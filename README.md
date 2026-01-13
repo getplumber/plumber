@@ -6,7 +6,7 @@ A command-line tool for checking the compliance of GitLab repositories against a
 
 - Go 1.25 or later
 
-## Installation
+## Contribute
 
 ```bash
 # Clone the repository
@@ -16,8 +16,8 @@ cd tpm-cli
 # Install dependencies
 go mod download
 
-# Build the binary
-go build -o tpm .
+# Run the binary
+go run main.go
 ```
 
 ## Usage
