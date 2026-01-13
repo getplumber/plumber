@@ -1,0 +1,36 @@
+# Git
+.git
+.gitignore
+
+# IDE
+.idea
+.vscode
+*.swp
+*.swo
+*~
+
+# Build artifacts
+tpm
+*.exe
+*.out
+
+# Test files
+*_test.go
+coverage.out
+coverage.html
+
+# Documentation
+*.md
+LICENSE
+
+# Local config files (conf.r2.yaml is kept as default template)
+.r2
+.r2.yaml
+.r2.yml
+r2.yaml
+r2.yml
+
+# Docker
+Dockerfile
+.dockerignore
+docker-compose*.yml

@@ -1,0 +1,84 @@
+{
+  "projectPath": "backend/go/agent",
+  "projectId": 670,
+  "ciValid": true,
+  "ciMissing": false,
+  "pipelineOriginMetrics": {
+    "jobTotal": 10,
+    "jobHardcoded": 4,
+    "originTotal": 7,
+    "originComponent": 1,
+    "originLocal": 0,
+    "originProject": 5,
+    "originRemote": 0,
+    "originTemplate": 0,
+    "originGitLabCatalog": 1,
+    "originOutdated": 0
+  },
+  "pipelineImageMetrics": {
+    "total": 10
+  },
+  "imageMutableResult": {
+    "issues": [],
+    "metrics": {
+      "total": 10,
+      "usingMutableTag": 0,
+      "ciInvalid": 0,
+      "ciMissing": 0
+    },
+    "compliance": 100,
+    "version": "0.2.0",
+    "ciValid": true,
+    "ciMissing": false,
+    "skipped": false
+  },
+  "imageUntrustedResult": {
+    "issues": [
+      {
+        "link": "docker.io/zricethezav/gitleaks:v8.15.0",
+        "status": "untrusted",
+        "job": "gitleaks"
+      }
+    ],
+    "metrics": {
+      "total": 10,
+      "trusted": 9,
+      "untrusted": 1,
+      "ciInvalid": 0,
+      "ciMissing": 0
+    },
+    "compliance": 0,
+    "version": "0.1.0",
+    "ciValid": true,
+    "ciMissing": false,
+    "skipped": false
+  },
+  "branchProtectionResult": {
+    "enabled": true,
+    "compliance": 100,
+    "version": "0.2.0",
+    "data": [
+      {
+        "branchName": "main",
+        "default": true,
+        "protected": true
+      },
+      {
+        "branchName": "dev",
+        "default": false,
+        "protected": true
+      }
+    ],
+    "metrics": {
+      "branches": 13,
+      "branchesToProtect": 2,
+      "unprotectedBranches": 0,
+      "nonCompliantBranches": 0,
+      "totalProtectedBranches": 2,
+      "projectsCorrectlyProtected": 1
+    }
+  },
+  "threshold": 100,
+  "compliance": 66.66666666666667,
+  "passed": false
+}

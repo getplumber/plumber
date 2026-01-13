@@ -1,0 +1,103 @@
+spec:
+  inputs:
+    # Authentication
+    # The token variable must be set as a CI/CD variable in your project settings
+    gitlab_token:
+      description: "CI/CD variable name containing the GitLab API token"
+      default: $R2_GITLAB_TOKEN
+    
+    # Project configuration
+    # These can be overridden but default to GitLab CI predefined variables
+    project_path:
+      description: "Full path of the GitLab project to analyze"
+      default: $CI_PROJECT_PATH
+    default_branch:
+      description: "Branch to analyze"
+      default: $CI_DEFAULT_BRANCH
+    server_url:
+      description: "GitLab instance URL"
+      default: $CI_SERVER_URL
+    
+    # Control configuration
+    # default conf can be found at https://gitlab.com/getplumber/plumber/-/blob/main/conf.r2.yaml
+    config_file:
+      description: "Path to conf.r2.yaml config file inside the container. Will use the default if not provided."
+      default: "/conf.r2.yaml"
+    
+    # Compliance configuration
+    threshold:
+      description: "Minimum compliance percentage required to pass (0-100)"
+      type: number
+      default: 100
+    
+    # Output configuration
+    print_output:
+      description: "Print text output to stdout"
+      type: boolean
+      default: true
+    output_file:
+      description: "Write JSON results to file (optional, leave empty to skip)"
+      default: ""
+    
+    # Job configuration
+    stage:
+      description: "Stage to run the job in"
+      default: "test"
+    image:
+      description: "Docker image to use for the job"
+      default: "getplumber/plumber:latest"
+    allow_failure:
+      description: "Allow the job to fail without failing the pipeline"
+      default: false
+      type: boolean
+
+---
+
+# Plumber Analyze Component
+# Analyzes GitLab CI/CD pipelines for compliance issues
+#
+# Prerequisites:
+#   1. Set R2_GITLAB_TOKEN as a CI/CD variable in your project settings
+#      (Settings > CI/CD > Variables) - use masked/protected for security
+#
+# Usage in .gitlab-ci.yml:
+#   include:
+#     - component: gitlab.com/getplumber/plumber/analyze@1.0.0
+#
+# With custom inputs:
+#   include:
+#     - component: gitlab.com/getplumber/plumber/analyze@1.0.0
+#       inputs:
+#         threshold: 80
+#         output_file: results.json
+#         gitlab_token: $MY_CUSTOM_TOKEN_VAR
+
+"plumber-analyze":
+  stage: $[[ inputs.stage ]]
+  image: $[[ inputs.image ]]
+  variables:
+    # Pass the token to the CLI via environment variable
+    R2_GITLAB_TOKEN: $[[ inputs.gitlab_token ]]
+  script:
+    - |
+      OUTPUT_FLAG=""
+      if [ -n "$[[ inputs.output_file ]]" ]; then
+        OUTPUT_FLAG="--output $[[ inputs.output_file ]]"
+      fi
+      /plumber analyze \
+        --gitlab-url "$[[ inputs.server_url ]]" \
+        --project "$[[ inputs.project_path ]]" \
+        --branch "$[[ inputs.default_branch ]]" \
+        --config "$[[ inputs.config_file ]]" \
+        --threshold "$[[ inputs.threshold ]]" \
+        --print="$[[ inputs.print_output ]]" \
+        $OUTPUT_FLAG
+  artifacts:
+    paths:
+      - $[[ inputs.output_file ]]
+    when: always
+    expire_in: 1 week
+  allow_failure: $[[ inputs.allow_failure ]]
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
