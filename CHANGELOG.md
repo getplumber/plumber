@@ -1,3 +1,10 @@
+## [0.1.7](https://github.com/getplumber/plumber/compare/v0.1.6...v0.1.7) (2026-01-19)
+
+
+### 🐛 Bug Fixes
+
+* **analysis:** Fix bug where analyzed branch was being mistaken for branches to protect ([afdd5f8](https://github.com/getplumber/plumber/commit/afdd5f8424a3a05120e50feb3dd99909bd5dba6a))
+
 ## [0.1.6](https://github.com/getplumber/plumber/compare/v0.1.5...v0.1.6) (2026-01-19)
 
 
