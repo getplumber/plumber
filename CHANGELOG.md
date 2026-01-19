@@ -1,3 +1,10 @@
+## [0.1.4](https://github.com/getplumber/plumber/compare/v0.1.3...v0.1.4) (2026-01-19)
+
+
+### 🐛 Bug Fixes
+
+* **doc:** Add plumber to trusted images ([2a80e1a](https://github.com/getplumber/plumber/commit/2a80e1a831d42b31d75a5af5407a2a2e7582473a))
+
 ## [0.1.3](https://github.com/getplumber/plumber/compare/v0.1.2...v0.1.3) (2026-01-19)
 
 
