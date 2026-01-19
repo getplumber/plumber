@@ -1,389 +1,137 @@
-# Plumber - Trust Policy Manager for GitLab CI/CD
+# 🔧 Plumber - Trust Policy Manager for GitLab CI/CD
 
-A command-line tool and GitLab CI/CD component for analyzing GitLab pipelines and enforcing trust policies on third-party components, images, and branch protections.
+Analyze your GitLab CI/CD pipelines for security and compliance issues.
 
----
+## 🎯 What it does
 
-## CLI
+Plumber scans your GitLab CI/CD configuration and checks for:
 
-### What This Service Does
+- 🏷️ **Mutable image tags** — Flags `latest`, `dev`, and other non-reproducible tags
+- 🔒 **Untrusted image registries** — Ensures images come from approved sources
+- 🛡️ **Branch protection compliance** — Verifies critical branches are properly protected
 
-Plumber analyzes GitLab projects to enforce security and compliance policies across your CI/CD pipelines. It performs the following checks:
+## 🚀 Quick Start (GitLab CI)
 
-| Control | Description |
-|---------|-------------|
-| **Mutable Image Tags** | Detects jobs using Docker images with mutable tags (e.g., `latest`, `dev`). Mutable tags make builds non-reproducible and can introduce security vulnerabilities when the underlying image changes unexpectedly. |
-| **Untrusted Images** | Identifies jobs using Docker images from untrusted registries. Only images from explicitly approved sources should be used to prevent supply chain attacks. |
-| **Branch Protection** | Verifies that critical branches (main, release/*, etc.) have proper protection settings including force push restrictions, code owner approvals, and access level requirements. |
+**1. Add your token**
 
-The CLI outputs:
-- **Text report** to stdout (human-readable)
-- **JSON report** to file (machine-readable, for integrations)
-- **Exit code** indicating pass/fail based on a configurable compliance threshold
+Go to **Settings → CI/CD → Variables** and add:
+- Name: `GITLAB_TOKEN`
+- Scopes: `read_api`, `read_repository`
 
-### Requirements
+**2. Add to `.gitlab-ci.yml`**
 
-#### GitLab Instance
-- GitLab.com or self-hosted GitLab instance (CE/EE)
-- API access enabled on the instance
+```yaml
+include:
+  - component: gitlab.com/getplumber/plumber/analyze@~latest
+```
 
-#### GitLab Token
-A GitLab Personal Access Token (PAT) or Project/Group Access Token with the following scopes:
+✅ That's it! Plumber runs on every MR and default branch commit.
 
-| Scope | Required | Purpose |
-|-------|----------|---------|
-| `read_api` | **Yes** | Read project configuration, CI/CD variables, branches, and protection rules |
-| `read_repository` | **Yes** | Read `.gitlab-ci.yml` and included files |
+> 💡 Everything is customizable — GitLab URL, branch, threshold, and more. See [Customize](#️-customize) below.
 
-> **Note:** The CLI performs **read-only** operations. No write access is required.
+## ⚙️ Customize
 
-**Creating a token:**
-1. Navigate to **Settings → Access Tokens** (User/Project/Group)
-2. Select scopes: `read_api`, `read_repository`
-3. Set an appropriate expiration date
-4. Copy the generated token
+Override any input to fit your needs:
 
-#### Configuration File
-A `.plumber.yaml` configuration file is **required**. This file defines:
-- Which controls are enabled
-- Control-specific settings (mutable tags list, trusted registries, branch patterns)
+```yaml
+include:
+  - component: gitlab.com/getplumber/plumber/analyze@~latest
+    inputs:
+      # Target (defaults to current project)
+      server_url: https://gitlab.example.com  # Self-hosted GitLab
+      project_path: other-group/other-project # Analyze a different project
+      default_branch: develop                 # Analyze a specific branch
+      
+      # Compliance
+      threshold: 80                           # Minimum % to pass (default: 100)
+      config_file: $CI_PROJECT_DIR/.plumber.yaml  # Custom config from your repo
+      
+      # Output
+      output_file: plumber-report.json        # Export JSON report
+      print_output: true                      # Print to stdout (default: true)
+      
+      # Job behavior
+      stage: security                         # Run in a different stage
+      allow_failure: true                     # Don't block pipeline on failure
+      gitlab_token: $MY_CUSTOM_TOKEN          # Use a different token variable
+```
 
-See [`.plumber.yaml`](.plumber.yaml) for a complete example with documentation.
+### All Inputs
 
-The Docker image includes a default configuration at `/.plumber.yaml`.
+| Input | Default | Description |
+|-------|---------|-------------|
+| `server_url` | `$CI_SERVER_URL` | GitLab instance URL |
+| `project_path` | `$CI_PROJECT_PATH` | Project to analyze |
+| `default_branch` | `$CI_DEFAULT_BRANCH` | Branch to analyze |
+| `gitlab_token` | `$GITLAB_TOKEN` | CI/CD variable with the API token |
+| `threshold` | `100` | Minimum compliance % to pass |
+| `config_file` | `/.plumber.yaml` | Path to configuration file |
+| `output_file` | `""` | Path to write JSON results |
+| `print_output` | `true` | Print text output to stdout |
+| `stage` | `test` | Pipeline stage for the job |
+| `image` | `getplumber/plumber:0.1` | Docker image to use |
+| `allow_failure` | `false` | Allow job to fail without blocking |
 
-### Installation
+## 💻 Test Locally (CLI)
 
-#### From Source
+```bash
+# Pull the image
+docker pull getplumber/plumber:latest
+
+# Run analysis
+docker run --rm \
+  -e GITLAB_TOKEN=glpat-xxxx \
+  getplumber/plumber:latest \
+  analyze \
+    --gitlab-url https://gitlab.com \
+    --project mygroup/myproject \
+    --threshold 100
+```
+
+Or build from source:
+
 ```bash
 git clone https://github.com/getplumber/plumber.git
 cd plumber
 go build -o plumber .
-```
 
-#### Using Docker
-```bash
-docker pull getplumber/plumber:latest
-```
-
-### Usage
-
-#### Basic Usage
-
-```bash
-# Set the token via environment variable
-export GITLAB_TOKEN=glpat-xxxxxxxxxxxx
-
-# Analyze a project
-plumber analyze \
-  --gitlab-url https://gitlab.com \
-  --project mygroup/myproject \
-  --config .plumber.yaml \
-  --threshold 100
-```
-
-#### Command Reference
-
-```
-plumber analyze [flags]
-
-Required Flags:
-  --gitlab-url    GitLab instance URL (e.g., https://gitlab.com)
-  --project       Full path of the project to analyze (e.g., mygroup/myproject)
-  --config        Path to .plumber.yaml configuration file
-  --threshold     Minimum compliance percentage to pass (0-100)
-
-Optional Flags:
-  --branch        Branch to analyze (defaults to project's default branch)
-  --print         Print text output to stdout (default: true)
-  --output, -o    Write JSON results to file
-  --verbose, -v   Enable debug logging
-
-Environment Variables:
-  GITLAB_TOKEN GitLab API token (required)
-```
-
-#### Exit Codes
-
-| Code | Meaning |
-|------|---------|
-| `0` | Analysis passed (compliance ≥ threshold) |
-| `1` | Analysis failed (compliance < threshold or error) |
-
-### Use Cases
-
-#### 1. Local Development Check
-Run before pushing changes to verify your pipeline configuration:
-
-```bash
 export GITLAB_TOKEN=glpat-xxxx
-
-plumber analyze \
+./plumber analyze \
   --gitlab-url https://gitlab.com \
   --project mygroup/myproject \
-  --branch feature/my-branch \
   --config .plumber.yaml \
   --threshold 100
 ```
 
-#### 2. CI/CD Gate (Pass/Fail)
-Enforce 100% compliance in your pipeline:
-
-```bash
-plumber analyze \
-  --gitlab-url $CI_SERVER_URL \
-  --project $CI_PROJECT_PATH \
-  --branch $CI_COMMIT_REF_NAME \
-  --config /.plumber.yaml \
-  --threshold 100
-```
-
-#### 3. Compliance Audit with JSON Export
-Generate a detailed report for auditing or processing:
-
-```bash
-plumber analyze \
-  --gitlab-url https://gitlab.com \
-  --project mygroup/myproject \
-  --config .plumber.yaml \
-  --threshold 0 \
-  --print=false \
-  --output audit-report.json
-```
-
-#### 4. Gradual Compliance Adoption
-Start with a lower threshold and increase over time:
-
-```bash
-# Week 1: 50% threshold
-plumber analyze --threshold 50 ...
-
-# Week 2: 75% threshold  
-plumber analyze --threshold 75 ...
-
-# Week 3+: 100% threshold
-plumber analyze --threshold 100 ...
-```
-
-#### 5. Multi-Project Analysis (Script)
-Analyze multiple projects in a loop:
-
-```bash
-#!/bin/bash
-PROJECTS=("group/project1" "group/project2" "group/project3")
-
-for project in "${PROJECTS[@]}"; do
-  echo "Analyzing $project..."
-  plumber analyze \
-    --gitlab-url https://gitlab.com \
-    --project "$project" \
-    --config .plumber.yaml \
-    --threshold 100 \
-    --output "reports/${project//\//_}.json"
-done
-```
-
-### Example Output
+## 📋 Example Output
 
 ```
 === Pipeline Analysis Results ===
 
 Project: mygroup/myproject
-CI Valid: true
-CI Missing: false
-
---- Pipeline Origin Metrics ---
-  Total Jobs: 12
-  Hardcoded Jobs: 2
-  Total Origins: 5
-    - Components: 3
-    - Local: 1
-    - Template: 1
-  GitLab Catalog Resources: 2
-
---- Pipeline Image Metrics ---
-  Total Images: 8
 
 --- Mutable Image Tag Control ---
-  Version: 0.2.0
-  Compliance: 0.0%
-  Total Images: 8
-  Using Mutable Tags: 2
-
+  Compliance: 50.0%
   Issues Found:
     - Job 'build' uses mutable tag 'latest' (image: docker.io/node:latest)
-    - Job 'test' uses mutable tag 'dev' (image: myregistry.com/app:dev)
 
 --- Untrusted Image Control ---
-  Version: 0.1.0
   Compliance: 100.0%
-  Total Images: 8
-  Trusted: 8
-  Untrusted: 0
+  Trusted: 8, Untrusted: 0
 
 --- Branch Protection Control ---
-  Version: 0.2.0
   Compliance: 100.0%
-  Total Branches: 5
-  Branches to Protect: 2
-  Protected Branches: 2
-  Unprotected: 0
-  Non-Compliant: 0
+  Protected: 2, Unprotected: 0
 
 === Summary ===
-  Overall Compliance: 66.7%
+  Overall Compliance: 83.3%
   Threshold: 100.0%
   Status: FAILED ✗
 ```
 
----
+## 📝 Configuration
 
-## GitLab Component
-
-### Overview
-
-Plumber is available as a GitLab CI/CD Component, enabling easy integration into any GitLab project with minimal configuration.
-
-**Component Location:** `templates/analyze.yml`
-
-### Prerequisites
-
-1. **Set the GitLab Token as a CI/CD Variable:**
-   - Navigate to **Settings → CI/CD → Variables**
-   - Add a variable named `GITLAB_TOKEN`
-   - Value: Your GitLab API token with `read_api` and `read_repository` scopes
-   - Options: Enable **Mask variable** (recommended), optionally **Protect variable**
-
-### Basic Usage
-
-Add to your `.gitlab-ci.yml`:
-
-```yaml
-include:
-  - component: gitlab.com/getplumber/plumber/analyze@~latest
-```
-
-This will:
-- Run in the `test` stage
-- Analyze the current project and default branch
-- Use the default configuration at `/.plumber.yaml` bundled in the Docker image
-- Require 100% compliance (fail the job if not met)
-- Print results to the job log
-
-### With Custom Inputs
-
-```yaml
-include:
-  - component: gitlab.com/getplumber/plumber/analyze@~latest
-    inputs:
-      # Lower the threshold for gradual adoption
-      threshold: 80
-      
-      # Export results to a JSON artifact
-      output_file: compliance-report.json
-      
-      # Use a custom config file from your repository
-      config_file: $CI_PROJECT_DIR/.plumber.yaml
-      
-      # Allow the job to fail without failing the pipeline
-      allow_failure: true
-```
-
-### Input Reference
-
-| Input | Type | Default | Description |
-|-------|------|---------|-------------|
-| `gitlab_token` | string | `$GITLAB_TOKEN` | CI/CD variable containing the GitLab API token |
-| `project_path` | string | `$CI_PROJECT_PATH` | Project to analyze |
-| `default_branch` | string | `$CI_DEFAULT_BRANCH` | Branch to analyze |
-| `server_url` | string | `$CI_SERVER_URL` | GitLab instance URL |
-| `config_file` | string | `/.plumber.yaml` | Path to configuration file (in container) |
-| `threshold` | number | `100` | Minimum compliance percentage (0-100) |
-| `print_output` | boolean | `true` | Print text output to job log |
-| `output_file` | string | `""` | Path to write JSON results (empty = skip) |
-| `stage` | string | `test` | Pipeline stage for the job |
-| `image` | string | `getplumber/plumber:latest` | Docker image to use |
-| `allow_failure` | boolean | `false` | Allow job to fail without failing pipeline |
-
-### Examples
-
-#### Minimal Setup (Strictest)
-```yaml
-include:
-  - component: gitlab.com/getplumber/plumber/analyze@~latest
-```
-
-#### Custom Configuration from Repository
-```yaml
-include:
-  - component: gitlab.com/getplumber/plumber/analyze@~latest
-    inputs:
-      config_file: $CI_PROJECT_DIR/.plumber.yaml
-```
-
-> **Note:** The path must be accessible in the container. Use `$CI_PROJECT_DIR/.plumber.yaml` to reference a config file in your repository root.
-
-#### Generate Artifact for Compliance Dashboard
-```yaml
-include:
-  - component: gitlab.com/getplumber/plumber/analyze@~latest
-    inputs:
-      threshold: 0  # Don't fail, just report
-      output_file: plumber-results.json
-      allow_failure: true
-```
-
-#### Different Thresholds per Branch
-```yaml
-include:
-  - component: gitlab.com/getplumber/plumber/analyze@~latest
-    inputs:
-      threshold: 100
-    rules:
-      - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
-
-include:
-  - component: gitlab.com/getplumber/plumber/analyze@~latest
-    inputs:
-      threshold: 75
-      allow_failure: true
-    rules:
-      - if: $CI_PIPELINE_SOURCE == "merge_request_event"
-```
-
-#### Using a Custom Token Variable
-```yaml
-include:
-  - component: gitlab.com/getplumber/plumber/analyze@~latest
-    inputs:
-      gitlab_token: $MY_ANALYSIS_TOKEN
-```
-
-### Pipeline Behavior
-
-The component runs on:
-- **Merge request pipelines** (`merge_request_event`)
-- **Default branch commits** (when `CI_COMMIT_BRANCH == CI_DEFAULT_BRANCH`)
-
-To customize when the job runs, override the rules in your pipeline or use `allow_failure` for non-blocking analysis.
-
-### Troubleshooting
-
-| Issue | Solution |
-|-------|----------|
-| `GITLAB_TOKEN environment variable is required` | Ensure the `GITLAB_TOKEN` CI/CD variable is set in your project settings |
-| `401 Unauthorized` | Verify the token has `read_api` and `read_repository` scopes and hasn't expired |
-| `403 Forbidden` on MR approval settings | This is expected for non-Premium GitLab instances; the control continues without this data |
-| Job fails but pipeline should continue | Set `allow_failure: true` in the inputs |
-| Need to analyze a different project | Override `project_path` input with the target project's path |
-
----
-
-## Configuration Reference
-
-See [`.plumber.yaml`](.plumber.yaml) for the complete configuration file with inline documentation.
-
-### Quick Reference
+Create a `.plumber.yaml` in your repo to customize checks:
 
 ```yaml
 version: "1.0"
@@ -408,18 +156,40 @@ controls:
     namePatterns:
       - main
       - release/*
-    allowForcePush: false
-    codeOwnerApprovalRequired: false
-    minMergeAccessLevel: 30
-    minPushAccessLevel: 40
 ```
 
----
+See [`.plumber.yaml`](.plumber.yaml) for the full reference with all options.
 
-## License
+## 🔍 CLI Reference
 
-[Elastic License 2.0 (ELv2)](LICENSE) - Free to use internally. Cannot be offered as a hosted/managed service.
+```
+plumber analyze [flags]
 
-## Contributing
+Flags:
+  --gitlab-url    GitLab instance URL (required)
+  --project       Project path, e.g., group/project (required)
+  --config        Path to .plumber.yaml (required)
+  --threshold     Minimum compliance % to pass (required)
+  --branch        Branch to analyze (default: project default)
+  --output        Write JSON results to file
+  --print         Print text output (default: true)
 
-Contributions are welcome! Please open an issue or submit a pull request.
+Environment:
+  GITLAB_TOKEN    GitLab API token (required)
+
+Exit Codes:
+  0  Passed (compliance ≥ threshold)
+  1  Failed (compliance < threshold or error)
+```
+
+## 🔧 Troubleshooting
+
+| Issue | Solution |
+|-------|----------|
+| `GITLAB_TOKEN environment variable is required` | Add `GITLAB_TOKEN` in CI/CD Variables |
+| `401 Unauthorized` | Check token has `read_api` + `read_repository` scopes |
+| `403 Forbidden` on MR settings | Expected on non-Premium GitLab; continues without that data |
+
+## 📄 License
+
+[Elastic License 2.0 (ELv2)](LICENSE) — Free to use. Cannot be offered as a managed service.
