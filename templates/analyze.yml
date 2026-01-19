@@ -78,10 +78,12 @@ spec:
     name: $[[ inputs.image ]]
     entrypoint: [""]  # Override ENTRYPOINT to allow shell script execution
   variables:
-    # Pass the token to the CLI via environment variable
-    GITLAB_TOKEN: $[[ inputs.gitlab_token ]]
+    # Use intermediate variable to avoid self-reference when default is $GITLAB_TOKEN
+    PLUMBER_TOKEN: $[[ inputs.gitlab_token ]]
   script:
     - |
+      # Export as GITLAB_TOKEN for the CLI
+      export GITLAB_TOKEN="$PLUMBER_TOKEN"
       OUTPUT_FLAG=""
       if [ -n "$[[ inputs.output_file ]]" ]; then
         OUTPUT_FLAG="--output $[[ inputs.output_file ]]"
