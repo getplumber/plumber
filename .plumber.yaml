@@ -65,6 +65,7 @@ controls:
       - registry.gitlab.com/*
       - $CI_REGISTRY_IMAGE:*
       - $CI_REGISTRY_IMAGE/*
+      - getplumber/plumber:*
       
       # Add your organization's trusted registries below:
       # - your-registry.example.com/*
