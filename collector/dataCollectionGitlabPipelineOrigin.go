@@ -331,8 +331,8 @@ func (dc *GitlabPipelineOriginDataCollection) Run(project *gitlab.ProjectInfo, t
 	var err error
 
 	// Get all infos about the CI configuration
-	// Use project.DefaultBranch as ref (can be overridden via --branch CLI flag)
-	data.Conf, data.MergedConf, data.MergedResponse, data.ConfString, _, err = gitlab.GetFullGitlabCI(project, project.DefaultBranch, token, conf.GitlabURL, conf)
+	// Use project.AnalyzeBranch as ref (set via --branch CLI flag, defaults to DefaultBranch)
+	data.Conf, data.MergedConf, data.MergedResponse, data.ConfString, _, err = gitlab.GetFullGitlabCI(project, project.AnalyzeBranch, token, conf.GitlabURL, conf)
 	if err != nil {
 		data.LimitedAnalysis = true
 		data.CiValid = false

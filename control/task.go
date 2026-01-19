@@ -43,11 +43,6 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	// Update result with project info
 	result.ProjectID = project.IdOnPlatform
 
-	// Override default branch if provided via CLI
-	if conf.DefaultBranch != "" {
-		project.DefaultBranch = conf.DefaultBranch
-	}
-
 	l.WithFields(logrus.Fields{
 		"projectID":     project.IdOnPlatform,
 		"projectName":   project.Name,
@@ -58,6 +53,14 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 
 	// Convert to ProjectInfo for collectors
 	projectInfo := project.ToProjectInfo()
+
+	// The --branch flag specifies which branch's CI config to analyze,
+	// NOT the project's default branch. Keep them separate.
+	// projectInfo.DefaultBranch = actual default branch from GitLab API (e.g., "main")
+	// projectInfo.AnalyzeBranch = branch to analyze from CLI (e.g., "testing-branch" or defaults to DefaultBranch)
+	if conf.Branch != "" {
+		projectInfo.AnalyzeBranch = conf.Branch
+	}
 
 	///////////////////////
 	// Run Data Collections

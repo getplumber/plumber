@@ -11,9 +11,9 @@ spec:
     project_path:
       description: "Full path of the GitLab project to analyze"
       default: $CI_PROJECT_PATH
-    default_branch:
+    branch:
       description: "Branch to analyze"
-      default: $CI_DEFAULT_BRANCH
+      default: $CI_COMMIT_REF_NAME
     server_url:
       description: "GitLab instance URL"
       default: $CI_SERVER_URL
@@ -42,7 +42,7 @@ spec:
     # Job configuration
     stage:
       description: "Stage to run the job in"
-      default: "test"
+      default: ".pre"
     image:
       description: "Docker image to use for the job"
       default: "getplumber/plumber:0.1"
@@ -91,7 +91,7 @@ spec:
       /plumber analyze \
         --gitlab-url "$[[ inputs.server_url ]]" \
         --project "$[[ inputs.project_path ]]" \
-        --branch "$[[ inputs.default_branch ]]" \
+        --branch "$[[ inputs.branch ]]" \
         --config "$[[ inputs.config_file ]]" \
         --threshold "$[[ inputs.threshold ]]" \
         --print="$[[ inputs.print_output ]]" \
@@ -105,3 +105,4 @@ spec:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_TAG

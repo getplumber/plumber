@@ -25,7 +25,7 @@ include:
   - component: gitlab.com/getplumber/plumber/analyze@~latest
 ```
 
-✅ That's it! Plumber runs on every MR and default branch commit.
+✅ That's it! Plumber runs on MRs, main branch, and tags.
 
 > 💡 Everything is customizable — GitLab URL, branch, threshold, and more. See [Customize](#️-customize) below.
 
@@ -40,7 +40,7 @@ include:
       # Target (defaults to current project)
       server_url: https://gitlab.example.com  # Self-hosted GitLab
       project_path: other-group/other-project # Analyze a different project
-      default_branch: develop                 # Analyze a specific branch
+      branch: develop                         # Analyze a specific branch
       
       # Compliance
       threshold: 80                           # Minimum % to pass (default: 100)
@@ -51,7 +51,7 @@ include:
       print_output: true                      # Print to stdout (default: true)
       
       # Job behavior
-      stage: security                         # Run in a different stage
+      stage: test                             # Run in a different stage (default: .pre)
       allow_failure: true                     # Don't block pipeline on failure
       gitlab_token: $MY_CUSTOM_TOKEN          # Use a different token variable
 ```
@@ -62,13 +62,13 @@ include:
 |-------|---------|-------------|
 | `server_url` | `$CI_SERVER_URL` | GitLab instance URL |
 | `project_path` | `$CI_PROJECT_PATH` | Project to analyze |
-| `default_branch` | `$CI_DEFAULT_BRANCH` | Branch to analyze |
+| `branch` | `$CI_COMMIT_REF_NAME` | Branch to analyze |
 | `gitlab_token` | `$GITLAB_TOKEN` | CI/CD variable with the API token |
 | `threshold` | `100` | Minimum compliance % to pass |
 | `config_file` | `/.plumber.yaml` | Path to configuration file |
 | `output_file` | `""` | Path to write JSON results |
 | `print_output` | `true` | Print text output to stdout |
-| `stage` | `test` | Pipeline stage for the job |
+| `stage` | `.pre` | Pipeline stage for the job |
 | `image` | `getplumber/plumber:0.1` | Docker image to use |
 | `allow_failure` | `false` | Allow job to fail without blocking |
 

@@ -223,6 +223,7 @@ func (p *Project) ToProjectInfo() *ProjectInfo {
 		Path:                p.Path,
 		CiConfPath:          p.CiConfPath,
 		DefaultBranch:       p.DefaultBranch,
+		AnalyzeBranch:       p.DefaultBranch, // Defaults to DefaultBranch, can be overridden
 		LatestHeadCommitSha: p.LatestHeadCommitSha,
 		Archived:            p.Archived,
 		NotFound:            false, // If we have a Project struct, it was found
@@ -239,7 +240,7 @@ func (p *Project) GetCIPredefinedVariables() map[string]string {
 	vars["CI_PROJECT_NAME"] = p.Name
 	vars["CI_PROJECT_PATH"] = p.Path
 	vars["CI_PROJECT_PATH_SLUG"] = p.Path // Could be slugified
-	vars["CI_DEFAULT_BRANCH"] = p.DefaultBranch
+	vars["CI_COMMIT_REF_NAME"] = p.DefaultBranch
 	vars["CI_COMMIT_SHA"] = p.LatestHeadCommitSha
 	vars["CI_PROJECT_VISIBILITY"] = p.Visibility
 

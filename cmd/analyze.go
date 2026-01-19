@@ -125,7 +125,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	conf.GitlabURL = cleanGitlabURL
 	conf.GitlabToken = gitlabToken
 	conf.ProjectPath = projectPath
-	conf.DefaultBranch = defaultBranch
+	conf.Branch = defaultBranch
 	conf.PlumberConfig = plumberConfig
 
 	if verbose {
@@ -324,7 +324,7 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64) e
 	// Summary with threshold check
 	fmt.Printf("=== Summary ===\n")
 	fmt.Printf("  Overall Compliance: %.1f%%\n", compliance)
-	fmt.Printf("  Threshold: %.1f%%\n", threshold)
+	fmt.Printf("  Compliance Threshold: %.1f%%\n", threshold)
 	if compliance >= threshold {
 		fmt.Printf("  Status: PASSED ✓\n\n")
 	} else {

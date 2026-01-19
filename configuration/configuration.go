@@ -13,9 +13,9 @@ type Configuration struct {
 	GitlabToken string // GitLab API token
 
 	// Project settings
-	ProjectPath   string // Full path of the project (e.g., group/project)
-	ProjectID     int    // Project ID on GitLab
-	DefaultBranch string // Default branch of the project
+	ProjectPath string // Full path of the project (e.g., group/project)
+	ProjectID   int    // Project ID on GitLab
+	Branch      string // Branch to analyze (from --branch flag, defaults to project's default branch)
 
 	// HTTP client settings
 	HTTPClientTimeout time.Duration // Timeout for HTTP clients (REST and GraphQL)

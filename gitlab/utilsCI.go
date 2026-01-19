@@ -122,7 +122,8 @@ type ProjectInfo struct {
 	ID                  int // Project ID on GitLab
 	Path                string
 	CiConfPath          string
-	DefaultBranch       string
+	DefaultBranch       string // The actual default branch from GitLab (e.g., "main")
+	AnalyzeBranch       string // The branch to analyze (from --branch flag, defaults to DefaultBranch)
 	LatestHeadCommitSha string
 	Archived            bool
 	NotFound            bool
