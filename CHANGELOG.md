@@ -1,3 +1,11 @@
+## [0.1.2](https://github.com/getplumber/plumber/compare/v0.1.1...v0.1.2) (2026-01-19)
+
+
+### ✨ Features
+
+* **build:** Move to alpine to make command customizable in CI ([763bcf3](https://github.com/getplumber/plumber/commit/763bcf3eadd21fdf53503033b00ced44b1a6b862))
+* **release:** Downgrade feat to patch ([eb30e81](https://github.com/getplumber/plumber/commit/eb30e8183466068954edbd4e700986e02bfd72af))
+
 ## [0.2.0](https://github.com/getplumber/plumber/compare/v0.1.1...v0.2.0) (2026-01-19)
 
 
