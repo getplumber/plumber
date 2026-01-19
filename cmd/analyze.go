@@ -41,7 +41,7 @@ Required environment variables:
 Required flags:
   --gitlab-url    GitLab instance URL
   --project       Full path of the project
-  --config        Path to conf.pb.yaml config file
+  --config        Path to .plumber.yaml config file
   --threshold     Minimum compliance percentage to pass (0-100)
 
 Optional flags:
@@ -58,13 +58,13 @@ Examples:
   export GITLAB_TOKEN=glpat-xxxx
 
   # Analyze a project (prints text to stdout)
-  plumber analyze --gitlab-url https://gitlab.com --project mygroup/myproject --config conf.pb.yaml --threshold 100
+  plumber analyze --gitlab-url https://gitlab.com --project mygroup/myproject --config .plumber.yaml --threshold 100
 
   # Analyze and save JSON to file (no stdout)
-  plumber analyze --gitlab-url https://gitlab.com --project mygroup/myproject --config conf.pb.yaml --threshold 100 --print=false --output results.json
+  plumber analyze --gitlab-url https://gitlab.com --project mygroup/myproject --config .plumber.yaml --threshold 100 --print=false --output results.json
 
   # Analyze with both text output and JSON file
-  plumber analyze --gitlab-url https://gitlab.com --project mygroup/myproject --config conf.pb.yaml --threshold 100 --output results.json
+  plumber analyze --gitlab-url https://gitlab.com --project mygroup/myproject --config .plumber.yaml --threshold 100 --output results.json
 `,
 	RunE: runAnalyze,
 }
@@ -75,7 +75,7 @@ func init() {
 	// Required flags
 	analyzeCmd.Flags().StringVar(&gitlabURL, "gitlab-url", "", "GitLab instance URL (required)")
 	analyzeCmd.Flags().StringVar(&projectPath, "project", "", "Full path of the project (required)")
-	analyzeCmd.Flags().StringVar(&configFile, "config", "", "Path to conf.pb.yaml config file (required)")
+	analyzeCmd.Flags().StringVar(&configFile, "config", "", "Path to .plumber.yaml config file (required)")
 	analyzeCmd.Flags().Float64Var(&threshold, "threshold", 0, "Minimum compliance percentage to pass, 0-100 (required)")
 
 	// Optional flags
@@ -112,8 +112,8 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	// Clean up URL
 	cleanGitlabURL := strings.TrimSuffix(gitlabURL, "/")
 
-	// Load PB configuration (required)
-	pbConfig, configPath, err := configuration.LoadPBConfig(configFile)
+	// Load Plumber configuration (required)
+	plumberConfig, configPath, err := configuration.LoadPlumberConfig(configFile)
 	if err != nil {
 		return fmt.Errorf("configuration error: %w", err)
 	}
@@ -126,7 +126,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	conf.GitlabToken = gitlabToken
 	conf.ProjectPath = projectPath
 	conf.DefaultBranch = defaultBranch
-	conf.PBConfig = pbConfig
+	conf.PlumberConfig = plumberConfig
 
 	if verbose {
 		conf.LogLevel = logrus.DebugLevel

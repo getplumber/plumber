@@ -23,12 +23,8 @@ coverage.html
 *.md
 LICENSE
 
-# Local config files (conf.pb.yaml is kept as default template)
-.pb
-.pb.yaml
-.pb.yml
-pb.yaml
-pb.yml
+# Local config files (user overrides - .plumber.yaml in repo root is the default template)
+# Note: .plumber.yaml is NOT ignored - it's the default config bundled in the image
 
 # Docker
 Dockerfile

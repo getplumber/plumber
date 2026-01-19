@@ -9,8 +9,8 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-// PBConfig represents the conf.pb.yaml configuration file structure
-type PBConfig struct {
+// PlumberConfig represents the .plumber.yaml configuration file structure
+type PlumberConfig struct {
 	// Version of the config file format
 	Version string `yaml:"version"`
 
@@ -75,13 +75,13 @@ type BranchProtectionControlConfig struct {
 	MinPushAccessLevel *int `yaml:"minPushAccessLevel,omitempty"`
 }
 
-// LoadPBConfig loads configuration from a file path
+// LoadPlumberConfig loads configuration from a file path
 // The config file is REQUIRED - returns error if not found
-// If configPath is empty, looks for conf.pb.yaml in current directory
-func LoadPBConfig(configPath string) (*PBConfig, string, error) {
-	l := logrus.WithField("action", "LoadPBConfig")
+// If configPath is empty, looks for .plumber.yaml in current directory
+func LoadPlumberConfig(configPath string) (*PlumberConfig, string, error) {
+	l := logrus.WithField("action", "LoadPlumberConfig")
 
-	// If no path specified, try to find conf.pb.yaml in current directory
+	// If no path specified, try to find .plumber.yaml in current directory
 	if configPath == "" {
 		cwd, err := os.Getwd()
 		if err != nil {
@@ -91,10 +91,10 @@ func LoadPBConfig(configPath string) (*PBConfig, string, error) {
 
 		// Try different file names
 		possiblePaths := []string{
-			filepath.Join(cwd, "conf.pb.yaml"),
-			filepath.Join(cwd, "conf.pb.yml"),
-			filepath.Join(cwd, ".pb.yaml"),
-			filepath.Join(cwd, ".pb.yml"),
+			filepath.Join(cwd, ".plumber.yaml"),
+			filepath.Join(cwd, ".plumber.yml"),
+			filepath.Join(cwd, "plumber.yaml"),
+			filepath.Join(cwd, "plumber.yml"),
 		}
 
 		for _, path := range possiblePaths {
@@ -107,7 +107,7 @@ func LoadPBConfig(configPath string) (*PBConfig, string, error) {
 
 	// Config file is required
 	if configPath == "" {
-		return nil, "", fmt.Errorf("no config file found. Please provide a config file with --config flag (e.g., conf.pb.yaml)")
+		return nil, "", fmt.Errorf("no config file found. Please provide a config file with --config flag (e.g., .plumber.yaml)")
 	}
 
 	l = l.WithField("configPath", configPath)
@@ -124,7 +124,7 @@ func LoadPBConfig(configPath string) (*PBConfig, string, error) {
 	}
 
 	// Parse YAML
-	config := &PBConfig{}
+	config := &PlumberConfig{}
 	if err := yaml.Unmarshal(data, config); err != nil {
 		l.WithError(err).Error("Failed to parse config file")
 		return nil, configPath, err
@@ -136,7 +136,7 @@ func LoadPBConfig(configPath string) (*PBConfig, string, error) {
 
 // GetImageMutableConfig returns the ImageMutable control configuration
 // Returns nil if not configured
-func (c *PBConfig) GetImageMutableConfig() *ImageMutableControlConfig {
+func (c *PlumberConfig) GetImageMutableConfig() *ImageMutableControlConfig {
 	if c == nil {
 		return nil
 	}
@@ -145,7 +145,7 @@ func (c *PBConfig) GetImageMutableConfig() *ImageMutableControlConfig {
 
 // GetImageUntrustedConfig returns the ImageUntrusted control configuration
 // Returns nil if not configured
-func (c *PBConfig) GetImageUntrustedConfig() *ImageUntrustedControlConfig {
+func (c *PlumberConfig) GetImageUntrustedConfig() *ImageUntrustedControlConfig {
 	if c == nil {
 		return nil
 	}
@@ -172,7 +172,7 @@ func (c *ImageUntrustedControlConfig) IsEnabled() bool {
 
 // GetBranchProtectionConfig returns the BranchProtection control configuration
 // Returns nil if not configured
-func (c *PBConfig) GetBranchProtectionConfig() *BranchProtectionControlConfig {
+func (c *PlumberConfig) GetBranchProtectionConfig() *BranchProtectionControlConfig {
 	if c == nil {
 		return nil
 	}

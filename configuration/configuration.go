@@ -32,8 +32,8 @@ type Configuration struct {
 	// Version info
 	Version string
 
-	// PB Configuration (from conf.pb.yaml file)
-	PBConfig *PBConfig
+	// Plumber Configuration (from .plumber.yaml file)
+	PlumberConfig *PlumberConfig
 }
 
 // NewDefaultConfiguration creates a Configuration with sensible defaults

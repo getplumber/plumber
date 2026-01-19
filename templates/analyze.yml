@@ -19,10 +19,10 @@ spec:
       default: $CI_SERVER_URL
     
     # Control configuration
-    # default conf can be found at https://gitlab.com/getplumber/plumber/-/blob/main/conf.pb.yaml
+    # default conf can be found at https://gitlab.com/getplumber/plumber/-/blob/main/.plumber.yaml
     config_file:
-      description: "Path to conf.pb.yaml config file inside the container. Will use the default if not provided."
-      default: "/conf.pb.yaml"
+      description: "Path to .plumber.yaml config file inside the container. Will use the default if not provided."
+      default: "/.plumber.yaml"
     
     # Compliance configuration
     threshold:
@@ -45,7 +45,7 @@ spec:
       default: "test"
     image:
       description: "Docker image to use for the job"
-      default: "getplumber/plumber:latest"
+      default: "getplumber/plumber:0.1"
     allow_failure:
       description: "Allow the job to fail without failing the pipeline"
       default: false
@@ -62,11 +62,11 @@ spec:
 #
 # Usage in .gitlab-ci.yml:
 #   include:
-#     - component: gitlab.com/getplumber/plumber/analyze@1.0.0
+#     - component: gitlab.com/getplumber/plumber/analyze@~latest
 #
 # With custom inputs:
 #   include:
-#     - component: gitlab.com/getplumber/plumber/analyze@1.0.0
+#     - component: gitlab.com/getplumber/plumber/analyze@v0.1.0
 #       inputs:
 #         threshold: 80
 #         output_file: results.json

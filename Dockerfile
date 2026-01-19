@@ -23,13 +23,13 @@ FROM gcr.io/distroless/static-debian12:nonroot
 COPY --from=builder /app/plumber /plumber
 
 # Copy default config file (the only hardcoded default)
-COPY conf.pb.yaml /conf.pb.yaml
+COPY .plumber.yaml /.plumber.yaml
 
 # Already running as nonroot user (65532:65532)
 USER nonroot:nonroot
 
 # Entrypoint: just the binary
 # All flags (including --config) are passed by the GitLab CI component
-# The default config file /conf.pb.yaml is available inside the image
+# The default config file /.plumber.yaml is available inside the image
 # Required env var: GITLAB_TOKEN
 ENTRYPOINT ["/plumber"]

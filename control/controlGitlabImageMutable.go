@@ -20,28 +20,28 @@ type GitlabImageMutableConf struct {
 	MutableTags []string `json:"mutableTags"`
 }
 
-// GetConf loads configuration from PBConfig
+// GetConf loads configuration from PlumberConfig
 // Returns error if config is missing or incomplete
-func (p *GitlabImageMutableConf) GetConf(pbConfig *configuration.PBConfig) error {
-	// PB config is required
-	if pbConfig == nil {
-		return fmt.Errorf("PB config is required but not provided")
+func (p *GitlabImageMutableConf) GetConf(plumberConfig *configuration.PlumberConfig) error {
+	// Plumber config is required
+	if plumberConfig == nil {
+		return fmt.Errorf("Plumber config is required but not provided")
 	}
 
-	// Get ImageMutable config from PBConfig
-	imgConfig := pbConfig.GetImageMutableConfig()
+	// Get ImageMutable config from PlumberConfig
+	imgConfig := plumberConfig.GetImageMutableConfig()
 	if imgConfig == nil {
-		return fmt.Errorf("imageMutable control configuration is missing from conf.pb.yaml config file")
+		return fmt.Errorf("imageMutable control configuration is missing from .plumber.yaml config file")
 	}
 
 	// Check if enabled field is set
 	if imgConfig.Enabled == nil {
-		return fmt.Errorf("imageMutable.enabled field is required in conf.pb.yaml config file")
+		return fmt.Errorf("imageMutable.enabled field is required in .plumber.yaml config file")
 	}
 
 	// Check if mutableTags field is set
 	if imgConfig.MutableTags == nil {
-		return fmt.Errorf("imageMutable.mutableTags field is required in conf.pb.yaml config file")
+		return fmt.Errorf("imageMutable.mutableTags field is required in .plumber.yaml config file")
 	}
 
 	// Apply configuration
@@ -51,7 +51,7 @@ func (p *GitlabImageMutableConf) GetConf(pbConfig *configuration.PBConfig) error
 	l.WithFields(logrus.Fields{
 		"enabled":     p.Enabled,
 		"mutableTags": p.MutableTags,
-	}).Debug("ImageMutable control configuration loaded from conf.pb.yaml file")
+	}).Debug("ImageMutable control configuration loaded from .plumber.yaml file")
 
 	return nil
 }

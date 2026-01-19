@@ -44,13 +44,13 @@ A GitLab Personal Access Token (PAT) or Project/Group Access Token with the foll
 4. Copy the generated token
 
 #### Configuration File
-A `conf.pb.yaml` configuration file is **required**. This file defines:
+A `.plumber.yaml` configuration file is **required**. This file defines:
 - Which controls are enabled
 - Control-specific settings (mutable tags list, trusted registries, branch patterns)
 
-See [`conf.pb.yaml`](conf.pb.yaml) for a complete example with documentation.
+See [`.plumber.yaml`](.plumber.yaml) for a complete example with documentation.
 
-The Docker image includes a default configuration at `/conf.pb.yaml`.
+The Docker image includes a default configuration at `/.plumber.yaml`.
 
 ### Installation
 
@@ -78,7 +78,7 @@ export GITLAB_TOKEN=glpat-xxxxxxxxxxxx
 plumber analyze \
   --gitlab-url https://gitlab.com \
   --project mygroup/myproject \
-  --config conf.pb.yaml \
+  --config .plumber.yaml \
   --threshold 100
 ```
 
@@ -90,7 +90,7 @@ plumber analyze [flags]
 Required Flags:
   --gitlab-url    GitLab instance URL (e.g., https://gitlab.com)
   --project       Full path of the project to analyze (e.g., mygroup/myproject)
-  --config        Path to conf.pb.yaml configuration file
+  --config        Path to .plumber.yaml configuration file
   --threshold     Minimum compliance percentage to pass (0-100)
 
 Optional Flags:
@@ -122,7 +122,7 @@ plumber analyze \
   --gitlab-url https://gitlab.com \
   --project mygroup/myproject \
   --branch feature/my-branch \
-  --config conf.pb.yaml \
+  --config .plumber.yaml \
   --threshold 100
 ```
 
@@ -134,7 +134,7 @@ plumber analyze \
   --gitlab-url $CI_SERVER_URL \
   --project $CI_PROJECT_PATH \
   --branch $CI_COMMIT_REF_NAME \
-  --config /conf.pb.yaml \
+  --config /.plumber.yaml \
   --threshold 100
 ```
 
@@ -145,7 +145,7 @@ Generate a detailed report for auditing or processing:
 plumber analyze \
   --gitlab-url https://gitlab.com \
   --project mygroup/myproject \
-  --config conf.pb.yaml \
+  --config .plumber.yaml \
   --threshold 0 \
   --print=false \
   --output audit-report.json
@@ -177,7 +177,7 @@ for project in "${PROJECTS[@]}"; do
   plumber analyze \
     --gitlab-url https://gitlab.com \
     --project "$project" \
-    --config conf.pb.yaml \
+    --config .plumber.yaml \
     --threshold 100 \
     --output "reports/${project//\//_}.json"
 done
@@ -260,13 +260,13 @@ Add to your `.gitlab-ci.yml`:
 
 ```yaml
 include:
-  - component: gitlab.com/getplumber/plumber/analyze@1.0.0
+  - component: gitlab.com/getplumber/plumber/analyze@~latest
 ```
 
 This will:
 - Run in the `test` stage
 - Analyze the current project and default branch
-- Use the default configuration at `/conf.pb.yaml` bundled in the Docker image
+- Use the default configuration at `/.plumber.yaml` bundled in the Docker image
 - Require 100% compliance (fail the job if not met)
 - Print results to the job log
 
@@ -274,7 +274,7 @@ This will:
 
 ```yaml
 include:
-  - component: gitlab.com/getplumber/plumber/analyze@1.0.0
+  - component: gitlab.com/getplumber/plumber/analyze@~latest
     inputs:
       # Lower the threshold for gradual adoption
       threshold: 80
@@ -283,7 +283,7 @@ include:
       output_file: compliance-report.json
       
       # Use a custom config file from your repository
-      config_file: $CI_PROJECT_DIR/conf.pb.yaml
+      config_file: $CI_PROJECT_DIR/.plumber.yaml
       
       # Allow the job to fail without failing the pipeline
       allow_failure: true
@@ -297,7 +297,7 @@ include:
 | `project_path` | string | `$CI_PROJECT_PATH` | Project to analyze |
 | `default_branch` | string | `$CI_DEFAULT_BRANCH` | Branch to analyze |
 | `server_url` | string | `$CI_SERVER_URL` | GitLab instance URL |
-| `config_file` | string | `/conf.pb.yaml` | Path to configuration file (in container) |
+| `config_file` | string | `/.plumber.yaml` | Path to configuration file (in container) |
 | `threshold` | number | `100` | Minimum compliance percentage (0-100) |
 | `print_output` | boolean | `true` | Print text output to job log |
 | `output_file` | string | `""` | Path to write JSON results (empty = skip) |
@@ -310,23 +310,23 @@ include:
 #### Minimal Setup (Strictest)
 ```yaml
 include:
-  - component: gitlab.com/getplumber/plumber/analyze@1.0.0
+  - component: gitlab.com/getplumber/plumber/analyze@~latest
 ```
 
 #### Custom Configuration from Repository
 ```yaml
 include:
-  - component: gitlab.com/getplumber/plumber/analyze@1.0.0
+  - component: gitlab.com/getplumber/plumber/analyze@~latest
     inputs:
-      config_file: $CI_PROJECT_DIR/conf.pb.yaml
+      config_file: $CI_PROJECT_DIR/.plumber.yaml
 ```
 
-> **Note:** The path must be accessible in the container. Use `$CI_PROJECT_DIR/conf.pb.yaml` to reference a config file in your repository root.
+> **Note:** The path must be accessible in the container. Use `$CI_PROJECT_DIR/.plumber.yaml` to reference a config file in your repository root.
 
 #### Generate Artifact for Compliance Dashboard
 ```yaml
 include:
-  - component: gitlab.com/getplumber/plumber/analyze@1.0.0
+  - component: gitlab.com/getplumber/plumber/analyze@~latest
     inputs:
       threshold: 0  # Don't fail, just report
       output_file: plumber-results.json
@@ -336,14 +336,14 @@ include:
 #### Different Thresholds per Branch
 ```yaml
 include:
-  - component: gitlab.com/getplumber/plumber/analyze@1.0.0
+  - component: gitlab.com/getplumber/plumber/analyze@~latest
     inputs:
       threshold: 100
     rules:
       - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
 include:
-  - component: gitlab.com/getplumber/plumber/analyze@1.0.0
+  - component: gitlab.com/getplumber/plumber/analyze@~latest
     inputs:
       threshold: 75
       allow_failure: true
@@ -354,7 +354,7 @@ include:
 #### Using a Custom Token Variable
 ```yaml
 include:
-  - component: gitlab.com/getplumber/plumber/analyze@1.0.0
+  - component: gitlab.com/getplumber/plumber/analyze@~latest
     inputs:
       gitlab_token: $MY_ANALYSIS_TOKEN
 ```
@@ -381,7 +381,7 @@ To customize when the job runs, override the rules in your pipeline or use `allo
 
 ## Configuration Reference
 
-See [`conf.pb.yaml`](conf.pb.yaml) for the complete configuration file with inline documentation.
+See [`.plumber.yaml`](.plumber.yaml) for the complete configuration file with inline documentation.
 
 ### Quick Reference
 
