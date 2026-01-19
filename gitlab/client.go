@@ -25,7 +25,7 @@ func GetNewGitlabClient(token string, instanceUrl string, conf *configuration.Co
 	// Sanitize the instance URL to remove any trailing slashes
 	sanitizedInstance := strings.TrimSuffix(instanceUrl, "/")
 
-	// Create HTTP client with retry logic
+	// Create HTTP client with retry logic and timeout
 	httpClient := &http.Client{
 		Transport: WrapTransportWithRetry(http.DefaultTransport, conf),
 		Timeout:   conf.HTTPClientTimeout,
