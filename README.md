@@ -418,7 +418,7 @@ controls:
 
 ## License
 
-[MIT License](LICENSE)
+[Elastic License 2.0 (ELv2)](LICENSE) - Free to use internally. Cannot be offered as a hosted/managed service.
 
 ## Contributing
 
