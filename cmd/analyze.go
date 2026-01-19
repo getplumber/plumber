@@ -36,12 +36,12 @@ configuration, and runs various checks including:
 - Mutable image tag detection
 
 Required environment variables:
-  R2_GITLAB_TOKEN    GitLab API token (required)
+  GITLAB_TOKEN    GitLab API token (required)
 
 Required flags:
   --gitlab-url    GitLab instance URL
   --project       Full path of the project
-  --config        Path to .r2 config file
+  --config        Path to conf.pb.yaml config file
   --threshold     Minimum compliance percentage to pass (0-100)
 
 Optional flags:
@@ -55,16 +55,16 @@ Exit codes:
 
 Examples:
   # Set token via environment variable
-  export R2_GITLAB_TOKEN=glpat-xxxx
+  export GITLAB_TOKEN=glpat-xxxx
 
   # Analyze a project (prints text to stdout)
-  plumber analyze --gitlab-url https://gitlab.com --project mygroup/myproject --config conf.r2.yaml --threshold 100
+  plumber analyze --gitlab-url https://gitlab.com --project mygroup/myproject --config conf.pb.yaml --threshold 100
 
   # Analyze and save JSON to file (no stdout)
-  plumber analyze --gitlab-url https://gitlab.com --project mygroup/myproject --config conf.r2.yaml --threshold 100 --print=false --output results.json
+  plumber analyze --gitlab-url https://gitlab.com --project mygroup/myproject --config conf.pb.yaml --threshold 100 --print=false --output results.json
 
   # Analyze with both text output and JSON file
-  plumber analyze --gitlab-url https://gitlab.com --project mygroup/myproject --config conf.r2.yaml --threshold 100 --output results.json
+  plumber analyze --gitlab-url https://gitlab.com --project mygroup/myproject --config conf.pb.yaml --threshold 100 --output results.json
 `,
 	RunE: runAnalyze,
 }
@@ -75,7 +75,7 @@ func init() {
 	// Required flags
 	analyzeCmd.Flags().StringVar(&gitlabURL, "gitlab-url", "", "GitLab instance URL (required)")
 	analyzeCmd.Flags().StringVar(&projectPath, "project", "", "Full path of the project (required)")
-	analyzeCmd.Flags().StringVar(&configFile, "config", "", "Path to .r2 config file (required)")
+	analyzeCmd.Flags().StringVar(&configFile, "config", "", "Path to conf.pb.yaml config file (required)")
 	analyzeCmd.Flags().Float64Var(&threshold, "threshold", 0, "Minimum compliance percentage to pass, 0-100 (required)")
 
 	// Optional flags
@@ -99,9 +99,9 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	}
 
 	// Get token from environment variable (required)
-	gitlabToken := os.Getenv("R2_GITLAB_TOKEN")
+	gitlabToken := os.Getenv("GITLAB_TOKEN")
 	if gitlabToken == "" {
-		return fmt.Errorf("R2_GITLAB_TOKEN environment variable is required")
+		return fmt.Errorf("GITLAB_TOKEN environment variable is required")
 	}
 
 	// Validate threshold
@@ -112,8 +112,8 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	// Clean up URL
 	cleanGitlabURL := strings.TrimSuffix(gitlabURL, "/")
 
-	// Load R2 configuration (required)
-	r2Config, configPath, err := configuration.LoadR2Config(configFile)
+	// Load PB configuration (required)
+	pbConfig, configPath, err := configuration.LoadPBConfig(configFile)
 	if err != nil {
 		return fmt.Errorf("configuration error: %w", err)
 	}
@@ -126,7 +126,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	conf.GitlabToken = gitlabToken
 	conf.ProjectPath = projectPath
 	conf.DefaultBranch = defaultBranch
-	conf.R2Config = r2Config
+	conf.PBConfig = pbConfig
 
 	if verbose {
 		conf.LogLevel = logrus.DebugLevel

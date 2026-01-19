@@ -9,8 +9,8 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-// R2Config represents the .r2 configuration file structure
-type R2Config struct {
+// PBConfig represents the conf.pb.yaml configuration file structure
+type PBConfig struct {
 	// Version of the config file format
 	Version string `yaml:"version"`
 
@@ -75,13 +75,13 @@ type BranchProtectionControlConfig struct {
 	MinPushAccessLevel *int `yaml:"minPushAccessLevel,omitempty"`
 }
 
-// LoadR2Config loads configuration from a file path
+// LoadPBConfig loads configuration from a file path
 // The config file is REQUIRED - returns error if not found
-// If configPath is empty, looks for .r2 or .r2.yaml in current directory
-func LoadR2Config(configPath string) (*R2Config, string, error) {
-	l := logrus.WithField("action", "LoadR2Config")
+// If configPath is empty, looks for conf.pb.yaml in current directory
+func LoadPBConfig(configPath string) (*PBConfig, string, error) {
+	l := logrus.WithField("action", "LoadPBConfig")
 
-	// If no path specified, try to find .r2 or .r2.yaml in current directory
+	// If no path specified, try to find conf.pb.yaml in current directory
 	if configPath == "" {
 		cwd, err := os.Getwd()
 		if err != nil {
@@ -91,11 +91,10 @@ func LoadR2Config(configPath string) (*R2Config, string, error) {
 
 		// Try different file names
 		possiblePaths := []string{
-			filepath.Join(cwd, ".r2"),
-			filepath.Join(cwd, ".r2.yaml"),
-			filepath.Join(cwd, ".r2.yml"),
-			filepath.Join(cwd, "r2.yaml"),
-			filepath.Join(cwd, "r2.yml"),
+			filepath.Join(cwd, "conf.pb.yaml"),
+			filepath.Join(cwd, "conf.pb.yml"),
+			filepath.Join(cwd, ".pb.yaml"),
+			filepath.Join(cwd, ".pb.yml"),
 		}
 
 		for _, path := range possiblePaths {
@@ -108,7 +107,7 @@ func LoadR2Config(configPath string) (*R2Config, string, error) {
 
 	// Config file is required
 	if configPath == "" {
-		return nil, "", fmt.Errorf("no .r2 config file found. Please provide a config file with --config flag")
+		return nil, "", fmt.Errorf("no config file found. Please provide a config file with --config flag (e.g., conf.pb.yaml)")
 	}
 
 	l = l.WithField("configPath", configPath)
@@ -125,7 +124,7 @@ func LoadR2Config(configPath string) (*R2Config, string, error) {
 	}
 
 	// Parse YAML
-	config := &R2Config{}
+	config := &PBConfig{}
 	if err := yaml.Unmarshal(data, config); err != nil {
 		l.WithError(err).Error("Failed to parse config file")
 		return nil, configPath, err
@@ -137,7 +136,7 @@ func LoadR2Config(configPath string) (*R2Config, string, error) {
 
 // GetImageMutableConfig returns the ImageMutable control configuration
 // Returns nil if not configured
-func (c *R2Config) GetImageMutableConfig() *ImageMutableControlConfig {
+func (c *PBConfig) GetImageMutableConfig() *ImageMutableControlConfig {
 	if c == nil {
 		return nil
 	}
@@ -146,7 +145,7 @@ func (c *R2Config) GetImageMutableConfig() *ImageMutableControlConfig {
 
 // GetImageUntrustedConfig returns the ImageUntrusted control configuration
 // Returns nil if not configured
-func (c *R2Config) GetImageUntrustedConfig() *ImageUntrustedControlConfig {
+func (c *PBConfig) GetImageUntrustedConfig() *ImageUntrustedControlConfig {
 	if c == nil {
 		return nil
 	}
@@ -173,7 +172,7 @@ func (c *ImageUntrustedControlConfig) IsEnabled() bool {
 
 // GetBranchProtectionConfig returns the BranchProtection control configuration
 // Returns nil if not configured
-func (c *R2Config) GetBranchProtectionConfig() *BranchProtectionControlConfig {
+func (c *PBConfig) GetBranchProtectionConfig() *BranchProtectionControlConfig {
 	if c == nil {
 		return nil
 	}

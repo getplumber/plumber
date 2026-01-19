@@ -23,12 +23,12 @@ coverage.html
 *.md
 LICENSE
 
-# Local config files (conf.r2.yaml is kept as default template)
-.r2
-.r2.yaml
-.r2.yml
-r2.yaml
-r2.yml
+# Local config files (conf.pb.yaml is kept as default template)
+.pb
+.pb.yaml
+.pb.yml
+pb.yaml
+pb.yml
 
 # Docker
 Dockerfile

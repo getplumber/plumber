@@ -32,7 +32,7 @@ const (
 	originTemplate  = "template"
 
 	glComponentVersionSeparator = "@"
-	r2LatestTag                 = "latest"
+	pbLatestTag                 = "latest"
 	glTildeLatestTag            = "~latest"
 	gitHeadRef                  = "HEAD"
 
@@ -549,7 +549,7 @@ func (dc *GitlabPipelineOriginDataCollection) Run(project *gitlab.ProjectInfo, t
 			}
 
 			// Prepare latest ref slice to check version
-			latestRefs := []string{gitHeadRef, project.DefaultBranch, r2LatestTag, glTildeLatestTag, mainBranch, masterBranch}
+			latestRefs := []string{gitHeadRef, project.DefaultBranch, pbLatestTag, glTildeLatestTag, mainBranch, masterBranch}
 
 			// Create a hash to be able to distinguish each origin
 			gitlabIncludeOriginByte, err := json.Marshal(originData.GitlabIncludeOrigin)

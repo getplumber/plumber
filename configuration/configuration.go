@@ -32,8 +32,8 @@ type Configuration struct {
 	// Version info
 	Version string
 
-	// R2 Configuration (from .r2 file)
-	R2Config *R2Config
+	// PB Configuration (from conf.pb.yaml file)
+	PBConfig *PBConfig
 }
 
 // NewDefaultConfiguration creates a Configuration with sensible defaults

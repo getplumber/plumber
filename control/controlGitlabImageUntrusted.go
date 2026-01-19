@@ -33,23 +33,23 @@ type GitlabImageUntrustedConf struct {
 	TrustDockerHubOfficialImages bool `json:"trustDockerHubOfficialImages"`
 }
 
-// GetConf loads configuration from R2Config
+// GetConf loads configuration from PBConfig
 // Returns error if config is missing or incomplete
-func (p *GitlabImageUntrustedConf) GetConf(r2Config *configuration.R2Config) error {
-	// R2 config is required
-	if r2Config == nil {
-		return fmt.Errorf("R2 config is required but not provided")
+func (p *GitlabImageUntrustedConf) GetConf(pbConfig *configuration.PBConfig) error {
+	// PB config is required
+	if pbConfig == nil {
+		return fmt.Errorf("PB config is required but not provided")
 	}
 
-	// Get ImageUntrusted config from R2Config
-	imgConfig := r2Config.GetImageUntrustedConfig()
+	// Get ImageUntrusted config from PBConfig
+	imgConfig := pbConfig.GetImageUntrustedConfig()
 	if imgConfig == nil {
-		return fmt.Errorf("imageUntrusted control configuration is missing from .r2 config file")
+		return fmt.Errorf("imageUntrusted control configuration is missing from conf.pb.yaml config file")
 	}
 
 	// Check if enabled field is set
 	if imgConfig.Enabled == nil {
-		return fmt.Errorf("imageUntrusted.enabled field is required in .r2 config file")
+		return fmt.Errorf("imageUntrusted.enabled field is required in conf.pb.yaml config file")
 	}
 
 	// Apply configuration
@@ -63,7 +63,7 @@ func (p *GitlabImageUntrustedConf) GetConf(r2Config *configuration.R2Config) err
 		"enabled":                      p.Enabled,
 		"trustedUrls":                  p.TrustedUrls,
 		"trustDockerHubOfficialImages": p.TrustDockerHubOfficialImages,
-	}).Debug("ImageUntrusted control configuration loaded from .r2 file")
+	}).Debug("ImageUntrusted control configuration loaded from conf.pb.yaml file")
 
 	return nil
 }
