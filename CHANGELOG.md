@@ -1,3 +1,10 @@
+## [0.1.5](https://github.com/getplumber/plumber/compare/v0.1.4...v0.1.5) (2026-01-19)
+
+
+### 🐛 Bug Fixes
+
+* **component:** Add full docker path to plumber as trusted ([d7732c8](https://github.com/getplumber/plumber/commit/d7732c8d1fefd7f12730e60e963a703d2a120a64))
+
 ## [0.1.4](https://github.com/getplumber/plumber/compare/v0.1.3...v0.1.4) (2026-01-19)
 
 
