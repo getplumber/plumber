@@ -44,13 +44,13 @@ A GitLab Personal Access Token (PAT) or Project/Group Access Token with the foll
 4. Copy the generated token
 
 #### Configuration File
-A `conf.r2.yaml` configuration file is **required**. This file defines:
+A `.plumber.yaml` configuration file is **required**. This file defines:
 - Which controls are enabled
 - Control-specific settings (mutable tags list, trusted registries, branch patterns)
 
-See [`conf.r2.yaml`](conf.r2.yaml) for a complete example with documentation.
+See [`.plumber.yaml`](.plumber.yaml) for a complete example with documentation.
 
-The Docker image includes a default configuration at `/conf.r2.yaml`.
+The Docker image includes a default configuration at `/.plumber.yaml`.
 
 ### Installation
 
@@ -72,13 +72,13 @@ docker pull getplumber/plumber:latest
 
 ```bash
 # Set the token via environment variable
-export R2_GITLAB_TOKEN=glpat-xxxxxxxxxxxx
+export GITLAB_TOKEN=glpat-xxxxxxxxxxxx
 
 # Analyze a project
 plumber analyze \
   --gitlab-url https://gitlab.com \
   --project mygroup/myproject \
-  --config conf.r2.yaml \
+  --config .plumber.yaml \
   --threshold 100
 ```
 
@@ -90,7 +90,7 @@ plumber analyze [flags]
 Required Flags:
   --gitlab-url    GitLab instance URL (e.g., https://gitlab.com)
   --project       Full path of the project to analyze (e.g., mygroup/myproject)
-  --config        Path to conf.r2.yaml configuration file
+  --config        Path to .plumber.yaml configuration file
   --threshold     Minimum compliance percentage to pass (0-100)
 
 Optional Flags:
@@ -100,7 +100,7 @@ Optional Flags:
   --verbose, -v   Enable debug logging
 
 Environment Variables:
-  R2_GITLAB_TOKEN GitLab API token (required)
+  GITLAB_TOKEN GitLab API token (required)
 ```
 
 #### Exit Codes
@@ -116,13 +116,13 @@ Environment Variables:
 Run before pushing changes to verify your pipeline configuration:
 
 ```bash
-export R2_GITLAB_TOKEN=glpat-xxxx
+export GITLAB_TOKEN=glpat-xxxx
 
 plumber analyze \
   --gitlab-url https://gitlab.com \
   --project mygroup/myproject \
   --branch feature/my-branch \
-  --config conf.r2.yaml \
+  --config .plumber.yaml \
   --threshold 100
 ```
 
@@ -134,7 +134,7 @@ plumber analyze \
   --gitlab-url $CI_SERVER_URL \
   --project $CI_PROJECT_PATH \
   --branch $CI_COMMIT_REF_NAME \
-  --config /conf.r2.yaml \
+  --config /.plumber.yaml \
   --threshold 100
 ```
 
@@ -145,7 +145,7 @@ Generate a detailed report for auditing or processing:
 plumber analyze \
   --gitlab-url https://gitlab.com \
   --project mygroup/myproject \
-  --config conf.r2.yaml \
+  --config .plumber.yaml \
   --threshold 0 \
   --print=false \
   --output audit-report.json
@@ -177,7 +177,7 @@ for project in "${PROJECTS[@]}"; do
   plumber analyze \
     --gitlab-url https://gitlab.com \
     --project "$project" \
-    --config conf.r2.yaml \
+    --config .plumber.yaml \
     --threshold 100 \
     --output "reports/${project//\//_}.json"
 done
@@ -250,7 +250,7 @@ Plumber is available as a GitLab CI/CD Component, enabling easy integration into
 
 1. **Set the GitLab Token as a CI/CD Variable:**
    - Navigate to **Settings → CI/CD → Variables**
-   - Add a variable named `R2_GITLAB_TOKEN`
+   - Add a variable named `GITLAB_TOKEN`
    - Value: Your GitLab API token with `read_api` and `read_repository` scopes
    - Options: Enable **Mask variable** (recommended), optionally **Protect variable**
 
@@ -260,13 +260,13 @@ Add to your `.gitlab-ci.yml`:
 
 ```yaml
 include:
-  - component: gitlab.com/getplumber/plumber/analyze@1.0.0
+  - component: gitlab.com/getplumber/plumber/analyze@~latest
 ```
 
 This will:
 - Run in the `test` stage
 - Analyze the current project and default branch
-- Use the default configuration at `/conf.r2.yaml` bundled in the Docker image
+- Use the default configuration at `/.plumber.yaml` bundled in the Docker image
 - Require 100% compliance (fail the job if not met)
 - Print results to the job log
 
@@ -274,7 +274,7 @@ This will:
 
 ```yaml
 include:
-  - component: gitlab.com/getplumber/plumber/analyze@1.0.0
+  - component: gitlab.com/getplumber/plumber/analyze@~latest
     inputs:
       # Lower the threshold for gradual adoption
       threshold: 80
@@ -283,7 +283,7 @@ include:
       output_file: compliance-report.json
       
       # Use a custom config file from your repository
-      config_file: $CI_PROJECT_DIR/conf.r2.yaml
+      config_file: $CI_PROJECT_DIR/.plumber.yaml
       
       # Allow the job to fail without failing the pipeline
       allow_failure: true
@@ -293,11 +293,11 @@ include:
 
 | Input | Type | Default | Description |
 |-------|------|---------|-------------|
-| `gitlab_token` | string | `$R2_GITLAB_TOKEN` | CI/CD variable containing the GitLab API token |
+| `gitlab_token` | string | `$GITLAB_TOKEN` | CI/CD variable containing the GitLab API token |
 | `project_path` | string | `$CI_PROJECT_PATH` | Project to analyze |
 | `default_branch` | string | `$CI_DEFAULT_BRANCH` | Branch to analyze |
 | `server_url` | string | `$CI_SERVER_URL` | GitLab instance URL |
-| `config_file` | string | `/conf.r2.yaml` | Path to configuration file (in container) |
+| `config_file` | string | `/.plumber.yaml` | Path to configuration file (in container) |
 | `threshold` | number | `100` | Minimum compliance percentage (0-100) |
 | `print_output` | boolean | `true` | Print text output to job log |
 | `output_file` | string | `""` | Path to write JSON results (empty = skip) |
@@ -310,23 +310,23 @@ include:
 #### Minimal Setup (Strictest)
 ```yaml
 include:
-  - component: gitlab.com/getplumber/plumber/analyze@1.0.0
+  - component: gitlab.com/getplumber/plumber/analyze@~latest
 ```
 
 #### Custom Configuration from Repository
 ```yaml
 include:
-  - component: gitlab.com/getplumber/plumber/analyze@1.0.0
+  - component: gitlab.com/getplumber/plumber/analyze@~latest
     inputs:
-      config_file: $CI_PROJECT_DIR/conf.r2.yaml
+      config_file: $CI_PROJECT_DIR/.plumber.yaml
 ```
 
-> **Note:** The path must be accessible in the container. Use `$CI_PROJECT_DIR/conf.r2.yaml` to reference a config file in your repository root.
+> **Note:** The path must be accessible in the container. Use `$CI_PROJECT_DIR/.plumber.yaml` to reference a config file in your repository root.
 
 #### Generate Artifact for Compliance Dashboard
 ```yaml
 include:
-  - component: gitlab.com/getplumber/plumber/analyze@1.0.0
+  - component: gitlab.com/getplumber/plumber/analyze@~latest
     inputs:
       threshold: 0  # Don't fail, just report
       output_file: plumber-results.json
@@ -336,14 +336,14 @@ include:
 #### Different Thresholds per Branch
 ```yaml
 include:
-  - component: gitlab.com/getplumber/plumber/analyze@1.0.0
+  - component: gitlab.com/getplumber/plumber/analyze@~latest
     inputs:
       threshold: 100
     rules:
       - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 
 include:
-  - component: gitlab.com/getplumber/plumber/analyze@1.0.0
+  - component: gitlab.com/getplumber/plumber/analyze@~latest
     inputs:
       threshold: 75
       allow_failure: true
@@ -354,7 +354,7 @@ include:
 #### Using a Custom Token Variable
 ```yaml
 include:
-  - component: gitlab.com/getplumber/plumber/analyze@1.0.0
+  - component: gitlab.com/getplumber/plumber/analyze@~latest
     inputs:
       gitlab_token: $MY_ANALYSIS_TOKEN
 ```
@@ -371,7 +371,7 @@ To customize when the job runs, override the rules in your pipeline or use `allo
 
 | Issue | Solution |
 |-------|----------|
-| `R2_GITLAB_TOKEN environment variable is required` | Ensure the `R2_GITLAB_TOKEN` CI/CD variable is set in your project settings |
+| `GITLAB_TOKEN environment variable is required` | Ensure the `GITLAB_TOKEN` CI/CD variable is set in your project settings |
 | `401 Unauthorized` | Verify the token has `read_api` and `read_repository` scopes and hasn't expired |
 | `403 Forbidden` on MR approval settings | This is expected for non-Premium GitLab instances; the control continues without this data |
 | Job fails but pipeline should continue | Set `allow_failure: true` in the inputs |
@@ -381,7 +381,7 @@ To customize when the job runs, override the rules in your pipeline or use `allo
 
 ## Configuration Reference
 
-See [`conf.r2.yaml`](conf.r2.yaml) for the complete configuration file with inline documentation.
+See [`.plumber.yaml`](.plumber.yaml) for the complete configuration file with inline documentation.
 
 ### Quick Reference
 
@@ -418,7 +418,7 @@ controls:
 
 ## License
 
-[MIT License](LICENSE)
+[Elastic License 2.0 (ELv2)](LICENSE) - Free to use internally. Cannot be offered as a hosted/managed service.
 
 ## Contributing
 

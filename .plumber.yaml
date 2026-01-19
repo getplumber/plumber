@@ -1,6 +1,6 @@
 # Plumber Configuration - Trust Policy Manager for GitLab CI/CD
 # This file is required for 'plumber analyze' to work.
-# Default file name: conf.r2.yaml
+# Default file name: .plumber.yaml
 
 version: "1.0"
 

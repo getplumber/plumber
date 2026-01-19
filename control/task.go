@@ -134,10 +134,10 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	// 3. Run Mutable Image Tag control
 	l.Info("Running Mutable Image Tag control")
 
-	// Load control configuration from R2Config (required)
+	// Load control configuration from PlumberConfig (required)
 	mutableConf := &GitlabImageMutableConf{}
-	if err := mutableConf.GetConf(conf.R2Config); err != nil {
-		l.WithError(err).Error("Failed to load ImageMutable config from .r2 file")
+	if err := mutableConf.GetConf(conf.PlumberConfig); err != nil {
+		l.WithError(err).Error("Failed to load ImageMutable config from .plumber.yaml file")
 		return result, fmt.Errorf("invalid configuration: %w", err)
 	}
 
@@ -148,8 +148,8 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	l.Info("Running Untrusted Image control")
 
 	untrustedConf := &GitlabImageUntrustedConf{}
-	if err := untrustedConf.GetConf(conf.R2Config); err != nil {
-		l.WithError(err).Error("Failed to load ImageUntrusted config from .r2 file")
+	if err := untrustedConf.GetConf(conf.PlumberConfig); err != nil {
+		l.WithError(err).Error("Failed to load ImageUntrusted config from .plumber.yaml file")
 		return result, fmt.Errorf("invalid configuration: %w", err)
 	}
 
@@ -157,7 +157,7 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	result.ImageUntrustedResult = untrustedResult
 
 	// 5. Run Branch Protection control (if enabled)
-	branchProtectionConfig := conf.R2Config.GetBranchProtectionConfig()
+	branchProtectionConfig := conf.PlumberConfig.GetBranchProtectionConfig()
 	if branchProtectionConfig != nil && branchProtectionConfig.IsEnabled() {
 		l.Info("Running Branch Protection control")
 
