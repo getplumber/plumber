@@ -1,0 +1,109 @@
+# Plumber Configuration - Trust Policy Manager for GitLab CI/CD
+# This file is required for 'plumber analyze' to work.
+# Default file name: conf.r2.yaml
+
+version: "1.0"
+
+# Controls configuration
+# Each control can be enabled/disabled and customized
+controls:
+
+  # ===========================================
+  # Mutable Image Tag Control
+  # ===========================================
+  # Detects CI/CD jobs using Docker images with mutable tags.
+  # Mutable tags (like 'latest') can point to different images over time,
+  # making builds non-reproducible and potentially introducing security risks.
+  #
+  # Best practice: Use immutable tags (e.g., specific versions or SHA digests)
+  imageMutable:
+    # Set to false to disable this control
+    enabled: true
+    
+    # Tags considered "mutable" - images using these will be flagged
+    mutableTags:
+      - latest
+      - dev
+      - development
+      - staging
+      - main
+      - master
+      # v8.15.0
+      # Add your organization's custom mutable tags below:
+      # - nightly
+      # - edge
+      # - canary
+      # - unstable
+
+  # ===========================================
+  # Untrusted Image Control
+  # ===========================================
+  # Detects CI/CD jobs using Docker images from untrusted registries.
+  # Only images from explicitly trusted sources should be used in pipelines
+  # to prevent supply chain attacks.
+  #
+  # Best practice: Maintain a list of approved registries and image patterns
+  imageUntrusted:
+    # Set to false to disable this control
+    enabled: true
+    
+    # Trust official Docker Hub images (e.g., nginx, alpine, python)
+    # These are images without a username prefix on Docker Hub
+    trustDockerHubOfficialImages: true
+    
+    # Trusted registry URLs and patterns (supports wildcards)
+    # Images matching these patterns will be considered trusted
+    trustedUrls:
+      # Docker Hub official images (if trustDockerHubOfficialImages is false)
+      # - docker.io/library/*
+      
+      # Common CI/CD tool images
+      - docker.io/docker:*
+      - gcr.io/kaniko-project/*
+      
+      # GitLab registry patterns
+      - registry.gitlab.com/*
+      - $CI_REGISTRY_IMAGE:*
+      - $CI_REGISTRY_IMAGE/*
+      
+      # Add your organization's trusted registries below:
+      # - your-registry.example.com/*
+      # - ghcr.io/your-org/*
+
+  # ===========================================
+  # Branch Protection Control
+  # ===========================================
+  # Checks that repository branches have proper protection settings.
+  # Ensures critical branches (like main/master) are protected
+  # from force pushes and require code reviews.
+  #
+  # Best practice: Protect default branch and release branches
+  branchProtection:
+    # Set to false to disable this control
+    enabled: true
+    
+    # Require the default branch to be protected
+    defaultMustBeProtected: true
+    
+    # Branch name patterns that must be protected (supports wildcards)
+    namePatterns:
+      - main
+      - master
+      - release/*
+      - production
+      - dev
+      # Add your organization's protected branch patterns below:
+      # - develop
+      # - staging
+    
+    # When false, force push must be disabled on protected branches
+    allowForcePush: false
+    
+    # Require code owner approval for changes
+    codeOwnerApprovalRequired: false
+    
+    # Minimum access level required to merge (0=No one, 30=Developer, 40=Maintainer)
+    minMergeAccessLevel: 30
+    
+    # Minimum access level required to push (0=No one, 30=Developer, 40=Maintainer)
+    minPushAccessLevel: 40

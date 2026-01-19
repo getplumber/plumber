@@ -1,6 +1,6 @@
 package main
 
-import "github.com/r2devops/tpm-cli/cmd"
+import "github.com/getplumber/plumber/cmd"
 
 func main() {
 	cmd.Execute()

@@ -1,0 +1,84 @@
+{
+  "projectPath": "backend/go/agent-2",
+  "projectId": 671,
+  "ciValid": true,
+  "ciMissing": false,
+  "pipelineOriginMetrics": {
+    "jobTotal": 2,
+    "jobHardcoded": 0,
+    "originTotal": 3,
+    "originComponent": 0,
+    "originLocal": 0,
+    "originProject": 2,
+    "originRemote": 0,
+    "originTemplate": 0,
+    "originGitLabCatalog": 0,
+    "originOutdated": 0
+  },
+  "pipelineImageMetrics": {
+    "total": 2
+  },
+  "imageMutableResult": {
+    "issues": [],
+    "metrics": {
+      "total": 2,
+      "usingMutableTag": 0,
+      "ciInvalid": 0,
+      "ciMissing": 0
+    },
+    "compliance": 100,
+    "version": "0.2.0",
+    "ciValid": true,
+    "ciMissing": false,
+    "skipped": false
+  },
+  "imageUntrustedResult": {
+    "issues": [
+      {
+        "link": "docker.io/edbizarro/gitlab-ci-pipeline-php:7.3",
+        "status": "untrusted",
+        "job": "composer_install"
+      },
+      {
+        "link": "docker.io/shiftleft/sast-scan:v1.15.1",
+        "status": "untrusted",
+        "job": "sls_scan"
+      }
+    ],
+    "metrics": {
+      "total": 2,
+      "trusted": 0,
+      "untrusted": 2,
+      "ciInvalid": 0,
+      "ciMissing": 0
+    },
+    "compliance": 0,
+    "version": "0.1.0",
+    "ciValid": true,
+    "ciMissing": false,
+    "skipped": false
+  },
+  "branchProtectionResult": {
+    "enabled": true,
+    "compliance": 100,
+    "version": "0.2.0",
+    "data": [
+      {
+        "branchName": "main",
+        "default": true,
+        "protected": true
+      }
+    ],
+    "metrics": {
+      "branches": 7,
+      "branchesToProtect": 1,
+      "unprotectedBranches": 0,
+      "nonCompliantBranches": 0,
+      "totalProtectedBranches": 1,
+      "projectsCorrectlyProtected": 1
+    }
+  },
+  "threshold": 100,
+  "compliance": 66.66666666666667,
+  "passed": false
+}

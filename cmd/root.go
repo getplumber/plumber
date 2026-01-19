@@ -13,10 +13,10 @@ var (
 )
 
 var rootCmd = &cobra.Command{
-	Use:   "tpm",
-	Short: "TPM CLI - GitLab repository compliance checker",
-	Long: `TPM CLI is a command-line tool that checks the compliance of GitLab
-repositories against a defined set of controls.`,
+	Use:   "plumber",
+	Short: "Plumber - Trust Policy Manager for GitLab CI/CD",
+	Long: `Plumber is a command-line tool that analyzes GitLab CI/CD pipelines
+and enforces trust policies on third-party components, images, and branch protections.`,
 }
 
 func Execute() {
