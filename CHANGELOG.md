@@ -1,3 +1,10 @@
+## [0.1.1](https://github.com/getplumber/plumber/compare/v0.1.0...v0.1.1) (2026-01-19)
+
+
+### 🐛 Bug Fixes
+
+* **release:** empty commit to trigger release and push ([e8bd954](https://github.com/getplumber/plumber/commit/e8bd954354e6c11ceef9fc53c89d634196a0e7af))
+
 ## [0.0.1](https://github.com/getplumber/plumber/compare/v0.0.0...v0.0.1) (2026-01-19)
 
 
