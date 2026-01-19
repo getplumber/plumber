@@ -1,3 +1,10 @@
+## [0.1.6](https://github.com/getplumber/plumber/compare/v0.1.5...v0.1.6) (2026-01-19)
+
+
+### 🐛 Bug Fixes
+
+* **comment:** Add timeout comment to client ([15df3f0](https://github.com/getplumber/plumber/commit/15df3f002dea5c9ba5a6a95b9943eafa1dc0230d))
+
 ## [0.1.5](https://github.com/getplumber/plumber/compare/v0.1.4...v0.1.5) (2026-01-19)
 
 
