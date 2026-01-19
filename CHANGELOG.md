@@ -1,3 +1,10 @@
+## [0.1.3](https://github.com/getplumber/plumber/compare/v0.1.2...v0.1.3) (2026-01-19)
+
+
+### 🐛 Bug Fixes
+
+* **variables:** Fix self referential variable ([d5aa9a9](https://github.com/getplumber/plumber/commit/d5aa9a93891b61c7a70a63f533d676084820a03a))
+
 ## [0.1.2](https://github.com/getplumber/plumber/compare/v0.1.1...v0.1.2) (2026-01-19)
 
 
