@@ -29,6 +29,16 @@ include:
 
 > 💡 Everything is customizable — GitLab URL, branch, threshold, and more. See [Customize](#️-customize) below.
 
+### ⚠️ Self-Hosted GitLab
+
+If you're running a self-hosted GitLab instance, you'll need to create your own component since `gitlab.com` components can't be accessed from your instance.
+
+**Option 1:** Fork our [GitLab component](https://gitlab.com/getplumber/plumber) to your instance
+
+**Option 2:** Create a component using [`templates/analyze.yml`](templates/analyze.yml) as a base
+
+See [GitLab's CI/CD component documentation](https://docs.gitlab.com/ee/ci/components/) for setup instructions.
+
 ## ⚙️ Customize
 
 Override any input to fit your needs:
