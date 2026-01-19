@@ -74,7 +74,9 @@ spec:
 
 "plumber-analyze":
   stage: $[[ inputs.stage ]]
-  image: $[[ inputs.image ]]
+  image:
+    name: $[[ inputs.image ]]
+    entrypoint: [""]  # Override ENTRYPOINT to allow shell script execution
   variables:
     # Pass the token to the CLI via environment variable
     GITLAB_TOKEN: $[[ inputs.gitlab_token ]]

@@ -75,17 +75,27 @@ include:
 ## 💻 Test Locally (CLI)
 
 ```bash
-# Pull the image
-docker pull getplumber/plumber:latest
-
 # Run analysis
 docker run --rm \
   -e GITLAB_TOKEN=glpat-xxxx \
-  getplumber/plumber:latest \
-  analyze \
-    --gitlab-url https://gitlab.com \
-    --project mygroup/myproject \
-    --threshold 100
+  getplumber/plumber:latest analyze \
+  --gitlab-url https://gitlab.com \
+  --project mygroup/myproject \
+  --branch main \
+  --config /.plumber.yaml \
+  --threshold 100
+
+# Save JSON output locally
+docker run --rm \
+  -e GITLAB_TOKEN=glpat-xxxx \
+  -v $(pwd):/output \
+  getplumber/plumber:latest analyze \
+  --gitlab-url https://gitlab.com \
+  --project mygroup/myproject \
+  --branch main \
+  --config /.plumber.yaml \
+  --threshold 100 \
+  --output /output/results.json
 ```
 
 Or build from source:
@@ -99,6 +109,7 @@ export GITLAB_TOKEN=glpat-xxxx
 ./plumber analyze \
   --gitlab-url https://gitlab.com \
   --project mygroup/myproject \
+  --branch main \
   --config .plumber.yaml \
   --threshold 100
 ```

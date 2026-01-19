@@ -16,20 +16,22 @@ COPY . .
 # Build static binary
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o plumber .
 
-# Final stage - distroless nonroot (rootless)
-FROM gcr.io/distroless/static-debian12:nonroot
+# Final stage - Alpine (small, has shell for CI compatibility)
+FROM alpine:3.21
+
+# Install CA certificates for HTTPS API calls
+RUN apk --no-cache add ca-certificates
 
 # Copy binary from builder
 COPY --from=builder /app/plumber /plumber
 
-# Copy default config file (the only hardcoded default)
+# Copy default config file
 COPY .plumber.yaml /.plumber.yaml
 
-# Already running as nonroot user (65532:65532)
-USER nonroot:nonroot
+# Create non-root user for security
+RUN adduser -D -u 65532 plumber
+USER plumber
 
-# Entrypoint: just the binary
-# All flags (including --config) are passed by the GitLab CI component
-# The default config file /.plumber.yaml is available inside the image
-# Required env var: GITLAB_TOKEN
+# ENTRYPOINT for clean Docker usage: docker run getplumber/plumber:0.1 analyze ...
+# GitLab CI overrides this entrypoint to use shell for script execution
 ENTRYPOINT ["/plumber"]
