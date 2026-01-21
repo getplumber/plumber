@@ -84,6 +84,56 @@ include:
 
 ## 💻 Test Locally (CLI)
 
+### Download Binary
+
+Pre-built binaries are available for each release:
+
+```bash
+# Linux (amd64)
+curl -LO https://github.com/getplumber/plumber/releases/latest/download/plumber-linux-amd64
+chmod +x plumber-linux-amd64
+sudo mv plumber-linux-amd64 /usr/local/bin/plumber
+
+# Linux (arm64)
+curl -LO https://github.com/getplumber/plumber/releases/latest/download/plumber-linux-arm64
+chmod +x plumber-linux-arm64
+sudo mv plumber-linux-arm64 /usr/local/bin/plumber
+
+# macOS (Apple Silicon)
+curl -LO https://github.com/getplumber/plumber/releases/latest/download/plumber-darwin-arm64
+chmod +x plumber-darwin-arm64
+sudo mv plumber-darwin-arm64 /usr/local/bin/plumber
+
+# macOS (Intel)
+curl -LO https://github.com/getplumber/plumber/releases/latest/download/plumber-darwin-amd64
+chmod +x plumber-darwin-amd64
+sudo mv plumber-darwin-amd64 /usr/local/bin/plumber
+
+# Windows (PowerShell)
+Invoke-WebRequest -Uri https://github.com/getplumber/plumber/releases/latest/download/plumber-windows-amd64.exe -OutFile plumber.exe
+```
+
+**Verify checksum** (optional):
+
+```bash
+curl -LO https://github.com/getplumber/plumber/releases/latest/download/checksums.txt
+sha256sum -c checksums.txt --ignore-missing
+```
+
+**Run analysis:**
+
+```bash
+export GITLAB_TOKEN=glpat-xxxx
+plumber analyze \
+  --gitlab-url https://gitlab.com \
+  --project mygroup/myproject \
+  --branch main \
+  --config .plumber.yaml \
+  --threshold 100
+```
+
+### Docker
+
 ```bash
 # Run analysis
 docker run --rm \
@@ -108,7 +158,7 @@ docker run --rm \
   --output /output/results.json
 ```
 
-Or build from source:
+### Build from Source
 
 ```bash
 git clone https://github.com/getplumber/plumber.git
