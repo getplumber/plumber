@@ -1,3 +1,10 @@
+## [0.1.9](https://github.com/getplumber/plumber/compare/v0.1.8...v0.1.9) (2026-01-21)
+
+
+### 🐛 Bug Fixes
+
+* **build:** Move release creation to after asset upload ([bc96e39](https://github.com/getplumber/plumber/commit/bc96e39f0a4fc56185b62199a1f0da8e6a503367))
+
 ## [0.1.8](https://github.com/getplumber/plumber/compare/v0.1.7...v0.1.8) (2026-01-21)
 
 
