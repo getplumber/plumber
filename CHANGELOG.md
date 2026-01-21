@@ -1,3 +1,10 @@
+## [0.1.8](https://github.com/getplumber/plumber/compare/v0.1.7...v0.1.8) (2026-01-21)
+
+
+### ✨ Features
+
+* **build:** Add platforms binary releases ([01d9bfa](https://github.com/getplumber/plumber/commit/01d9bfa79b80cf9d2c7ea6d1984e2acc7a4db9bb))
+
 ## [0.1.7](https://github.com/getplumber/plumber/compare/v0.1.6...v0.1.7) (2026-01-19)
 
 
