@@ -1,14 +1,15 @@
-# 🔧 Plumber - Trust Policy Manager for GitLab CI/CD
+# 🔧 Plumber
 
-Analyze your GitLab CI/CD pipelines for security and compliance issues.
+Find compliance issues in your GitLab repositories and their CI/CD pipelines.
 
 ## 🎯 What it does
 
-Plumber scans your GitLab CI/CD configuration and checks for:
+Plumber scans your GitLab CI/CD configuration and run following controls:
 
-- 🏷️ **Mutable image tags** — Flags `latest`, `dev`, and other non-reproducible tags
-- 🔒 **Untrusted image registries** — Ensures images come from approved sources
-- 🛡️ **Branch protection compliance** — Verifies critical branches are properly protected
+- 🏷️ **Mutable image tags** — Flags `latest`, `dev`, and other non-reproducible tags for container images used in CI/CD pipelines
+- 🔒 **Untrusted image registries** — Ensures container images used in your CI/CD pipelines come from approved sources
+- 🛡️ **Branch protection compliance** — Verifies that repository branches are properly protected
+- Other controls will come
 
 ## 🚀 Quick Start (GitLab CI)
 
@@ -51,15 +52,15 @@ include:
       server_url: https://gitlab.example.com  # Self-hosted GitLab
       project_path: other-group/other-project # Analyze a different project
       branch: develop                         # Analyze a specific branch
-      
+
       # Compliance
       threshold: 80                           # Minimum % to pass (default: 100)
       config_file: $CI_PROJECT_DIR/.plumber.yaml  # Custom config from your repo
-      
+
       # Output
       output_file: plumber-report.json        # Export JSON report
       print_output: true                      # Print to stdout (default: true)
-      
+
       # Job behavior
       stage: test                             # Run in a different stage (default: .pre)
       allow_failure: true                     # Don't block pipeline on failure
@@ -152,7 +153,7 @@ Project: mygroup/myproject
 
 ## 📝 Configuration
 
-Create a `.plumber.yaml` in your repo to customize checks:
+Create a `.plumber.yaml` in your repo to customize controls:
 
 ```yaml
 version: "1.0"
@@ -208,9 +209,10 @@ Exit Codes:
 | Issue | Solution |
 |-------|----------|
 | `GITLAB_TOKEN environment variable is required` | Add `GITLAB_TOKEN` in CI/CD Variables |
-| `401 Unauthorized` | Check token has `read_api` + `read_repository` scopes |
+| `401 Unauthorized` | Token should have `read_api` + `read_repository` scopes |
 | `403 Forbidden` on MR settings | Expected on non-Premium GitLab; continues without that data |
 
 ## 📄 License
 
 [Elastic License 2.0 (ELv2)](LICENSE) — Free to use. Cannot be offered as a managed service.
+
