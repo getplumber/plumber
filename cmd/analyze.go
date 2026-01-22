@@ -214,79 +214,104 @@ func writeJSONToFile(result *control.AnalysisResult, threshold, compliance float
 	return encoder.Encode(output)
 }
 
+// ANSI color codes
+const (
+	colorReset  = "\033[0m"
+	colorRed    = "\033[31m"
+	colorGreen  = "\033[32m"
+	colorYellow = "\033[33m"
+	colorCyan   = "\033[36m"
+	colorBold   = "\033[1m"
+	colorDim    = "\033[2m"
+)
+
+// controlSummary holds summary data for a control
+type controlSummary struct {
+	name       string
+	compliance float64
+	issues     int
+	skipped    bool
+}
+
 func outputText(result *control.AnalysisResult, threshold, compliance float64) error {
-	fmt.Printf("\n=== Pipeline Analysis Results ===\n\n")
-	fmt.Printf("Project: %s\n", result.ProjectPath)
-	fmt.Printf("CI Valid: %v\n", result.CiValid)
-	fmt.Printf("CI Missing: %v\n\n", result.CiMissing)
+	// Collect control summaries for tables
+	var controls []controlSummary
 
-	if result.PipelineOriginMetrics != nil {
-		fmt.Printf("--- Pipeline Origin Metrics ---\n")
-		fmt.Printf("  Total Jobs: %d\n", result.PipelineOriginMetrics.JobTotal)
-		fmt.Printf("  Hardcoded Jobs: %d\n", result.PipelineOriginMetrics.JobHardcoded)
-		fmt.Printf("  Total Origins: %d\n", result.PipelineOriginMetrics.OriginTotal)
-		fmt.Printf("    - Components: %d\n", result.PipelineOriginMetrics.OriginComponent)
-		fmt.Printf("    - Local: %d\n", result.PipelineOriginMetrics.OriginLocal)
-		fmt.Printf("    - Project: %d\n", result.PipelineOriginMetrics.OriginProject)
-		fmt.Printf("    - Remote: %d\n", result.PipelineOriginMetrics.OriginRemote)
-		fmt.Printf("    - Template: %d\n", result.PipelineOriginMetrics.OriginTemplate)
-		fmt.Printf("  GitLab Catalog Resources: %d\n", result.PipelineOriginMetrics.OriginGitLabCatalog)
-		fmt.Printf("  Outdated: %d\n\n", result.PipelineOriginMetrics.OriginOutdated)
-	}
+	// Header
+	fmt.Printf("\n%sProject: %s%s\n\n", colorBold, result.ProjectPath, colorReset)
 
-	if result.PipelineImageMetrics != nil {
-		fmt.Printf("--- Pipeline Image Metrics ---\n")
-		fmt.Printf("  Total Images: %d\n\n", result.PipelineImageMetrics.Total)
-	}
-
+	// Control 1: Mutable Image Tags
 	if result.ImageMutableResult != nil {
-		fmt.Printf("--- Mutable Image Tag Control ---\n")
+		ctrl := controlSummary{
+			name:       "Mutable Image Tags",
+			compliance: result.ImageMutableResult.Compliance,
+			issues:     len(result.ImageMutableResult.Issues),
+			skipped:    result.ImageMutableResult.Skipped,
+		}
+		controls = append(controls, ctrl)
+
+		printControlHeader("Mutable Image Tags", result.ImageMutableResult.Compliance, result.ImageMutableResult.Skipped)
+
 		if result.ImageMutableResult.Skipped {
-			fmt.Printf("  Status: SKIPPED (disabled in configuration)\n\n")
+			fmt.Printf("  %sStatus: SKIPPED (disabled in configuration)%s\n", colorDim, colorReset)
 		} else {
-			fmt.Printf("  Version: %s\n", result.ImageMutableResult.Version)
-			fmt.Printf("  Compliance: %.1f%%\n", result.ImageMutableResult.Compliance)
 			fmt.Printf("  Total Images: %d\n", result.ImageMutableResult.Metrics.Total)
 			fmt.Printf("  Using Mutable Tags: %d\n", result.ImageMutableResult.Metrics.UsingMutableTag)
 
 			if len(result.ImageMutableResult.Issues) > 0 {
-				fmt.Printf("\n  Issues Found:\n")
+				fmt.Printf("\n  %sMutable Tags Found:%s\n", colorYellow, colorReset)
 				for _, issue := range result.ImageMutableResult.Issues {
-					fmt.Printf("    - Job '%s' uses mutable tag '%s' (image: %s)\n", issue.Job, issue.Tag, issue.Link)
+					fmt.Printf("    %s•%s Job '%s' uses mutable tag '%s' (image: %s)\n", colorYellow, colorReset, issue.Job, issue.Tag, issue.Link)
 				}
 			}
-			fmt.Println()
 		}
+		fmt.Println()
 	}
 
+	// Control 2: Untrusted Image Sources
 	if result.ImageUntrustedResult != nil {
-		fmt.Printf("--- Untrusted Image Control ---\n")
+		ctrl := controlSummary{
+			name:       "Untrusted Image Sources",
+			compliance: result.ImageUntrustedResult.Compliance,
+			issues:     len(result.ImageUntrustedResult.Issues),
+			skipped:    result.ImageUntrustedResult.Skipped,
+		}
+		controls = append(controls, ctrl)
+
+		printControlHeader("Untrusted Image Sources", result.ImageUntrustedResult.Compliance, result.ImageUntrustedResult.Skipped)
+
 		if result.ImageUntrustedResult.Skipped {
-			fmt.Printf("  Status: SKIPPED (disabled in configuration)\n\n")
+			fmt.Printf("  %sStatus: SKIPPED (disabled in configuration)%s\n", colorDim, colorReset)
 		} else {
-			fmt.Printf("  Version: %s\n", result.ImageUntrustedResult.Version)
-			fmt.Printf("  Compliance: %.1f%%\n", result.ImageUntrustedResult.Compliance)
 			fmt.Printf("  Total Images: %d\n", result.ImageUntrustedResult.Metrics.Total)
 			fmt.Printf("  Trusted: %d\n", result.ImageUntrustedResult.Metrics.Trusted)
 			fmt.Printf("  Untrusted: %d\n", result.ImageUntrustedResult.Metrics.Untrusted)
 
 			if len(result.ImageUntrustedResult.Issues) > 0 {
-				fmt.Printf("\n  Untrusted Images Found:\n")
+				fmt.Printf("\n  %sUntrusted Images Found:%s\n", colorYellow, colorReset)
 				for _, issue := range result.ImageUntrustedResult.Issues {
-					fmt.Printf("    - Job '%s' uses untrusted image: %s\n", issue.Job, issue.Link)
+					fmt.Printf("    %s•%s Job '%s' uses untrusted image: %s\n", colorYellow, colorReset, issue.Job, issue.Link)
 				}
 			}
-			fmt.Println()
 		}
+		fmt.Println()
 	}
 
+	// Control 3: Branch Protection
 	if result.BranchProtectionResult != nil {
-		fmt.Printf("--- Branch Protection Control ---\n")
+		ctrl := controlSummary{
+			name:       "Branch Protection",
+			compliance: result.BranchProtectionResult.Compliance,
+			issues:     len(result.BranchProtectionResult.Issues),
+			skipped:    result.BranchProtectionResult.Skipped,
+		}
+		controls = append(controls, ctrl)
+
+		printControlHeader("Branch Protection", result.BranchProtectionResult.Compliance, result.BranchProtectionResult.Skipped)
+
 		if result.BranchProtectionResult.Skipped {
-			fmt.Printf("  Status: SKIPPED (disabled in configuration)\n\n")
+			fmt.Printf("  %sStatus: SKIPPED (disabled in configuration)%s\n", colorDim, colorReset)
 		} else {
-			fmt.Printf("  Version: %s\n", result.BranchProtectionResult.Version)
-			fmt.Printf("  Compliance: %.1f%%\n", result.BranchProtectionResult.Compliance)
 			if result.BranchProtectionResult.Metrics != nil {
 				fmt.Printf("  Total Branches: %d\n", result.BranchProtectionResult.Metrics.Branches)
 				fmt.Printf("  Branches to Protect: %d\n", result.BranchProtectionResult.Metrics.BranchesToProtect)
@@ -296,40 +321,234 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64) e
 			}
 
 			if len(result.BranchProtectionResult.Issues) > 0 {
-				fmt.Printf("\n  Issues Found:\n")
+				fmt.Printf("\n  %sIssues Found:%s\n", colorYellow, colorReset)
 				for _, issue := range result.BranchProtectionResult.Issues {
 					if issue.Type == "unprotected" {
-						fmt.Printf("    - Branch '%s' is not protected\n", issue.BranchName)
+						fmt.Printf("    %s•%s Branch '%s' is not protected\n", colorYellow, colorReset, issue.BranchName)
 					} else {
-						fmt.Printf("    - Branch '%s' has non-compliant protection settings\n", issue.BranchName)
+						fmt.Printf("    %s•%s Branch '%s' has non-compliant protection settings\n", colorYellow, colorReset, issue.BranchName)
 						if issue.AllowForcePushDisplay {
-							fmt.Printf("      * Force push is allowed (should be disabled)\n")
+							fmt.Printf("      └─ Force push is allowed (should be disabled)\n")
 						}
 						if issue.CodeOwnerApprovalRequiredDisplay {
-							fmt.Printf("      * Code owner approval is not required\n")
+							fmt.Printf("      └─ Code owner approval is not required\n")
 						}
 						if issue.MinMergeAccessLevelDisplay {
-							fmt.Printf("      * Merge access level is too low (%d, minimum: %d)\n", issue.MinMergeAccessLevel, issue.AuthorizedMinMergeAccessLevel)
+							fmt.Printf("      └─ Merge access level is too low (%d, minimum: %d)\n", issue.MinMergeAccessLevel, issue.AuthorizedMinMergeAccessLevel)
 						}
 						if issue.MinPushAccessLevelDisplay {
-							fmt.Printf("      * Push access level is too low (%d, minimum: %d)\n", issue.MinPushAccessLevel, issue.AuthorizedMinPushAccessLevel)
+							fmt.Printf("      └─ Push access level is too low (%d, minimum: %d)\n", issue.MinPushAccessLevel, issue.AuthorizedMinPushAccessLevel)
 						}
 					}
 				}
 			}
-			fmt.Println()
 		}
+		fmt.Println()
 	}
 
-	// Summary with threshold check
-	fmt.Printf("=== Summary ===\n")
-	fmt.Printf("  Overall Compliance: %.1f%%\n", compliance)
-	fmt.Printf("  Compliance Threshold: %.1f%%\n", threshold)
+	// Summary Section
+	printSectionHeader("Summary")
+	fmt.Println()
+
+	// Status
 	if compliance >= threshold {
-		fmt.Printf("  Status: PASSED ✓\n\n")
+		fmt.Printf("  Status: %s%sPASSED ✓%s\n\n", colorBold, colorGreen, colorReset)
 	} else {
-		fmt.Printf("  Status: FAILED ✗\n\n")
+		fmt.Printf("  Status: %s%sFAILED ✗%s\n\n", colorBold, colorRed, colorReset)
 	}
+
+	// Issues Table
+	printIssuesTable(controls)
+	fmt.Println()
+
+	// Compliance Table
+	printComplianceTable(controls, compliance, threshold)
+	fmt.Println()
 
 	return nil
+}
+
+func printControlHeader(name string, compliance float64, skipped bool) {
+	line := strings.Repeat("─", 50)
+	fmt.Printf("%s%s%s\n", colorDim, line, colorReset)
+	if skipped {
+		fmt.Printf("%s%s%s %s(skipped)%s\n", colorBold, name, colorReset, colorDim, colorReset)
+	} else {
+		compColor := colorGreen
+		if compliance < 100 {
+			compColor = colorYellow
+		}
+		if compliance == 0 {
+			compColor = colorRed
+		}
+		fmt.Printf("%s%s%s %s(%.1f%% compliant)%s\n", colorBold, name, colorReset, compColor, compliance, colorReset)
+	}
+	fmt.Printf("%s%s%s\n", colorDim, line, colorReset)
+}
+
+func printSectionHeader(name string) {
+	line := strings.Repeat("─", 20)
+	fmt.Printf("%s%s%s\n", colorDim, line, colorReset)
+	fmt.Printf("%s%s%s\n", colorBold, name, colorReset)
+	fmt.Printf("%s%s%s\n", colorDim, line, colorReset)
+}
+
+func printIssuesTable(controls []controlSummary) {
+	fmt.Printf("  %sIssues%s\n", colorBold, colorReset)
+
+	// Calculate column widths
+	controlWidth := 30
+	issuesWidth := 10
+
+	// Top border
+	fmt.Printf("  %s╔%s╤%s╗%s\n",
+		colorCyan,
+		strings.Repeat("═", controlWidth),
+		strings.Repeat("═", issuesWidth),
+		colorReset)
+
+	// Header row
+	fmt.Printf("  %s║%s %-*s %s│%s %*s %s║%s\n",
+		colorCyan, colorReset,
+		controlWidth-2, "Control",
+		colorCyan, colorReset,
+		issuesWidth-2, "Issues",
+		colorCyan, colorReset)
+
+	// Header separator
+	fmt.Printf("  %s╟%s┼%s╢%s\n",
+		colorCyan,
+		strings.Repeat("─", controlWidth),
+		strings.Repeat("─", issuesWidth),
+		colorReset)
+
+	// Data rows
+	totalIssues := 0
+	for _, ctrl := range controls {
+		issueStr := "-"
+		if !ctrl.skipped {
+			issueStr = fmt.Sprintf("%d", ctrl.issues)
+			totalIssues += ctrl.issues
+		}
+
+		issueColor := colorReset
+		if ctrl.issues > 0 {
+			issueColor = colorRed
+		}
+
+		fmt.Printf("  %s║%s %-*s %s│%s %s%*s%s %s║%s\n",
+			colorCyan, colorReset,
+			controlWidth-2, ctrl.name,
+			colorCyan, colorReset,
+			issueColor, issuesWidth-2, issueStr, colorReset,
+			colorCyan, colorReset)
+	}
+
+	// Bottom border
+	fmt.Printf("  %s╚%s╧%s╝%s\n",
+		colorCyan,
+		strings.Repeat("═", controlWidth),
+		strings.Repeat("═", issuesWidth),
+		colorReset)
+}
+
+func printComplianceTable(controls []controlSummary, overallCompliance, threshold float64) {
+	fmt.Printf("  %sCompliance%s\n", colorBold, colorReset)
+
+	// Calculate column widths
+	controlWidth := 30
+	complianceWidth := 12
+	statusWidth := 10
+
+	// Top border
+	fmt.Printf("  %s╔%s╤%s╤%s╗%s\n",
+		colorCyan,
+		strings.Repeat("═", controlWidth),
+		strings.Repeat("═", complianceWidth),
+		strings.Repeat("═", statusWidth),
+		colorReset)
+
+	// Header row
+	fmt.Printf("  %s║%s %-*s %s│%s %*s %s│%s %*s %s║%s\n",
+		colorCyan, colorReset,
+		controlWidth-2, "Control",
+		colorCyan, colorReset,
+		complianceWidth-2, "Compliance",
+		colorCyan, colorReset,
+		statusWidth-2, "Status",
+		colorCyan, colorReset)
+
+	// Header separator
+	fmt.Printf("  %s╟%s┼%s┼%s╢%s\n",
+		colorCyan,
+		strings.Repeat("─", controlWidth),
+		strings.Repeat("─", complianceWidth),
+		strings.Repeat("─", statusWidth),
+		colorReset)
+
+	// Data rows
+	for _, ctrl := range controls {
+		compStr := "-"
+		statusStr := "-"
+		compColor := colorReset
+		statusColor := colorDim
+
+		if !ctrl.skipped {
+			compStr = fmt.Sprintf("%.1f%%", ctrl.compliance)
+			if ctrl.compliance >= 100 {
+				compColor = colorGreen
+				statusColor = colorGreen
+				statusStr = "✓"
+			} else {
+				compColor = colorRed
+				statusColor = colorRed
+				statusStr = "✗"
+			}
+		}
+
+		fmt.Printf("  %s║%s %-*s %s│%s %s%*s%s %s│%s %s%*s%s %s║%s\n",
+			colorCyan, colorReset,
+			controlWidth-2, ctrl.name,
+			colorCyan, colorReset,
+			compColor, complianceWidth-2, compStr, colorReset,
+			colorCyan, colorReset,
+			statusColor, statusWidth-2, statusStr, colorReset,
+			colorCyan, colorReset)
+	}
+
+	// Separator before total
+	fmt.Printf("  %s╟%s┼%s┼%s╢%s\n",
+		colorCyan,
+		strings.Repeat("─", controlWidth),
+		strings.Repeat("─", complianceWidth),
+		strings.Repeat("─", statusWidth),
+		colorReset)
+
+	// Total row
+	totalCompStr := fmt.Sprintf("%.1f%%", overallCompliance)
+	totalStatus := "✓"
+	totalCompColor := colorGreen
+	totalStatusColor := colorGreen
+	if overallCompliance < threshold {
+		totalStatus = "✗"
+		totalCompColor = colorRed
+		totalStatusColor = colorRed
+	}
+
+	fmt.Printf("  %s║%s %s%-*s%s %s│%s %s%*s%s %s│%s %s%*s%s %s║%s\n",
+		colorCyan, colorReset,
+		colorBold, controlWidth-2, fmt.Sprintf("Total (required: %.0f%%)", threshold), colorReset,
+		colorCyan, colorReset,
+		totalCompColor, complianceWidth-2, totalCompStr, colorReset,
+		colorCyan, colorReset,
+		totalStatusColor, statusWidth-2, totalStatus, colorReset,
+		colorCyan, colorReset)
+
+	// Bottom border
+	fmt.Printf("  %s╚%s╧%s╧%s╝%s\n",
+		colorCyan,
+		strings.Repeat("═", controlWidth),
+		strings.Repeat("═", complianceWidth),
+		strings.Repeat("═", statusWidth),
+		colorReset)
 }
