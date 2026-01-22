@@ -62,7 +62,6 @@ controls:
       - gcr.io/kaniko-project/*
       
       # GitLab registry patterns
-      - registry.gitlab.com/*
       - $CI_REGISTRY_IMAGE:*
       - $CI_REGISTRY_IMAGE/*
 

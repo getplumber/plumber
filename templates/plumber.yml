@@ -53,7 +53,7 @@ spec:
 
 ---
 
-# Plumber Analyze Component
+# Plumber Component
 # Analyzes GitLab CI/CD pipelines for compliance issues
 #
 # Prerequisites:
@@ -62,17 +62,17 @@ spec:
 #
 # Usage in .gitlab-ci.yml:
 #   include:
-#     - component: gitlab.com/getplumber/plumber/analyze@~latest
+#     - component: gitlab.com/getplumber/plumber/plumber@~latest
 #
 # With custom inputs:
 #   include:
-#     - component: gitlab.com/getplumber/plumber/analyze@v0.1.0
+#     - component: gitlab.com/getplumber/plumber/plumber@v0.1.0
 #       inputs:
 #         threshold: 80
 #         output_file: results.json
 #         gitlab_token: $MY_CUSTOM_TOKEN_VAR
 
-"plumber-analyze":
+"plumber":
   stage: $[[ inputs.stage ]]
   image:
     name: $[[ inputs.image ]]

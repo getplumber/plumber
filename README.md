@@ -23,7 +23,7 @@ Go to **Settings → CI/CD → Variables** and add:
 
 ```yaml
 include:
-  - component: gitlab.com/getplumber/plumber/analyze@~latest
+  - component: gitlab.com/getplumber/plumber/plumber@~latest
 ```
 
 ✅ That's it! Plumber runs on MRs, main branch, and tags.
@@ -36,7 +36,7 @@ If you're running a self-hosted GitLab instance, you'll need to create your own 
 
 **Option 1:** Fork our [GitLab component](https://gitlab.com/getplumber/plumber) to your instance
 
-**Option 2:** Create a component using [`templates/analyze.yml`](templates/analyze.yml) as a base
+**Option 2:** Create a component using [`templates/plumber.yml`](templates/plumber.yml) as a base
 
 See [GitLab's CI/CD component documentation](https://docs.gitlab.com/ee/ci/components/) for setup instructions.
 
@@ -46,7 +46,7 @@ Override any input to fit your needs:
 
 ```yaml
 include:
-  - component: gitlab.com/getplumber/plumber/analyze@~latest
+  - component: gitlab.com/getplumber/plumber/plumber@~latest
     inputs:
       # Target (defaults to current project)
       server_url: https://gitlab.example.com  # Self-hosted GitLab
