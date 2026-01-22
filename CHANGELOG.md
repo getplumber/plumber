@@ -1,3 +1,10 @@
+## [0.1.11](https://github.com/getplumber/plumber/compare/v0.1.10...v0.1.11) (2026-01-22)
+
+
+### ✨ Features
+
+* **naming:** Rename components to plumber, no need for the analyze suffix ([53a0816](https://github.com/getplumber/plumber/commit/53a08165e7d879099606505c98cce7abc45715eb))
+
 ## [0.1.10](https://github.com/getplumber/plumber/compare/v0.1.9...v0.1.10) (2026-01-22)
 
 
