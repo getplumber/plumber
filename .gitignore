@@ -37,3 +37,9 @@ Thumbs.db
 dist/
 build/
 
+#Output files
+results.json
+plumber-report.json
+out.json
+output.json
+

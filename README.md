@@ -235,6 +235,8 @@ Summary
   ╚══════════════════════════════╧════════════╧══════════╝
 ```
 
+> 💡 **JSON Output:** When using `--output`, results are saved as JSON. See [`output-example.json`](output-example.json) for the full structure.
+
 ## 📝 Configuration
 
 Create a `.plumber.yaml` in your repo to customize controls:

@@ -37,7 +37,7 @@ spec:
       default: true
     output_file:
       description: "Write JSON results to file (optional, leave empty to skip)"
-      default: ""
+      default: "plumber-report.json"
     
     # Job configuration
     stage:

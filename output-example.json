@@ -59,13 +59,13 @@
     "version": "0.2.0",
     "data": [
       {
-        "branchName": "main",
-        "default": true,
+        "branchName": "dev",
+        "default": false,
         "protected": true
       },
       {
-        "branchName": "dev",
-        "default": false,
+        "branchName": "main",
+        "default": true,
         "protected": true
       }
     ],
