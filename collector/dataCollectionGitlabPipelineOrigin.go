@@ -343,10 +343,10 @@ func (dc *GitlabPipelineOriginDataCollection) Run(project *gitlab.ProjectInfo, t
 			// In this case, it's CI missing rather than an analysis error
 			data.CiMissing = true
 			data.CiValid = true // It's not really valid (missing) but we keep it to avoid false positive on "invalid"
-			l.WithError(err).Warning("Unable to retrieve project's CI configuration (404). CI is missing but project exists. Data collection will continue with limited data.")
+			l.WithError(err).Warn("Unable to retrieve project's CI configuration (404). CI is missing but project exists. Data collection will continue with limited data.")
 		} else {
 			data.CiValid = false
-			l.WithError(err).Warning("Unable to retrieve project's CI merged configuration. Data collection will continue with limited data.")
+			l.WithError(err).Warn("Unable to retrieve project's CI merged configuration. Data collection will continue with limited data.")
 		}
 
 	} else if data.MergedResponse != nil && (len(data.MergedResponse.CiConfig.Errors) > 0 || data.MergedResponse.CiConfig.Status == "INVALID") {
@@ -359,14 +359,14 @@ func (dc *GitlabPipelineOriginDataCollection) Run(project *gitlab.ProjectInfo, t
 			data.CiValid = false
 		}
 		data.LimitedAnalysis = true
-		l.WithField("errors", data.MergedResponse.CiConfig.Errors).Warning("Pipeline has configuration errors. Data collection will continue with limited data.")
+		l.WithField("errors", data.MergedResponse.CiConfig.Errors).Warn("Pipeline has configuration errors. Data collection will continue with limited data.")
 
 	} else if data.MergedResponse == nil || data.MergedConf == nil {
 
 		data.LimitedAnalysis = true
 		data.CiValid = true   // It's not really valid (missing) but we keep it to avoid false positive on "invalid"
 		data.CiMissing = true // CI is empty/missing
-		l.Warning("Pipeline is empty. Data collection will continue with limited data.")
+		l.Warn("Pipeline is empty. Data collection will continue with limited data.")
 
 	}
 
@@ -379,7 +379,7 @@ func (dc *GitlabPipelineOriginDataCollection) Run(project *gitlab.ProjectInfo, t
 	// Fetch all GitLab components
 	data.GitlabCatalogResources, err = gitlab.GetGitlabCIComponentResources(project.IsGroup, token, conf.GitlabURL, conf)
 	if err != nil {
-		l.WithError(err).Warning("Unable to retrieve GitLab CI components")
+		l.WithError(err).Warn("Unable to retrieve GitLab CI components")
 		// Continue even if we can't get components (will just not detect them)
 	}
 

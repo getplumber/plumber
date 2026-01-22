@@ -45,7 +45,7 @@ func NewDefaultConfiguration() *Configuration {
 		GitlabRetryInitialBackoff: 1 * time.Second,
 		GitlabRetryMaxBackoff:     30 * time.Second,
 		GitlabRetryBackoffFactor:  2.0,
-		LogLevel:                  logrus.InfoLevel,
+		LogLevel:                  logrus.WarnLevel,
 		Version:                   "0.1.0",
 	}
 }

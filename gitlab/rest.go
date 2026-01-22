@@ -58,7 +58,7 @@ func FetchGitlabProject(id int, token string, APIURL string, conf *configuration
 	})
 
 	if err != nil {
-		l.WithError(err).Warning("Unable to get project from GitLab API")
+		l.WithError(err).Warn("Unable to get project from GitLab API")
 		return project, err, nil
 	}
 
@@ -129,7 +129,7 @@ func SearchTags(projectPath string, token string, APIURL string, conf *configura
 
 		tags, _, err := glab.Tags.ListTags(projectPath, options)
 		if err != nil {
-			l.WithError(err).Warning("Failed to retreive tags from GitLab API")
+			l.WithError(err).Warn("Failed to retreive tags from GitLab API")
 			return []string{}, err, nil
 		} else {
 			gTags = append(gTags, tags...)
@@ -217,7 +217,7 @@ func FetchBranchProtections(projectID int, token string, APIURL string, conf *co
 		options.Page = page
 		protections, _, err := glab.ProtectedBranches.ListProtectedBranches(projectID, options)
 		if err != nil {
-			l.WithError(err).Warning("Failed to fetch branch protections")
+			l.WithError(err).Warn("Failed to fetch branch protections")
 			return nil, err
 		}
 
@@ -270,7 +270,7 @@ func FetchProjectMRApprovalRules(projectID int, token string, APIURL string, con
 
 	rules, _, err := glab.Projects.GetProjectApprovalRules(projectID, nil)
 	if err != nil {
-		l.WithError(err).Warning("Failed to fetch MR approval rules")
+		l.WithError(err).Warn("Failed to fetch MR approval rules")
 		return nil, err
 	}
 
@@ -294,7 +294,7 @@ func FetchProjectMRApprovalSettings(projectID int, token string, APIURL string, 
 
 	settings, _, err := glab.Projects.GetApprovalConfiguration(projectID)
 	if err != nil {
-		l.WithError(err).Warning("Failed to fetch MR approval settings")
+		l.WithError(err).Warn("Failed to fetch MR approval settings")
 		return nil, err
 	}
 
@@ -328,7 +328,7 @@ func FetchProjectMembers(projectID int, token string, APIURL string, conf *confi
 		options.Page = page
 		members, _, err := glab.ProjectMembers.ListAllProjectMembers(projectID, options)
 		if err != nil {
-			l.WithError(err).Warning("Failed to fetch project members")
+			l.WithError(err).Warn("Failed to fetch project members")
 			return nil, err
 		}
 
@@ -385,7 +385,7 @@ func FetchGroupMembers(groupID int, token string, APIURL string, conf *configura
 		options.Page = page
 		members, _, err := glab.Groups.ListAllGroupMembers(groupID, options)
 		if err != nil {
-			l.WithError(err).Warning("Failed to fetch group members")
+			l.WithError(err).Warn("Failed to fetch group members")
 			return nil, err
 		}
 
@@ -468,7 +468,7 @@ func FetchProjectBranchData(projectPath string, token string, APIURL string, con
 		protOptions.Page = page
 		protections, _, err := glab.ProtectedBranches.ListProtectedBranches(projectPath, protOptions)
 		if err != nil {
-			l.WithError(err).Warning("Failed to fetch branch protections (may require premium)")
+			l.WithError(err).Warn("Failed to fetch branch protections (may require premium)")
 			// Return branches without protections
 			return allBranches, nil, nil
 		}
@@ -531,7 +531,7 @@ func GetGroupFullPath(groupID int, token string, APIURL string, conf *configurat
 		})
 
 	if err != nil {
-		l.WithError(err).Warning("Unable to get group from GitLab API")
+		l.WithError(err).Warn("Unable to get group from GitLab API")
 		return path, err
 	}
 
@@ -563,7 +563,7 @@ func FetchGitlabGroup(id int, token string, APIURL string, conf *configuration.C
 		})
 
 	if err != nil {
-		l.WithError(err).Warning("Unable to get group from GitLab API")
+		l.WithError(err).Warn("Unable to get group from GitLab API")
 		return group, err, nil
 	}
 
@@ -702,7 +702,7 @@ func IsVersionGreaterOrEqual(version, requiredVersion string) bool {
 	for i := 0; i < len(vParts) && i < 3; i++ {
 		num, err := strconv.Atoi(vParts[i])
 		if err != nil {
-			l.WithError(err).WithField("component", vParts[i]).Warning("Failed to parse version component")
+			l.WithError(err).WithField("component", vParts[i]).Warn("Failed to parse version component")
 			return false
 		}
 		vComponents[i] = num
@@ -712,7 +712,7 @@ func IsVersionGreaterOrEqual(version, requiredVersion string) bool {
 	for i := 0; i < len(reqParts) && i < 3; i++ {
 		num, err := strconv.Atoi(reqParts[i])
 		if err != nil {
-			l.WithError(err).WithField("component", reqParts[i]).Warning("Failed to parse required version component")
+			l.WithError(err).WithField("component", reqParts[i]).Warn("Failed to parse required version component")
 			return false
 		}
 		reqComponents[i] = num

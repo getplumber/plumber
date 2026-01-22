@@ -75,7 +75,7 @@ func FetchProjectDetails(projectPath string, token string, instanceURL string, c
 	// Get the latest commit SHA for the default branch
 	latestSha, err := fetchLatestCommitSha(glab, projectPath, project.DefaultBranch, l)
 	if err != nil {
-		l.WithError(err).Warning("Unable to fetch latest commit SHA, using HEAD")
+		l.WithError(err).Warn("Unable to fetch latest commit SHA, using HEAD")
 		project.LatestHeadCommitSha = "HEAD"
 	} else {
 		project.LatestHeadCommitSha = latestSha
@@ -203,7 +203,7 @@ func EnhanceProjectWithGraphQL(project *Project, token string, instanceURL strin
 
 	var resp graphqlResponse
 	if err := client.Run(context.Background(), req, &resp); err != nil {
-		l.WithError(err).Warning("GraphQL query failed")
+		l.WithError(err).Warn("GraphQL query failed")
 		return err
 	}
 

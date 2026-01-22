@@ -92,10 +92,12 @@ func init() {
 
 func runAnalyze(cmd *cobra.Command, args []string) error {
 	// Set log level based on verbose flag
+	// Default: WarnLevel (quiet output, only show warnings/errors)
+	// Verbose: DebugLevel (show all logs for troubleshooting)
 	if verbose {
 		logrus.SetLevel(logrus.DebugLevel)
 	} else {
-		logrus.SetLevel(logrus.InfoLevel)
+		logrus.SetLevel(logrus.WarnLevel)
 	}
 
 	// Get token from environment variable (required)

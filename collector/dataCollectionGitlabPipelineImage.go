@@ -566,7 +566,7 @@ func (i *GitlabPipelineImageInfo) parseImageLink(l *logrus.Entry) {
 	if strings.Contains(i.Link, "$") {
 		l.WithField("image", i).Debug("Image link contains variables")
 		i.handlePresenceOfVariables()
-		l.WithField("image registry", i.Registry).WithField("image name", i.Name).WithField("image tag", i.Tag).Debug("Image link contains variables")
+		l.WithField("imageRegistry", i.Registry).WithField("imageName", i.Name).WithField("imageTag", i.Tag).Debug("Image link contains variables")
 		return
 	}
 
@@ -611,7 +611,7 @@ func (i *GitlabPipelineImageInfo) parseImageLink(l *logrus.Entry) {
 	}
 	// Safety check: if name ended up empty but we have a link, preserve the original
 	if strings.TrimSpace(i.Name) == "" && strings.TrimSpace(originalLink) != "" {
-		l.WithField("originalLink", originalLink).Warning("Image name is empty")
+		l.WithField("originalLink", originalLink).Warn("Image name is empty, using original link")
 		i.Name = originalLink
 		i.Registry = unknownRegistry
 		i.Tag = ""
@@ -701,7 +701,7 @@ func (dc *GitlabPipelineImageDataCollection) Run(project *gitlab.ProjectInfo, to
 			return data, metrics, err
 		}
 		data.InstanceVars = gitlab.ConvertCICDVariableToMap(instanceVarsResult)
-		l.WithField("instanceVars", data.InstanceVars).Debug("Instance vars found")
+		l.WithField("instanceVarKeys", gitlab.GetMapKeys(data.InstanceVars)).Debug("Instance vars found")
 	}
 
 	// Get value of variables inherited from group(s)
@@ -711,7 +711,7 @@ func (dc *GitlabPipelineImageDataCollection) Run(project *gitlab.ProjectInfo, to
 		return data, metrics, err
 	}
 	data.GroupVars = gitlab.ConvertCICDVariableToMap(groupVarsResult)
-	l.WithField("groupVars", data.GroupVars).Debug("Group vars found")
+	l.WithField("groupVarKeys", gitlab.GetMapKeys(data.GroupVars)).Debug("Group vars found")
 
 	// Get project variables
 	projectVarsResult, err := gitlab.GetGitlabProjectVariables(project.Path, token, conf.GitlabURL, conf)
@@ -720,7 +720,7 @@ func (dc *GitlabPipelineImageDataCollection) Run(project *gitlab.ProjectInfo, to
 		return data, metrics, err
 	}
 	data.ProjectVars = gitlab.ConvertCICDVariableToMap(projectVarsResult)
-	l.WithField("projectVars", data.ProjectVars).Debug("Project vars found")
+	l.WithField("projectVarKeys", gitlab.GetMapKeys(data.ProjectVars)).Debug("Project vars found")
 
 	// Set predefined variables
 	predefinedVars := map[string]string{
@@ -768,7 +768,7 @@ func (dc *GitlabPipelineImageDataCollection) Run(project *gitlab.ProjectInfo, to
 
 		//  If no image: next
 		if imageLink == "" {
-			jobLogger.Warning("Job with empty image found")
+			jobLogger.Debug("Job with empty image skipped (no image defined)")
 			continue
 		}
 

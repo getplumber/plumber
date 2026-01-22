@@ -25,6 +25,15 @@ const (
 	includeComponent   = "component"
 )
 
+// GetMapKeys returns the keys of a string map as a slice (for safe logging without values)
+func GetMapKeys(m map[string]string) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
+}
+
 // Convert map[interface{}]interface{} to map[string]interface{} for JSON-safe logging
 func toJSONSafeMap(m interface{}) interface{} {
 	switch v := m.(type) {
@@ -508,7 +517,7 @@ func FetchGitlabInclude(include MergedCIConfResponseInclude, projectPath, token,
 	if len(inputs) > 0 {
 		inputsYaml, err := yaml.Marshal(inputs)
 		if err != nil {
-			l.WithError(err).Warning("Unable to marshal inputs to YAML")
+			l.WithError(err).Warn("Unable to marshal inputs to YAML")
 		} else {
 			includeConf += "\n  inputs:"
 			inputsLines := strings.Split(strings.TrimSpace(string(inputsYaml)), "\n")
@@ -527,7 +536,7 @@ func FetchGitlabInclude(include MergedCIConfResponseInclude, projectPath, token,
 		return []string{}, err
 	}
 	if len(mergedInclude.CiConfig.Errors) > 0 {
-		l.WithField("errors", mergedInclude.CiConfig.Errors).Warn("CI Error found in the include's merged configuration response")
+		l.WithField("errors", mergedInclude.CiConfig.Errors).Debug("CI errors found in include's merged configuration (may not affect analysis)")
 	}
 
 	l.WithField("mergedYaml", mergedInclude.CiConfig.MergedYaml).Debug("Merged YAML from GitLab")

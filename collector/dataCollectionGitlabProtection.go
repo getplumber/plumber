@@ -99,7 +99,7 @@ func (dc *GitlabProtectionDataCollection) Run(
 			l.WithError(err).Error("Failed to fetch MR approval rules")
 			return nil, metrics, err
 		}
-		l.WithError(err).Warning("MR approval rules not available (may require premium)")
+		l.WithError(err).Warn("MR approval rules not available (may require premium)")
 		// If 403/404 error, MRApprovalRules will be nil which controls can handle
 	} else {
 		returnedData.MRApprovalRules = approvalRules
@@ -113,7 +113,7 @@ func (dc *GitlabProtectionDataCollection) Run(
 			l.WithError(err).Error("Failed to fetch MR approval settings")
 			return nil, metrics, err
 		}
-		l.WithError(err).Warning("MR approval settings not available (may require premium)")
+		l.WithError(err).Warn("MR approval settings not available (may require premium)")
 		// If 403/404 error, MRApprovalSettings will be nil which controls can handle
 	} else {
 		returnedData.MRApprovalSettings = approvalSettings
@@ -130,7 +130,7 @@ func (dc *GitlabProtectionDataCollection) Run(
 	// Get project members
 	members, err := gitlab.FetchProjectMembers(project.ID, token, conf.GitlabURL, conf)
 	if err != nil {
-		l.WithError(err).Warning("Failed to fetch project members")
+		l.WithError(err).Warn("Failed to fetch project members")
 		// Continue without members
 	} else {
 		returnedData.ProjectMembers = members

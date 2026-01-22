@@ -114,7 +114,7 @@ func IsUpToDate(version, latestVersion string, latestRefs []string) bool {
 	})
 
 	if latestVersion == "" || version == "" {
-		l.Warning("Checking latest of an empty version or empty latestVersion")
+		l.Warn("Checking latest of an empty version or empty latestVersion")
 		return false
 	}
 
@@ -170,7 +170,7 @@ func IsUsingLatest(version string, latestRefs []string) bool {
 	})
 
 	if version == "" {
-		l.Warning("Checking latest of an empty version")
+		l.Warn("Checking latest of an empty version")
 		return false
 	}
 
