@@ -49,22 +49,22 @@ include:
   - component: gitlab.com/getplumber/plumber/plumber@~latest
     inputs:
       # Target (defaults to current project)
-      server_url: https://gitlab.example.com  # Self-hosted GitLab
-      project_path: other-group/other-project # Analyze a different project
-      branch: develop                         # Analyze a specific branch
+      server_url: https://gitlab.example.com  # Self-hosted GitLab (default: $CI_SERVER_URL)
+      project_path: other-group/other-project # Analyze a different project (default: $CI_PROJECT_PATH)
+      branch: develop                         # Analyze a specific branch (default: $CI_COMMIT_REF_NAME)
 
       # Compliance
       threshold: 80                           # Minimum % to pass (default: 100)
-      config_file: $CI_PROJECT_DIR/.plumber.yaml  # Custom config from your repo
+      config_file: $CI_PROJECT_DIR/.plumber.yaml  # Custom config from your repo(default: baked-in image conf file find .plumber.yaml in this repo for reference)
 
       # Output
-      output_file: plumber-report.json        # Export JSON report
+      output_file: plumber-report.json        # Export JSON report (default: plumber-report.json )
       print_output: true                      # Print to stdout (default: true)
 
       # Job behavior
       stage: test                             # Run in a different stage (default: .pre)
-      allow_failure: true                     # Don't block pipeline on failure
-      gitlab_token: $MY_CUSTOM_TOKEN          # Use a different token variable
+      allow_failure: true                     # Don't block pipeline on failure (default: false)
+      gitlab_token: $MY_CUSTOM_TOKEN          # Use a different token variable (default: $GITLAB_TOKEN) WIP to make it use $CI_JOB_TOKEN
 ```
 
 ### All Inputs
@@ -239,34 +239,8 @@ Summary
 
 ## 📝 Configuration
 
-Create a `.plumber.yaml` in your repo to customize controls:
-
-```yaml
-version: "1.0"
-
-controls:
-  imageMutable:
-    enabled: true
-    mutableTags:
-      - latest
-      - dev
-
-  imageUntrusted:
-    enabled: true
-    trustDockerHubOfficialImages: true
-    trustedUrls:
-      - registry.gitlab.com/*
-      - $CI_REGISTRY_IMAGE:*
-
-  branchProtection:
-    enabled: true
-    defaultMustBeProtected: true
-    namePatterns:
-      - main
-      - release/*
-```
-
-See [`.plumber.yaml`](.plumber.yaml) for the full reference with all options.
+Create a `.plumber.yaml` in your repo to customize controls:  
+See the [full configuration reference](.plumber.yaml) for all options.
 
 ## 🔍 CLI Reference
 
