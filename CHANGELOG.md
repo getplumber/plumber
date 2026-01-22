@@ -1,3 +1,10 @@
+## [0.1.10](https://github.com/getplumber/plumber/compare/v0.1.9...v0.1.10) (2026-01-22)
+
+
+### ✨ Features
+
+* **output:** Improve readability of printed results ([97d708f](https://github.com/getplumber/plumber/commit/97d708f75d5b76fba6bb3724543837eb371f5c04))
+
 ## [0.1.9](https://github.com/getplumber/plumber/compare/v0.1.8...v0.1.9) (2026-01-21)
 
 
