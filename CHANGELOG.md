@@ -1,3 +1,10 @@
+## [0.1.12](https://github.com/getplumber/plumber/compare/v0.1.11...v0.1.12) (2026-01-22)
+
+
+### ✨ Features
+
+* **UX:** Define default output file, add output json example ([3dbfa1c](https://github.com/getplumber/plumber/commit/3dbfa1c9172b561e35ce52d834e794bc2fb08091))
+
 ## [0.1.11](https://github.com/getplumber/plumber/compare/v0.1.10...v0.1.11) (2026-01-22)
 
 
