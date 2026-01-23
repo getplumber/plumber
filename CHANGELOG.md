@@ -1,3 +1,10 @@
+## [0.1.17](https://github.com/getplumber/plumber/compare/v0.1.16...v0.1.17) (2026-01-23)
+
+
+### ✨ Features
+
+* **analysis:** Revert CI_JOB_TOKEN ([6c12fb5](https://github.com/getplumber/plumber/commit/6c12fb59ad73147ca96c3e58ce570eab751706eb))
+
 ## [0.1.16](https://github.com/getplumber/plumber/compare/v0.1.15...v0.1.16) (2026-01-23)
 
 
