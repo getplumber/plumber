@@ -3,7 +3,6 @@ package configuration
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 
 	"github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v2"
@@ -76,38 +75,12 @@ type BranchProtectionControlConfig struct {
 }
 
 // LoadPlumberConfig loads configuration from a file path
-// The config file is REQUIRED - returns error if not found
-// If configPath is empty, looks for .plumber.yaml in current directory
+// The config file path is required - returns error if empty or not found
 func LoadPlumberConfig(configPath string) (*PlumberConfig, string, error) {
 	l := logrus.WithField("action", "LoadPlumberConfig")
 
-	// If no path specified, try to find .plumber.yaml in current directory
 	if configPath == "" {
-		cwd, err := os.Getwd()
-		if err != nil {
-			l.WithError(err).Error("Unable to get current directory")
-			return nil, "", err
-		}
-
-		// Try different file names
-		possiblePaths := []string{
-			filepath.Join(cwd, ".plumber.yaml"),
-			filepath.Join(cwd, ".plumber.yml"),
-			filepath.Join(cwd, "plumber.yaml"),
-			filepath.Join(cwd, "plumber.yml"),
-		}
-
-		for _, path := range possiblePaths {
-			if _, err := os.Stat(path); err == nil {
-				configPath = path
-				break
-			}
-		}
-	}
-
-	// Config file is required
-	if configPath == "" {
-		return nil, "", fmt.Errorf("no config file found. Please provide a config file with --config flag (e.g., .plumber.yaml)")
+		return nil, "", fmt.Errorf("config file path is required")
 	}
 
 	l = l.WithField("configPath", configPath)
