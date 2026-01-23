@@ -1,3 +1,10 @@
+## [0.1.19](https://github.com/getplumber/plumber/compare/v0.1.18...v0.1.19) (2026-01-23)
+
+
+### 🐛 Bug Fixes
+
+* **bug:** Cleanup some dead code ([fa7e1ae](https://github.com/getplumber/plumber/commit/fa7e1ae3f445ed2047c5ab4ef0a4a66f0bc8ad93))
+
 ## [0.1.18](https://github.com/getplumber/plumber/compare/v0.1.17...v0.1.18) (2026-01-23)
 
 
