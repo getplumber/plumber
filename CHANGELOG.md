@@ -1,3 +1,10 @@
+## [0.1.16](https://github.com/getplumber/plumber/compare/v0.1.15...v0.1.16) (2026-01-23)
+
+
+### 🐛 Bug Fixes
+
+* **analysis:** If no controls ran (e.g., data collection failed), compliance is 0% - we can't verify anything ([7ec0e72](https://github.com/getplumber/plumber/commit/7ec0e72ca459539c4a8e4d4fdbc04faf01ddfae8))
+
 ## [0.1.15](https://github.com/getplumber/plumber/compare/v0.1.14...v0.1.15) (2026-01-23)
 
 
