@@ -1,3 +1,10 @@
+## [0.1.18](https://github.com/getplumber/plumber/compare/v0.1.17...v0.1.18) (2026-01-23)
+
+
+### ✨ Features
+
+* **conf:** Introduce priority and automatic detection of conf files ([91ef31b](https://github.com/getplumber/plumber/commit/91ef31b3a43b1fa150a8fba1c2c880a2220b80ef))
+
 ## [0.1.17](https://github.com/getplumber/plumber/compare/v0.1.16...v0.1.17) (2026-01-23)
 
 
