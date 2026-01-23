@@ -20,10 +20,11 @@ spec:
       default: $CI_SERVER_URL
     
     # Control configuration
-    # default conf can be found at https://gitlab.com/getplumber/plumber/-/blob/main/.plumber.yaml
+    # Default conf can be found at https://gitlab.com/getplumber/plumber/-/blob/main/.plumber.yaml
+    # Priority: 1) config_file input (if set), 2) .plumber.yaml in repo (if exists), 3) default config
     config_file:
-      description: "Path to .plumber.yaml config file inside the container. Will use the default if not provided."
-      default: "/.plumber.yaml"
+      description: "Path to your .plumber.yaml config file (relative to repo root). If not set, uses .plumber.yaml from repo if present, otherwise uses default config."
+      default: ""
     
     # Compliance configuration
     threshold:
@@ -68,11 +69,22 @@ spec:
 #   2. Add it as GITLAB_TOKEN in Settings > CI/CD > Variables
 #      (use masked & protected for security)
 #
+# Configuration file priority:
+#   1. If config_file input is set → uses $CI_PROJECT_DIR/<config_file>
+#   2. If .plumber.yaml exists in repo root → uses $CI_PROJECT_DIR/.plumber.yaml
+#   3. Otherwise → uses default config embedded in the container
+#
 # Usage in .gitlab-ci.yml:
 #   include:
 #     - component: gitlab.com/getplumber/plumber/plumber@~latest
 #
-# With custom inputs:
+# With custom config file:
+#   include:
+#     - component: gitlab.com/getplumber/plumber/plumber@v0.1.0
+#       inputs:
+#         config_file: "configs/my-plumber.yaml"  # relative to repo root
+#
+# With other custom inputs:
 #   include:
 #     - component: gitlab.com/getplumber/plumber/plumber@v0.1.0
 #       inputs:
@@ -92,6 +104,24 @@ spec:
     - |
       # Export as GITLAB_TOKEN for the CLI
       export GITLAB_TOKEN="$PLUMBER_TOKEN"
+      
+      # Determine config file path
+      # Priority: 1) config_file input (if set), 2) .plumber.yaml in repo (if exists), 3) default config
+      CONFIG_PATH=""
+      if [ -n "$[[ inputs.config_file ]]" ]; then
+        # User provided a custom config path (relative to repo root)
+        CONFIG_PATH="$CI_PROJECT_DIR/$[[ inputs.config_file ]]"
+        echo "Using custom config: $CONFIG_PATH"
+      elif [ -f "$CI_PROJECT_DIR/.plumber.yaml" ]; then
+        # User has .plumber.yaml in their repo
+        CONFIG_PATH="$CI_PROJECT_DIR/.plumber.yaml"
+        echo "Using repo config: $CONFIG_PATH"
+      else
+        # Use default config embedded in the container
+        CONFIG_PATH="/.plumber.yaml"
+        echo "Using default config: $CONFIG_PATH"
+      fi
+      
       OUTPUT_FLAG=""
       if [ -n "$[[ inputs.output_file ]]" ]; then
         OUTPUT_FLAG="--output $[[ inputs.output_file ]]"
@@ -104,7 +134,7 @@ spec:
         --gitlab-url "$[[ inputs.server_url ]]" \
         --project "$[[ inputs.project_path ]]" \
         --branch "$[[ inputs.branch ]]" \
-        --config "$[[ inputs.config_file ]]" \
+        --config "$CONFIG_PATH" \
         --threshold "$[[ inputs.threshold ]]" \
         --print="$[[ inputs.print_output ]]" \
         $OUTPUT_FLAG \

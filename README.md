@@ -51,7 +51,7 @@ include:
 
       # Compliance
       threshold: 80                           # Minimum % to pass (default: 100)
-      config_file: $CI_PROJECT_DIR/.plumber.yaml  # Custom config from your repo(default: baked-in image conf file find .plumber.yaml in this repo for reference)
+      config_file: configs/my-plumber.yaml    # Custom config path (relative to repo root)
 
       # Output
       output_file: plumber-report.json        # Export JSON report (default: plumber-report.json )
@@ -73,7 +73,7 @@ include:
 | `branch` | `$CI_COMMIT_REF_NAME` | Branch to analyze |
 | `gitlab_token` | `$GITLAB_TOKEN` | GitLab API token (requires `read_api` + `read_repository` scopes) |
 | `threshold` | `100` | Minimum compliance % to pass |
-| `config_file` | `/.plumber.yaml` | Path to configuration file |
+| `config_file` | *(auto-detect)* | Path to config file (relative to repo root). Auto-detects `.plumber.yaml` in repo, falls back to default |
 | `output_file` | `plumber-report.json` | Path to write JSON results |
 | `print_output` | `true` | Print text output to stdout |
 | `stage` | `.pre` | Pipeline stage for the job |
@@ -237,7 +237,21 @@ Summary
 
 ## 📝 Configuration
 
-Create a `.plumber.yaml` in your repo to customize controls:  
+### GitLab CI Component
+
+The component automatically detects your configuration using this priority:
+
+1. **`config_file` input set** → Uses your specified path (relative to repo root)
+2. **`.plumber.yaml` in repo root** → Uses your repo's config file
+3. **No config found** → Uses the default configuration embedded in the container
+
+### CLI
+
+When using the CLI directly, you must explicitly provide the `--config` flag — there is no auto-detection.
+
+---
+
+To customize controls, create a `.plumber.yaml` file.  
 See the [full configuration reference](.plumber.yaml) for all options.
 
 ## 🔍 CLI Reference
