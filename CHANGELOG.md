@@ -1,3 +1,10 @@
+## [0.1.15](https://github.com/getplumber/plumber/compare/v0.1.14...v0.1.15) (2026-01-23)
+
+
+### ✨ Features
+
+* **component:** Allow verbosity in component ([b59015a](https://github.com/getplumber/plumber/commit/b59015a9bd64213ca0b3cf21ea02b16e833eee13))
+
 ## [0.1.14](https://github.com/getplumber/plumber/compare/v0.1.13...v0.1.14) (2026-01-23)
 
 
