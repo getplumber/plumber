@@ -693,43 +693,34 @@ func (dc *GitlabPipelineImageDataCollection) Run(project *gitlab.ProjectInfo, to
 		return data, metrics, err
 	}
 
-	// Check if running in CI mode
-	// In CI mode, all variables are available in the environment, so we don't need to fetch them via API
-	isRunningInCI := gitlab.IsRunningInCI()
-	if isRunningInCI {
-		l.Debug("Running in CI mode - variables will be resolved from environment")
-	} else {
-		l.Debug("Running in local mode - fetching variables from GitLab API")
-
-		// Get instance variables only if it's an instance wide organization (not a group)
-		if !project.IsGroup {
-			instanceVarsResult, err := gitlab.GetGitlabInstanceVariables(token, conf.GitlabURL, conf)
-			if err != nil {
-				l.WithError(err).Error("Unable to retrieve instance variables")
-				return data, metrics, err
-			}
-			data.InstanceVars = gitlab.ConvertCICDVariableToMap(instanceVarsResult)
-			l.WithField("instanceVarKeys", gitlab.GetMapKeys(data.InstanceVars)).Debug("Instance vars found")
-		}
-
-		// Get value of variables inherited from group(s)
-		groupVarsResult, err := gitlab.GetGitlabProjectInheritedVariables(project.Path, token, conf.GitlabURL, conf)
+	// Get instance variables only if it's an instance wide organization (not a group)
+	if !project.IsGroup {
+		instanceVarsResult, err := gitlab.GetGitlabInstanceVariables(token, conf.GitlabURL, conf)
 		if err != nil {
-			l.WithError(err).Error("Unable to retrieve project inherited variables")
+			l.WithError(err).Error("Unable to retrieve instance variables")
 			return data, metrics, err
 		}
-		data.GroupVars = gitlab.ConvertCICDVariableToMap(groupVarsResult)
-		l.WithField("groupVarKeys", gitlab.GetMapKeys(data.GroupVars)).Debug("Group vars found")
-
-		// Get project variables
-		projectVarsResult, err := gitlab.GetGitlabProjectVariables(project.Path, token, conf.GitlabURL, conf)
-		if err != nil {
-			l.WithError(err).Error("Unable to retrieve project variables")
-			return data, metrics, err
-		}
-		data.ProjectVars = gitlab.ConvertCICDVariableToMap(projectVarsResult)
-		l.WithField("projectVarKeys", gitlab.GetMapKeys(data.ProjectVars)).Debug("Project vars found")
+		data.InstanceVars = gitlab.ConvertCICDVariableToMap(instanceVarsResult)
+		l.WithField("instanceVarKeys", gitlab.GetMapKeys(data.InstanceVars)).Debug("Instance vars found")
 	}
+
+	// Get value of variables inherited from group(s)
+	groupVarsResult, err := gitlab.GetGitlabProjectInheritedVariables(project.Path, token, conf.GitlabURL, conf)
+	if err != nil {
+		l.WithError(err).Error("Unable to retrieve project inherited variables")
+		return data, metrics, err
+	}
+	data.GroupVars = gitlab.ConvertCICDVariableToMap(groupVarsResult)
+	l.WithField("groupVarKeys", gitlab.GetMapKeys(data.GroupVars)).Debug("Group vars found")
+
+	// Get project variables
+	projectVarsResult, err := gitlab.GetGitlabProjectVariables(project.Path, token, conf.GitlabURL, conf)
+	if err != nil {
+		l.WithError(err).Error("Unable to retrieve project variables")
+		return data, metrics, err
+	}
+	data.ProjectVars = gitlab.ConvertCICDVariableToMap(projectVarsResult)
+	l.WithField("projectVarKeys", gitlab.GetMapKeys(data.ProjectVars)).Debug("Project vars found")
 
 	// Set predefined variables
 	predefinedVars := map[string]string{
@@ -770,21 +761,7 @@ func (dc *GitlabPipelineImageDataCollection) Run(project *gitlab.ProjectInfo, to
 		}
 
 		// Resolve variables in image
-		// In CI mode: resolve from environment first (higher precedence per GitLab rules),
-		//             then apply job-specific YAML variables for vars not in env
-		// In local mode: use the API-fetched variable maps
-		var imageLink string
-		if isRunningInCI {
-			// 1. Environment has GitLab's final resolved values (predefined + Settings vars)
-			// 2. Then apply job-specific YAML variables (for vars only defined in that job's config)
-			jobLogger.Debug("Running in CI mode - resolving variables from environment")
-			imageLink = gitlab.ReplaceVariableFromEnv(imageUnresolved)
-			emptyMap := map[string]string{}
-			imageLink = gitlab.ReplaceVariable(imageLink, emptyMap, emptyMap, emptyMap, jobVars, data.GlobalVars, predefinedVars)
-		} else {
-			jobLogger.Debug("Running in local mode - resolving variables from GitLab API")
-			imageLink = gitlab.ReplaceVariable(imageUnresolved, data.ProjectVars, data.GroupVars, data.InstanceVars, jobVars, data.GlobalVars, predefinedVars)
-		}
+		imageLink := gitlab.ReplaceVariable(imageUnresolved, data.ProjectVars, data.GroupVars, data.InstanceVars, jobVars, data.GlobalVars, predefinedVars)
 
 		// Add logging
 		jobLogger = jobLogger.WithField("imageLink", imageLink)

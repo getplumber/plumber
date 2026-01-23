@@ -1,11 +1,11 @@
 spec:
   inputs:
     # Authentication
-    # Uses CI_JOB_TOKEN by default (no setup required!)
-    # For additional permissions (e.g., cross-project access), set GITLAB_TOKEN as a CI/CD variable
+    # Requires a GitLab token with read_api + read_repository scopes
+    # Set GITLAB_TOKEN as a CI/CD variable in Settings > CI/CD > Variables
     gitlab_token:
-      description: "GitLab API token (CI_JOB_TOKEN works for most use cases)"
-      default: $CI_JOB_TOKEN
+      description: "GitLab API token (requires read_api + read_repository scopes)"
+      default: $GITLAB_TOKEN
     
     # Project configuration
     # These can be overridden but default to GitLab CI predefined variables
@@ -62,8 +62,11 @@ spec:
 # Analyzes GitLab CI/CD pipelines for compliance issues
 #
 # Prerequisites:
-#   1. Set GITLAB_TOKEN as a CI/CD variable in your project settings
-#      (Settings > CI/CD > Variables) - use masked/protected for security
+#   1. Create a GitLab token (PAT or Project/Group Access Token) with:
+#      - read_api scope
+#      - read_repository scope
+#   2. Add it as GITLAB_TOKEN in Settings > CI/CD > Variables
+#      (use masked & protected for security)
 #
 # Usage in .gitlab-ci.yml:
 #   include:

@@ -13,25 +13,18 @@ Plumber scans your GitLab CI/CD configuration and run following controls:
 
 ## 🚀 Quick Start (GitLab CI)
 
-Add to your `.gitlab-ci.yml`:
+**1.** Create a GitLab token with `read_api` + `read_repository` scopes and add it as `GITLAB_TOKEN` in **Settings → CI/CD → Variables** (masked & protected recommended).
+
+**2.** Add to your `.gitlab-ci.yml`:
 
 ```yaml
 include:
   - component: gitlab.com/getplumber/plumber/plumber@~latest
 ```
 
-✅ **That's it!** No token setup required — Plumber uses `CI_JOB_TOKEN` by default.
+✅ **That's it!** Plumber will analyze your CI/CD pipeline for compliance issues.
 
 > 💡 Everything is customizable — GitLab URL, branch, threshold, and more. See [Customize](#️-customize) below.
-
-### 🔑 Token Options
-
-| Token | Setup | Use Case |
-|-------|-------|----------|
-| `CI_JOB_TOKEN` (default) | None required | Works for most use cases |
-| `GITLAB_TOKEN` (PAT) | Add to CI/CD Variables | Cross-project access, additional API permissions |
-
-To use a PAT instead: add `GITLAB_TOKEN` to **Settings → CI/CD → Variables** with `read_api` + `read_repository` scopes.
 
 ### ⚠️ Self-Hosted GitLab
 
@@ -67,7 +60,7 @@ include:
       # Job behavior
       stage: test                             # Run in a different stage (default: .pre)
       allow_failure: true                     # Don't block pipeline on failure (default: false)
-      gitlab_token: $GITLAB_TOKEN             # Use a PAT instead of CI_JOB_TOKEN (for cross-project access)
+      gitlab_token: $MY_CUSTOM_TOKEN          # Use a different variable name (default: $GITLAB_TOKEN)
       verbose: true                           # Enable debug output for troubleshooting (default: false)
 ```
 
@@ -78,7 +71,7 @@ include:
 | `server_url` | `$CI_SERVER_URL` | GitLab instance URL |
 | `project_path` | `$CI_PROJECT_PATH` | Project to analyze |
 | `branch` | `$CI_COMMIT_REF_NAME` | Branch to analyze |
-| `gitlab_token` | `$CI_JOB_TOKEN` | GitLab API token (CI_JOB_TOKEN works for most use cases) |
+| `gitlab_token` | `$GITLAB_TOKEN` | GitLab API token (requires `read_api` + `read_repository` scopes) |
 | `threshold` | `100` | Minimum compliance % to pass |
 | `config_file` | `/.plumber.yaml` | Path to configuration file |
 | `output_file` | `plumber-report.json` | Path to write JSON results |
