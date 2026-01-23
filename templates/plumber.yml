@@ -51,6 +51,10 @@ spec:
       description: "Allow the job to fail without failing the pipeline"
       default: false
       type: boolean
+    verbose:
+      description: "Enable verbose/debug output for troubleshooting"
+      default: false
+      type: boolean
 
 ---
 
@@ -89,6 +93,10 @@ spec:
       if [ -n "$[[ inputs.output_file ]]" ]; then
         OUTPUT_FLAG="--output $[[ inputs.output_file ]]"
       fi
+      VERBOSE_FLAG=""
+      if [ "$[[ inputs.verbose ]]" = "true" ]; then
+        VERBOSE_FLAG="--verbose"
+      fi
       /plumber analyze \
         --gitlab-url "$[[ inputs.server_url ]]" \
         --project "$[[ inputs.project_path ]]" \
@@ -96,7 +104,8 @@ spec:
         --config "$[[ inputs.config_file ]]" \
         --threshold "$[[ inputs.threshold ]]" \
         --print="$[[ inputs.print_output ]]" \
-        $OUTPUT_FLAG
+        $OUTPUT_FLAG \
+        $VERBOSE_FLAG
   artifacts:
     paths:
       - $[[ inputs.output_file ]]

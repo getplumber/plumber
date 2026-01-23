@@ -68,6 +68,7 @@ include:
       stage: test                             # Run in a different stage (default: .pre)
       allow_failure: true                     # Don't block pipeline on failure (default: false)
       gitlab_token: $GITLAB_TOKEN             # Use a PAT instead of CI_JOB_TOKEN (for cross-project access)
+      verbose: true                           # Enable debug output for troubleshooting (default: false)
 ```
 
 ### All Inputs
@@ -85,6 +86,7 @@ include:
 | `stage` | `.pre` | Pipeline stage for the job |
 | `image` | `getplumber/plumber:0.1` | Docker image to use |
 | `allow_failure` | `false` | Allow job to fail without blocking |
+| `verbose` | `false` | Enable debug output for troubleshooting |
 
 ## 💻 Test Locally (CLI)
 
