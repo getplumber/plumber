@@ -161,15 +161,16 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		controlCount++
 	}
 
-	// Calculate average compliance, default to 100 if no controls ran
-	var compliance float64 = 100
+	// Calculate average compliance
+	// If no controls ran (e.g., data collection failed), compliance is 0% - we can't verify anything
+	var compliance float64 = 0
 	if controlCount > 0 {
 		compliance = complianceSum / float64(controlCount)
 	}
 
 	// Print text output to stdout if enabled
 	if printOutput {
-		if err := outputText(result, threshold, compliance); err != nil {
+		if err := outputText(result, threshold, compliance, controlCount); err != nil {
 			return err
 		}
 	}
@@ -235,12 +236,19 @@ type controlSummary struct {
 	skipped    bool
 }
 
-func outputText(result *control.AnalysisResult, threshold, compliance float64) error {
+func outputText(result *control.AnalysisResult, threshold, compliance float64, controlCount int) error {
 	// Collect control summaries for tables
 	var controls []controlSummary
 
 	// Header
 	fmt.Printf("\n%sProject: %s%s\n\n", colorBold, result.ProjectPath, colorReset)
+
+	// Warning if no controls could be evaluated
+	if controlCount == 0 {
+		fmt.Printf("  %s⚠ WARNING: No controls could be evaluated!%s\n", colorRed, colorReset)
+		fmt.Printf("  %sData collection failed - compliance defaults to 0%%.%s\n", colorDim, colorReset)
+		fmt.Printf("  %sCheck the logs above for details (use --verbose for more info).%s\n\n", colorDim, colorReset)
+	}
 
 	// Control 1: Container images must not use forbidden tags
 	if result.ImageForbiddenTagsResult != nil {
