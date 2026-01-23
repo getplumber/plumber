@@ -9,19 +9,19 @@ version: "1.0"
 controls:
 
   # ===========================================
-  # Mutable Image Tag Control
+  # Container images must not use forbidden tags
   # ===========================================
-  # Detects CI/CD jobs using Docker images with mutable tags.
-  # Mutable tags (like 'latest') can point to different images over time,
+  # Detects CI/CD jobs using Docker images with forbidden tags.
+  # Forbidden tags (like 'latest') can point to different images over time,
   # making builds non-reproducible and potentially introducing security risks.
   #
-  # Best practice: Use immutable tags (e.g., specific versions or SHA digests)
-  imageMutable:
+  # Best practice: Use immutable tags (e.g., specific versions or SHA digests) and not forbidden tags
+  containerImageMustNotUseForbiddenTags:
     # Set to false to disable this control
     enabled: true
     
-    # Tags considered "mutable" - images using these will be flagged
-    mutableTags:
+    # Tags considered "forbidden" - images using these will be flagged
+    tags:
       - latest
       - dev
       - development
@@ -36,14 +36,14 @@ controls:
       # - unstable
 
   # ===========================================
-  # Untrusted Image Control
+  # Container images must come from authorized sources
   # ===========================================
   # Detects CI/CD jobs using Docker images from untrusted registries.
   # Only images from explicitly trusted sources should be used in pipelines
   # to prevent supply chain attacks.
   #
   # Best practice: Maintain a list of approved registries and image patterns
-  imageUntrusted:
+  containerImageMustComeFromAuthorizedSources:
     # Set to false to disable this control
     enabled: true
     
@@ -74,14 +74,14 @@ controls:
       # - ghcr.io/your-org/*
 
   # ===========================================
-  # Branch Protection Control
+  # Branch must be protected
   # ===========================================
   # Checks that repository branches have proper protection settings.
   # Ensures critical branches (like main/master) are protected
   # from force pushes and require code reviews.
   #
   # Best practice: Protect default branch and release branches
-  branchProtection:
+  branchMustBeProtected:
     # Set to false to disable this control
     enabled: true
     

@@ -21,9 +21,9 @@ type AnalysisResult struct {
 	PipelineImageMetrics *PipelineImageMetricsSummary `json:"pipelineImageMetrics,omitempty"`
 
 	// Control results
-	ImageMutableResult     *GitlabImageMutableResult     `json:"imageMutableResult,omitempty"`
-	ImageUntrustedResult   *GitlabImageUntrustedResult   `json:"imageUntrustedResult,omitempty"`
-	BranchProtectionResult *GitlabBranchProtectionResult `json:"branchProtectionResult,omitempty"`
+	ImageForbiddenTagsResult     *GitlabImageForbiddenTagsResult     `json:"imageForbiddenTagsResult,omitempty"`
+	ImageAuthorizedSourcesResult *GitlabImageAuthorizedSourcesResult `json:"imageAuthorizedSourcesResult,omitempty"`
+	BranchProtectionResult       *GitlabBranchProtectionResult       `json:"branchProtectionResult,omitempty"`
 }
 
 // PipelineOriginMetricsSummary is a simplified version of origin metrics for output

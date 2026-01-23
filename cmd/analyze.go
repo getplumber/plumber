@@ -146,13 +146,13 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	var complianceSum float64 = 0
 	controlCount := 0
 
-	if result.ImageMutableResult != nil && !result.ImageMutableResult.Skipped {
-		complianceSum += result.ImageMutableResult.Compliance
+	if result.ImageForbiddenTagsResult != nil && !result.ImageForbiddenTagsResult.Skipped {
+		complianceSum += result.ImageForbiddenTagsResult.Compliance
 		controlCount++
 	}
 
-	if result.ImageUntrustedResult != nil && !result.ImageUntrustedResult.Skipped {
-		complianceSum += result.ImageUntrustedResult.Compliance
+	if result.ImageAuthorizedSourcesResult != nil && !result.ImageAuthorizedSourcesResult.Skipped {
+		complianceSum += result.ImageAuthorizedSourcesResult.Compliance
 		controlCount++
 	}
 
@@ -242,74 +242,74 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64) e
 	// Header
 	fmt.Printf("\n%sProject: %s%s\n\n", colorBold, result.ProjectPath, colorReset)
 
-	// Control 1: Mutable Image Tags
-	if result.ImageMutableResult != nil {
+	// Control 1: Container images must not use forbidden tags
+	if result.ImageForbiddenTagsResult != nil {
 		ctrl := controlSummary{
-			name:       "Mutable Image Tags",
-			compliance: result.ImageMutableResult.Compliance,
-			issues:     len(result.ImageMutableResult.Issues),
-			skipped:    result.ImageMutableResult.Skipped,
+			name:       "Container images must not use forbidden tags",
+			compliance: result.ImageForbiddenTagsResult.Compliance,
+			issues:     len(result.ImageForbiddenTagsResult.Issues),
+			skipped:    result.ImageForbiddenTagsResult.Skipped,
 		}
 		controls = append(controls, ctrl)
 
-		printControlHeader("Mutable Image Tags", result.ImageMutableResult.Compliance, result.ImageMutableResult.Skipped)
+		printControlHeader("Container images must not use forbidden tags", result.ImageForbiddenTagsResult.Compliance, result.ImageForbiddenTagsResult.Skipped)
 
-		if result.ImageMutableResult.Skipped {
+		if result.ImageForbiddenTagsResult.Skipped {
 			fmt.Printf("  %sStatus: SKIPPED (disabled in configuration)%s\n", colorDim, colorReset)
 		} else {
-			fmt.Printf("  Total Images: %d\n", result.ImageMutableResult.Metrics.Total)
-			fmt.Printf("  Using Mutable Tags: %d\n", result.ImageMutableResult.Metrics.UsingMutableTag)
+			fmt.Printf("  Total Images: %d\n", result.ImageForbiddenTagsResult.Metrics.Total)
+			fmt.Printf("  Using Forbidden Tags: %d\n", result.ImageForbiddenTagsResult.Metrics.UsingForbiddenTags)
 
-			if len(result.ImageMutableResult.Issues) > 0 {
-				fmt.Printf("\n  %sMutable Tags Found:%s\n", colorYellow, colorReset)
-				for _, issue := range result.ImageMutableResult.Issues {
-					fmt.Printf("    %s•%s Job '%s' uses mutable tag '%s' (image: %s)\n", colorYellow, colorReset, issue.Job, issue.Tag, issue.Link)
+			if len(result.ImageForbiddenTagsResult.Issues) > 0 {
+				fmt.Printf("\n  %sForbidden Tags Found:%s\n", colorYellow, colorReset)
+				for _, issue := range result.ImageForbiddenTagsResult.Issues {
+					fmt.Printf("    %s•%s Job '%s' uses forbidden tag '%s' (image: %s)\n", colorYellow, colorReset, issue.Job, issue.Tag, issue.Link)
 				}
 			}
 		}
 		fmt.Println()
 	}
 
-	// Control 2: Untrusted Image Sources
-	if result.ImageUntrustedResult != nil {
+	// Control 2: Container images must come from authorized sources
+	if result.ImageAuthorizedSourcesResult != nil {
 		ctrl := controlSummary{
-			name:       "Untrusted Image Sources",
-			compliance: result.ImageUntrustedResult.Compliance,
-			issues:     len(result.ImageUntrustedResult.Issues),
-			skipped:    result.ImageUntrustedResult.Skipped,
+			name:       "Container images must come from authorized sources",
+			compliance: result.ImageAuthorizedSourcesResult.Compliance,
+			issues:     len(result.ImageAuthorizedSourcesResult.Issues),
+			skipped:    result.ImageAuthorizedSourcesResult.Skipped,
 		}
 		controls = append(controls, ctrl)
 
-		printControlHeader("Untrusted Image Sources", result.ImageUntrustedResult.Compliance, result.ImageUntrustedResult.Skipped)
+		printControlHeader("Container images must come from authorized sources", result.ImageAuthorizedSourcesResult.Compliance, result.ImageAuthorizedSourcesResult.Skipped)
 
-		if result.ImageUntrustedResult.Skipped {
+		if result.ImageAuthorizedSourcesResult.Skipped {
 			fmt.Printf("  %sStatus: SKIPPED (disabled in configuration)%s\n", colorDim, colorReset)
 		} else {
-			fmt.Printf("  Total Images: %d\n", result.ImageUntrustedResult.Metrics.Total)
-			fmt.Printf("  Trusted: %d\n", result.ImageUntrustedResult.Metrics.Trusted)
-			fmt.Printf("  Untrusted: %d\n", result.ImageUntrustedResult.Metrics.Untrusted)
+			fmt.Printf("  Total Images: %d\n", result.ImageAuthorizedSourcesResult.Metrics.Total)
+			fmt.Printf("  Authorized: %d\n", result.ImageAuthorizedSourcesResult.Metrics.Authorized)
+			fmt.Printf("  Unauthorized: %d\n", result.ImageAuthorizedSourcesResult.Metrics.Unauthorized)
 
-			if len(result.ImageUntrustedResult.Issues) > 0 {
-				fmt.Printf("\n  %sUntrusted Images Found:%s\n", colorYellow, colorReset)
-				for _, issue := range result.ImageUntrustedResult.Issues {
-					fmt.Printf("    %s•%s Job '%s' uses untrusted image: %s\n", colorYellow, colorReset, issue.Job, issue.Link)
+			if len(result.ImageAuthorizedSourcesResult.Issues) > 0 {
+				fmt.Printf("\n  %sUnauthorized Images Found:%s\n", colorYellow, colorReset)
+				for _, issue := range result.ImageAuthorizedSourcesResult.Issues {
+					fmt.Printf("    %s•%s Job '%s' uses unauthorized image: %s\n", colorYellow, colorReset, issue.Job, issue.Link)
 				}
 			}
 		}
 		fmt.Println()
 	}
 
-	// Control 3: Branch Protection
+	// Control 3: Branch must be protected
 	if result.BranchProtectionResult != nil {
 		ctrl := controlSummary{
-			name:       "Branch Protection",
+			name:       "Branch must be protected",
 			compliance: result.BranchProtectionResult.Compliance,
 			issues:     len(result.BranchProtectionResult.Issues),
 			skipped:    result.BranchProtectionResult.Skipped,
 		}
 		controls = append(controls, ctrl)
 
-		printControlHeader("Branch Protection", result.BranchProtectionResult.Compliance, result.BranchProtectionResult.Skipped)
+		printControlHeader("Branch must be protected", result.BranchProtectionResult.Compliance, result.BranchProtectionResult.Skipped)
 
 		if result.BranchProtectionResult.Skipped {
 			fmt.Printf("  %sStatus: SKIPPED (disabled in configuration)%s\n", colorDim, colorReset)
@@ -399,7 +399,7 @@ func printIssuesTable(controls []controlSummary) {
 	fmt.Printf("  %sIssues%s\n", colorBold, colorReset)
 
 	// Calculate column widths
-	controlWidth := 30
+	controlWidth := 52
 	issuesWidth := 10
 
 	// Top border
@@ -458,7 +458,7 @@ func printComplianceTable(controls []controlSummary, overallCompliance, threshol
 	fmt.Printf("  %sCompliance%s\n", colorBold, colorReset)
 
 	// Calculate column widths
-	controlWidth := 30
+	controlWidth := 52
 	complianceWidth := 12
 	statusWidth := 10
 

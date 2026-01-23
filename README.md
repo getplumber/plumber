@@ -6,29 +6,32 @@ Find compliance issues in your GitLab repositories and their CI/CD pipelines.
 
 Plumber scans your GitLab CI/CD configuration and run following controls:
 
-- 🏷️ **Mutable image tags** — Flags `latest`, `dev`, and other non-reproducible tags for container images used in CI/CD pipelines
-- 🔒 **Untrusted image registries** — Ensures container images used in your CI/CD pipelines come from approved sources
-- 🛡️ **Branch protection compliance** — Verifies that repository branches are properly protected
+- 🏷️ **Authorized image tags** — Flags `latest`, `dev`, and other non-reproducible tags for container images used in CI/CD pipelines
+- 🔒 **Authorized image sources** — Ensures container images used in your CI/CD pipelines come from approved sources
+- 🛡️ **Branch protection** — Verifies that repository branches are properly protected
 - Other controls will come
 
 ## 🚀 Quick Start (GitLab CI)
 
-**1. Add your token**
-
-Go to **Settings → CI/CD → Variables** and add:
-- Name: `GITLAB_TOKEN`
-- Scopes: `read_api`, `read_repository`
-
-**2. Add to `.gitlab-ci.yml`**
+Add to your `.gitlab-ci.yml`:
 
 ```yaml
 include:
   - component: gitlab.com/getplumber/plumber/plumber@~latest
 ```
 
-✅ That's it! Plumber runs on MRs, main branch, and tags.
+✅ **That's it!** No token setup required — Plumber uses `CI_JOB_TOKEN` by default.
 
 > 💡 Everything is customizable — GitLab URL, branch, threshold, and more. See [Customize](#️-customize) below.
+
+### 🔑 Token Options
+
+| Token | Setup | Use Case |
+|-------|-------|----------|
+| `CI_JOB_TOKEN` (default) | None required | Works for most use cases |
+| `GITLAB_TOKEN` (PAT) | Add to CI/CD Variables | Cross-project access, additional API permissions |
+
+To use a PAT instead: add `GITLAB_TOKEN` to **Settings → CI/CD → Variables** with `read_api` + `read_repository` scopes.
 
 ### ⚠️ Self-Hosted GitLab
 
@@ -64,7 +67,7 @@ include:
       # Job behavior
       stage: test                             # Run in a different stage (default: .pre)
       allow_failure: true                     # Don't block pipeline on failure (default: false)
-      gitlab_token: $MY_CUSTOM_TOKEN          # Use a different token variable (default: $GITLAB_TOKEN) WIP to make it use $CI_JOB_TOKEN
+      gitlab_token: $GITLAB_TOKEN             # Use a PAT instead of CI_JOB_TOKEN (for cross-project access)
 ```
 
 ### All Inputs
@@ -74,10 +77,10 @@ include:
 | `server_url` | `$CI_SERVER_URL` | GitLab instance URL |
 | `project_path` | `$CI_PROJECT_PATH` | Project to analyze |
 | `branch` | `$CI_COMMIT_REF_NAME` | Branch to analyze |
-| `gitlab_token` | `$GITLAB_TOKEN` | CI/CD variable with the API token |
+| `gitlab_token` | `$CI_JOB_TOKEN` | GitLab API token (CI_JOB_TOKEN works for most use cases) |
 | `threshold` | `100` | Minimum compliance % to pass |
 | `config_file` | `/.plumber.yaml` | Path to configuration file |
-| `output_file` | `""` | Path to write JSON results |
+| `output_file` | `plumber-report.json` | Path to write JSON results |
 | `print_output` | `true` | Print text output to stdout |
 | `stage` | `.pre` | Pipeline stage for the job |
 | `image` | `getplumber/plumber:0.1` | Docker image to use |
@@ -181,26 +184,26 @@ export GITLAB_TOKEN=glpat-xxxx
 Project: mygroup/myproject
 
 ──────────────────────────────────────────────────
-Mutable Image Tags (100.0% compliant)
+Container images must not use forbidden tags (100.0% compliant)
 ──────────────────────────────────────────────────
   Total Images: 10
-  Using Mutable Tags: 0
+  Using Forbidden Tags: 0
 
 ──────────────────────────────────────────────────
-Untrusted Image Sources (0.0% compliant)
+Container images must come from authorized sources (0.0% compliant)
 ──────────────────────────────────────────────────
   Total Images: 10
-  Trusted: 6
-  Untrusted: 4
+  Authorized: 6
+  Unauthorized: 4
 
-  Untrusted Images Found:
-    • Job 'sls_scan' uses untrusted image: docker.io/shiftleft/sast-scan:v1.15.1
-    • Job 'gitleaks' uses untrusted image: docker.io/zricethezav/gitleaks:v8.15.0
-    • Job 'golint' uses untrusted image: docker.io/docker/golangci-lint:2.5.0-go1.25.3
-    • Job 'tag-production-image' uses untrusted image: gcr.io/go-containerregistry/crane:debug
+  Unauthorized Images Found:
+    • Job 'sls_scan' uses unauthorized image: docker.io/shiftleft/sast-scan:v1.15.1
+    • Job 'gitleaks' uses unauthorized image: docker.io/zricethezav/gitleaks:v8.15.0
+    • Job 'golint' uses unauthorized image: docker.io/docker/golangci-lint:2.5.0-go1.25.3
+    • Job 'tag-production-image' uses unauthorized image: gcr.io/go-containerregistry/crane:debug
 
 ──────────────────────────────────────────────────
-Branch Protection (100.0% compliant)
+Branch must be protected (100.0% compliant)
 ──────────────────────────────────────────────────
   Total Branches: 8
   Branches to Protect: 1
@@ -215,24 +218,24 @@ Summary
   Status: FAILED ✗
 
   Issues
-  ╔══════════════════════════════╤══════════╗
-  ║ Control                      │   Issues ║
-  ╟──────────────────────────────┼──────────╢
-  ║ Mutable Image Tags           │        0 ║
-  ║ Untrusted Image Sources      │        4 ║
-  ║ Branch Protection            │        0 ║
-  ╚══════════════════════════════╧══════════╝
+  ╔════════════════════════════════════════════════════╤══════════╗
+  ║ Control                                            │   Issues ║
+  ╟────────────────────────────────────────────────────┼──────────╢
+  ║ Container images must not use forbidden tags       │        0 ║
+  ║ Container images must come from authorized sources │        4 ║
+  ║ Branch must be protected                           │        0 ║
+  ╚════════════════════════════════════════════════════╧══════════╝
 
   Compliance
-  ╔══════════════════════════════╤════════════╤══════════╗
-  ║ Control                      │ Compliance │   Status ║
-  ╟──────────────────────────────┼────────────┼──────────╢
-  ║ Mutable Image Tags           │     100.0% │        ✓ ║
-  ║ Untrusted Image Sources      │       0.0% │        ✗ ║
-  ║ Branch Protection            │     100.0% │        ✓ ║
-  ╟──────────────────────────────┼────────────┼──────────╢
-  ║ Total (required: 100%)       │      66.7% │        ✗ ║
-  ╚══════════════════════════════╧════════════╧══════════╝
+  ╔════════════════════════════════════════════════════╤════════════╤══════════╗
+  ║ Control                                            │ Compliance │   Status ║
+  ╟────────────────────────────────────────────────────┼────────────┼──────────╢
+  ║ Container images must not use forbidden tags       │     100.0% │        ✓ ║
+  ║ Container images must come from authorized sources │       0.0% │        ✗ ║
+  ║ Branch must be protected                           │     100.0% │        ✓ ║
+  ╟────────────────────────────────────────────────────┼────────────┼──────────╢
+  ║ Total (required: 100%)                             │      66.7% │        ✗ ║
+  ╚════════════════════════════════════════════════════╧════════════╧══════════╝
 ```
 
 > 💡 **JSON Output:** When using `--output`, results are saved as JSON. See [`output-example.json`](output-example.json) for the full structure.

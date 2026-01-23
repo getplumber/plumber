@@ -1,10 +1,11 @@
 spec:
   inputs:
     # Authentication
-    # The token variable must be set as a CI/CD variable in your project settings
+    # Uses CI_JOB_TOKEN by default (no setup required!)
+    # For additional permissions (e.g., cross-project access), set GITLAB_TOKEN as a CI/CD variable
     gitlab_token:
-      description: "CI/CD variable name containing the GitLab API token"
-      default: $GITLAB_TOKEN
+      description: "GitLab API token (CI_JOB_TOKEN works for most use cases)"
+      default: $CI_JOB_TOKEN
     
     # Project configuration
     # These can be overridden but default to GitLab CI predefined variables

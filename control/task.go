@@ -32,8 +32,8 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 		// Cannot fetch project - compliance is 0
 		result.CiValid = false
 		result.CiMissing = true
-		result.ImageMutableResult = &GitlabImageMutableResult{
-			Version:    ControlTypeGitlabImageMutableVersion,
+		result.ImageForbiddenTagsResult = &GitlabImageForbiddenTagsResult{
+			Version:    ControlTypeGitlabImageForbiddenTagsVersion,
 			Compliance: 0,
 			Error:      err.Error(),
 		}
@@ -75,8 +75,8 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 		// Data collection failed - compliance is 0, cannot continue to controls
 		result.CiValid = false
 		result.CiMissing = true
-		result.ImageMutableResult = &GitlabImageMutableResult{
-			Version:    ControlTypeGitlabImageMutableVersion,
+		result.ImageForbiddenTagsResult = &GitlabImageForbiddenTagsResult{
+			Version:    ControlTypeGitlabImageForbiddenTagsVersion,
 			Compliance: 0,
 			Error:      err.Error(),
 		}
@@ -115,8 +115,8 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	if err != nil {
 		l.WithError(err).Error("Pipeline Image data collection failed")
 		// Data collection failed - compliance is 0, cannot continue to controls
-		result.ImageMutableResult = &GitlabImageMutableResult{
-			Version:    ControlTypeGitlabImageMutableVersion,
+		result.ImageForbiddenTagsResult = &GitlabImageForbiddenTagsResult{
+			Version:    ControlTypeGitlabImageForbiddenTagsVersion,
 			Compliance: 0,
 			Error:      err.Error(),
 		}
@@ -134,35 +134,35 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	// Run Controls
 	///////////////////
 
-	// 3. Run Mutable Image Tag control
-	l.Info("Running Mutable Image Tag control")
+	// 3. Run Forbidden Image Tags control
+	l.Info("Running Forbidden Image Tags control")
 
 	// Load control configuration from PlumberConfig (required)
-	mutableConf := &GitlabImageMutableConf{}
-	if err := mutableConf.GetConf(conf.PlumberConfig); err != nil {
-		l.WithError(err).Error("Failed to load ImageMutable config from .plumber.yaml file")
+	forbiddenTagsConf := &GitlabImageForbiddenTagsConf{}
+	if err := forbiddenTagsConf.GetConf(conf.PlumberConfig); err != nil {
+		l.WithError(err).Error("Failed to load ImageForbiddenTags config from .plumber.yaml file")
 		return result, fmt.Errorf("invalid configuration: %w", err)
 	}
 
-	mutableResult := mutableConf.Run(pipelineImageData)
-	result.ImageMutableResult = mutableResult
+	forbiddenTagsResult := forbiddenTagsConf.Run(pipelineImageData)
+	result.ImageForbiddenTagsResult = forbiddenTagsResult
 
-	// 4. Run Untrusted Image control
-	l.Info("Running Untrusted Image control")
+	// 4. Run Image Authorized Sources control
+	l.Info("Running Image Authorized Sources control")
 
-	untrustedConf := &GitlabImageUntrustedConf{}
-	if err := untrustedConf.GetConf(conf.PlumberConfig); err != nil {
-		l.WithError(err).Error("Failed to load ImageUntrusted config from .plumber.yaml file")
+	authorizedSourcesConf := &GitlabImageAuthorizedSourcesConf{}
+	if err := authorizedSourcesConf.GetConf(conf.PlumberConfig); err != nil {
+		l.WithError(err).Error("Failed to load ImageAuthorizedSources config from .plumber.yaml file")
 		return result, fmt.Errorf("invalid configuration: %w", err)
 	}
 
-	untrustedResult := untrustedConf.Run(pipelineImageData)
-	result.ImageUntrustedResult = untrustedResult
+	authorizedSourcesResult := authorizedSourcesConf.Run(pipelineImageData)
+	result.ImageAuthorizedSourcesResult = authorizedSourcesResult
 
-	// 5. Run Branch Protection control (if enabled)
-	branchProtectionConfig := conf.PlumberConfig.GetBranchProtectionConfig()
+	// 5. Run Branch Must Be Protected control (if enabled)
+	branchProtectionConfig := conf.PlumberConfig.GetBranchMustBeProtectedConfig()
 	if branchProtectionConfig != nil && branchProtectionConfig.IsEnabled() {
-		l.Info("Running Branch Protection control")
+		l.Info("Running Branch Must Be Protected control")
 
 		// Run Protection data collection first
 		protectionDC := &collector.GitlabProtectionDataCollection{}
@@ -183,7 +183,7 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 			result.BranchProtectionResult = branchProtectionResult
 		}
 	} else {
-		l.Debug("Branch Protection control is disabled or not configured")
+		l.Debug("Branch Must Be Protected control is disabled or not configured")
 	}
 
 	l.WithFields(logrus.Fields{

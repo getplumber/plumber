@@ -20,27 +20,27 @@ type PlumberConfig struct {
 
 // ControlsConfig holds configuration for all controls
 type ControlsConfig struct {
-	// ImageMutable control configuration
-	ImageMutable *ImageMutableControlConfig `yaml:"imageMutable,omitempty"`
+	// ContainerImageMustNotUseForbiddenTags control configuration
+	ContainerImageMustNotUseForbiddenTags *ImageForbiddenTagsControlConfig `yaml:"containerImageMustNotUseForbiddenTags,omitempty"`
 
-	// ImageUntrusted control configuration
-	ImageUntrusted *ImageUntrustedControlConfig `yaml:"imageUntrusted,omitempty"`
+	// ContainerImageMustComeFromAuthorizedSources control configuration
+	ContainerImageMustComeFromAuthorizedSources *ImageAuthorizedSourcesControlConfig `yaml:"containerImageMustComeFromAuthorizedSources,omitempty"`
 
-	// BranchProtection control configuration
-	BranchProtection *BranchProtectionControlConfig `yaml:"branchProtection,omitempty"`
+	// BranchMustBeProtected control configuration
+	BranchMustBeProtected *BranchProtectionControlConfig `yaml:"branchMustBeProtected,omitempty"`
 }
 
-// ImageMutableControlConfig configuration for the mutable image tag control
-type ImageMutableControlConfig struct {
+// ImageForbiddenTagsControlConfig configuration for the forbidden image tags control
+type ImageForbiddenTagsControlConfig struct {
 	// Enabled controls whether this check runs
 	Enabled *bool `yaml:"enabled,omitempty"`
 
-	// MutableTags is a list of tags considered mutable
-	MutableTags []string `yaml:"mutableTags,omitempty"`
+	// Tags is a list of forbidden tags (e.g., latest, dev)
+	Tags []string `yaml:"tags,omitempty"`
 }
 
-// ImageUntrustedControlConfig configuration for the untrusted image control
-type ImageUntrustedControlConfig struct {
+// ImageAuthorizedSourcesControlConfig configuration for the authorized image sources control
+type ImageAuthorizedSourcesControlConfig struct {
 	// Enabled controls whether this check runs
 	Enabled *bool `yaml:"enabled,omitempty"`
 
@@ -134,27 +134,27 @@ func LoadPlumberConfig(configPath string) (*PlumberConfig, string, error) {
 	return config, configPath, nil
 }
 
-// GetImageMutableConfig returns the ImageMutable control configuration
+// GetContainerImageMustNotUseForbiddenTagsConfig returns the control configuration
 // Returns nil if not configured
-func (c *PlumberConfig) GetImageMutableConfig() *ImageMutableControlConfig {
+func (c *PlumberConfig) GetContainerImageMustNotUseForbiddenTagsConfig() *ImageForbiddenTagsControlConfig {
 	if c == nil {
 		return nil
 	}
-	return c.Controls.ImageMutable
+	return c.Controls.ContainerImageMustNotUseForbiddenTags
 }
 
-// GetImageUntrustedConfig returns the ImageUntrusted control configuration
+// GetContainerImageMustComeFromAuthorizedSourcesConfig returns the control configuration
 // Returns nil if not configured
-func (c *PlumberConfig) GetImageUntrustedConfig() *ImageUntrustedControlConfig {
+func (c *PlumberConfig) GetContainerImageMustComeFromAuthorizedSourcesConfig() *ImageAuthorizedSourcesControlConfig {
 	if c == nil {
 		return nil
 	}
-	return c.Controls.ImageUntrusted
+	return c.Controls.ContainerImageMustComeFromAuthorizedSources
 }
 
 // IsEnabled returns whether the control is enabled
 // Returns false if not properly configured
-func (c *ImageMutableControlConfig) IsEnabled() bool {
+func (c *ImageForbiddenTagsControlConfig) IsEnabled() bool {
 	if c == nil || c.Enabled == nil {
 		return false
 	}
@@ -163,20 +163,20 @@ func (c *ImageMutableControlConfig) IsEnabled() bool {
 
 // IsEnabled returns whether the control is enabled
 // Returns false if not properly configured
-func (c *ImageUntrustedControlConfig) IsEnabled() bool {
+func (c *ImageAuthorizedSourcesControlConfig) IsEnabled() bool {
 	if c == nil || c.Enabled == nil {
 		return false
 	}
 	return *c.Enabled
 }
 
-// GetBranchProtectionConfig returns the BranchProtection control configuration
+// GetBranchMustBeProtectedConfig returns the control configuration
 // Returns nil if not configured
-func (c *PlumberConfig) GetBranchProtectionConfig() *BranchProtectionControlConfig {
+func (c *PlumberConfig) GetBranchMustBeProtectedConfig() *BranchProtectionControlConfig {
 	if c == nil {
 		return nil
 	}
-	return c.Controls.BranchProtection
+	return c.Controls.BranchMustBeProtected
 }
 
 // IsEnabled returns whether the control is enabled

@@ -3,6 +3,7 @@ package gitlab
 import (
 	"errors"
 	"fmt"
+	"os"
 	"regexp"
 	"strconv"
 	"strings"
@@ -281,6 +282,47 @@ func ReplaceVariable(input string, project, group, instance, job, defaultJob, pr
 	for current != previous && level < maxLevels {
 		previous = current
 		current = resolveVariables(previous)
+		level++
+	}
+
+	return current
+}
+
+// IsRunningInCI checks if the code is running inside a GitLab CI environment
+// by checking if the CI environment variable is set to "true"
+func IsRunningInCI() bool {
+	ciEnv := os.Getenv("CI")
+	return strings.ToLower(ciEnv) == "true"
+}
+
+// ReplaceVariableFromEnv replaces variables in the input string using environment variables
+// This is used when running in CI mode where all variables are available in the environment
+func ReplaceVariableFromEnv(input string) string {
+	regex := `(\$[a-zA-Z_][a-zA-Z0-9_]*|\${[a-zA-Z_][a-zA-Z0-9_]*}|%[a-zA-Z_][a-zA-Z0-9_]*%)`
+	r := regexp.MustCompile(regex)
+
+	resolveFromEnv := func(input string) string {
+		return r.ReplaceAllStringFunc(input, func(match string) string {
+			varName := regexp.MustCompile(`[\$\{\}%]`).ReplaceAllString(match, "")
+
+			if val := os.Getenv(varName); val != "" {
+				return val
+			}
+
+			// Variable not found in environment, keep it as-is
+			return match
+		})
+	}
+
+	// Resolve recursively up to 5 levels (for nested variables)
+	maxLevels := 5
+	previous := ""
+	current := input
+	level := 0
+
+	for current != previous && level < maxLevels {
+		previous = current
+		current = resolveFromEnv(previous)
 		level++
 	}
 

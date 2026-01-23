@@ -11,22 +11,22 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-const ControlTypeGitlabImageUntrustedVersion = "0.1.0"
+const ControlTypeGitlabImageAuthorizedSourcesVersion = "0.1.0"
 
 // Constants for image registry and trust status
 const (
-	dockerHubDomain     = "docker.io"
-	unknownRegistry     = "unknown"
-	trustedSourceType   = "trusted"
-	untrustedSourceType = "untrusted"
+	dockerHubDomain    = "docker.io"
+	unknownRegistry    = "unknown"
+	authorizedStatus   = "authorized"
+	unauthorizedStatus = "unauthorized"
 )
 
-// GitlabImageUntrustedConf holds the configuration for untrusted image detection
-type GitlabImageUntrustedConf struct {
+// GitlabImageAuthorizedSourcesConf holds the configuration for image source authorization
+type GitlabImageAuthorizedSourcesConf struct {
 	// Enabled controls whether this check runs
 	Enabled bool `json:"enabled"`
 
-	// TrustedUrls is a list of trusted registry URLs/patterns
+	// TrustedUrls is a list of authorized registry URLs/patterns
 	TrustedUrls []string `json:"trustedUrls"`
 
 	// TrustDockerHubOfficialImages trusts official Docker Hub images (e.g., nginx, alpine)
@@ -35,21 +35,21 @@ type GitlabImageUntrustedConf struct {
 
 // GetConf loads configuration from PlumberConfig
 // Returns error if config is missing or incomplete
-func (p *GitlabImageUntrustedConf) GetConf(plumberConfig *configuration.PlumberConfig) error {
+func (p *GitlabImageAuthorizedSourcesConf) GetConf(plumberConfig *configuration.PlumberConfig) error {
 	// Plumber config is required
 	if plumberConfig == nil {
 		return fmt.Errorf("Plumber config is required but not provided")
 	}
 
-	// Get ImageUntrusted config from PlumberConfig
-	imgConfig := plumberConfig.GetImageUntrustedConfig()
+	// Get control config from PlumberConfig
+	imgConfig := plumberConfig.GetContainerImageMustComeFromAuthorizedSourcesConfig()
 	if imgConfig == nil {
-		return fmt.Errorf("imageUntrusted control configuration is missing from .plumber.yaml config file")
+		return fmt.Errorf("containerImageMustComeFromAuthorizedSources control configuration is missing from .plumber.yaml config file")
 	}
 
 	// Check if enabled field is set
 	if imgConfig.Enabled == nil {
-		return fmt.Errorf("imageUntrusted.enabled field is required in .plumber.yaml config file")
+		return fmt.Errorf("containerImageMustComeFromAuthorizedSources.enabled field is required in .plumber.yaml config file")
 	}
 
 	// Apply configuration
@@ -63,38 +63,38 @@ func (p *GitlabImageUntrustedConf) GetConf(plumberConfig *configuration.PlumberC
 		"enabled":                      p.Enabled,
 		"trustedUrls":                  p.TrustedUrls,
 		"trustDockerHubOfficialImages": p.TrustDockerHubOfficialImages,
-	}).Debug("ImageUntrusted control configuration loaded from .plumber.yaml file")
+	}).Debug("containerImageMustComeFromAuthorizedSources control configuration loaded from .plumber.yaml file")
 
 	return nil
 }
 
-// GitlabImageUntrustedMetrics holds metrics about untrusted images
-type GitlabImageUntrustedMetrics struct {
-	Total     uint `json:"total"`
-	Trusted   uint `json:"trusted"`
-	Untrusted uint `json:"untrusted"`
-	CiInvalid uint `json:"ciInvalid"`
-	CiMissing uint `json:"ciMissing"`
+// GitlabImageAuthorizedSourcesMetrics holds metrics about image source authorization
+type GitlabImageAuthorizedSourcesMetrics struct {
+	Total        uint `json:"total"`
+	Authorized   uint `json:"authorized"`
+	Unauthorized uint `json:"unauthorized"`
+	CiInvalid    uint `json:"ciInvalid"`
+	CiMissing    uint `json:"ciMissing"`
 }
 
-// GitlabImageUntrustedResult holds the result of the untrusted image control
-type GitlabImageUntrustedResult struct {
-	Issues     []GitlabPipelineImageIssueUntrusted `json:"issues"`
-	Metrics    GitlabImageUntrustedMetrics         `json:"metrics"`
-	Compliance float64                             `json:"compliance"`
-	Version    string                              `json:"version"`
-	CiValid    bool                                `json:"ciValid"`
-	CiMissing  bool                                `json:"ciMissing"`
-	Skipped    bool                                `json:"skipped"`         // True if control was disabled
-	Error      string                              `json:"error,omitempty"` // Error message if data collection failed
+// GitlabImageAuthorizedSourcesResult holds the result of the image authorized sources control
+type GitlabImageAuthorizedSourcesResult struct {
+	Issues     []GitlabPipelineImageIssueUnauthorized `json:"issues"`
+	Metrics    GitlabImageAuthorizedSourcesMetrics    `json:"metrics"`
+	Compliance float64                                `json:"compliance"`
+	Version    string                                 `json:"version"`
+	CiValid    bool                                   `json:"ciValid"`
+	CiMissing  bool                                   `json:"ciMissing"`
+	Skipped    bool                                   `json:"skipped"`         // True if control was disabled
+	Error      string                                 `json:"error,omitempty"` // Error message if data collection failed
 }
 
 ////////////////////
 // Control issues //
 ////////////////////
 
-// GitlabPipelineImageIssueUntrusted represents an issue with an untrusted image
-type GitlabPipelineImageIssueUntrusted struct {
+// GitlabPipelineImageIssueUnauthorized represents an issue with an unauthorized image source
+type GitlabPipelineImageIssueUnauthorized struct {
 	Link   string `json:"link"`
 	Status string `json:"status"`
 	Job    string `json:"job"`
@@ -104,8 +104,8 @@ type GitlabPipelineImageIssueUntrusted struct {
 // Control functions //
 ///////////////////////
 
-// checkImageTrustStatus checks if an image is from a trusted source
-func checkImageTrustStatus(image *collector.GitlabPipelineImageInfo, trustedUrls []string, trustDockerHubOfficialImages bool) string {
+// checkImageAuthorizationStatus checks if an image is from an authorized source
+func checkImageAuthorizationStatus(image *collector.GitlabPipelineImageInfo, trustedUrls []string, trustDockerHubOfficialImages bool) string {
 	// Check if Docker Hub options are enabled
 	isDockerHubOfficial := false
 	if trustDockerHubOfficialImages && image.Registry == dockerHubDomain {
@@ -116,12 +116,12 @@ func checkImageTrustStatus(image *collector.GitlabPipelineImageInfo, trustedUrls
 		}
 	}
 
-	// If no trusted urls in the conf and Docker Hub options don't apply: image status is untrusted
+	// If no trusted urls in the conf and Docker Hub options don't apply: image is unauthorized
 	if len(trustedUrls) == 0 && !isDockerHubOfficial {
-		return untrustedSourceType
+		return unauthorizedStatus
 	}
 
-	// Check if the image url is trusted
+	// Check if the image url is authorized
 	imageUrl := ""
 	if image.Registry == unknownRegistry {
 		imageUrl = image.Name
@@ -136,7 +136,7 @@ func checkImageTrustStatus(image *collector.GitlabPipelineImageInfo, trustedUrls
 
 	imageUrlSanitized := strings.Trim(imageUrl, "/")
 	if imageUrlSanitized == "" {
-		return untrustedSourceType
+		return unauthorizedStatus
 	}
 
 	l.WithFields(logrus.Fields{
@@ -145,7 +145,7 @@ func checkImageTrustStatus(image *collector.GitlabPipelineImageInfo, trustedUrls
 		"tag":               image.Tag,
 		"registry":          image.Registry,
 		"link":              image.Link,
-	}).Debug("Checking trust status of image")
+	}).Debug("Checking authorization status of image")
 
 	// Normalize variable notations in both the image URL and the trusted URL patterns
 	normalizeVarNotation := func(s string) string {
@@ -158,33 +158,33 @@ func checkImageTrustStatus(image *collector.GitlabPipelineImageInfo, trustedUrls
 		trustedNormalized = append(trustedNormalized, normalizeVarNotation(p))
 	}
 
-	// Check if the image is in the trusted URLs list
+	// Check if the image is in the authorized URLs list
 	if gitlab.CheckItemMatchToPatterns(imageUrlNormalized, trustedNormalized) {
-		return trustedSourceType
+		return authorizedStatus
 	}
 
-	// If the image is a Docker Hub official image, mark it as trusted
+	// If the image is a Docker Hub official image, mark it as authorized
 	if isDockerHubOfficial {
-		l.WithField("image", image.Name).Debug("Docker Hub official image considered trusted")
-		return trustedSourceType
+		l.WithField("image", image.Name).Debug("Docker Hub official image considered authorized")
+		return authorizedStatus
 	}
 
-	return untrustedSourceType
+	return unauthorizedStatus
 }
 
-// Run executes the untrusted image detection control
-func (p *GitlabImageUntrustedConf) Run(pipelineImageData *collector.GitlabPipelineImageData) *GitlabImageUntrustedResult {
+// Run executes the image authorized sources control
+func (p *GitlabImageAuthorizedSourcesConf) Run(pipelineImageData *collector.GitlabPipelineImageData) *GitlabImageAuthorizedSourcesResult {
 	l := l.WithFields(logrus.Fields{
-		"control":        "GitlabImageUntrusted",
-		"controlVersion": ControlTypeGitlabImageUntrustedVersion,
+		"control":        "GitlabImageAuthorizedSources",
+		"controlVersion": ControlTypeGitlabImageAuthorizedSourcesVersion,
 	})
-	l.Info("Start untrusted image control")
+	l.Info("Start image authorized sources control")
 
-	result := &GitlabImageUntrustedResult{
-		Issues:     []GitlabPipelineImageIssueUntrusted{},
-		Metrics:    GitlabImageUntrustedMetrics{},
+	result := &GitlabImageAuthorizedSourcesResult{
+		Issues:     []GitlabPipelineImageIssueUnauthorized{},
+		Metrics:    GitlabImageAuthorizedSourcesMetrics{},
 		Compliance: 100.0,
-		Version:    ControlTypeGitlabImageUntrustedVersion,
+		Version:    ControlTypeGitlabImageAuthorizedSourcesVersion,
 		CiValid:    pipelineImageData.CiValid,
 		CiMissing:  pipelineImageData.CiMissing,
 		Skipped:    false,
@@ -192,7 +192,7 @@ func (p *GitlabImageUntrustedConf) Run(pipelineImageData *collector.GitlabPipeli
 
 	// Check if control is enabled
 	if !p.Enabled {
-		l.Info("Untrusted image control is disabled, skipping")
+		l.Info("Image authorized sources control is disabled, skipping")
 		result.Skipped = true
 		return result
 	}
@@ -209,18 +209,18 @@ func (p *GitlabImageUntrustedConf) Run(pipelineImageData *collector.GitlabPipeli
 		return result
 	}
 
-	// Loop over all images to check trust status
+	// Loop over all images to check authorization status
 	for _, image := range pipelineImageData.Images {
-		status := checkImageTrustStatus(&image, p.TrustedUrls, p.TrustDockerHubOfficialImages)
+		status := checkImageAuthorizationStatus(&image, p.TrustedUrls, p.TrustDockerHubOfficialImages)
 
 		// Update metrics
 		switch status {
-		case trustedSourceType:
-			result.Metrics.Trusted++
-		case untrustedSourceType:
-			result.Metrics.Untrusted++
-			// Add issue for untrusted images
-			issue := GitlabPipelineImageIssueUntrusted{
+		case authorizedStatus:
+			result.Metrics.Authorized++
+		case unauthorizedStatus:
+			result.Metrics.Unauthorized++
+			// Add issue for unauthorized images
+			issue := GitlabPipelineImageIssueUnauthorized{
 				Link:   image.Link,
 				Status: status,
 				Job:    image.Job,
@@ -232,18 +232,18 @@ func (p *GitlabImageUntrustedConf) Run(pipelineImageData *collector.GitlabPipeli
 	// Calculate compliance based on issues
 	if len(result.Issues) > 0 {
 		result.Compliance = 0.0
-		l.WithField("issuesCount", len(result.Issues)).Debug("Found untrusted images, setting compliance to 0")
+		l.WithField("issuesCount", len(result.Issues)).Debug("Found unauthorized images, setting compliance to 0")
 	}
 
 	// Set total metrics
 	result.Metrics.Total = uint(len(pipelineImageData.Images))
 
 	l.WithFields(logrus.Fields{
-		"totalImages":    result.Metrics.Total,
-		"trustedCount":   result.Metrics.Trusted,
-		"untrustedCount": result.Metrics.Untrusted,
-		"compliance":     result.Compliance,
-	}).Info("Untrusted image control completed")
+		"totalImages":       result.Metrics.Total,
+		"authorizedCount":   result.Metrics.Authorized,
+		"unauthorizedCount": result.Metrics.Unauthorized,
+		"compliance":        result.Compliance,
+	}).Info("Image authorized sources control completed")
 
 	return result
 }
