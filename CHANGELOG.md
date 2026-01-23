@@ -1,3 +1,10 @@
+## [0.1.14](https://github.com/getplumber/plumber/compare/v0.1.13...v0.1.14) (2026-01-23)
+
+
+### ✨ Features
+
+* **controls:** Rename control outputs and config to make them more human-readable & Start using CI_JOB_TOKEN if in the CI ([6669707](https://github.com/getplumber/plumber/commit/66697073a13a337230f88a5ba1213def645f474d))
+
 ## [0.1.13](https://github.com/getplumber/plumber/compare/v0.1.12...v0.1.13) (2026-01-22)
 
 
