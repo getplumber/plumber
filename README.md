@@ -6,7 +6,7 @@
   <img src="https://img.shields.io/github/go-mod/go-version/getplumber/plumber" alt="Go Version">
   <a href="https://github.com/getplumber/plumber/releases"><img src="https://img.shields.io/github/downloads/getplumber/plumber/total?label=Downloads" alt="GitHub Downloads"></a>
   <a href="https://hub.docker.com/r/getplumber/plumber"><img src="https://img.shields.io/docker/pulls/getplumber/plumber" alt="Docker Pulls"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-ELv2-blue" alt="License"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MPL--2.0-blue" alt="License"></a>
   <br>
   <br>
   <a href="https://getplumber.io"><img src="https://img.shields.io/badge/website-getplumber.io-blue" alt="Website"></a>
@@ -337,5 +337,5 @@ Contributions are welcome! Please read our [Contributing Guide](CONTRIBUTING.md)
 
 ## 📄 License
 
-[Elastic License 2.0 (ELv2)](LICENSE) — Free to use. Cannot be offered as a managed service.
+[Mozilla Public License 2.0 (MPL-2.0)](LICENSE)
 
