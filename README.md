@@ -1,29 +1,36 @@
 # 🔧 Plumber
 
-Find compliance issues in your GitLab repositories and their CI/CD pipelines.
+* Find compliance issues in your GitLab repositories and their CI/CD pipelines
+* Visualize compliance with neatly colored output in your Gitlab CI/CD jobs
+* Download and store compliance results as JSON artifacts for auditability and traceability
+* Customize controls as well required compliance % to pass
 
 ## 📸 Preview
 
 ### ✅ Compliance Passed
 
-![Compliance passed](assets/simple-success-job.png?v=2)
+![Compliance passed](assets/trimmed-simple-success-job.png?v=3)
 
-### ❌ Compliance Failed
 
-![Compliance failed](assets/simple-fail-job.png?v=2)
+## Contents
 
-### ✅ Passed with Custom Passing Threshold (33%)
-
-![Passed with custom threshold](assets/custom-threshold-success-job.png?v=2)
-
-## 🎯 What it does
-
-Plumber scans your GitLab CI/CD configuration and run following controls:
-
-- 🏷️ **Authorized image tags** — Flags `latest`, `dev`, and other non-reproducible tags for container images used in CI/CD pipelines
-- 🔒 **Authorized image sources** — Ensures container images used in your CI/CD pipelines come from approved sources
-- 🛡️ **Branch protection** — Verifies that repository branches are properly protected
-- Other controls will come
+- [Plumber](#-plumber)
+- [Preview](#-preview)
+- [Quick Start (GitLab CI)](#-quick-start-gitlab-ci)
+  - [Self-Hosted GitLab](#%EF%B8%8F-self-hosted-gitlab)
+- [Compliance Controls](#-compliance-controls)
+- [Customize](#%EF%B8%8F-customize)
+  - [All Inputs](#all-inputs)
+- [Test Locally (CLI)](#-test-locally-cli)
+  - [Download Binary](#download-binary)
+  - [Docker](#docker)
+  - [Build from Source](#build-from-source)
+- [Example Output](#-example-output)
+- [Configuration](#-configuration)
+- [CLI Reference](#-cli-reference)
+- [Troubleshooting](#-troubleshooting)
+- [Contributing](#-contributing)
+- [License](#-license)
 
 ## 🚀 Quick Start (GitLab CI)
 
@@ -49,6 +56,15 @@ If you're running a self-hosted GitLab instance, you'll need to create your own 
 **Option 2:** Create a component using [`templates/plumber.yml`](templates/plumber.yml) as a base
 
 See [GitLab's CI/CD component documentation](https://docs.gitlab.com/ee/ci/components/) for setup instructions.
+
+## 🎯 Compliance Controls
+
+Plumber scans your GitLab CI/CD configuration and run following controls:
+
+- 🏷️ **Authorized image tags** — Flags `latest`, `dev`, and other non-reproducible tags for container images used in CI/CD pipelines
+- 🔒 **Authorized image sources** — Ensures container images used in your CI/CD pipelines come from approved sources
+- 🛡️ **Branch protection** — Verifies that repository branches are properly protected
+- Other controls will come
 
 ## ⚙️ Customize
 
