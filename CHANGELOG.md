@@ -1,3 +1,10 @@
+## [0.1.20](https://github.com/getplumber/plumber/compare/v0.1.19...v0.1.20) (2026-01-28)
+
+
+### ✨ Features
+
+* **license:** Update license in readme to MPL-2.0 ([4cbab86](https://github.com/getplumber/plumber/commit/4cbab86370f2ee3c5d010d5888e17e1d6fa9d445))
+
 ## [0.1.19](https://github.com/getplumber/plumber/compare/v0.1.18...v0.1.19) (2026-01-23)
 
 
