@@ -1,9 +1,23 @@
-# 🔧 Plumber
+<p align="center">
+  <img src="assets/plumber.svg" alt="Plumber" width="600">
+</p>
+
+<p align="center">
+  <a href="https://github.com/getplumber/plumber/actions"><img src="https://img.shields.io/github/actions/workflow/status/getplumber/plumber/release.yml?label=Build" alt="Build Status"></a>
+  <a href="https://github.com/getplumber/plumber/releases"><img src="https://img.shields.io/github/v/release/getplumber/plumber" alt="Latest Release"></a>
+  <img src="https://img.shields.io/github/go-mod/go-version/getplumber/plumber" alt="Go Version">
+  <a href="https://github.com/getplumber/plumber/releases"><img src="https://img.shields.io/github/downloads/getplumber/plumber/total?label=Downloads" alt="GitHub Downloads"></a>
+  <a href="https://hub.docker.com/r/getplumber/plumber"><img src="https://img.shields.io/docker/pulls/getplumber/plumber" alt="Docker Pulls"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-ELv2-blue" alt="License"></a>
+  <br>
+  <br>
+  <a href="https://getplumber.io"><img src="https://img.shields.io/badge/website-getplumber.io-blue" alt="Website"></a>
+  <a href="https://discord.gg/932xkSU24f"><img src="https://img.shields.io/badge/Discord-Join-5865F2?logo=discord&logoColor=white" alt="Discord"></a>
+</p>
 
 * Find compliance issues in your GitLab repositories and their CI/CD pipelines
-* Visualize compliance with neatly colored output in your Gitlab CI/CD jobs
 * Download and store compliance results as JSON artifacts for auditability and traceability
-* Customize controls and required compliance % to pass
+* Customize controls
 
 ## 📸 Preview
 
