@@ -3,7 +3,7 @@
 * Find compliance issues in your GitLab repositories and their CI/CD pipelines
 * Visualize compliance with neatly colored output in your Gitlab CI/CD jobs
 * Download and store compliance results as JSON artifacts for auditability and traceability
-* Customize controls as well required compliance % to pass
+* Customize controls and required compliance % to pass
 
 ## 📸 Preview
 
