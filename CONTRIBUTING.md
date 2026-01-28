@@ -72,7 +72,7 @@ Before opening an issue, please:
 
 4. **Commit your changes** following our [commit conventions](#commit-conventions)
 
-5. **Push to your fork**:
+5. **Push**:
    ```bash
    git push origin feature/your-feature-name
    ```
