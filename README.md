@@ -1,6 +1,4 @@
-<p align="center">
   <img src="assets/plumber.svg" alt="Plumber">
-</p>
 
 <p align="center">
   <a href="https://github.com/getplumber/plumber/actions"><img src="https://img.shields.io/github/actions/workflow/status/getplumber/plumber/release.yml?label=Build" alt="Build Status"></a>
