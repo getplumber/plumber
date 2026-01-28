@@ -284,6 +284,15 @@ Exit Codes:
 | `401 Unauthorized` | Token should have `read_api` + `read_repository` scopes |
 | `403 Forbidden` on MR settings | Expected on non-Premium GitLab; continues without that data |
 
+## 🤝 Contributing
+
+Contributions are welcome! Please read our [Contributing Guide](CONTRIBUTING.md) for details on:
+
+- How to report issues
+- How to submit pull requests
+- Coding and commit conventions
+- The review process
+
 ## 📄 License
 
 [Elastic License 2.0 (ELv2)](LICENSE) — Free to use. Cannot be offered as a managed service.
