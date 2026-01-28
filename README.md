@@ -4,17 +4,15 @@ Find compliance issues in your GitLab repositories and their CI/CD pipelines.
 
 ## 📸 Preview
 
-**Passed compliance check:**
+### ✅ Compliance Passed
 
-![Passed compliance check](assets/simple-success-job.png)
+![Compliance passed](assets/simple-success-job.png)
 
+### ❌ Compliance Failed
 
-**Failed compliance check:**
+![Compliance failed](assets/simple-fail-job.png)
 
-![Failed compliance check](assets/simple-fail-job.png)
-
-
-**Passed with custom threshold (e.g., 33%):**
+### ✅ Passed with Custom Threshold (33%)
 
 ![Passed with custom threshold](assets/custom-threshold-success-job.png)
 
