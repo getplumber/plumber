@@ -1,4 +1,4 @@
-  <img src="assets/plumber.svg" alt="Plumber">
+<img src="assets/plumber.svg" alt="Plumber">
 
 <p align="center">
   <a href="https://github.com/getplumber/plumber/actions"><img src="https://img.shields.io/github/actions/workflow/status/getplumber/plumber/release.yml?label=Build" alt="Build Status"></a>
@@ -21,7 +21,7 @@
 
 ### ✅ Compliance Passed
 
-![Compliance passed](assets/trimmed-simple-success-job.png?v=3)
+![Compliance passed](assets/component.gif?v=3)
 
 
 ## Contents
