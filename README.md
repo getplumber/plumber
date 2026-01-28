@@ -2,6 +2,22 @@
 
 Find compliance issues in your GitLab repositories and their CI/CD pipelines.
 
+## 📸 Preview
+
+**Passed compliance check:**
+
+![Passed compliance check](assets/simple-success-job.png)
+
+
+**Failed compliance check:**
+
+![Failed compliance check](assets/simple-fail-job.png)
+
+
+**Passed with custom threshold (e.g., 33%):**
+
+![Passed with custom threshold](assets/custom-threshold-success-job.png)
+
 ## 🎯 What it does
 
 Plumber scans your GitLab CI/CD configuration and run following controls:
