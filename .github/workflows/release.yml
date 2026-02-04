@@ -2,8 +2,8 @@ name: Release & Publish
 
 on:
   push:
-    branches:
-      - main
+    tags:
+      - '*'
 
 permissions:
   contents: write
@@ -11,114 +11,24 @@ permissions:
 
 jobs:
   release:
-    name: Semantic Release
-    runs-on: ubuntu-24.04
-    outputs:
-      new_release_published: ${{ steps.semantic.outputs.new_release_published }}
-      new_release_version: ${{ steps.semantic.outputs.new_release_version }}
-      new_release_notes: ${{ steps.semantic.outputs.new_release_notes }}
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v3
         with:
           fetch-depth: 0
-          persist-credentials: false
-
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-
-      - name: Semantic Release
-        id: semantic
-        uses: cycjimmy/semantic-release-action@v4
-        with:
-          semantic_version: 23
-          extra_plugins: |
-            @semantic-release/changelog@6
-            @semantic-release/git@10
-            conventional-changelog-conventionalcommits@7
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  binaries:
-    name: Build Binaries
-    runs-on: ubuntu-24.04
-    needs: release
-    if: needs.release.outputs.new_release_published == 'true'
-    strategy:
-      matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-          - goos: linux
-            goarch: arm64
-          - goos: darwin
-            goarch: amd64
-          - goos: darwin
-            goarch: arm64
-          - goos: windows
-            goarch: amd64
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Setup Go
+      -
+        name: Set up Go
         uses: actions/setup-go@v5
+      - run: git tag ${{ github.event.inputs.tag }}
+      -
+        name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@v6
         with:
-          go-version: '1.25'
-
-      - name: Prepare embedded config
-        run: cp .plumber.yaml internal/defaultconfig/default.yaml
-
-      - name: Build binary
+          distribution: goreleaser
+          version: '~> v2'
+          args: release --clean
         env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: 0
-        run: |
-          VERSION=${{ needs.release.outputs.new_release_version }}
-          COMMIT=${{ github.sha }}
-          BUILD_DATE=$(date -u +"%Y-%m-%dT%H:%M:%SZ")
-          BINARY_NAME=plumber-${{ matrix.goos }}-${{ matrix.goarch }}
-          if [ "${{ matrix.goos }}" = "windows" ]; then
-            BINARY_NAME="${BINARY_NAME}.exe"
-          fi
-          go build -ldflags="-s -w -X github.com/getplumber/plumber/cmd.Version=${VERSION} -X github.com/getplumber/plumber/cmd.Commit=${COMMIT} -X github.com/getplumber/plumber/cmd.BuildDate=${BUILD_DATE}" -o dist/${BINARY_NAME} .
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@v4
-        with:
-          name: plumber-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dist/
-
-  upload-release:
-    name: Create Release & Upload Assets
-    runs-on: ubuntu-24.04
-    needs: [release, binaries]
-    if: needs.release.outputs.new_release_published == 'true'
-    steps:
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: dist/
-          merge-multiple: true
-
-      - name: Generate checksums
-        working-directory: dist
-        run: |
-          sha256sum plumber-* > checksums.txt
-          cat checksums.txt
-
-      - name: Create release with assets
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: v${{ needs.release.outputs.new_release_version }}
-          name: v${{ needs.release.outputs.new_release_version }}
-          body: ${{ needs.release.outputs.new_release_notes }}
-          files: |
-            dist/plumber-*
-            dist/checksums.txt
+          GITHUB_TOKEN: ${{ secrets.GH_TOKEN }}
 
   docker:
     name: Build & Push Docker Image
@@ -163,180 +73,3 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
-  homebrew:
-    name: Update Homebrew Tap
-    runs-on: ubuntu-24.04
-    needs: [release, upload-release]
-    if: needs.release.outputs.new_release_published == 'true'
-    steps:
-      - name: Download checksums
-        run: |
-          VERSION=${{ needs.release.outputs.new_release_version }}
-          curl -sL "https://github.com/getplumber/plumber/releases/download/v${VERSION}/checksums.txt" -o checksums.txt
-          cat checksums.txt
-
-      - name: Extract checksums
-        id: checksums
-        run: |
-          echo "darwin_arm64=$(grep 'plumber-darwin-arm64$' checksums.txt | awk '{print $1}')" >> $GITHUB_OUTPUT
-          echo "darwin_amd64=$(grep 'plumber-darwin-amd64$' checksums.txt | awk '{print $1}')" >> $GITHUB_OUTPUT
-          echo "linux_arm64=$(grep 'plumber-linux-arm64$' checksums.txt | awk '{print $1}')" >> $GITHUB_OUTPUT
-          echo "linux_amd64=$(grep 'plumber-linux-amd64$' checksums.txt | awk '{print $1}')" >> $GITHUB_OUTPUT
-
-      - name: Checkout Homebrew tap
-        uses: actions/checkout@v4
-        with:
-          repository: getplumber/homebrew-plumber
-          token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
-          path: homebrew-tap
-
-      - name: Update formulas
-        env:
-          VERSION: ${{ needs.release.outputs.new_release_version }}
-          SHA_DARWIN_ARM64: ${{ steps.checksums.outputs.darwin_arm64 }}
-          SHA_DARWIN_AMD64: ${{ steps.checksums.outputs.darwin_amd64 }}
-          SHA_LINUX_ARM64: ${{ steps.checksums.outputs.linux_arm64 }}
-          SHA_LINUX_AMD64: ${{ steps.checksums.outputs.linux_amd64 }}
-        run: |
-          cd homebrew-tap/Formula
-          
-          # Update main formula (plumber.rb)
-          cat > plumber.rb << 'FORMULA'
-          # typed: false
-          # frozen_string_literal: true
-
-          class Plumber < Formula
-            desc "CI/CD compliance scanner for GitLab pipelines"
-            homepage "https://getplumber.io"
-            version "VERSION_PLACEHOLDER"
-            license "MPL-2.0"
-
-            on_macos do
-              on_arm do
-                url "https://github.com/getplumber/plumber/releases/download/v#{version}/plumber-darwin-arm64"
-                sha256 "SHA_DARWIN_ARM64_PLACEHOLDER"
-
-                def install
-                  bin.install "plumber-darwin-arm64" => "plumber"
-                end
-              end
-
-              on_intel do
-                url "https://github.com/getplumber/plumber/releases/download/v#{version}/plumber-darwin-amd64"
-                sha256 "SHA_DARWIN_AMD64_PLACEHOLDER"
-
-                def install
-                  bin.install "plumber-darwin-amd64" => "plumber"
-                end
-              end
-            end
-
-            on_linux do
-              on_arm do
-                url "https://github.com/getplumber/plumber/releases/download/v#{version}/plumber-linux-arm64"
-                sha256 "SHA_LINUX_ARM64_PLACEHOLDER"
-
-                def install
-                  bin.install "plumber-linux-arm64" => "plumber"
-                end
-              end
-
-              on_intel do
-                url "https://github.com/getplumber/plumber/releases/download/v#{version}/plumber-linux-amd64"
-                sha256 "SHA_LINUX_AMD64_PLACEHOLDER"
-
-                def install
-                  bin.install "plumber-linux-amd64" => "plumber"
-                end
-              end
-            end
-
-            test do
-              assert_match "plumber version #{version}", shell_output("#{bin}/plumber --version")
-            end
-          end
-          FORMULA
-
-          # Strip leading spaces (10 spaces from YAML indentation)
-          sed -i 's/^          //' plumber.rb
-
-          # Replace placeholders
-          sed -i "s/VERSION_PLACEHOLDER/${VERSION}/g" plumber.rb
-          sed -i "s/SHA_DARWIN_ARM64_PLACEHOLDER/${SHA_DARWIN_ARM64}/g" plumber.rb
-          sed -i "s/SHA_DARWIN_AMD64_PLACEHOLDER/${SHA_DARWIN_AMD64}/g" plumber.rb
-          sed -i "s/SHA_LINUX_ARM64_PLACEHOLDER/${SHA_LINUX_ARM64}/g" plumber.rb
-          sed -i "s/SHA_LINUX_AMD64_PLACEHOLDER/${SHA_LINUX_AMD64}/g" plumber.rb
-
-          # Create versioned formula
-          VERSION_UNDERSCORE=$(echo "${VERSION}" | tr -d '.')
-          VERSIONED_FILE="plumber@${VERSION}.rb"
-          
-          cat > "${VERSIONED_FILE}" << VERSIONED
-          # typed: false
-          # frozen_string_literal: true
-
-          class PlumberAT${VERSION_UNDERSCORE} < Formula
-            desc "CI/CD compliance scanner for GitLab pipelines"
-            homepage "https://getplumber.io"
-            version "${VERSION}"
-            license "MPL-2.0"
-
-            on_macos do
-              on_arm do
-                url "https://github.com/getplumber/plumber/releases/download/v${VERSION}/plumber-darwin-arm64"
-                sha256 "${SHA_DARWIN_ARM64}"
-
-                def install
-                  bin.install "plumber-darwin-arm64" => "plumber"
-                end
-              end
-
-              on_intel do
-                url "https://github.com/getplumber/plumber/releases/download/v${VERSION}/plumber-darwin-amd64"
-                sha256 "${SHA_DARWIN_AMD64}"
-
-                def install
-                  bin.install "plumber-darwin-amd64" => "plumber"
-                end
-              end
-            end
-
-            on_linux do
-              on_arm do
-                url "https://github.com/getplumber/plumber/releases/download/v${VERSION}/plumber-linux-arm64"
-                sha256 "${SHA_LINUX_ARM64}"
-
-                def install
-                  bin.install "plumber-linux-arm64" => "plumber"
-                end
-              end
-
-              on_intel do
-                url "https://github.com/getplumber/plumber/releases/download/v${VERSION}/plumber-linux-amd64"
-                sha256 "${SHA_LINUX_AMD64}"
-
-                def install
-                  bin.install "plumber-linux-amd64" => "plumber"
-                end
-              end
-            end
-
-            keg_only :versioned_formula
-
-            test do
-              assert_match "plumber version ${VERSION}", shell_output("#{bin}/plumber --version")
-            end
-          end
-          VERSIONED
-
-          # Strip leading spaces from versioned formula
-          sed -i 's/^          //' "${VERSIONED_FILE}"
-
-      - name: Commit and push
-        working-directory: homebrew-tap
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add Formula/
-          git commit -m "Update to v${{ needs.release.outputs.new_release_version }}"
-          git push
