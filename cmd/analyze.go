@@ -8,6 +8,7 @@ import (
 
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
+	"github.com/getplumber/plumber/pbom"
 	"github.com/getplumber/plumber/utils"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -15,13 +16,15 @@ import (
 
 var (
 	// Flags for analyze command
-	gitlabURL     string
-	projectPath   string
-	defaultBranch string
-	outputFile    string
-	printOutput   bool
-	configFile    string
-	threshold     float64
+	gitlabURL        string
+	projectPath      string
+	defaultBranch    string
+	outputFile       string
+	printOutput      bool
+	configFile       string
+	threshold        float64
+	pbomFile         string
+	pbomCycloneDXFile string
 )
 
 var analyzeCmd = &cobra.Command{
@@ -44,11 +47,13 @@ Flags (auto-detected from git remote if not specified):
   --project       Full path of the project (auto-detected from git remote)
 
 Optional flags:
-  --config        Path to .plumber.yaml config file (default: .plumber.yaml)
-  --threshold     Minimum compliance percentage to pass, 0-100 (default: 100)
-  --branch        Branch to analyze (defaults to project's default branch)
-  --print         Print text output to stdout (default: true)
-  --output        Write JSON results to file (optional)
+  --config           Path to .plumber.yaml config file (default: .plumber.yaml)
+  --threshold        Minimum compliance percentage to pass, 0-100 (default: 100)
+  --branch           Branch to analyze (defaults to project's default branch)
+  --print            Print text output to stdout (default: true)
+  --output           Write JSON results to file (optional)
+  --pbom             Write PBOM (Pipeline Bill of Materials) to file (optional)
+  --pbom-cyclonedx   Write PBOM in CycloneDX format for integration with security tools
 
 Exit codes:
   0  Analysis passed (compliance >= threshold)
@@ -86,6 +91,8 @@ func init() {
 	analyzeCmd.Flags().StringVar(&defaultBranch, "branch", "", "Branch to analyze (defaults to project's default branch)")
 	analyzeCmd.Flags().BoolVar(&printOutput, "print", true, "Print text output to stdout")
 	analyzeCmd.Flags().StringVarP(&outputFile, "output", "o", "", "Write JSON results to file")
+	analyzeCmd.Flags().StringVar(&pbomFile, "pbom", "", "Write PBOM (Pipeline Bill of Materials) to file")
+	analyzeCmd.Flags().StringVar(&pbomCycloneDXFile, "pbom-cyclonedx", "", "Write PBOM in CycloneDX format (for security tool integration)")
 }
 
 func runAnalyze(cmd *cobra.Command, args []string) error {
@@ -235,6 +242,22 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		fmt.Fprintf(os.Stderr, "Results written to: %s\n", outputFile)
 	}
 
+	// Write PBOM to file if specified
+	if pbomFile != "" {
+		if err := writePBOMToFile(result, cleanGitlabURL, defaultBranch, pbomFile); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "PBOM written to: %s\n", pbomFile)
+	}
+
+	// Write CycloneDX PBOM to file if specified
+	if pbomCycloneDXFile != "" {
+		if err := writePBOMCycloneDXToFile(result, cleanGitlabURL, defaultBranch, pbomCycloneDXFile); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "PBOM (CycloneDX) written to: %s\n", pbomCycloneDXFile)
+	}
+
 	// Check compliance against threshold
 	if compliance < threshold {
 		return fmt.Errorf("compliance %.1f%% is below threshold %.1f%%", compliance, threshold)
@@ -267,6 +290,85 @@ func writeJSONToFile(result *control.AnalysisResult, threshold, compliance float
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
 	return encoder.Encode(output)
+}
+
+// buildImageComplianceData extracts compliance results into a lookup map for the PBOM generator
+func buildImageComplianceData(result *control.AnalysisResult) *pbom.ImageComplianceData {
+	data := &pbom.ImageComplianceData{
+		ForbiddenTagImages: make(map[string]bool),
+		UnauthorizedImages: make(map[string]bool),
+	}
+
+	// Build set of images with forbidden tags from control results
+	if result.ImageForbiddenTagsResult != nil && !result.ImageForbiddenTagsResult.Skipped {
+		// Mark all images as NOT having forbidden tags first
+		if result.PipelineImageData != nil {
+			for _, img := range result.PipelineImageData.Images {
+				data.ForbiddenTagImages[img.Link] = false
+			}
+		}
+		// Then mark the ones that do
+		for _, issue := range result.ImageForbiddenTagsResult.Issues {
+			data.ForbiddenTagImages[issue.Link] = true
+		}
+	}
+
+	// Build set of unauthorized images from control results
+	if result.ImageAuthorizedSourcesResult != nil && !result.ImageAuthorizedSourcesResult.Skipped {
+		// Mark all images as authorized first
+		if result.PipelineImageData != nil {
+			for _, img := range result.PipelineImageData.Images {
+				data.UnauthorizedImages[img.Link] = false
+			}
+		}
+		// Then mark the ones that aren't
+		for _, issue := range result.ImageAuthorizedSourcesResult.Issues {
+			data.UnauthorizedImages[issue.Link] = true
+		}
+	}
+
+	return data
+}
+
+func writePBOMToFile(result *control.AnalysisResult, gitlabURL, branch, filePath string) error {
+	// Generate PBOM from collected data
+	complianceData := buildImageComplianceData(result)
+	generator := pbom.NewGenerator(result.ProjectPath, result.ProjectID, gitlabURL, branch).
+		WithComplianceData(complianceData)
+	pipelineBOM := generator.Generate(result.PipelineImageData, result.PipelineOriginData)
+
+	// Create/overwrite the file
+	file, err := os.Create(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to create PBOM file: %w", err)
+	}
+	defer file.Close()
+
+	encoder := json.NewEncoder(file)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(pipelineBOM)
+}
+
+func writePBOMCycloneDXToFile(result *control.AnalysisResult, gitlabURL, branch, filePath string) error {
+	// Generate PBOM from collected data
+	complianceData := buildImageComplianceData(result)
+	generator := pbom.NewGenerator(result.ProjectPath, result.ProjectID, gitlabURL, branch).
+		WithComplianceData(complianceData)
+	pipelineBOM := generator.Generate(result.PipelineImageData, result.PipelineOriginData)
+
+	// Convert to CycloneDX format
+	cycloneDX := pipelineBOM.ToCycloneDX(Version)
+
+	// Create/overwrite the file
+	file, err := os.Create(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to create CycloneDX PBOM file: %w", err)
+	}
+	defer file.Close()
+
+	encoder := json.NewEncoder(file)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(cycloneDX)
 }
 
 // ANSI color codes

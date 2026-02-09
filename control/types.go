@@ -1,6 +1,9 @@
 package control
 
-import "github.com/sirupsen/logrus"
+import (
+	"github.com/getplumber/plumber/collector"
+	"github.com/sirupsen/logrus"
+)
 
 var l = logrus.WithField("context", "control")
 
@@ -29,6 +32,10 @@ type AnalysisResult struct {
 	ForbiddenVersionsIncludesResult *GitlabPipelineIncludesForbiddenVersionResult `json:"forbiddenVersionsIncludesResult,omitempty"`
 	RequiredComponentsResult        *GitlabPipelineRequiredComponentsResult       `json:"requiredComponentsResult,omitempty"`
 	RequiredTemplatesResult         *GitlabPipelineRequiredTemplatesResult        `json:"requiredTemplatesResult,omitempty"`
+
+	// Raw collected data (not included in JSON output, used for PBOM generation)
+	PipelineImageData  *collector.GitlabPipelineImageData  `json:"-"`
+	PipelineOriginData *collector.GitlabPipelineOriginData `json:"-"`
 }
 
 // PipelineOriginMetricsSummary is a simplified version of origin metrics for output

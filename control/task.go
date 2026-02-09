@@ -144,6 +144,10 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 		}
 	}
 
+	// Store raw collected data for PBOM generation
+	result.PipelineImageData = pipelineImageData
+	result.PipelineOriginData = pipelineOriginData
+
 	///////////////////
 	// Run Controls
 	///////////////////

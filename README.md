@@ -42,10 +42,6 @@ Plumber is a compliance scanner for GitLab. It reads your `.gitlab-ci.yml` and r
   <img src="assets/component.gif" alt="Plumber Demo" width="700">
 </p>
 
-> 💡 **Want to see it in action?** Check out our example projects:
-> - [go-build-test-compliant](https://gitlab.com/getplumber/examples/go-build-test-compliant/-/pipelines) - A compliant project passing all checks
-> - [go-build-test-non-compliant](https://gitlab.com/getplumber/examples/go-build-test-non-compliant/-/pipelines) - A non-compliant project showing detected issues
-
 ## 🚀 Two Ways to Use Plumber
 
 Choose **one** of these methods. You don't need both:
@@ -54,6 +50,11 @@ Choose **one** of these methods. You don't need both:
 |--------|----------|--------------|
 | **[CLI](#option-1-cli)** | Quick evaluation, local testing, one-off scans | Install binary and run from terminal |
 | **[GitLab CI Component](#option-2-gitlab-ci-component)** | Automated checks on every pipeline run | Add 2 lines to your `.gitlab-ci.yml` |
+
+> 💡 **Want to see it in action?** Check out our example projects:
+> - [go-build-test-compliant](https://gitlab.com/getplumber/examples/go-build-test-compliant/-/pipelines) - A compliant project passing all checks
+> - [go-build-test-non-compliant](https://gitlab.com/getplumber/examples/go-build-test-non-compliant/-/pipelines) - A non-compliant project showing detected issues
+
 
 ---
 
@@ -65,6 +66,7 @@ Choose **one** of these methods. You don't need both:
 - [Configuration](#%EF%B8%8F-configuration)
   - [Available Controls](#available-controls)
   - [Outputs](#outputs)
+    - [Pipeline Bill of Materials (PBOM) & CycloneDX](#pipeline-bill-of-materials-pbom--cyclonedx)
     - [Example Output](#example-output)
 - [Installation](#-installation)
 - [CLI Reference](#-cli-reference)
@@ -167,7 +169,7 @@ Add this to your `.gitlab-ci.yml`:
 
 ```yaml
 include:
-  - component: gitlab.com/getplumber/plumber/plumber@v0.1.21
+  - component: gitlab.com/getplumber/plumber/plumber@v0.1.22
 ```
 * Get the latest version from the [Catalog](https://gitlab.com/explore/catalog/getplumber/plumber)
 
@@ -187,12 +189,10 @@ Override any input to fit your needs:
 
 ```yaml
 include:
-  - component: gitlab.com/getplumber/plumber/plumber@v0.1.21
+  - component: gitlab.com/getplumber/plumber/plumber@v0.1.22
     inputs:
       threshold: 80                           # Minimum % to pass (default: 100)
       config_file: configs/my-plumber.yaml    # Custom config path
-      server_url: https://gitlab.example.com  # Self-hosted GitLab
-      branch: develop                         # Specific branch to analyze
       verbose: true                           # Debug output
 ```
 
@@ -210,6 +210,8 @@ include:
 | `threshold` | `100` | Minimum compliance % to pass |
 | `config_file` | *(auto-detect)* | Path to config file (relative to repo root) |
 | `output_file` | `plumber-report.json` | Path to write JSON results |
+| `pbom_file` | `plumber-pbom.json` | Path to write PBOM output |
+| `pbom_cyclonedx_file` | `plumber-cyclonedx-sbom.json` | Path to write CycloneDX SBOM (auto-uploaded as GitLab report) |
 | `print_output` | `true` | Print text output to stdout |
 | `stage` | `.pre` | Pipeline stage for the job |
 | `image` | `getplumber/plumber:0.1` | Docker image to use |
@@ -413,6 +415,24 @@ By default, Plumber [prints a colorized](#example-output) detail and a summary o
 You can also configure Plumber to output a json file with the results.
 * This is enabled by default if using Plumber Component in Gitlab
 
+#### Pipeline Bill of Materials (PBOM) & CycloneDX
+
+Plumber can generate a **PBOM** — a complete inventory of all dependencies in your CI/CD pipeline (container images, components, templates, includes). Two formats are available:
+
+```bash
+# Native PBOM format (detailed, pipeline-specific)
+plumber analyze --pbom pbom.json
+
+# CycloneDX SBOM format (standard, for security tool integration)
+plumber analyze --pbom-cyclonedx pipeline-sbom.json
+```
+
+The CycloneDX output follows the [CycloneDX 1.5 specification](https://cyclonedx.org/docs/1.5/json/) and is compatible with tools like Grype, Trivy, and Dependency-Track. When using the GitLab CI component, the CycloneDX file is automatically uploaded as a [GitLab CycloneDX report](https://docs.gitlab.com/ci/yaml/artifacts_reports/#artifactsreportscyclonedx).
+
+> **Note:** CI/CD components and templates do not have CVEs in public vulnerability databases. The PBOM is primarily an **inventory and compliance tool** — it tells you *what's in your pipeline*, not whether those items have known vulnerabilities. For image vulnerability scanning, use `trivy image` or `grype` directly on the images.
+
+📖 See [docs/PBOM.md](docs/PBOM.md) for full format documentation, field reference, and tool compatibility.
+
 #### Example Output
 
 Plumber provides colorized terminal output for easy scanning:
@@ -562,7 +582,10 @@ plumber analyze [flags]
 | `--threshold` | No | `100` | Minimum compliance % to pass (0-100) |
 | `--branch` | No | default | Branch to analyze |
 | `--output` | No | — | Write JSON results to file |
+| `--pbom` | No | — | Write PBOM (Pipeline Bill of Materials) to file |
+| `--pbom-cyclonedx` | No | — | Write PBOM in CycloneDX SBOM format |
 | `--print` | No | `true` | Print text output to stdout |
+| `--verbose`, `-v` | No | `false` | Enable verbose/debug output for troubleshooting |
 
 > \* Auto-detected from git remote (`origin`) if not specified. Supports both SSH and HTTPS remote URLs.
 

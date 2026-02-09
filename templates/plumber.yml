@@ -40,6 +40,12 @@ spec:
     output_file:
       description: "Write JSON results to file (optional, leave empty to skip)"
       default: "plumber-report.json"
+    pbom_file:
+      description: "Write PBOM (Pipeline Bill of Materials) to file (optional, leave empty to skip)"
+      default: "plumber-pbom.json"
+    pbom_cyclonedx_file:
+      description: "Write PBOM in CycloneDX SBOM format for security tool integration (optional, leave empty to skip)"
+      default: "plumber-cyclonedx-sbom.json"
     
     # Job configuration
     stage:
@@ -126,6 +132,14 @@ spec:
       if [ -n "$[[ inputs.output_file ]]" ]; then
         OUTPUT_FLAG="--output $[[ inputs.output_file ]]"
       fi
+      PBOM_FLAG=""
+      if [ -n "$[[ inputs.pbom_file ]]" ]; then
+        PBOM_FLAG="--pbom $[[ inputs.pbom_file ]]"
+      fi
+      PBOM_CDX_FLAG=""
+      if [ -n "$[[ inputs.pbom_cyclonedx_file ]]" ]; then
+        PBOM_CDX_FLAG="--pbom-cyclonedx $[[ inputs.pbom_cyclonedx_file ]]"
+      fi
       VERBOSE_FLAG=""
       if [ "$[[ inputs.verbose ]]" = "true" ]; then
         VERBOSE_FLAG="--verbose"
@@ -138,10 +152,17 @@ spec:
         --threshold "$[[ inputs.threshold ]]" \
         --print="$[[ inputs.print_output ]]" \
         $OUTPUT_FLAG \
+        $PBOM_FLAG \
+        $PBOM_CDX_FLAG \
         $VERBOSE_FLAG
   artifacts:
     paths:
       - $[[ inputs.output_file ]]
+      - $[[ inputs.pbom_file ]]
+      - $[[ inputs.pbom_cyclonedx_file ]]
+    reports:
+      cyclonedx:
+        - $[[ inputs.pbom_cyclonedx_file ]]
     when: always
     expire_in: 1 week
   allow_failure: $[[ inputs.allow_failure ]]
