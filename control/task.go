@@ -60,6 +60,20 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	// projectInfo.AnalyzeBranch = branch to analyze from CLI (e.g., "testing-branch" or defaults to DefaultBranch)
 	if conf.Branch != "" {
 		projectInfo.AnalyzeBranch = conf.Branch
+
+		// When analyzing a non-default branch, fetch the correct SHA so that
+		// GitLab's ciConfig GraphQL query resolves include:local files from
+		// the target branch's file tree, not the default branch's.
+		if conf.Branch != projectInfo.DefaultBranch {
+			branchSha, err := gitlab.FetchLatestCommitSha(
+				conf.GitlabToken, conf.GitlabURL, conf.ProjectPath, conf.Branch, conf,
+			)
+			if err != nil {
+				l.WithError(err).Warn("Unable to fetch commit SHA for analyze branch, using default branch SHA")
+			} else {
+				projectInfo.LatestHeadCommitSha = branchSha
+			}
+		}
 	}
 
 	///////////////////////

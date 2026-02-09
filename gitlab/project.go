@@ -216,6 +216,23 @@ func EnhanceProjectWithGraphQL(project *Project, token string, instanceURL strin
 	return nil
 }
 
+// FetchLatestCommitSha gets the latest commit SHA for a given branch.
+// Exported wrapper around fetchLatestCommitSha for use outside the gitlab package.
+func FetchLatestCommitSha(token, instanceURL, projectPath, branch string, conf *configuration.Configuration) (string, error) {
+	l := logger.WithFields(logrus.Fields{
+		"action": "FetchLatestCommitSha",
+		"branch": branch,
+	})
+
+	glab, err := GetNewGitlabClient(token, instanceURL, conf)
+	if err != nil {
+		l.WithError(err).Error("Unable to get a GitLab client")
+		return "", err
+	}
+
+	return fetchLatestCommitSha(glab, projectPath, branch, l)
+}
+
 // ToProjectInfo converts Project to the simpler ProjectInfo struct used by collectors
 func (p *Project) ToProjectInfo() *ProjectInfo {
 	return &ProjectInfo{
