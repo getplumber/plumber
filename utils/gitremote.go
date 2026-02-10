@@ -34,13 +34,28 @@ func DetectGitRemote() *GitRemoteInfo {
 }
 
 // ParseGitRemoteURL parses a git remote URL and extracts host and project path.
-// Supports both SSH and HTTPS formats:
-//   - SSH:   git@gitlab.com:group/project.git
-//   - HTTPS: https://gitlab.com/group/project.git
+// Supports the following formats:
+//   - SSH URL:       ssh://git@host[:port]/group/project.git
+//   - SSH SCP-like:  git@host:group/project.git
+//   - HTTPS:         https://host[:port]/group/project.git
+//   - Git protocol:  git://host[:port]/group/project.git
 //
 // Returns nil if the URL cannot be parsed.
 func ParseGitRemoteURL(remoteURL string) *GitRemoteInfo {
-	// Try SSH format: git@host:path.git
+	// Try SSH URL format: ssh://[user@]host[:port]/path.git
+	// The port is intentionally ignored as the GitLab API uses HTTPS
+	sshURLRegex := regexp.MustCompile(`^ssh://[^@]+@([^/:]+)(?::\d+)?/(.+?)(?:\.git)?$`)
+	if matches := sshURLRegex.FindStringSubmatch(remoteURL); matches != nil {
+		host := matches[1]
+		projectPath := matches[2]
+		return &GitRemoteInfo{
+			Host:        host,
+			ProjectPath: projectPath,
+			URL:         fmt.Sprintf("https://%s", host),
+		}
+	}
+
+	// Try SSH SCP-like format: git@host:path.git
 	sshRegex := regexp.MustCompile(`^git@([^:]+):(.+?)(?:\.git)?$`)
 	if matches := sshRegex.FindStringSubmatch(remoteURL); matches != nil {
 		host := matches[1]
@@ -52,9 +67,21 @@ func ParseGitRemoteURL(remoteURL string) *GitRemoteInfo {
 		}
 	}
 
-	// Try HTTPS format: https://host/path.git or https://host/path
+	// Try HTTPS format: https://host[:port]/path.git
 	httpsRegex := regexp.MustCompile(`^https?://([^/]+)/(.+?)(?:\.git)?$`)
 	if matches := httpsRegex.FindStringSubmatch(remoteURL); matches != nil {
+		host := matches[1]
+		projectPath := matches[2]
+		return &GitRemoteInfo{
+			Host:        host,
+			ProjectPath: projectPath,
+			URL:         fmt.Sprintf("https://%s", host),
+		}
+	}
+
+	// Try Git protocol format: git://host[:port]/path.git
+	gitRegex := regexp.MustCompile(`^git://([^/:]+)(?::\d+)?/(.+?)(?:\.git)?$`)
+	if matches := gitRegex.FindStringSubmatch(remoteURL); matches != nil {
 		host := matches[1]
 		projectPath := matches[2]
 		return &GitRemoteInfo{
