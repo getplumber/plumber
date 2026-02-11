@@ -4,6 +4,7 @@ Thank you for your interest in contributing to Plumber! This guide will help you
 
 ## Table of Contents
 
+- [AI Usage Policy](#ai-usage-policy)
 - [Code of Conduct](#code-of-conduct)
 - [Getting Started](#getting-started)
 - [How to Contribute](#how-to-contribute)
@@ -19,6 +20,10 @@ Thank you for your interest in contributing to Plumber! This guide will help you
 - [Coding Conventions](#coding-conventions)
 - [Commit Conventions](#commit-conventions)
 - [Review Process](#review-process)
+
+## AI Usage Policy
+
+If you use AI tools (e.g. Cursor, Claude Code, Copilot) to contribute to Plumber, please read our [AI Usage Policy](AI_POLICY.md) first. All AI usage must be disclosed, and AI-assisted pull requests must reference an accepted issue and be fully verified by a human.
 
 ## Code of Conduct
 
