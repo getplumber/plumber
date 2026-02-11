@@ -2,7 +2,7 @@
 
 > ⚠️ **EARLY STAGE FEATURE** ⚠️
 >
-> PBOM is a **new concept being built from the ground up**. Unlike traditional SBOMs for application code, there is no existing standard for documenting CI/CD pipeline dependencies. Plumber is pioneering this space.
+> PBOM is a **new feature being built from the ground up**. Unlike traditional SBOMs for application code, there is no existing recognized standard for documenting CI/CD pipeline dependencies. Plumber is pioneering this space.
 >
 > 📣 Your feedback shapes the future: [open an issue](https://github.com/getplumber/plumber/issues) with suggestions.
 
