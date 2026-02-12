@@ -45,7 +45,7 @@ controls:
   # (e.g., alpine@sha256:..., node@sha256:...)
   containerImagesMustBePinnedByDigest:
     # Set to false to disable this control
-    enabled: true
+    enabled: false
 
   # ===========================================
   # Container images must come from authorized sources

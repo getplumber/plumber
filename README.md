@@ -241,7 +241,7 @@ Plumber includes 9 compliance controls. Each can be enabled/disabled and customi
 <details>
 <summary><b>1. Container images must not use forbidden tags</b></summary>
 
-Detects container images using mutable tags that can change unexpectedly.
+Detects container images using mutable tags that are expected change unexpectedly.
 
 ```yaml
 containerImageMustNotUseForbiddenTags:
@@ -260,7 +260,7 @@ containerImageMustNotUseForbiddenTags:
 <details>
 <summary><b>2. Container images must be pinned by digest</b></summary>
 
-Prevents use of mutable image references and enforces immutable digest references.
+Detects use of non-SHA pinned image references and enforces immutable digest references.
 
 ```yaml
 containerImagesMustBePinnedByDigest:
