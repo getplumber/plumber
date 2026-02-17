@@ -21,6 +21,8 @@ var (
 	// config generate flags
 	configGenerateOutput string
 	configGenerateForce  bool
+// config validate flags
+	configValidateFile string
 )
 
 var configCmd = &cobra.Command{
@@ -54,6 +56,26 @@ Examples:
 	RunE: runConfigView,
 }
 
+var configValidateCmd = &cobra.Command{
+	Use:   "validate",
+	Short: "Validate a configuration file",
+	Long: `Validate a Plumber configuration file for correctness.
+
+This command checks the configuration file for:
+  - Valid YAML syntax
+  - Unknown configuration keys (warns with suggestions)
+  - Required fields
+
+Examples:
+  # Validate the default .plumber.yaml
+  plumber config validate
+
+  # Validate a specific config file
+  plumber config validate --config custom-plumber.yaml
+`,
+	RunE: runConfigValidate,
+}
+
 var configGenerateCmd = &cobra.Command{
 	Use:   "generate",
 	Short: "Generate a default .plumber.yaml configuration file",
@@ -85,6 +107,10 @@ func init() {
 	rootCmd.AddCommand(configCmd)
 	configCmd.AddCommand(configViewCmd)
 	configCmd.AddCommand(configGenerateCmd)
+configCmd.AddCommand(configValidateCmd)
+
+	// config validate flags
+	configValidateCmd.Flags().StringVarP(&configValidateFile, "config", "c", ".plumber.yaml", "Path to configuration file")
 
 	// config view flags
 	configViewCmd.Flags().StringVarP(&configViewFile, "config", "c", ".plumber.yaml", "Path to configuration file")
@@ -282,6 +308,35 @@ func runConfigGenerate(cmd *cobra.Command, args []string) error {
 	fmt.Println("  1. Review and customize the configuration for your needs")
 	fmt.Println("  2. Export the GITLAB_TOKEN environment variable if you haven't already")
 	fmt.Println("  3. Run: plumber analyze --gitlab-url <url> --project <path>")
+
+	return nil
+}
+
+
+func runConfigValidate(cmd *cobra.Command, args []string) error {
+	// Suppress debug logs for clean output (unless verbose)
+	if !verbose {
+		logrus.SetLevel(logrus.WarnLevel)
+	}
+
+	// Load the configuration
+	config, _, err := configuration.LoadPlumberConfig(configValidateFile)
+	if err != nil {
+		return fmt.Errorf("failed to load configuration: %w", err)
+	}
+
+	// Validate known keys
+	warnings := configuration.ValidateKnownKeys(config)
+	if len(warnings) > 0 {
+		fmt.Fprintf(os.Stderr, "Configuration validation warnings:\n")
+		for _, warning := range warnings {
+			fmt.Fprintf(os.Stderr, "  - %s\n", warning)
+		}
+		fmt.Fprintf(os.Stderr, "\nConfiguration loaded from: %s\n", configValidateFile)
+		fmt.Fprintf(os.Stderr, "Please fix the warnings above for best results.\n")
+	} else {
+		fmt.Printf("Configuration %s is valid.\n", configValidateFile)
+	}
 
 	return nil
 }

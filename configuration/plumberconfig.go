@@ -3,10 +3,23 @@ package configuration
 import (
 	"fmt"
 	"os"
+	"sort"
 
 	"github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v2"
 )
+
+// validControlKeys contains all known control names in .plumber.yaml
+var validControlKeys = []string{
+	"containerImageMustNotUseForbiddenTags",
+	"containerImageMustComeFromAuthorizedSources",
+	"branchMustBeProtected",
+	"pipelineMustNotIncludeHardcodedJobs",
+	"includesMustBeUpToDate",
+	"includesMustNotUseForbiddenVersions",
+	"pipelineMustIncludeComponent",
+	"pipelineMustIncludeTemplate",
+}
 
 // PlumberConfig represents the .plumber.yaml configuration file structure
 type PlumberConfig struct {
@@ -423,4 +436,126 @@ func (c *RequiredTemplatesControlConfig) IsEnabled() bool {
 		return false
 	}
 	return *c.Enabled
+}
+
+// levenshteinDistance calculates the Levenshtein distance between two strings
+func levenshteinDistance(a, b string) int {
+	if len(a) == 0 {
+		return len(b)
+	}
+	if len(b) == 0 {
+		return len(a)
+	}
+
+	// Create matrix
+	matrix := make([][]int, len(a)+1)
+	for i := range matrix {
+		matrix[i] = make([]int, len(b)+1)
+	}
+
+	// Initialize first column
+	for i := 0; i <= len(a); i++ {
+		matrix[i][0] = i
+	}
+
+	// Initialize first row
+	for j := 0; j <= len(b); j++ {
+		matrix[0][j] = j
+	}
+
+	// Fill in the rest
+	for i := 1; i <= len(a); i++ {
+		for j := 1; j <= len(b); j++ {
+			cost := 1
+			if a[i-1] == b[j-1] {
+				cost = 0
+			}
+			matrix[i][j] = min(
+				matrix[i-1][j]+1,      // deletion
+				matrix[i][j-1]+1,      // insertion
+				matrix[i-1][j-1]+cost, // substitution
+			)
+		}
+	}
+
+	return matrix[len(a)][len(b)]
+}
+
+func min(a, b, c int) int {
+	if a < b {
+		if a < c {
+			return a
+		}
+		return c
+	}
+	if b < c {
+		return b
+	}
+	return c
+}
+
+// findClosestMatch finds the closest matching valid key using Levenshtein distance
+func findClosestMatch(unknownKey string, validKeys []string) string {
+	if len(validKeys) == 0 {
+		return ""
+	}
+
+	type match struct {
+		key      string
+		distance int
+	}
+
+	matches := make([]match, len(validKeys))
+	for i, key := range validKeys {
+		matches[i] = match{key: key, distance: levenshteinDistance(unknownKey, key)}
+	}
+
+	sort.Slice(matches, func(i, j int) bool {
+		return matches[i].distance < matches[j].distance
+	})
+
+	// Only suggest if distance is reasonable (less than half the key length)
+	if matches[0].distance < len(unknownKey)/2+2 {
+		return matches[0].key
+	}
+	return ""
+}
+
+// contains checks if a string is in a slice
+func contains(slice []string, item string) bool {
+	for _, s := range slice {
+		if s == item {
+			return true
+		}
+	}
+	return false
+}
+
+// ValidateKnownKeys checks for unknown configuration keys in .plumber.yaml
+// Returns a list of warning messages for unknown keys
+func ValidateKnownKeys(data []byte) []string {
+	var raw map[string]interface{}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return nil // If we can't parse, let the normal parsing handle the error
+	}
+
+	var warnings []string
+
+	// Check controls section
+	if controls, ok := raw["controls"].(map[string]interface{}); ok {
+		for key := range controls {
+			if !contains(validControlKeys, key) {
+				suggestion := findClosestMatch(key, validControlKeys)
+				if suggestion != "" {
+					warnings = append(warnings,
+						fmt.Sprintf("Unknown control in .plumber.yaml: %q. Did you mean %q?", key, suggestion))
+				} else {
+					warnings = append(warnings,
+						fmt.Sprintf("Unknown control in .plumber.yaml: %q", key))
+				}
+			}
+		}
+	}
+
+	return warnings
 }
