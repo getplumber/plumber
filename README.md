@@ -133,7 +133,7 @@ export GITLAB_TOKEN=glpat-xxxx
 
 ### Step 4: Run Analysis
 
-Plumber auto-detects the GitLab URL and project from your git remote but requires the remote to be set to 'origin'. 
+Plumber auto-detects the GitLab URL and project from your git remote but requires the remote to be set to 'origin'.
 ```bash
 # if in git remote with remote = origin, run:
 plumber analyze
@@ -141,7 +141,7 @@ plumber analyze
 # Or specify the project explicitly:
 plumber analyze --gitlab-url https://gitlab.com --project mygroup/myproject
 ```
-   
+
 It reads your `.plumber.yaml` config and outputs a compliance report. You can also tell it to store the output in JSON format with the `--output` flag.
 
 #### Local CI Configuration
@@ -495,7 +495,7 @@ Plumber provides colorized terminal output for easy scanning:
 </p>
 
 - **Green checkmarks (✓)** indicate passing controls
-- **Red crosses (✗)** indicate failing controls  
+- **Red crosses (✗)** indicate failing controls
 - **Yellow bullets (•)** highlight specific issues found
 - Summary tables show compliance percentages at a glance
 
@@ -651,7 +651,7 @@ docker pull getplumber/plumber:latest
 docker run --rm \
   -e GITLAB_TOKEN=glpat-xxxx \
   getplumber/plumber:latest analyze \
-  --gitlab-url https://your-gitlab-instance.com \ 
+  --gitlab-url https://your-gitlab-instance.com \
   --project mygroup/myproject
 ```
 
@@ -841,7 +841,7 @@ Contributions are welcome! Please read our [Contributing Guide](CONTRIBUTING.md)
 
 ---
 
-## 💡 See it in action 
+## 💡 See it in action
 Check out our example projects:
 - [go-build-test-compliant](https://gitlab.com/getplumber/examples/go-build-test-compliant/-/pipelines) - A compliant project passing all checks
 - [go-build-test-non-compliant](https://gitlab.com/getplumber/examples/go-build-test-non-compliant/-/pipelines) - A non-compliant project showing detected issues
@@ -869,3 +869,4 @@ Check out our example projects:
 ## Star History
 
 [![Star History Chart](https://api.star-history.com/svg?repos=getplumber/plumber&type=date&legend=top-left)](https://www.star-history.com/#getplumber/plumber&type=date&legend=top-left)
+
