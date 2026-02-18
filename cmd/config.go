@@ -21,7 +21,7 @@ var (
 	// config generate flags
 	configGenerateOutput string
 	configGenerateForce  bool
-// config validate flags
+	// config validate flags
 	configValidateFile string
 )
 
@@ -107,7 +107,7 @@ func init() {
 	rootCmd.AddCommand(configCmd)
 	configCmd.AddCommand(configViewCmd)
 	configCmd.AddCommand(configGenerateCmd)
-configCmd.AddCommand(configValidateCmd)
+	configCmd.AddCommand(configValidateCmd)
 
 	// config validate flags
 	configValidateCmd.Flags().StringVarP(&configValidateFile, "config", "c", ".plumber.yaml", "Path to configuration file")
@@ -312,21 +312,27 @@ func runConfigGenerate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
-
 func runConfigValidate(cmd *cobra.Command, args []string) error {
 	// Suppress debug logs for clean output (unless verbose)
 	if !verbose {
 		logrus.SetLevel(logrus.WarnLevel)
 	}
 
-	// Load the configuration
-	config, _, err := configuration.LoadPlumberConfig(configValidateFile)
+	// Read raw config file for unknown key validation
+	rawData, err := os.ReadFile(configValidateFile)
+	if err != nil {
+		return fmt.Errorf("failed to read configuration file: %w", err)
+	}
+
+	// Check for unknown keys in raw YAML (before struct parsing loses them)
+	warnings := configuration.ValidateKnownKeys(rawData)
+
+	// Also validate the config parses correctly and passes structural validation
+	_, _, err = configuration.LoadPlumberConfig(configValidateFile)
 	if err != nil {
 		return fmt.Errorf("failed to load configuration: %w", err)
 	}
 
-	// Validate known keys
-	warnings := configuration.ValidateKnownKeys(config)
 	if len(warnings) > 0 {
 		fmt.Fprintf(os.Stderr, "Configuration validation warnings:\n")
 		for _, warning := range warnings {

@@ -9,16 +9,44 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-// validControlKeys contains all known control names in .plumber.yaml
-var validControlKeys = []string{
-	"containerImageMustNotUseForbiddenTags",
-	"containerImageMustComeFromAuthorizedSources",
-	"branchMustBeProtected",
-	"pipelineMustNotIncludeHardcodedJobs",
-	"includesMustBeUpToDate",
-	"includesMustNotUseForbiddenVersions",
-	"pipelineMustIncludeComponent",
-	"pipelineMustIncludeTemplate",
+// validControlSchema maps each known control name to its valid sub-keys.
+// When adding a new control, add its entry here to enable validation.
+var validControlSchema = map[string][]string{
+	"containerImageMustNotUseForbiddenTags": {
+		"enabled", "tags", "containerImagesMustBePinnedByDigest",
+	},
+	"containerImageMustComeFromAuthorizedSources": {
+		"enabled", "trustedUrls", "trustDockerHubOfficialImages",
+	},
+	"branchMustBeProtected": {
+		"enabled", "namePatterns", "defaultMustBeProtected",
+		"allowForcePush", "codeOwnerApprovalRequired",
+		"minMergeAccessLevel", "minPushAccessLevel",
+	},
+	"pipelineMustNotIncludeHardcodedJobs": {
+		"enabled",
+	},
+	"includesMustBeUpToDate": {
+		"enabled",
+	},
+	"includesMustNotUseForbiddenVersions": {
+		"enabled", "forbiddenVersions", "defaultBranchIsForbiddenVersion",
+	},
+	"pipelineMustIncludeComponent": {
+		"enabled", "required", "requiredGroups",
+	},
+	"pipelineMustIncludeTemplate": {
+		"enabled", "required", "requiredGroups",
+	},
+}
+
+// validControlKeys returns the list of known control names.
+func validControlNames() []string {
+	keys := make([]string, 0, len(validControlSchema))
+	for k := range validControlSchema {
+		keys = append(keys, k)
+	}
+	return keys
 }
 
 // PlumberConfig represents the .plumber.yaml configuration file structure
@@ -532,26 +560,67 @@ func contains(slice []string, item string) bool {
 }
 
 // ValidateKnownKeys checks for unknown configuration keys in .plumber.yaml
-// Returns a list of warning messages for unknown keys
+// at both the control level and the sub-key level.
+// Returns a list of warning messages for unknown keys.
 func ValidateKnownKeys(data []byte) []string {
-	var raw map[string]interface{}
+	var raw map[interface{}]interface{}
 	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return nil // If we can't parse, let the normal parsing handle the error
+		return nil
 	}
 
 	var warnings []string
 
-	// Check controls section
-	if controls, ok := raw["controls"].(map[string]interface{}); ok {
-		for key := range controls {
-			if !contains(validControlKeys, key) {
-				suggestion := findClosestMatch(key, validControlKeys)
+	controlsRaw, exists := raw["controls"]
+	if !exists {
+		return warnings
+	}
+
+	controls, ok := controlsRaw.(map[interface{}]interface{})
+	if !ok {
+		return warnings
+	}
+
+	knownNames := validControlNames()
+
+	for keyRaw, valueRaw := range controls {
+		controlName, ok := keyRaw.(string)
+		if !ok {
+			continue
+		}
+
+		// Check control name
+		if !contains(knownNames, controlName) {
+			suggestion := findClosestMatch(controlName, knownNames)
+			if suggestion != "" {
+				warnings = append(warnings,
+					fmt.Sprintf("Unknown control in .plumber.yaml: %q. Did you mean %q?", controlName, suggestion))
+			} else {
+				warnings = append(warnings,
+					fmt.Sprintf("Unknown control in .plumber.yaml: %q", controlName))
+			}
+			continue
+		}
+
+		// Check sub-keys within this control
+		subMap, ok := valueRaw.(map[interface{}]interface{})
+		if !ok {
+			continue
+		}
+		validSubKeys := validControlSchema[controlName]
+
+		for subKeyRaw := range subMap {
+			subKey, ok := subKeyRaw.(string)
+			if !ok {
+				continue
+			}
+			if !contains(validSubKeys, subKey) {
+				suggestion := findClosestMatch(subKey, validSubKeys)
 				if suggestion != "" {
 					warnings = append(warnings,
-						fmt.Sprintf("Unknown control in .plumber.yaml: %q. Did you mean %q?", key, suggestion))
+						fmt.Sprintf("Unknown key %q in control %q. Did you mean %q?", subKey, controlName, suggestion))
 				} else {
 					warnings = append(warnings,
-						fmt.Sprintf("Unknown control in .plumber.yaml: %q", key))
+						fmt.Sprintf("Unknown key %q in control %q", subKey, controlName))
 				}
 			}
 		}
