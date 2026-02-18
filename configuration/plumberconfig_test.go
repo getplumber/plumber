@@ -90,52 +90,46 @@ func TestFindClosestMatch(t *testing.T) {
 	}
 
 	tests := []struct {
-		name          string
-		input         string
-		expectMatch   bool
-		expectedKey   string
-		maxDistance   int
+		name        string
+		input       string
+		expectMatch bool
+		expectedKey string
 	}{
 		{
 			name:        "exact match",
 			input:       "containerImageMustNotUseForbiddenTags",
 			expectMatch: true,
 			expectedKey: "containerImageMustNotUseForbiddenTags",
-			maxDistance: 3,
 		},
 		{
 			name:        "typo - missing 's' at end",
 			input:       "containerImageMustNotUseForbiddenTag",
 			expectMatch: true,
 			expectedKey: "containerImageMustNotUseForbiddenTags",
-			maxDistance: 3,
 		},
 		{
 			name:        "typo - wrong character",
 			input:       "branchMustBeProtectod",
 			expectMatch: true,
 			expectedKey: "branchMustBeProtected",
-			maxDistance: 3,
 		},
 		{
 			name:        "completely different string - no match",
 			input:       "xyz123",
 			expectMatch: false,
 			expectedKey: "",
-			maxDistance: 3,
 		},
 		{
 			name:        "similar but too different",
 			input:       "containerMustNotUseTags",
 			expectMatch: false,
 			expectedKey: "",
-			maxDistance: 5,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := findClosestMatch(tt.input, validKeys, tt.maxDistance)
+			result := findClosestMatch(tt.input, validKeys)
 			if tt.expectMatch {
 				if result != tt.expectedKey {
 					t.Errorf("findClosestMatch(%q) = %q, want %q", tt.input, result, tt.expectedKey)
@@ -152,38 +146,181 @@ func TestFindClosestMatch(t *testing.T) {
 func TestValidateKnownKeys(t *testing.T) {
 	tests := []struct {
 		name           string
-		config         *PlumberConfig
+		yamlContent    string
 		expectWarnings int
+		wantContains   string
 	}{
 		{
 			name: "valid config - no warnings",
-			config: &PlumberConfig{
-				Controls: ControlsConfig{
-					ContainerImageMustNotUseForbiddenTags:   &ContainerImageMustNotUseForbiddenTagsControlConfig{},
-					ContainerImageMustComeFromAuthorizedSources: &ContainerImageMustComeFromAuthorizedSourcesControlConfig{},
-				},
-			},
+			yamlContent: `
+version: "1"
+controls:
+  containerImageMustNotUseForbiddenTags:
+    enabled: true
+  branchMustBeProtected:
+    enabled: true
+`,
 			expectWarnings: 0,
 		},
 		{
-			name: "unknown control key",
-			config: &PlumberConfig{
-				Controls: ControlsConfig{
-					ContainerImageMustNotUseForbiddenTags: &ContainerImageMustNotUseForbiddenTagsControlConfig{},
-					// This would need to be tested differently since ControlsConfig is a struct
-					// The actual implementation checks for unknown keys in the raw YAML
-				},
-			},
-			expectWarnings: 0, // Will be adjusted based on actual implementation
+			name: "unknown control key - typo missing 's'",
+			yamlContent: `
+version: "1"
+controls:
+  containerImageMustNotUseForbiddenTag:
+    enabled: true
+`,
+			expectWarnings: 1,
+			wantContains:   "containerImageMustNotUseForbiddenTags",
+		},
+		{
+			name: "multiple unknown keys",
+			yamlContent: `
+version: "1"
+controls:
+  containerImageMustNotUseForbiddenTag:
+    enabled: true
+  branchMustBeProtectod:
+    enabled: true
+`,
+			expectWarnings: 2,
+		},
+		{
+			name: "completely unknown key",
+			yamlContent: `
+version: "1"
+controls:
+  someRandomControl:
+    enabled: true
+`,
+			expectWarnings: 1,
+		},
+		{
+			name: "unknown sub-key - tags typo",
+			yamlContent: `
+version: "1"
+controls:
+  containerImageMustNotUseForbiddenTags:
+    enabled: true
+    tag:
+      - latest
+`,
+			expectWarnings: 1,
+			wantContains:   "tags",
+		},
+		{
+			name: "unknown sub-key - allowForcePush typo",
+			yamlContent: `
+version: "1"
+controls:
+  branchMustBeProtected:
+    enabled: true
+    allowForcePushes: false
+`,
+			expectWarnings: 1,
+			wantContains:   "allowForcePush",
+		},
+		{
+			name: "multiple sub-key typos in same control",
+			yamlContent: `
+version: "1"
+controls:
+  branchMustBeProtected:
+    enabled: true
+    namePattern:
+      - main
+    allowForcePushes: false
+`,
+			expectWarnings: 2,
+		},
+		{
+			name: "typo at both control and sub-key level",
+			yamlContent: `
+version: "1"
+controls:
+  containerImageMustNotUseForbiddenTag:
+    enabled: true
+  branchMustBeProtected:
+    enabled: true
+    allowForcePushes: false
+`,
+			expectWarnings: 2,
+		},
+		{
+			name: "valid sub-keys - no warnings",
+			yamlContent: `
+version: "1"
+controls:
+  branchMustBeProtected:
+    enabled: true
+    namePatterns:
+      - main
+    defaultMustBeProtected: true
+    allowForcePush: false
+    codeOwnerApprovalRequired: false
+    minMergeAccessLevel: 30
+    minPushAccessLevel: 40
+`,
+			expectWarnings: 0,
+		},
+		{
+			name: "completely unknown sub-key",
+			yamlContent: `
+version: "1"
+controls:
+  includesMustBeUpToDate:
+    enabled: true
+    somethingTotallyRandom: true
+`,
+			expectWarnings: 1,
+		},
+		{
+			name:           "invalid yaml - no warnings returned",
+			yamlContent:    `{{{invalid yaml`,
+			expectWarnings: 0,
+		},
+		{
+			name: "empty controls section - no warnings",
+			yamlContent: `
+version: "1"
+controls: {}
+`,
+			expectWarnings: 0,
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Note: ValidateKnownKeys checks for unknown keys in raw YAML
-			// This test verifies the function runs without error
-			_ = ValidateKnownKeys(tt.config)
-			// The actual warning count depends on the YAML parsing
+			warnings := ValidateKnownKeys([]byte(tt.yamlContent))
+			if len(warnings) != tt.expectWarnings {
+				t.Errorf("ValidateKnownKeys() returned %d warnings, want %d. Warnings: %v",
+					len(warnings), tt.expectWarnings, warnings)
+			}
+			if tt.wantContains != "" && len(warnings) > 0 {
+				found := false
+				for _, w := range warnings {
+					if contains([]string{w}, tt.wantContains) || len(w) > 0 && containsSubstring(w, tt.wantContains) {
+						found = true
+						break
+					}
+				}
+				if !found {
+					t.Errorf("Expected warning to contain %q, but got: %v", tt.wantContains, warnings)
+				}
+			}
 		})
 	}
+}
+
+func containsSubstring(s, substr string) bool {
+	return len(s) >= len(substr) && (s == substr || len(s) > 0 && findSubstring(s, substr))
+}
+
+func findSubstring(s, substr string) bool {
+	for i := 0; i <= len(s)-len(substr); i++ {
+		if s[i:i+len(substr)] == substr {
+			return true
+		}
+	}
+	return false
 }
