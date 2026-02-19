@@ -70,6 +70,12 @@ spec:
       description: "Create/update a Plumber compliance badge on the project (requires api scope; only runs on default branch pipelines)"
       default: false
       type: boolean
+    controls:
+      description: "Run only listed controls (comma-separated control names). Cannot be used with skip_controls."
+      default: ""
+    skip_controls:
+      description: "Skip listed controls (comma-separated control names). Cannot be used with controls."
+      default: ""
 
 ---
 
@@ -160,6 +166,14 @@ spec:
       if [ "$[[ inputs.badge ]]" = "true" ]; then
         BADGE_FLAG="--badge"
       fi
+      CONTROLS_FLAG=""
+      if [ -n "$[[ inputs.controls ]]" ]; then
+        CONTROLS_FLAG="--controls $[[ inputs.controls ]]"
+      fi
+      SKIP_CONTROLS_FLAG=""
+      if [ -n "$[[ inputs.skip_controls ]]" ]; then
+        SKIP_CONTROLS_FLAG="--skip-controls $[[ inputs.skip_controls ]]"
+      fi
       /plumber analyze \
         --gitlab-url "$[[ inputs.server_url ]]" \
         --project "$[[ inputs.project_path ]]" \
@@ -172,7 +186,9 @@ spec:
         $PBOM_CDX_FLAG \
         $VERBOSE_FLAG \
         $MR_COMMENT_FLAG \
-        $BADGE_FLAG
+        $BADGE_FLAG \
+        $CONTROLS_FLAG \
+        $SKIP_CONTROLS_FLAG
   artifacts:
     paths:
       - $[[ inputs.output_file ]]

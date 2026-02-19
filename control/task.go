@@ -26,6 +26,7 @@ const (
 // shouldRunControl applies --controls / --skip-controls filtering for a control.
 // If --controls is set, only listed controls are eligible.
 // Then --skip-controls removes controls from that eligible set.
+// Normally the CLI will not allow setting both --controls and --skip-controls together
 func shouldRunControl(controlName string, conf *configuration.Configuration) bool {
 	if conf == nil {
 		return true

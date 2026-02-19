@@ -298,7 +298,7 @@ When using the Plumber component in GitLab CI, the CycloneDX output is automatic
 
 ```yaml
 include:
-  - component: gitlab.com/getplumber/plumber/plumber@v0.1.26
+  - component: gitlab.com/getplumber/plumber/plumber@v0.1.27
 ```
 
 Both `plumber-pbom.json` (native PBOM) and `plumber-cyclonedx-sbom.json` (CycloneDX) are generated and stored as pipeline artifacts by default.

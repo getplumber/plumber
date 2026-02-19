@@ -1,6 +1,7 @@
 package configuration
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -299,7 +300,7 @@ controls: {}
 			if tt.wantContains != "" && len(warnings) > 0 {
 				found := false
 				for _, w := range warnings {
-					if contains([]string{w}, tt.wantContains) || len(w) > 0 && containsSubstring(w, tt.wantContains) {
+					if strings.Contains(w, tt.wantContains) {
 						found = true
 						break
 					}
@@ -312,17 +313,30 @@ controls: {}
 	}
 }
 
-func containsSubstring(s, substr string) bool {
-	return len(s) >= len(substr) && (s == substr || len(s) > 0 && findSubstring(s, substr))
-}
 
-func findSubstring(s, substr string) bool {
-	for i := 0; i <= len(s)-len(substr); i++ {
-		if s[i:i+len(substr)] == substr {
-			return true
+func TestValidControlNames(t *testing.T) {
+	names := ValidControlNames()
+
+	expected := []string{
+		"branchMustBeProtected",
+		"containerImageMustComeFromAuthorizedSources",
+		"containerImageMustNotUseForbiddenTags",
+		"includesMustBeUpToDate",
+		"includesMustNotUseForbiddenVersions",
+		"pipelineMustIncludeComponent",
+		"pipelineMustIncludeTemplate",
+		"pipelineMustNotIncludeHardcodedJobs",
+	}
+
+	if len(names) != len(expected) {
+		t.Fatalf("ValidControlNames() returned %d entries, want %d (%v)", len(names), len(expected), names)
+	}
+
+	for i := range expected {
+		if names[i] != expected[i] {
+			t.Fatalf("ValidControlNames()[%d] = %q, want %q", i, names[i], expected[i])
 		}
 	}
-	return false
 }
 
 func TestValidControlNames(t *testing.T) {

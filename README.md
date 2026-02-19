@@ -186,7 +186,7 @@ Add this to your `.gitlab-ci.yml`:
 
 ```yaml
 include:
-  - component: gitlab.com/getplumber/plumber/plumber@v0.1.26
+  - component: gitlab.com/getplumber/plumber/plumber@v0.1.27
 ```
 * Get the latest version from the [Catalog](https://gitlab.com/explore/catalog/getplumber/plumber)
 
@@ -206,7 +206,7 @@ Override any input to fit your needs:
 
 ```yaml
 include:
-  - component: gitlab.com/getplumber/plumber/plumber@v0.1.26
+  - component: gitlab.com/getplumber/plumber/plumber@v0.1.27
     inputs:
       threshold: 80                           # Minimum % to pass (default: 100)
       config_file: configs/my-plumber.yaml    # Custom config path
@@ -236,6 +236,8 @@ include:
 | `verbose` | `false` | Enable debug output |
 | `mr_comment` | `false` | Post/update a compliance comment on the merge request (requires `api` scope) |
 | `badge` | `false` | Create/update a Plumber compliance badge on the project (requires `api` scope; only runs on default branch) |
+| `controls` | — | Run only listed controls (comma-separated). Cannot be used with `skip_controls` |
+| `skip_controls` | — | Skip listed controls (comma-separated). Cannot be used with `controls` |
 
 </details>
 
@@ -432,6 +434,51 @@ pipelineMustIncludeTemplate:
 
 </details>
 
+### Selective Control Execution
+
+You can run or skip specific controls using their YAML key names from `.plumber.yaml`. This is useful for iterative debugging or targeted CI checks.
+
+**Run only specific controls:**
+
+```bash
+# Only check image tags and branch protection
+plumber analyze --controls containerImageMustNotUseForbiddenTags,branchMustBeProtected
+```
+
+**Skip specific controls:**
+
+```bash
+# Run everything except branch protection (avoids API calls you don't need)
+plumber analyze --skip-controls branchMustBeProtected
+```
+
+**In the GitLab CI component:**
+
+```yaml
+include:
+  - component: gitlab.com/getplumber/plumber/plumber@v0.1.27
+    inputs:
+      controls: containerImageMustNotUseForbiddenTags,containerImageMustComeFromAuthorizedSources
+```
+
+Controls not selected are reported as **skipped** in the output. The `--controls` and `--skip-controls` flags are mutually exclusive.
+
+<details>
+<summary><b>Valid control names</b></summary>
+
+| Control Name |
+|-------------|
+| `branchMustBeProtected` |
+| `containerImageMustComeFromAuthorizedSources` |
+| `containerImageMustNotUseForbiddenTags` |
+| `includesMustBeUpToDate` |
+| `includesMustNotUseForbiddenVersions` |
+| `pipelineMustIncludeComponent` |
+| `pipelineMustIncludeTemplate` |
+| `pipelineMustNotIncludeHardcodedJobs` |
+
+</details>
+
 ---
 
 ## 📊 Artifacts & Outputs
@@ -511,7 +558,7 @@ Automatically post compliance summaries on merge requests to catch issues before
 
 ```yaml
 include:
-  - component: gitlab.com/getplumber/plumber/plumber@v0.1.26
+  - component: gitlab.com/getplumber/plumber/plumber@v0.1.27
     inputs:
       mr_comment: true  # Requires api scope on token
 ```
@@ -534,7 +581,7 @@ Display a live compliance badge on your project's overview page.
 
 ```yaml
 include:
-  - component: gitlab.com/getplumber/plumber/plumber@v0.1.26
+  - component: gitlab.com/getplumber/plumber/plumber@v0.1.27
     inputs:
       badge: true  # Requires api scope on token
 ```
@@ -692,6 +739,8 @@ plumber analyze [flags]
 | `--print` | No | `true` | Print text output to stdout |
 | `--mr-comment` | No | `false` | Post/update a compliance comment on the merge request (MR pipelines only: requires `api` scope) |
 | `--badge` | No | `false` | Create/update a Plumber compliance badge on the project (requires `api` scope; only runs on default branch) |
+| `--controls` | No | — | Run only listed controls (comma-separated). Cannot be used with `--skip-controls` |
+| `--skip-controls` | No | — | Skip listed controls (comma-separated). Cannot be used with `--controls` |
 | `--verbose`, `-v` | No | `false` | Enable verbose/debug output for troubleshooting |
 
 > \* Auto-detected from git remote (`origin`) if not specified. Supports both SSH and HTTPS remote URLs.

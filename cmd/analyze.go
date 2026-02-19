@@ -419,11 +419,16 @@ func parseControlsFilter(raw string) ([]string, error) {
 	if len(unknown) > 0 {
 		sort.Strings(unknown)
 		sort.Strings(validControls)
-		return nil, fmt.Errorf(
-			strings.Join(unknown, ", "),
-			"unknown control names: %s. valid controls: %s",
-			strings.Join(validControls, ", "),
-		)
+		var b strings.Builder
+		b.WriteString("unknown control names: ")
+		b.WriteString(strings.Join(unknown, ", "))
+		b.WriteString("\n\nValid controls:\n")
+		for _, name := range validControls {
+			b.WriteString("  - ")
+			b.WriteString(name)
+			b.WriteString("\n")
+		}
+		return nil, fmt.Errorf("%s", b.String())
 	}
 
 	return controls, nil
