@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"sort"
 	"strings"
 
 	"github.com/getplumber/plumber/configuration"
@@ -28,6 +29,8 @@ var (
 	pbomCycloneDXFile string
 	mrComment         bool
 	badge             bool
+	controlsFilter    string
+	skipControls      string
 )
 
 var analyzeCmd = &cobra.Command{
@@ -60,6 +63,8 @@ Optional flags:
   --pbom-cyclonedx   Write PBOM in CycloneDX format for integration with security tools
   --mr-comment       Post/update a compliance comment on the merge request (requires api scope, merge request pipeline only)
   --badge            Create/update a Plumber compliance badge on the project (requires api scope; only runs on default branch)
+  --controls         Run only listed controls (comma-separated)
+  --skip-controls    Skip listed controls (comma-separated)
 
 Exit codes:
   0  Analysis passed (compliance >= threshold)
@@ -101,6 +106,8 @@ func init() {
 	analyzeCmd.Flags().StringVar(&pbomCycloneDXFile, "pbom-cyclonedx", "", "Write PBOM in CycloneDX format (for security tool integration)")
 	analyzeCmd.Flags().BoolVar(&mrComment, "mr-comment", false, "Post/update a compliance comment on the merge request (requires api scope token; only works in merge request pipelines)")
 	analyzeCmd.Flags().BoolVar(&badge, "badge", false, "Create/update a Plumber compliance badge on the project (requires api scope; only runs on default branch)")
+	analyzeCmd.Flags().StringVar(&controlsFilter, "controls", "", "Run only listed controls (comma-separated)")
+	analyzeCmd.Flags().StringVar(&skipControls, "skip-controls", "", "Skip listed controls (comma-separated)")
 }
 
 func runAnalyze(cmd *cobra.Command, args []string) error {
@@ -144,15 +151,28 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--project is required (could not auto-detect from git remote)")
 	}
 
+	// Validate threshold
+	if threshold < 0 || threshold > 100 {
+		return fmt.Errorf("threshold must be between 0 and 100")
+	}
+	if controlsFilter != "" && skipControls != "" {
+		return fmt.Errorf("--controls and --skip-controls cannot be used together")
+	}
+
+	controlsFilterList, err := parseControlsFilter(controlsFilter)
+	if err != nil {
+		return err
+	}
+
+	skipControlsList, err := parseControlsFilter(skipControls)
+	if err != nil {
+		return err
+	}
+
 	// Get token from environment variable (required)
 	gitlabToken := os.Getenv("GITLAB_TOKEN")
 	if gitlabToken == "" {
 		return fmt.Errorf("GITLAB_TOKEN environment variable is required")
-	}
-
-	// Validate threshold
-	if threshold < 0 || threshold > 100 {
-		return fmt.Errorf("threshold must be between 0 and 100")
 	}
 
 	// Clean up URL
@@ -183,6 +203,8 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	conf.Branch = defaultBranch
 	conf.PlumberConfig = plumberConfig
 	conf.GitRepoRoot = gitRepoRoot
+	conf.ControlsFilter = controlsFilterList
+	conf.SkipControlsFilter = skipControlsList
 
 	// Determine if the local git repo matches the project being analyzed.
 	// Local CI file support only applies when the local repo IS the analyzed project.
@@ -347,6 +369,64 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	}
 
 	return nil
+}
+
+// parseControlsFilter parses and validates a comma separated control list.
+func parseControlsFilter(raw string) ([]string, error) {
+	// Empty flag means that no filter,
+	// so keep current behavior (all controls run).
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil, nil
+	}
+
+	// Resolve valid names from the same schema used by .plumber.yaml validation.
+	validControls := configuration.ValidControlNames()
+	validSet := make(map[string]struct{}, len(validControls))
+	for _, control := range validControls {
+		validSet[control] = struct{}{}
+	}
+
+	controls := make([]string, 0)
+	controlsSet := make(map[string]struct{})
+	unknown := make([]string, 0)
+	unknownSet := make(map[string]struct{})
+
+	for _, part := range strings.Split(raw, ",") {
+		control := strings.TrimSpace(part)
+		if control == "" {
+			continue
+		}
+
+		// Collecting unknown names so it can return one actionable error.
+		if _, ok := validSet[control]; !ok {
+			if _, seen := unknownSet[control]; !seen {
+				unknownSet[control] = struct{}{}
+				unknown = append(unknown, control)
+			}
+			continue
+		}
+
+		// Keeps the first occurrence only,
+		// it will avoid duplicate work downstream.
+		if _, seen := controlsSet[control]; seen {
+			continue
+		}
+		controlsSet[control] = struct{}{}
+		controls = append(controls, control)
+	}
+
+	if len(unknown) > 0 {
+		sort.Strings(unknown)
+		sort.Strings(validControls)
+		return nil, fmt.Errorf(
+			strings.Join(unknown, ", "),
+			"unknown control names: %s. valid controls: %s",
+			strings.Join(validControls, ", "),
+		)
+	}
+
+	return controls, nil
 }
 
 func writeJSONToFile(result *control.AnalysisResult, threshold, compliance float64, filePath string) error {
