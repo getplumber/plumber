@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"fmt"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -21,7 +20,14 @@ and enforces trust policies on third-party components, images, and branch protec
 
 func Execute() {
 	if err := rootCmd.Execute(); err != nil {
-		fmt.Fprintln(os.Stderr, err)
+		// Duplicated output
+		// Cobra give same output;
+		// from github.com/spf13/cobra v1.8.1
+		// just commenting this duplication for now.
+		// to validate, just uncomment that fmt line and run this command:
+		// make build && ./plumber analyze --gitlab-url https://gitlab.com --project a/b --controls nope
+		//
+		// fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }

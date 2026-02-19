@@ -11,6 +11,50 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
+const (
+	// Control names match .plumber.yaml keys exactly.
+	controlContainerImageMustNotUseForbiddenTags       = "containerImageMustNotUseForbiddenTags"
+	controlContainerImageMustComeFromAuthorizedSources = "containerImageMustComeFromAuthorizedSources"
+	controlBranchMustBeProtected                       = "branchMustBeProtected"
+	controlPipelineMustNotIncludeHardcodedJobs         = "pipelineMustNotIncludeHardcodedJobs"
+	controlIncludesMustBeUpToDate                      = "includesMustBeUpToDate"
+	controlIncludesMustNotUseForbiddenVersions         = "includesMustNotUseForbiddenVersions"
+	controlPipelineMustIncludeComponent                = "pipelineMustIncludeComponent"
+	controlPipelineMustIncludeTemplate                 = "pipelineMustIncludeTemplate"
+)
+
+// shouldRunControl applies --controls / --skip-controls filtering for a control.
+// If --controls is set, only listed controls are eligible.
+// Then --skip-controls removes controls from that eligible set.
+func shouldRunControl(controlName string, conf *configuration.Configuration) bool {
+	if conf == nil {
+		return true
+	}
+
+	// If --controls is set, only listed controls should run
+	if len(conf.ControlsFilter) > 0 {
+		found := false
+		for _, name := range conf.ControlsFilter {
+			if name == controlName {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+
+	// If --skip-controls is set, listed controls should not run
+	for _, name := range conf.SkipControlsFilter {
+		if name == controlName {
+			return false
+		}
+	}
+
+	return true
+}
+
 // RunAnalysis executes the complete pipeline analysis for a GitLab project
 func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	l := l.WithFields(logrus.Fields{
@@ -200,9 +244,13 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 
 	// Load control configuration from PlumberConfig (required)
 	forbiddenTagsConf := &GitlabImageForbiddenTagsConf{}
-	if err := forbiddenTagsConf.GetConf(conf.PlumberConfig); err != nil {
-		l.WithError(err).Error("Failed to load ImageForbiddenTags config from .plumber.yaml file")
-		return result, fmt.Errorf("invalid configuration: %w", err)
+	if shouldRunControl(controlContainerImageMustNotUseForbiddenTags, conf) {
+		if err := forbiddenTagsConf.GetConf(conf.PlumberConfig); err != nil {
+			l.WithError(err).Error("Failed to load ImageForbiddenTags config from .plumber.yaml file")
+			return result, fmt.Errorf("invalid configuration: %w", err)
+		}
+	} else {
+		forbiddenTagsConf.Enabled = false
 	}
 
 	forbiddenTagsResult := forbiddenTagsConf.Run(pipelineImageData)
@@ -212,9 +260,13 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	l.Info("Running Image Authorized Sources control")
 
 	authorizedSourcesConf := &GitlabImageAuthorizedSourcesConf{}
-	if err := authorizedSourcesConf.GetConf(conf.PlumberConfig); err != nil {
-		l.WithError(err).Error("Failed to load ImageAuthorizedSources config from .plumber.yaml file")
-		return result, fmt.Errorf("invalid configuration: %w", err)
+	if shouldRunControl(controlContainerImageMustComeFromAuthorizedSources, conf) {
+		if err := authorizedSourcesConf.GetConf(conf.PlumberConfig); err != nil {
+			l.WithError(err).Error("Failed to load ImageAuthorizedSources config from .plumber.yaml file")
+			return result, fmt.Errorf("invalid configuration: %w", err)
+		}
+	} else {
+		authorizedSourcesConf.Enabled = false
 	}
 
 	authorizedSourcesResult := authorizedSourcesConf.Run(pipelineImageData)
@@ -224,9 +276,13 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	l.Info("Running Pipeline Must Not Include Hardcoded Jobs control")
 
 	hardcodedJobsConf := &GitlabPipelineHardcodedJobsConf{}
-	if err := hardcodedJobsConf.GetConf(conf.PlumberConfig); err != nil {
-		l.WithError(err).Error("Failed to load HardcodedJobs config from .plumber.yaml file")
-		return result, fmt.Errorf("invalid configuration: %w", err)
+	if shouldRunControl(controlPipelineMustNotIncludeHardcodedJobs, conf) {
+		if err := hardcodedJobsConf.GetConf(conf.PlumberConfig); err != nil {
+			l.WithError(err).Error("Failed to load HardcodedJobs config from .plumber.yaml file")
+			return result, fmt.Errorf("invalid configuration: %w", err)
+		}
+	} else {
+		hardcodedJobsConf.Enabled = false
 	}
 
 	hardcodedJobsResult := hardcodedJobsConf.Run(pipelineOriginData)
@@ -236,9 +292,13 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	l.Info("Running Includes Must Be Up To Date control")
 
 	outdatedConf := &GitlabPipelineIncludesOutdatedConf{}
-	if err := outdatedConf.GetConf(conf.PlumberConfig); err != nil {
-		l.WithError(err).Error("Failed to load IncludesOutdated config from .plumber.yaml file")
-		return result, fmt.Errorf("invalid configuration: %w", err)
+	if shouldRunControl(controlIncludesMustBeUpToDate, conf) {
+		if err := outdatedConf.GetConf(conf.PlumberConfig); err != nil {
+			l.WithError(err).Error("Failed to load IncludesOutdated config from .plumber.yaml file")
+			return result, fmt.Errorf("invalid configuration: %w", err)
+		}
+	} else {
+		outdatedConf.Enabled = false
 	}
 
 	outdatedResult := outdatedConf.Run(pipelineOriginData)
@@ -248,48 +308,65 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	l.Info("Running Includes Must Not Use Forbidden Versions control")
 
 	forbiddenVersionConf := &GitlabPipelineIncludesForbiddenVersionConf{}
-	if err := forbiddenVersionConf.GetConf(conf.PlumberConfig); err != nil {
-		l.WithError(err).Error("Failed to load ForbiddenVersions config from .plumber.yaml file")
-		return result, fmt.Errorf("invalid configuration: %w", err)
+	if shouldRunControl(controlIncludesMustNotUseForbiddenVersions, conf) {
+		if err := forbiddenVersionConf.GetConf(conf.PlumberConfig); err != nil {
+			l.WithError(err).Error("Failed to load ForbiddenVersions config from .plumber.yaml file")
+			return result, fmt.Errorf("invalid configuration: %w", err)
+		}
+	} else {
+		forbiddenVersionConf.Enabled = false
 	}
 
 	forbiddenVersionResult := forbiddenVersionConf.Run(pipelineOriginData, projectInfo.DefaultBranch)
 	result.ForbiddenVersionsIncludesResult = forbiddenVersionResult
 
 	// 8. Run Branch Must Be Protected control (if enabled)
-	branchProtectionConfig := conf.PlumberConfig.GetBranchMustBeProtectedConfig()
-	if branchProtectionConfig != nil && branchProtectionConfig.IsEnabled() {
-		l.Info("Running Branch Must Be Protected control")
+	if shouldRunControl(controlBranchMustBeProtected, conf) {
+		branchProtectionConfig := conf.PlumberConfig.GetBranchMustBeProtectedConfig()
+		if branchProtectionConfig != nil && branchProtectionConfig.IsEnabled() {
+			l.Info("Running Branch Must Be Protected control")
 
-		// Run Protection data collection first
-		protectionDC := &collector.GitlabProtectionDataCollection{}
-		protectionData, _, err := protectionDC.Run(projectInfo, conf.GitlabToken, conf)
-		if err != nil {
-			l.WithError(err).Error("Protection data collection failed")
-			// Data collection failed - set compliance to 0 but continue
-			result.BranchProtectionResult = &GitlabBranchProtectionResult{
-				Enabled:    true,
-				Compliance: 0,
-				Version:    ControlTypeGitlabProtectionBranchProtectionNotCompliantVersion,
-				Error:      err.Error(),
+			// Run Protection data collection first
+			protectionDC := &collector.GitlabProtectionDataCollection{}
+			protectionData, _, err := protectionDC.Run(projectInfo, conf.GitlabToken, conf)
+			if err != nil {
+				l.WithError(err).Error("Protection data collection failed")
+				// Data collection failed - set compliance to 0 but continue
+				result.BranchProtectionResult = &GitlabBranchProtectionResult{
+					Enabled:    true,
+					Compliance: 0,
+					Version:    ControlTypeGitlabProtectionBranchProtectionNotCompliantVersion,
+					Error:      err.Error(),
+				}
+			} else {
+				// Run the branch protection control
+				branchProtectionControl := NewGitlabBranchProtectionControl(branchProtectionConfig)
+				branchProtectionResult := branchProtectionControl.Run(protectionData, projectInfo)
+				result.BranchProtectionResult = branchProtectionResult
 			}
 		} else {
-			// Run the branch protection control
-			branchProtectionControl := NewGitlabBranchProtectionControl(branchProtectionConfig)
-			branchProtectionResult := branchProtectionControl.Run(protectionData, projectInfo)
-			result.BranchProtectionResult = branchProtectionResult
+			l.Debug("Branch Must Be Protected control is disabled or not configured")
 		}
 	} else {
-		l.Debug("Branch Must Be Protected control is disabled or not configured")
+		result.BranchProtectionResult = &GitlabBranchProtectionResult{
+			Enabled:    false,
+			Skipped:    true,
+			Compliance: 100.0,
+			Version:    ControlTypeGitlabProtectionBranchProtectionNotCompliantVersion,
+		}
 	}
 
 	// 9. Run Pipeline Must Include Component control
 	l.Info("Running Pipeline Must Include Component control")
 
 	requiredComponentsConf := &GitlabPipelineRequiredComponentsConf{}
-	if err := requiredComponentsConf.GetConf(conf.PlumberConfig); err != nil {
-		l.WithError(err).Error("Failed to load RequiredComponents config from .plumber.yaml file")
-		return result, fmt.Errorf("invalid configuration: %w", err)
+	if shouldRunControl(controlPipelineMustIncludeComponent, conf) {
+		if err := requiredComponentsConf.GetConf(conf.PlumberConfig); err != nil {
+			l.WithError(err).Error("Failed to load RequiredComponents config from .plumber.yaml file")
+			return result, fmt.Errorf("invalid configuration: %w", err)
+		}
+	} else {
+		requiredComponentsConf.Enabled = false
 	}
 
 	requiredComponentsResult := requiredComponentsConf.Run(pipelineOriginData, conf.GitlabURL)
@@ -299,9 +376,13 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	l.Info("Running Pipeline Must Include Template control")
 
 	requiredTemplatesConf := &GitlabPipelineRequiredTemplatesConf{}
-	if err := requiredTemplatesConf.GetConf(conf.PlumberConfig); err != nil {
-		l.WithError(err).Error("Failed to load RequiredTemplates config from .plumber.yaml file")
-		return result, fmt.Errorf("invalid configuration: %w", err)
+	if shouldRunControl(controlPipelineMustIncludeTemplate, conf) {
+		if err := requiredTemplatesConf.GetConf(conf.PlumberConfig); err != nil {
+			l.WithError(err).Error("Failed to load RequiredTemplates config from .plumber.yaml file")
+			return result, fmt.Errorf("invalid configuration: %w", err)
+		}
+	} else {
+		requiredTemplatesConf.Enabled = false
 	}
 
 	requiredTemplatesResult := requiredTemplatesConf.Run(pipelineOriginData)

@@ -40,6 +40,12 @@ type Configuration struct {
 
 	// Plumber Configuration (from .plumber.yaml file)
 	PlumberConfig *PlumberConfig
+
+	// Values must match .plumber.yaml control keys
+	// ControlsFilter runs only the listed controls when set;
+	ControlsFilter []string
+	// SkipControlsFilter skips the listed controls when set;
+	SkipControlsFilter []string
 }
 
 // NewDefaultConfiguration creates a Configuration with sensible defaults

@@ -49,6 +49,13 @@ func validControlNames() []string {
 	return keys
 }
 
+// ValidControlNames returns all known control names from the configuration schema;
+func ValidControlNames() []string {
+	names := validControlNames()
+	sort.Strings(names)
+	return names
+}
+
 // PlumberConfig represents the .plumber.yaml configuration file structure
 type PlumberConfig struct {
 	// Version of the config file format
