@@ -6,6 +6,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
@@ -218,10 +219,19 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		conf.LogLevel = logrus.DebugLevel
 	}
 
-	// Run analysis
+	// Run analysis with spinner
 	fmt.Fprintf(os.Stderr, "Analyzing project: %s on %s\n", projectPath, cleanGitlabURL)
 
-	result, err := control.RunAnalysis(conf)
+	var result *control.AnalysisResult
+
+	// Start spinner in verbose mode (when user wants to see progress)
+	if verbose {
+		stopSpinner := startSpinner("Analyzing")
+		result, err = control.RunAnalysis(conf)
+		stopSpinner()
+	} else {
+		result, err = control.RunAnalysis(conf)
+	}
 	if err != nil {
 		return fmt.Errorf("analysis failed: %w", err)
 	}
@@ -1085,4 +1095,35 @@ func printComplianceTable(controls []controlSummary, overallCompliance, threshol
 		strings.Repeat("═", complianceWidth),
 		strings.Repeat("═", statusWidth),
 		colorReset)
+}
+
+// startSpinner displays a spinner while the analysis is running
+// Returns a stop function that should be called when done
+func startSpinner(message string) func() {
+	stop := make(chan bool)
+	done := make(chan bool)
+	
+	go func() {
+		spinner := []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+		i := 0
+		
+		for {
+			select {
+			case <-stop:
+				done <- true
+				return
+			default:
+				fmt.Fprintf(os.Stderr, "\r%s %s... ", spinner[i%len(spinner)], message)
+				i++
+				time.Sleep(100 * time.Millisecond)
+			}
+		}
+	}()
+	
+	return func() {
+		stop <- true
+		<-done
+		// Clear the spinner line
+		fmt.Fprintf(os.Stderr, "\r")
+	}
 }
