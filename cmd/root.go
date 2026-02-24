@@ -1,14 +1,17 @@
 package cmd
 
 import (
+	"fmt"
 	"os"
+	"time"
 
 	"github.com/spf13/cobra"
 )
 
 var (
 	// Global flags
-	verbose bool
+	verbose   bool
+	updateMsg chan string
 )
 
 var rootCmd = &cobra.Command{
@@ -17,21 +20,33 @@ var rootCmd = &cobra.Command{
 	Long: `Plumber is a command-line tool that analyzes GitLab CI/CD pipelines
 and enforces trust policies on third-party components, images, and branch protections.`,
 	PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-		checkForNewerVersion()
+		if os.Getenv("PLUMBER_NO_UPDATE_CHECK") == "" {
+			updateMsg = make(chan string, 1)
+			go checkForNewerVersion(updateMsg)
+		}
 		return nil
 	},
 }
 
 func Execute() {
-	if err := rootCmd.Execute(); err != nil {
-		// Duplicated output
-		// Cobra give same output;
-		// from github.com/spf13/cobra v1.8.1
-		// just commenting this duplication for now.
-		// to validate, just uncomment that fmt line and run this command:
-		// make build && ./plumber analyze --gitlab-url https://gitlab.com --project a/b --controls nope
-		//
-		// fmt.Fprintln(os.Stderr, err)
+	err := rootCmd.Execute()
+
+	if updateMsg != nil {
+		select {
+		case msg := <-updateMsg:
+			if msg != "" {
+				fmt.Fprint(os.Stderr, msg)
+			}
+
+		case <-time.After(500 * time.Millisecond):
+			// Fast commands (e.g. "plumber version") finish before the GitHub
+			// API responds. Give the check up to 500ms after the command ends
+			// to avoid hanging on firewalled networks where packets are silently
+			// dropped and the HTTP client waits for the full 3s timeout.
+		}
+	}
+
+	if err != nil {
 		os.Exit(1)
 	}
 }
