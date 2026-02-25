@@ -151,6 +151,17 @@ func (p *PBOM) ToCycloneDX(plumberVersion string) *CycloneDX {
 			component.Properties = append(component.Properties,
 				CycloneDXProperty{Name: "plumber:nested", Value: "true"})
 		}
+		if inc.Overridden {
+			component.Properties = append(component.Properties,
+				CycloneDXProperty{Name: "plumber:overridden", Value: "true"})
+			for _, job := range inc.OverriddenJobs {
+				component.Properties = append(component.Properties,
+					CycloneDXProperty{
+						Name:  "plumber:overridden-job",
+						Value: fmt.Sprintf("%s:%s", job.JobName, strings.Join(job.OverriddenKeys, ",")),
+					})
+			}
+		}
 
 		cdx.Components = append(cdx.Components, component)
 	}

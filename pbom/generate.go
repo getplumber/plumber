@@ -4,6 +4,7 @@ import (
 	"time"
 
 	"github.com/getplumber/plumber/collector"
+	"github.com/getplumber/plumber/utils"
 )
 
 // ImageComplianceData holds compliance results for images to enrich PBOM output
@@ -14,13 +15,21 @@ type ImageComplianceData struct {
 	UnauthorizedImages map[string]bool
 }
 
+// IncludeOverrideData holds override detection results for includes.
+// Key is the clean include location path (without version/instance prefix).
+type IncludeOverrideData struct {
+	// Overrides maps a clean include path to its overridden job details
+	Overrides map[string][]utils.OverriddenJobDetail
+}
+
 // Generator creates PBOMs from pipeline analysis data
 type Generator struct {
-	projectPath    string
-	projectID      int
-	gitlabURL      string
-	branch         string
-	complianceData *ImageComplianceData
+	projectPath       string
+	projectID         int
+	gitlabURL         string
+	branch            string
+	complianceData    *ImageComplianceData
+	includeOverrides  *IncludeOverrideData
 }
 
 // NewGenerator creates a new PBOM generator
@@ -36,6 +45,12 @@ func NewGenerator(projectPath string, projectID int, gitlabURL, branch string) *
 // WithComplianceData attaches compliance results so the PBOM includes authorized/forbiddenTag fields
 func (g *Generator) WithComplianceData(data *ImageComplianceData) *Generator {
 	g.complianceData = data
+	return g
+}
+
+// WithIncludeOverrideData attaches override detection results so the PBOM marks overridden includes
+func (g *Generator) WithIncludeOverrideData(data *IncludeOverrideData) *Generator {
+	g.includeOverrides = data
 	return g
 }
 
@@ -153,6 +168,15 @@ func (g *Generator) processIncludes(originData *collector.GitlabPipelineOriginDa
 				inc.LatestVersion = origin.GitlabComponent.ComponentLatestVersion
 				upToDate := origin.UpToDate
 				inc.UpToDate = &upToDate
+			}
+		}
+
+		// Enrich with override data if available
+		if g.includeOverrides != nil {
+			cleanPath := utils.CleanOriginPath(inc.Location)
+			if jobs, found := g.includeOverrides.Overrides[cleanPath]; found {
+				inc.Overridden = true
+				inc.OverriddenJobs = jobs
 			}
 		}
 

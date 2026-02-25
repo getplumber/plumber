@@ -510,14 +510,36 @@ func buildImageComplianceData(result *control.AnalysisResult) *pbom.ImageComplia
 	return data
 }
 
+// buildIncludeOverrideData extracts override detection results into a lookup map for the PBOM generator.
+// Keys are clean include paths (without version/instance prefix).
+func buildIncludeOverrideData(result *control.AnalysisResult) *pbom.IncludeOverrideData {
+	data := &pbom.IncludeOverrideData{
+		Overrides: make(map[string][]utils.OverriddenJobDetail),
+	}
+
+	if r := result.RequiredComponentsResult; r != nil && !r.Skipped {
+		for _, issue := range r.OverriddenIssues {
+			data.Overrides[issue.ComponentPath] = issue.OverriddenJobs
+		}
+	}
+
+	if r := result.RequiredTemplatesResult; r != nil && !r.Skipped {
+		for _, issue := range r.OverriddenIssues {
+			data.Overrides[issue.TemplatePath] = issue.OverriddenJobs
+		}
+	}
+
+	return data
+}
+
 func writePBOMToFile(result *control.AnalysisResult, gitlabURL, branch, filePath string) error {
-	// Generate PBOM from collected data
 	complianceData := buildImageComplianceData(result)
+	overrideData := buildIncludeOverrideData(result)
 	generator := pbom.NewGenerator(result.ProjectPath, result.ProjectID, gitlabURL, branch).
-		WithComplianceData(complianceData)
+		WithComplianceData(complianceData).
+		WithIncludeOverrideData(overrideData)
 	pipelineBOM := generator.Generate(result.PipelineImageData, result.PipelineOriginData)
 
-	// Create/overwrite the file
 	file, err := os.Create(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to create PBOM file: %w", err)
@@ -530,16 +552,15 @@ func writePBOMToFile(result *control.AnalysisResult, gitlabURL, branch, filePath
 }
 
 func writePBOMCycloneDXToFile(result *control.AnalysisResult, gitlabURL, branch, filePath string) error {
-	// Generate PBOM from collected data
 	complianceData := buildImageComplianceData(result)
+	overrideData := buildIncludeOverrideData(result)
 	generator := pbom.NewGenerator(result.ProjectPath, result.ProjectID, gitlabURL, branch).
-		WithComplianceData(complianceData)
+		WithComplianceData(complianceData).
+		WithIncludeOverrideData(overrideData)
 	pipelineBOM := generator.Generate(result.PipelineImageData, result.PipelineOriginData)
 
-	// Convert to CycloneDX format
 	cycloneDX := pipelineBOM.ToCycloneDX(Version)
 
-	// Create/overwrite the file
 	file, err := os.Create(filePath)
 	if err != nil {
 		return fmt.Errorf("failed to create CycloneDX PBOM file: %w", err)
@@ -826,10 +847,11 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 
 	// Control 7: Pipeline must include component
 	if result.RequiredComponentsResult != nil {
+		totalComponentIssues := len(result.RequiredComponentsResult.Issues) + len(result.RequiredComponentsResult.OverriddenIssues)
 		ctrl := controlSummary{
 			name:       "Pipeline must include component",
 			compliance: result.RequiredComponentsResult.Compliance,
-			issues:     len(result.RequiredComponentsResult.Issues),
+			issues:     totalComponentIssues,
 			skipped:    result.RequiredComponentsResult.Skipped,
 		}
 		controls = append(controls, ctrl)
@@ -848,16 +870,27 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 					fmt.Printf("    %s•%s %s (group %d)\n", colorYellow, colorReset, issue.ComponentPath, issue.GroupIndex+1)
 				}
 			}
+
+			if len(result.RequiredComponentsResult.OverriddenIssues) > 0 {
+				fmt.Printf("\n  %sOverridden Components:%s\n", colorYellow, colorReset)
+				for _, issue := range result.RequiredComponentsResult.OverriddenIssues {
+					fmt.Printf("    %s•%s %s (group %d)\n", colorYellow, colorReset, issue.ComponentPath, issue.GroupIndex+1)
+					for _, job := range issue.OverriddenJobs {
+						fmt.Printf("      job %s%s%s overrides: %s\n", colorDim, job.JobName, colorReset, strings.Join(job.OverriddenKeys, ", "))
+					}
+				}
+			}
 		}
 		fmt.Println()
 	}
 
 	// Control 8: Pipeline must include template
 	if result.RequiredTemplatesResult != nil {
+		totalTemplateIssues := len(result.RequiredTemplatesResult.Issues) + len(result.RequiredTemplatesResult.OverriddenIssues)
 		ctrl := controlSummary{
 			name:       "Pipeline must include template",
 			compliance: result.RequiredTemplatesResult.Compliance,
-			issues:     len(result.RequiredTemplatesResult.Issues),
+			issues:     totalTemplateIssues,
 			skipped:    result.RequiredTemplatesResult.Skipped,
 		}
 		controls = append(controls, ctrl)
@@ -874,6 +907,16 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 				fmt.Printf("\n  %sMissing Templates:%s\n", colorYellow, colorReset)
 				for _, issue := range result.RequiredTemplatesResult.Issues {
 					fmt.Printf("    %s•%s %s (group %d)\n", colorYellow, colorReset, issue.TemplatePath, issue.GroupIndex+1)
+				}
+			}
+
+			if len(result.RequiredTemplatesResult.OverriddenIssues) > 0 {
+				fmt.Printf("\n  %sOverridden Templates:%s\n", colorYellow, colorReset)
+				for _, issue := range result.RequiredTemplatesResult.OverriddenIssues {
+					fmt.Printf("    %s•%s %s (group %d)\n", colorYellow, colorReset, issue.TemplatePath, issue.GroupIndex+1)
+					for _, job := range issue.OverriddenJobs {
+						fmt.Printf("      job %s%s%s overrides: %s\n", colorDim, job.JobName, colorReset, strings.Join(job.OverriddenKeys, ", "))
+					}
 				}
 			}
 		}

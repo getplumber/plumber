@@ -173,15 +173,17 @@ func generateMRComment(result *AnalysisResult, compliance, threshold float64) st
 		}
 	}
 	if r := result.RequiredComponentsResult; r != nil {
-		controls = append(controls, controlEntry{"Pipeline must include required components", r.Compliance, len(r.Issues), r.Skipped})
+		issueCount := len(r.Issues) + len(r.OverriddenIssues)
+		controls = append(controls, controlEntry{"Pipeline must include required components", r.Compliance, issueCount, r.Skipped})
 		if !r.Skipped {
-			totalIssues += len(r.Issues)
+			totalIssues += issueCount
 		}
 	}
 	if r := result.RequiredTemplatesResult; r != nil {
-		controls = append(controls, controlEntry{"Pipeline must include required templates", r.Compliance, len(r.Issues), r.Skipped})
+		issueCount := len(r.Issues) + len(r.OverriddenIssues)
+		controls = append(controls, controlEntry{"Pipeline must include required templates", r.Compliance, issueCount, r.Skipped})
 		if !r.Skipped {
-			totalIssues += len(r.Issues)
+			totalIssues += issueCount
 		}
 	}
 
@@ -290,19 +292,31 @@ func writeIssueDetails(b *strings.Builder, result *AnalysisResult) {
 	}
 
 	// Required components
-	if r := result.RequiredComponentsResult; r != nil && !r.Skipped && len(r.Issues) > 0 {
+	if r := result.RequiredComponentsResult; r != nil && !r.Skipped && (len(r.Issues) > 0 || len(r.OverriddenIssues) > 0) {
 		b.WriteString("**Pipeline must include required components:**\n")
 		for _, issue := range r.Issues {
 			b.WriteString(fmt.Sprintf("- Missing component `%s` (group %d)\n", issue.ComponentPath, issue.GroupIndex+1))
+		}
+		for _, issue := range r.OverriddenIssues {
+			b.WriteString(fmt.Sprintf("- Overridden component `%s` (group %d)\n", issue.ComponentPath, issue.GroupIndex+1))
+			for _, job := range issue.OverriddenJobs {
+				b.WriteString(fmt.Sprintf("  - job `%s` overrides: `%s`\n", job.JobName, strings.Join(job.OverriddenKeys, "`, `")))
+			}
 		}
 		b.WriteString("\n")
 	}
 
 	// Required templates
-	if r := result.RequiredTemplatesResult; r != nil && !r.Skipped && len(r.Issues) > 0 {
+	if r := result.RequiredTemplatesResult; r != nil && !r.Skipped && (len(r.Issues) > 0 || len(r.OverriddenIssues) > 0) {
 		b.WriteString("**Pipeline must include required templates:**\n")
 		for _, issue := range r.Issues {
 			b.WriteString(fmt.Sprintf("- Missing template `%s` (group %d)\n", issue.TemplatePath, issue.GroupIndex+1))
+		}
+		for _, issue := range r.OverriddenIssues {
+			b.WriteString(fmt.Sprintf("- Overridden template `%s` (group %d)\n", issue.TemplatePath, issue.GroupIndex+1))
+			for _, job := range issue.OverriddenJobs {
+				b.WriteString(fmt.Sprintf("  - job `%s` overrides: `%s`\n", job.JobName, strings.Join(job.OverriddenKeys, "`, `")))
+			}
 		}
 		b.WriteString("\n")
 	}

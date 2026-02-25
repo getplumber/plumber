@@ -6,7 +6,11 @@
 // a PBOM tracks pipeline infrastructure dependencies.
 package pbom
 
-import "time"
+import (
+	"time"
+
+	"github.com/getplumber/plumber/utils"
+)
 
 // Version is the current PBOM specification version
 const Version = "1.0.0"
@@ -77,6 +81,10 @@ type Include struct {
 
 	// Whether this is a nested include (included by another include)
 	Nested bool `json:"nested,omitempty"`
+
+	// Override information (populated from control results)
+	Overridden     bool                       `json:"overridden,omitempty"`
+	OverriddenJobs []utils.OverriddenJobDetail `json:"overriddenJobs,omitempty"`
 }
 
 // Summary provides aggregate statistics about the pipeline dependencies

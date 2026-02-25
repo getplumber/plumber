@@ -1,14 +1,13 @@
 package control
 
 import (
-	"strings"
-
 	"github.com/getplumber/plumber/collector"
 	"github.com/getplumber/plumber/configuration"
+	"github.com/getplumber/plumber/utils"
 	"github.com/sirupsen/logrus"
 )
 
-const ControlTypeGitlabPipelineOriginRequiredComponentsVersion = "0.1.0"
+const ControlTypeGitlabPipelineOriginRequiredComponentsVersion = "0.2.0"
 
 //////////////////
 // Control conf //
@@ -63,11 +62,12 @@ func (p *GitlabPipelineRequiredComponentsConf) GetConf(plumberConfig *configurat
 
 // ComponentGroupStatus tracks the status of a single requirement group (AND clause)
 type ComponentGroupStatus struct {
-	GroupIndex       int      `json:"groupIndex"`       // Which requirement group (0-based)
-	RequiredOrigins  []string `json:"requiredOrigins"`  // Components required in this group
-	FoundOrigins     []string `json:"foundOrigins"`     // Components found
-	MissingOrigins   []string `json:"missingOrigins"`   // Components missing from this group
-	IsFullySatisfied bool     `json:"isFullySatisfied"` // All components in group present
+	GroupIndex        int      `json:"groupIndex"`        // Which requirement group (0-based)
+	RequiredOrigins   []string `json:"requiredOrigins"`   // Components required in this group
+	FoundOrigins      []string `json:"foundOrigins"`      // Components found and not overridden
+	MissingOrigins    []string `json:"missingOrigins"`    // Components missing from this group
+	OverriddenOrigins []string `json:"overriddenOrigins"` // Components found but overridden with forbidden keywords
+	IsFullySatisfied  bool     `json:"isFullySatisfied"`  // All components in group present (not missing)
 }
 
 // GitlabPipelineRequiredComponentsMetrics holds metrics about required components
@@ -83,6 +83,7 @@ type GitlabPipelineRequiredComponentsMetrics struct {
 type GitlabPipelineRequiredComponentsResult struct {
 	RequirementGroups []ComponentGroupStatus                  `json:"requirementGroups"`
 	Issues            []RequiredComponentIssue                `json:"issues"`
+	OverriddenIssues  []RequiredComponentOverriddenIssue      `json:"overriddenIssues"`
 	Metrics           GitlabPipelineRequiredComponentsMetrics `json:"metrics"`
 	Compliance        float64                                 `json:"compliance"`
 	Version           string                                  `json:"version"`
@@ -102,29 +103,17 @@ type RequiredComponentIssue struct {
 	GroupIndex    int    `json:"groupIndex"`
 }
 
+// RequiredComponentOverriddenIssue represents an issue where a required component
+// is imported but its jobs are overridden with forbidden keywords
+type RequiredComponentOverriddenIssue struct {
+	ComponentPath  string                `json:"componentPath"`
+	GroupIndex     int                   `json:"groupIndex"`
+	OverriddenJobs []utils.OverriddenJobDetail `json:"overriddenJobs"`
+}
+
 ///////////////////////
 // Control functions //
 ///////////////////////
-
-// parseComponentPath extracts the clean component path without version and instance URL
-func parseComponentPath(componentLocation string) string {
-	// Remove version (everything after @)
-	if idx := strings.LastIndex(componentLocation, "@"); idx != -1 {
-		componentLocation = componentLocation[:idx]
-	}
-	// Remove common instance prefixes
-	componentLocation = strings.TrimPrefix(componentLocation, "$CI_SERVER_FQDN/")
-	componentLocation = strings.TrimPrefix(componentLocation, "$CI_SERVER_HOST/")
-	// Remove any gitlab.com or other instance URLs
-	if idx := strings.Index(componentLocation, "/"); idx != -1 {
-		parts := strings.SplitN(componentLocation, "/", 2)
-		if len(parts) == 2 && strings.Contains(parts[0], ".") {
-			// First part looks like a domain, remove it
-			componentLocation = parts[1]
-		}
-	}
-	return componentLocation
-}
 
 // Run executes the required components control
 func (p *GitlabPipelineRequiredComponentsConf) Run(pipelineOriginData *collector.GitlabPipelineOriginData, gitlabURL string) *GitlabPipelineRequiredComponentsResult {
@@ -137,6 +126,7 @@ func (p *GitlabPipelineRequiredComponentsConf) Run(pipelineOriginData *collector
 	result := &GitlabPipelineRequiredComponentsResult{
 		RequirementGroups: []ComponentGroupStatus{},
 		Issues:            []RequiredComponentIssue{},
+		OverriddenIssues:  []RequiredComponentOverriddenIssue{},
 		Metrics:           GitlabPipelineRequiredComponentsMetrics{},
 		Compliance:        0.0,
 		Version:           ControlTypeGitlabPipelineOriginRequiredComponentsVersion,
@@ -162,52 +152,89 @@ func (p *GitlabPipelineRequiredComponentsConf) Run(pipelineOriginData *collector
 		metrics.CiMissing = 1
 	}
 
-	// Build set of component paths found in the pipeline
-	foundComponents := make(map[string]bool)
-	for _, origin := range pipelineOriginData.Origins {
-		if origin.OriginType == "component" {
-			cleanPath := parseComponentPath(origin.GitlabIncludeOrigin.Location)
-			foundComponents[cleanPath] = true
-			l.WithField("componentPath", cleanPath).Debug("Found component in pipeline")
+	// Initialize requirement groups
+	result.RequirementGroups = make([]ComponentGroupStatus, len(p.RequiredGroups))
+	for i, group := range p.RequiredGroups {
+		result.RequirementGroups[i] = ComponentGroupStatus{
+			GroupIndex:        i,
+			RequiredOrigins:   group,
+			FoundOrigins:      []string{},
+			MissingOrigins:    make([]string, len(group)),
+			OverriddenOrigins: []string{},
+			IsFullySatisfied:  false,
+		}
+		// Initialize all as missing
+		copy(result.RequirementGroups[i].MissingOrigins, group)
+	}
+
+	// Check all origins against all requirement groups
+	for idx := range pipelineOriginData.Origins {
+		origin := &pipelineOriginData.Origins[idx]
+
+		if origin.OriginType != "component" {
+			continue
+		}
+
+		cleanComponentPath := utils.CleanOriginPath(origin.GitlabIncludeOrigin.Location)
+
+		for groupIdx := range result.RequirementGroups {
+			group := &result.RequirementGroups[groupIdx]
+
+			for _, requiredOrigin := range group.RequiredOrigins {
+				cleanRequired := utils.CleanOriginPath(requiredOrigin)
+
+				if cleanComponentPath == cleanRequired {
+					overriddenJobs := getOriginOverriddenJobs(origin, pipelineOriginData)
+
+					if len(overriddenJobs) > 0 {
+						group.OverriddenOrigins = append(group.OverriddenOrigins, requiredOrigin)
+						result.OverriddenIssues = append(result.OverriddenIssues, RequiredComponentOverriddenIssue{
+							ComponentPath:  requiredOrigin,
+							GroupIndex:     groupIdx,
+							OverriddenJobs: overriddenJobs,
+						})
+					} else {
+						group.FoundOrigins = append(group.FoundOrigins, requiredOrigin)
+					}
+
+					// Remove from missing list regardless of override status
+					removeMissingComponent(group, requiredOrigin)
+
+					l.WithFields(logrus.Fields{
+						"component":      requiredOrigin,
+						"groupIndex":     groupIdx,
+						"overriddenJobs": overriddenJobs,
+					}).Debug("Required component matched")
+
+					break
+				}
+			}
 		}
 	}
 
-	// Check each requirement group
-	result.RequirementGroups = make([]ComponentGroupStatus, len(p.RequiredGroups))
+	// Evaluate groups, populate issues
 	anySatisfied := false
+	for i := range result.RequirementGroups {
+		group := &result.RequirementGroups[i]
 
-	for i, group := range p.RequiredGroups {
-		groupStatus := ComponentGroupStatus{
-			GroupIndex:       i,
-			RequiredOrigins:  group,
-			FoundOrigins:     []string{},
-			MissingOrigins:   []string{},
-			IsFullySatisfied: true,
-		}
+		// Group is fully satisfied if no components are missing.
+		// Overridden components are still "present" (imported) — they produce separate issues.
+		group.IsFullySatisfied = len(group.MissingOrigins) == 0
 
-		for _, requiredComponent := range group {
-			cleanRequired := parseComponentPath(requiredComponent)
-
-			if foundComponents[cleanRequired] {
-				groupStatus.FoundOrigins = append(groupStatus.FoundOrigins, requiredComponent)
-			} else {
-				groupStatus.MissingOrigins = append(groupStatus.MissingOrigins, requiredComponent)
-				groupStatus.IsFullySatisfied = false
-
-				// Create issue for missing component
-				result.Issues = append(result.Issues, RequiredComponentIssue{
-					ComponentPath: requiredComponent,
-					GroupIndex:    i,
-				})
-			}
-		}
-
-		if groupStatus.IsFullySatisfied {
+		if group.IsFullySatisfied {
 			anySatisfied = true
 			metrics.SatisfiedGroups++
 		}
 
-		result.RequirementGroups[i] = groupStatus
+		// Create issues for missing components
+		for _, missing := range group.MissingOrigins {
+			result.Issues = append(result.Issues, RequiredComponentIssue{
+				ComponentPath: missing,
+				GroupIndex:    i,
+			})
+		}
+		// Note: overridden issues are created inline during origin matching
+		// so we can capture the specific forbidden keys per component
 	}
 
 	// Calculate metrics
@@ -215,21 +242,23 @@ func (p *GitlabPipelineRequiredComponentsConf) Run(pipelineOriginData *collector
 	metrics.AnySatisfiedGroup = anySatisfied
 
 	// Calculate compliance using DNF logic
-	// 100% if at least one group is fully satisfied, 0% otherwise (for simplicity)
-	// More nuanced: find the group with highest completion percentage
+	// Found = 100%, Overridden = 50%, Missing = 0%
 	if len(p.RequiredGroups) == 0 {
 		result.Compliance = 100.0
-	} else if anySatisfied {
-		result.Compliance = 100.0
 	} else {
-		// Find the group with highest completion
 		maxScore := 0.0
 		for _, group := range result.RequirementGroups {
-			if len(group.RequiredOrigins) > 0 {
-				score := float64(len(group.FoundOrigins)) / float64(len(group.RequiredOrigins))
-				if score > maxScore {
-					maxScore = score
-				}
+			totalRequired := len(group.RequiredOrigins)
+			if totalRequired == 0 {
+				continue
+			}
+
+			found := len(group.FoundOrigins)
+			overridden := len(group.OverriddenOrigins)
+
+			score := (float64(found) + float64(overridden)*0.5) / float64(totalRequired)
+			if score > maxScore {
+				maxScore = score
 			}
 		}
 		result.Compliance = maxScore * 100.0
@@ -238,11 +267,24 @@ func (p *GitlabPipelineRequiredComponentsConf) Run(pipelineOriginData *collector
 	result.Metrics = metrics
 
 	l.WithFields(logrus.Fields{
-		"totalGroups":     metrics.TotalGroups,
-		"satisfiedGroups": metrics.SatisfiedGroups,
-		"compliance":      result.Compliance,
-		"issueCount":      len(result.Issues),
+		"totalGroups":      metrics.TotalGroups,
+		"satisfiedGroups":  metrics.SatisfiedGroups,
+		"compliance":       result.Compliance,
+		"missingIssues":    len(result.Issues),
+		"overriddenIssues": len(result.OverriddenIssues),
 	}).Info("Required components control completed")
 
 	return result
+}
+
+// removeMissingComponent removes a component from the missing list by path
+func removeMissingComponent(group *ComponentGroupStatus, componentPath string) {
+	cleanTarget := utils.CleanOriginPath(componentPath)
+	for i := 0; i < len(group.MissingOrigins); i++ {
+		cleanMissing := utils.CleanOriginPath(group.MissingOrigins[i])
+		if cleanMissing == cleanTarget {
+			group.MissingOrigins = append(group.MissingOrigins[:i], group.MissingOrigins[i+1:]...)
+			return
+		}
+	}
 }

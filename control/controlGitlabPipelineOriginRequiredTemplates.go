@@ -6,10 +6,11 @@ import (
 
 	"github.com/getplumber/plumber/collector"
 	"github.com/getplumber/plumber/configuration"
+	"github.com/getplumber/plumber/utils"
 	"github.com/sirupsen/logrus"
 )
 
-const ControlTypeGitlabPipelineOriginRequiredTemplatesVersion = "0.1.0"
+const ControlTypeGitlabPipelineOriginRequiredTemplatesVersion = "0.2.0"
 
 //////////////////
 // Control conf //
@@ -64,11 +65,12 @@ func (p *GitlabPipelineRequiredTemplatesConf) GetConf(plumberConfig *configurati
 
 // TemplateGroupStatus tracks the status of a single requirement group (AND clause)
 type TemplateGroupStatus struct {
-	GroupIndex       int      `json:"groupIndex"`       // Which requirement group (0-based)
-	RequiredOrigins  []string `json:"requiredOrigins"`  // Templates required in this group
-	FoundOrigins     []string `json:"foundOrigins"`     // Templates found
-	MissingOrigins   []string `json:"missingOrigins"`   // Templates missing from this group
-	IsFullySatisfied bool     `json:"isFullySatisfied"` // All templates in group present
+	GroupIndex        int      `json:"groupIndex"`        // Which requirement group (0-based)
+	RequiredOrigins   []string `json:"requiredOrigins"`   // Templates required in this group
+	FoundOrigins      []string `json:"foundOrigins"`      // Templates found and not overridden
+	MissingOrigins    []string `json:"missingOrigins"`    // Templates missing from this group
+	OverriddenOrigins []string `json:"overriddenOrigins"` // Templates found but overridden with forbidden keywords
+	IsFullySatisfied  bool     `json:"isFullySatisfied"`  // All templates in group present (not missing)
 }
 
 // GitlabPipelineRequiredTemplatesMetrics holds metrics about required templates
@@ -84,6 +86,7 @@ type GitlabPipelineRequiredTemplatesMetrics struct {
 type GitlabPipelineRequiredTemplatesResult struct {
 	RequirementGroups []TemplateGroupStatus                  `json:"requirementGroups"`
 	Issues            []RequiredTemplateIssue                `json:"issues"`
+	OverriddenIssues  []RequiredTemplateOverriddenIssue      `json:"overriddenIssues"`
 	Metrics           GitlabPipelineRequiredTemplatesMetrics `json:"metrics"`
 	Compliance        float64                                `json:"compliance"`
 	Version           string                                 `json:"version"`
@@ -103,18 +106,36 @@ type RequiredTemplateIssue struct {
 	GroupIndex   int    `json:"groupIndex"`
 }
 
+// RequiredTemplateOverriddenIssue represents an issue where a required template
+// is imported but its jobs are overridden with forbidden keywords
+type RequiredTemplateOverriddenIssue struct {
+	TemplatePath   string                `json:"templatePath"`
+	GroupIndex     int                   `json:"groupIndex"`
+	OverriddenJobs []utils.OverriddenJobDetail `json:"overriddenJobs"`
+}
+
 ///////////////////////
 // Control functions //
 ///////////////////////
 
 // pathsMatch checks if two paths match (direct or normalized)
 func pathsMatch(path1, path2 string) bool {
-	// Direct match
 	if path1 == path2 {
 		return true
 	}
-	// Normalized path match
 	return path.Clean(path1) == path.Clean(path2)
+}
+
+
+// templateMatchesRequired checks if a found template path matches a required template path
+func templateMatchesRequired(foundPath, requiredPath string) bool {
+	if pathsMatch(foundPath, requiredPath) {
+		return true
+	}
+	if strings.HasSuffix(foundPath, "/"+requiredPath) || strings.HasSuffix(foundPath, requiredPath) {
+		return true
+	}
+	return false
 }
 
 // Run executes the required templates control
@@ -128,6 +149,7 @@ func (p *GitlabPipelineRequiredTemplatesConf) Run(pipelineOriginData *collector.
 	result := &GitlabPipelineRequiredTemplatesResult{
 		RequirementGroups: []TemplateGroupStatus{},
 		Issues:            []RequiredTemplateIssue{},
+		OverriddenIssues:  []RequiredTemplateOverriddenIssue{},
 		Metrics:           GitlabPipelineRequiredTemplatesMetrics{},
 		Compliance:        0.0,
 		Version:           ControlTypeGitlabPipelineOriginRequiredTemplatesVersion,
@@ -153,76 +175,110 @@ func (p *GitlabPipelineRequiredTemplatesConf) Run(pipelineOriginData *collector.
 		metrics.CiMissing = 1
 	}
 
-	// Build set of template paths found in the pipeline
-	// For project includes, use PlumberOrigin.Path if available
-	foundTemplates := make(map[string]bool)
-	for _, origin := range pipelineOriginData.Origins {
-		// Check if it's a template (project include with Plumber/R2 origin)
-		if origin.FromPlumber && origin.PlumberOrigin.Path != "" {
-			foundTemplates[origin.PlumberOrigin.Path] = true
-			l.WithField("templatePath", origin.PlumberOrigin.Path).Debug("Found template in pipeline (from PlumberOrigin.Path)")
+	// Initialize requirement groups
+	result.RequirementGroups = make([]TemplateGroupStatus, len(p.RequiredGroups))
+	for i, group := range p.RequiredGroups {
+		result.RequirementGroups[i] = TemplateGroupStatus{
+			GroupIndex:        i,
+			RequiredOrigins:   group,
+			FoundOrigins:      []string{},
+			MissingOrigins:    make([]string, len(group)),
+			OverriddenOrigins: []string{},
+			IsFullySatisfied:  false,
 		}
-		// Also check GitlabIncludeOrigin for project includes
+		// Initialize all as missing
+		copy(result.RequirementGroups[i].MissingOrigins, group)
+	}
+
+	// Check all origins against all requirement groups
+	for idx := range pipelineOriginData.Origins {
+		origin := &pipelineOriginData.Origins[idx]
+
+		// Skip hardcoded origins
+		if origin.OriginType == originHardcoded {
+			continue
+		}
+
+		// Determine the template path from the origin
+		var templatePaths []string
+		if origin.FromPlumber && origin.PlumberOrigin.Path != "" {
+			templatePaths = append(templatePaths, origin.PlumberOrigin.Path)
+		}
 		if origin.OriginType == "project" && origin.GitlabIncludeOrigin.Location != "" {
-			// Try to extract a meaningful path from the include
 			templatePath := origin.GitlabIncludeOrigin.Location
-			// Remove file extension for matching
 			templatePath = strings.TrimSuffix(templatePath, ".yml")
 			templatePath = strings.TrimSuffix(templatePath, ".yaml")
-			foundTemplates[templatePath] = true
-			l.WithField("templatePath", templatePath).Debug("Found template in pipeline (from GitlabIncludeOrigin)")
+			templatePaths = append(templatePaths, templatePath)
+		}
+
+		if len(templatePaths) == 0 {
+			continue
+		}
+
+		for groupIdx := range result.RequirementGroups {
+			group := &result.RequirementGroups[groupIdx]
+
+			for _, requiredOrigin := range group.RequiredOrigins {
+				matched := false
+				for _, foundPath := range templatePaths {
+					if templateMatchesRequired(foundPath, requiredOrigin) {
+						matched = true
+						break
+					}
+				}
+
+				if matched {
+					overriddenJobs := getOriginOverriddenJobs(origin, pipelineOriginData)
+
+					if len(overriddenJobs) > 0 {
+						group.OverriddenOrigins = append(group.OverriddenOrigins, requiredOrigin)
+						result.OverriddenIssues = append(result.OverriddenIssues, RequiredTemplateOverriddenIssue{
+							TemplatePath:   requiredOrigin,
+							GroupIndex:     groupIdx,
+							OverriddenJobs: overriddenJobs,
+						})
+					} else {
+						group.FoundOrigins = append(group.FoundOrigins, requiredOrigin)
+					}
+
+					// Remove from missing list regardless of override status
+					removeMissingTemplate(group, requiredOrigin)
+
+					l.WithFields(logrus.Fields{
+						"template":       requiredOrigin,
+						"groupIndex":     groupIdx,
+						"overriddenJobs": overriddenJobs,
+					}).Debug("Required template matched")
+
+					break
+				}
+			}
 		}
 	}
 
-	// Check each requirement group
-	result.RequirementGroups = make([]TemplateGroupStatus, len(p.RequiredGroups))
+	// Evaluate groups, populate issues
 	anySatisfied := false
+	for i := range result.RequirementGroups {
+		group := &result.RequirementGroups[i]
 
-	for i, group := range p.RequiredGroups {
-		groupStatus := TemplateGroupStatus{
-			GroupIndex:       i,
-			RequiredOrigins:  group,
-			FoundOrigins:     []string{},
-			MissingOrigins:   []string{},
-			IsFullySatisfied: true,
-		}
+		// Group is fully satisfied if no templates are missing.
+		// Overridden templates are still "present" (imported) — they produce separate issues.
+		group.IsFullySatisfied = len(group.MissingOrigins) == 0
 
-		for _, requiredTemplate := range group {
-			found := false
-
-			// Check if the required template matches any found template
-			for foundPath := range foundTemplates {
-				if pathsMatch(foundPath, requiredTemplate) {
-					found = true
-					break
-				}
-				// Also try partial match (template name might be specified without full path)
-				if strings.HasSuffix(foundPath, "/"+requiredTemplate) || strings.HasSuffix(foundPath, requiredTemplate) {
-					found = true
-					break
-				}
-			}
-
-			if found {
-				groupStatus.FoundOrigins = append(groupStatus.FoundOrigins, requiredTemplate)
-			} else {
-				groupStatus.MissingOrigins = append(groupStatus.MissingOrigins, requiredTemplate)
-				groupStatus.IsFullySatisfied = false
-
-				// Create issue for missing template
-				result.Issues = append(result.Issues, RequiredTemplateIssue{
-					TemplatePath: requiredTemplate,
-					GroupIndex:   i,
-				})
-			}
-		}
-
-		if groupStatus.IsFullySatisfied {
+		if group.IsFullySatisfied {
 			anySatisfied = true
 			metrics.SatisfiedGroups++
 		}
 
-		result.RequirementGroups[i] = groupStatus
+		// Create issues for missing templates
+		for _, missing := range group.MissingOrigins {
+			result.Issues = append(result.Issues, RequiredTemplateIssue{
+				TemplatePath: missing,
+				GroupIndex:   i,
+			})
+		}
+		// Note: overridden issues are created inline during origin matching
+		// so we can capture the specific forbidden keys per template
 	}
 
 	// Calculate metrics
@@ -230,19 +286,23 @@ func (p *GitlabPipelineRequiredTemplatesConf) Run(pipelineOriginData *collector.
 	metrics.AnySatisfiedGroup = anySatisfied
 
 	// Calculate compliance using DNF logic
+	// Found = 100%, Overridden = 50%, Missing = 0%
 	if len(p.RequiredGroups) == 0 {
 		result.Compliance = 100.0
-	} else if anySatisfied {
-		result.Compliance = 100.0
 	} else {
-		// Find the group with highest completion
 		maxScore := 0.0
 		for _, group := range result.RequirementGroups {
-			if len(group.RequiredOrigins) > 0 {
-				score := float64(len(group.FoundOrigins)) / float64(len(group.RequiredOrigins))
-				if score > maxScore {
-					maxScore = score
-				}
+			totalRequired := len(group.RequiredOrigins)
+			if totalRequired == 0 {
+				continue
+			}
+
+			found := len(group.FoundOrigins)
+			overridden := len(group.OverriddenOrigins)
+
+			score := (float64(found) + float64(overridden)*0.5) / float64(totalRequired)
+			if score > maxScore {
+				maxScore = score
 			}
 		}
 		result.Compliance = maxScore * 100.0
@@ -251,11 +311,22 @@ func (p *GitlabPipelineRequiredTemplatesConf) Run(pipelineOriginData *collector.
 	result.Metrics = metrics
 
 	l.WithFields(logrus.Fields{
-		"totalGroups":     metrics.TotalGroups,
-		"satisfiedGroups": metrics.SatisfiedGroups,
-		"compliance":      result.Compliance,
-		"issueCount":      len(result.Issues),
+		"totalGroups":      metrics.TotalGroups,
+		"satisfiedGroups":  metrics.SatisfiedGroups,
+		"compliance":       result.Compliance,
+		"missingIssues":    len(result.Issues),
+		"overriddenIssues": len(result.OverriddenIssues),
 	}).Info("Required templates control completed")
 
 	return result
+}
+
+// removeMissingTemplate removes a template from the missing list by path
+func removeMissingTemplate(group *TemplateGroupStatus, templatePath string) {
+	for i := 0; i < len(group.MissingOrigins); i++ {
+		if pathsMatch(group.MissingOrigins[i], templatePath) {
+			group.MissingOrigins = append(group.MissingOrigins[:i], group.MissingOrigins[i+1:]...)
+			return
+		}
+	}
 }
