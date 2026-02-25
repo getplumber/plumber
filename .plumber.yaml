@@ -185,6 +185,11 @@ controls:
   # Ensures pipelines include required GitLab CI/CD components.
   # Useful for enforcing security scanning, compliance, or utility components.
   #
+  # Override detection: components that are imported but have their jobs
+  # overridden with forbidden CI/CD keywords (script, image, rules, etc.)
+  # are flagged as overridden. They still count as imported but produce
+  # separate issues and reduce compliance to 50% for that component.
+  #
   # Two ways to define requirements (use one, not both):
   #
   # Option 1 — Expression syntax ('required'):
@@ -215,6 +220,11 @@ controls:
   # ============================================================================
   # Ensures pipelines include required templates (project file includes).
   # Useful for enforcing organization-specific CI templates.
+  #
+  # Override detection: templates that are imported but have their jobs
+  # overridden with forbidden CI/CD keywords (script, image, rules, etc.)
+  # are flagged as overridden. They still count as imported but produce
+  # separate issues and reduce compliance to 50% for that template.
   #
   # Two ways to define requirements (use one, not both):
   #

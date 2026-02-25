@@ -375,7 +375,7 @@ includesMustNotUseForbiddenVersions:
 <details>
 <summary><b>7. Pipeline must include component</b></summary>
 
-Ensures required GitLab CI/CD components are included in the pipeline.
+Ensures required GitLab CI/CD components are included in the pipeline. Components that are imported but have their jobs overridden with forbidden CI/CD keywords (e.g., `script`, `image`, `rules`) are flagged as **overridden**. They still count as imported but produce separate issues and reduce compliance to 50% for that component.
 
 There are two ways to define requirements (use one, not both):
 
@@ -408,7 +408,7 @@ pipelineMustIncludeComponent:
 <details>
 <summary><b>8. Pipeline must include template</b></summary>
 
-Ensures required templates (project includes) are present in the pipeline.
+Ensures required templates (project includes) are present in the pipeline. Templates that are imported but have their jobs overridden with forbidden CI/CD keywords (e.g., `script`, `image`, `rules`) are flagged as **overridden** — they still count as imported but produce separate issues and reduce compliance to 50% for that template.
 
 There are two ways to define requirements (use one, not both):
 
@@ -516,6 +516,7 @@ The PBOM includes:
 - **CI/CD components** with version and source
 - **Templates** and includes with version tracking
 - **Compliance status** for each dependency
+- **Override detection** — includes whose jobs are overridden with forbidden CI/CD keywords
 
 ### CycloneDX SBOM
 

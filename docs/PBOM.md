@@ -148,6 +148,15 @@ Each entry represents a CI/CD include dependency. Fields vary by include type: o
 | `componentName` | string | Component name. Only for `component` type. |
 | `fromCatalog` | bool | Whether it comes from the GitLab CI/CD Catalog. Only for `component` type. |
 | `nested` | bool | Whether this is a nested include (included by another include). Only present when `true`. |
+| `overridden` | bool | Whether this include's jobs are overridden with forbidden CI/CD keywords. Only present when `true`. |
+| `overriddenJobs` | array | Details of which jobs are overridden and with which keywords. Only present when `overridden` is `true`. |
+
+Each entry in `overriddenJobs[]`:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `jobName` | string | Name of the overridden job |
+| `overriddenKeys` | string[] | Forbidden CI/CD keywords found in the override (e.g., `script`, `image`, `rules`) |
 
 **Example (component):**
 
@@ -160,6 +169,27 @@ Each entry represents a CI/CD include dependency. Fields vary by include type: o
   "upToDate": true,
   "componentName": "sast",
   "fromCatalog": true
+}
+```
+
+**Example (overridden component):**
+
+```json
+{
+  "type": "component",
+  "location": "gitlab.com/components/secret-detection/secret-detection",
+  "version": "2.2.0",
+  "latestVersion": "2.2.0",
+  "upToDate": true,
+  "componentName": "secret-detection",
+  "fromCatalog": true,
+  "overridden": true,
+  "overriddenJobs": [
+    {
+      "jobName": "secret_detection",
+      "overriddenKeys": ["script"]
+    }
+  ]
 }
 ```
 
@@ -287,6 +317,8 @@ CycloneDX components carry Plumber-specific metadata as properties:
 | `plumber:component-name` | includes | Component name |
 | `plumber:from-catalog` | includes | `"true"` if from GitLab CI/CD Catalog |
 | `plumber:nested` | includes | `"true"` if nested include |
+| `plumber:overridden` | includes | `"true"` if the include's jobs are overridden with forbidden keywords |
+| `plumber:overridden-job` | includes | `"jobName:key1,key2"` — one property per overridden job with its forbidden keys |
 | `plumber:gitlab-url` | metadata | GitLab instance URL |
 | `plumber:project-id` | metadata | GitLab project ID |
 
