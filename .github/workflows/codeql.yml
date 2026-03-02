@@ -1,0 +1,42 @@
+name: CodeQL
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  schedule:
+    - cron: '0 6 * * 1'
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+permissions:
+  security-events: write
+  contents: read
+
+jobs:
+  analyze:
+    name: Analyze (Go)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+
+      - uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        with:
+          go-version: stable
+
+      - name: Prepare embedded config
+        run: cp .plumber.yaml internal/defaultconfig/default.yaml
+
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@ccdb31a30b64f237d5e093766753e134dd045e07 # v3.32.5
+        with:
+          languages: go
+
+      - name: Autobuild
+        uses: github/codeql-action/autobuild@ccdb31a30b64f237d5e093766753e134dd045e07 # v3.32.5
+
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@ccdb31a30b64f237d5e093766753e134dd045e07 # v3.32.5

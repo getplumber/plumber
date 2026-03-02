@@ -1,4 +1,4 @@
-.PHONY: build clean test embed
+.PHONY: build clean test embed lint
 
 # Binary name
 BINARY=plumber
@@ -23,6 +23,10 @@ build-all: embed
 # Run tests
 test: embed
 	go test ./...
+
+# Lint (mirrors CI configuration — requires golangci-lint v2+)
+lint: embed
+	golangci-lint run ./...
 
 # Clean build artifacts
 clean:
