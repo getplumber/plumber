@@ -19,12 +19,12 @@ jobs:
       new_release_notes: ${{ steps.semantic.outputs.new_release_notes }}
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
 
       - name: Setup Node.js
-        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4.4.0
+        uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
         with:
           node-version: 20
 
@@ -60,10 +60,10 @@ jobs:
             goarch: amd64
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Setup Go
-        uses: actions/setup-go@40f1582b2485089dde7abd97c1529aa768e1baff # v5.6.0
+        uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
         with:
           go-version: '1.25'
 
@@ -86,7 +86,7 @@ jobs:
           go build -ldflags="-s -w -X github.com/getplumber/plumber/cmd.Version=${VERSION} -X github.com/getplumber/plumber/cmd.Commit=${COMMIT} -X github.com/getplumber/plumber/cmd.BuildDate=${BUILD_DATE}" -o "dist/${BINARY_NAME}" .
 
       - name: Upload artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f # v7.0.0
         with:
           name: plumber-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/
@@ -98,7 +98,7 @@ jobs:
     if: needs.release.outputs.new_release_published == 'true'
     steps:
       - name: Download all artifacts
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.3.0
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
         with:
           path: dist/
           merge-multiple: true
@@ -126,7 +126,7 @@ jobs:
     if: needs.release.outputs.new_release_published == 'true'
     steps:
       - name: Checkout
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
@@ -184,7 +184,7 @@ jobs:
           echo "linux_amd64=$(grep 'plumber-linux-amd64$' checksums.txt | awk '{print $1}')" >> $GITHUB_OUTPUT
 
       - name: Checkout Homebrew tap
-        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           repository: getplumber/homebrew-plumber
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
