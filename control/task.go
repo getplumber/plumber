@@ -21,6 +21,7 @@ const (
 	controlIncludesMustNotUseForbiddenVersions         = "includesMustNotUseForbiddenVersions"
 	controlPipelineMustIncludeComponent                = "pipelineMustIncludeComponent"
 	controlPipelineMustIncludeTemplate                 = "pipelineMustIncludeTemplate"
+	controlPipelineMustNotEnableDebugTrace             = "pipelineMustNotEnableDebugTrace"
 )
 
 // shouldRunControl applies --controls / --skip-controls filtering for a control.
@@ -420,6 +421,21 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	result.RequiredTemplatesResult = requiredTemplatesResult
 
 	reportProgress(conf, analysisStepCount, analysisStepCount, "Analysis complete")
+	// 11. Run Pipeline Must Not Enable Debug Trace control
+	l.Info("Running Pipeline Must Not Enable Debug Trace control")
+
+	debugTraceConf := &GitlabPipelineDebugTraceConf{}
+	if shouldRunControl(controlPipelineMustNotEnableDebugTrace, conf) {
+		if err := debugTraceConf.GetConf(conf.PlumberConfig); err != nil {
+			l.WithError(err).Error("Failed to load DebugTrace config from .plumber.yaml file")
+			return result, fmt.Errorf("invalid configuration: %w", err)
+		}
+	} else {
+		debugTraceConf.Enabled = false
+	}
+
+	debugTraceResult := debugTraceConf.Run(pipelineOriginData)
+	result.DebugTraceResult = debugTraceResult
 
 	l.WithFields(logrus.Fields{
 		"ciValid":   result.CiValid,

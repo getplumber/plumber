@@ -186,6 +186,12 @@ func generateMRComment(result *AnalysisResult, compliance, threshold float64) st
 			totalIssues += issueCount
 		}
 	}
+	if r := result.DebugTraceResult; r != nil {
+		controls = append(controls, controlEntry{"Pipeline must not enable debug trace", r.Compliance, len(r.Issues), r.Skipped})
+		if !r.Skipped {
+			totalIssues += len(r.Issues)
+		}
+	}
 
 	// Controls summary table
 	b.WriteString("### Controls\n\n")
@@ -316,6 +322,19 @@ func writeIssueDetails(b *strings.Builder, result *AnalysisResult) {
 			fmt.Fprintf(b, "- Overridden template `%s` (group %d)\n", issue.TemplatePath, issue.GroupIndex+1)
 			for _, job := range issue.OverriddenJobs {
 				fmt.Fprintf(b, "  - job `%s` overrides: `%s`\n", job.JobName, strings.Join(job.OverriddenKeys, "`, `"))
+			}
+		}
+		b.WriteString("\n")
+	}
+
+	// Debug trace
+	if r := result.DebugTraceResult; r != nil && !r.Skipped && len(r.Issues) > 0 {
+		b.WriteString("**Pipeline must not enable debug trace:**\n")
+		for _, issue := range r.Issues {
+			if issue.Location == "global" {
+				fmt.Fprintf(b, "- `%s` = `%s` in global variables\n", issue.VariableName, issue.Value)
+			} else {
+				fmt.Fprintf(b, "- `%s` = `%s` in job `%s`\n", issue.VariableName, issue.Value, issue.Location)
 			}
 		}
 		b.WriteString("\n")

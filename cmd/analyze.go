@@ -293,6 +293,11 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		controlCount++
 	}
 
+	if result.DebugTraceResult != nil && !result.DebugTraceResult.Skipped {
+		complianceSum += result.DebugTraceResult.Compliance
+		controlCount++
+	}
+
 	// Calculate average compliance
 	// If no controls ran (e.g., data collection failed), compliance is 0% - we can't verify anything
 	var compliance float64 = 0
@@ -927,6 +932,39 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 					fmt.Printf("    %s•%s %s (group %d)\n", colorYellow, colorReset, issue.TemplatePath, issue.GroupIndex+1)
 					for _, job := range issue.OverriddenJobs {
 						fmt.Printf("      job %s%s%s overrides: %s\n", colorDim, job.JobName, colorReset, strings.Join(job.OverriddenKeys, ", "))
+					}
+				}
+			}
+		}
+		fmt.Println()
+	}
+
+	// Control 9: Pipeline must not enable debug trace
+	if result.DebugTraceResult != nil {
+		ctrl := controlSummary{
+			name:       "Pipeline must not enable debug trace",
+			compliance: result.DebugTraceResult.Compliance,
+			issues:     len(result.DebugTraceResult.Issues),
+			skipped:    result.DebugTraceResult.Skipped,
+		}
+		controls = append(controls, ctrl)
+
+		printControlHeader("Pipeline must not enable debug trace", result.DebugTraceResult.Compliance, result.DebugTraceResult.Skipped)
+
+		if result.DebugTraceResult.Skipped {
+			fmt.Printf("  %sStatus: SKIPPED (disabled in configuration)%s\n", colorDim, colorReset)
+		} else {
+			fmt.Printf("  Variables Checked: %d\n", result.DebugTraceResult.Metrics.TotalVariablesChecked)
+			fmt.Printf("  Forbidden Found: %d\n", result.DebugTraceResult.Metrics.ForbiddenFound)
+
+			if len(result.DebugTraceResult.Issues) > 0 {
+				fmt.Printf("\n  %sForbidden Debug Variables Found:%s\n", colorYellow, colorReset)
+				for _, issue := range result.DebugTraceResult.Issues {
+					location := issue.Location
+					if location == "global" {
+						fmt.Printf("    %s•%s %s = \"%s\" (global variables)\n", colorYellow, colorReset, issue.VariableName, issue.Value)
+					} else {
+						fmt.Printf("    %s•%s %s = \"%s\" (job '%s')\n", colorYellow, colorReset, issue.VariableName, issue.Value, location)
 					}
 				}
 			}

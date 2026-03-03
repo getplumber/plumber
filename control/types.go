@@ -35,6 +35,7 @@ type AnalysisResult struct {
 	ForbiddenVersionsIncludesResult *GitlabPipelineIncludesForbiddenVersionResult `json:"forbiddenVersionsIncludesResult,omitempty"`
 	RequiredComponentsResult        *GitlabPipelineRequiredComponentsResult       `json:"requiredComponentsResult,omitempty"`
 	RequiredTemplatesResult         *GitlabPipelineRequiredTemplatesResult        `json:"requiredTemplatesResult,omitempty"`
+	DebugTraceResult                *GitlabPipelineDebugTraceResult              `json:"debugTraceResult,omitempty"`
 
 	// Raw collected data (not included in JSON output, used for PBOM generation)
 	PipelineImageData  *collector.GitlabPipelineImageData  `json:"-"`

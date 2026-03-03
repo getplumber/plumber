@@ -325,6 +325,7 @@ func TestValidControlNames(t *testing.T) {
 		"includesMustNotUseForbiddenVersions",
 		"pipelineMustIncludeComponent",
 		"pipelineMustIncludeTemplate",
+		"pipelineMustNotEnableDebugTrace",
 		"pipelineMustNotIncludeHardcodedJobs",
 	}
 

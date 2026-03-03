@@ -38,6 +38,9 @@ var validControlSchema = map[string][]string{
 	"pipelineMustIncludeTemplate": {
 		"enabled", "required", "requiredGroups",
 	},
+	"pipelineMustNotEnableDebugTrace": {
+		"enabled", "forbiddenVariables",
+	},
 }
 
 // validControlKeys returns the list of known control names.
@@ -90,6 +93,9 @@ type ControlsConfig struct {
 
 	// PipelineMustIncludeTemplate control configuration
 	PipelineMustIncludeTemplate *RequiredTemplatesControlConfig `yaml:"pipelineMustIncludeTemplate,omitempty"`
+
+	// PipelineMustNotEnableDebugTrace control configuration
+	PipelineMustNotEnableDebugTrace *DebugTraceControlConfig `yaml:"pipelineMustNotEnableDebugTrace,omitempty"`
 }
 
 // ImageForbiddenTagsControlConfig configuration for the forbidden image tags control
@@ -218,6 +224,16 @@ func (c *RequiredComponentsControlConfig) GetResolvedRequiredGroups() ([][]strin
 		return groups, nil
 	}
 	return c.RequiredGroups, nil
+}
+
+// DebugTraceControlConfig configuration for the debug trace detection control
+type DebugTraceControlConfig struct {
+	// Enabled controls whether this check runs
+	Enabled *bool `yaml:"enabled,omitempty"`
+
+	// ForbiddenVariables is a list of CI/CD variable names that must not be set to "true"
+	// Defaults: CI_DEBUG_TRACE, CI_DEBUG_SERVICES
+	ForbiddenVariables []string `yaml:"forbiddenVariables,omitempty"`
 }
 
 // RequiredTemplatesControlConfig configuration for the required templates control
@@ -464,6 +480,24 @@ func (c *PlumberConfig) GetPipelineMustIncludeTemplateConfig() *RequiredTemplate
 		return nil
 	}
 	return c.Controls.PipelineMustIncludeTemplate
+}
+
+// GetPipelineMustNotEnableDebugTraceConfig returns the control configuration
+// Returns nil if not configured
+func (c *PlumberConfig) GetPipelineMustNotEnableDebugTraceConfig() *DebugTraceControlConfig {
+	if c == nil {
+		return nil
+	}
+	return c.Controls.PipelineMustNotEnableDebugTrace
+}
+
+// IsEnabled returns whether the control is enabled
+// Returns false if not properly configured
+func (c *DebugTraceControlConfig) IsEnabled() bool {
+	if c == nil || c.Enabled == nil {
+		return false
+	}
+	return *c.Enabled
 }
 
 // IsEnabled returns whether the control is enabled

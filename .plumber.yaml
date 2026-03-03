@@ -21,7 +21,7 @@ controls:
   containerImageMustNotUseForbiddenTags:
     # Set to false to disable this control
     enabled: true
-    
+
     # Tags considered "forbidden" - images using these will be flagged
     tags:
       - latest
@@ -54,21 +54,21 @@ controls:
   containerImageMustComeFromAuthorizedSources:
     # Set to false to disable this control
     enabled: true
-    
+
     # Trust official Docker Hub images (e.g., nginx, alpine, python)
     # These are images without a username prefix on Docker Hub
     trustDockerHubOfficialImages: true
-    
+
     # Trusted registry URLs and patterns (supports wildcards)
     # Images matching these patterns will be considered trusted
     trustedUrls:
       # Docker Hub official images (if trustDockerHubOfficialImages is false)
       # - docker.io/library/*
-      
+
       # Common CI/CD tool images
       - docker.io/docker:*
       - gcr.io/kaniko-project/*
-      
+
       # GitLab registry patterns
       - $CI_REGISTRY_IMAGE:*
       - $CI_REGISTRY_IMAGE/*
@@ -79,7 +79,7 @@ controls:
 
       # Security products
       - registry.gitlab.com/security-products/*
-      
+
       # Add your organization's trusted registries below:
       # - your-registry.example.com/*
       # - ghcr.io/your-org/*
@@ -95,10 +95,10 @@ controls:
   branchMustBeProtected:
     # Set to false to disable this control
     enabled: true
-    
+
     # Require the default branch to be protected
     defaultMustBeProtected: true
-    
+
     # Branch name patterns that must be protected (supports wildcards)
     namePatterns:
       - main
@@ -109,16 +109,16 @@ controls:
       # Add your organization's protected branch patterns below:
       # - develop
       # - staging
-    
+
     # When false, force push must be disabled on protected branches
     allowForcePush: false
-    
+
     # Require code owner approval for changes
     codeOwnerApprovalRequired: false
-    
+
     # Minimum access level required to merge (0=No one, 30=Developer, 40=Maintainer)
     minMergeAccessLevel: 30
-    
+
     # Minimum access level required to push (0=No one, 30=Developer, 40=Maintainer)
     minPushAccessLevel: 40
 
@@ -243,3 +243,23 @@ controls:
     enabled: false
     # required: templates/go/go AND templates/trivy/trivy AND templates/iso27001/iso27001
     requiredGroups: []
+
+  # ===========================================
+  # Pipeline must not enable debug trace
+  # ===========================================
+  # Detects CI/CD pipelines that set CI_DEBUG_TRACE or CI_DEBUG_SERVICES
+  # to "true" in global or job-level variables.
+  #
+  # When CI_DEBUG_TRACE is enabled, GitLab prints ALL environment variables
+  # in the job logs, including masked secrets like CI_JOB_TOKEN and any
+  # custom CI/CD variables. This is a critical security risk.
+  #
+  # Best practice: Never enable CI_DEBUG_TRACE in committed CI configuration
+  pipelineMustNotEnableDebugTrace:
+    # Set to false to disable this control
+    enabled: true
+
+    # CI/CD variable names that must not be set to "true"
+    forbiddenVariables:
+      - CI_DEBUG_TRACE
+      - CI_DEBUG_SERVICES
