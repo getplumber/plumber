@@ -35,6 +35,7 @@ Plumber is a compliance scanner for GitLab. It reads your `.gitlab-ci.yml` and r
 - Outdated includes/templates
 - Forbidden version patterns (e.g., `main`, `HEAD`)
 - Missing required components or templates
+- Debug trace variables (`CI_DEBUG_TRACE`) leaking secrets in job logs
 
 **How does it work?** Plumber connects to your GitLab instance via API, analyzes your pipeline configuration, and reports any issues it finds. You define what's allowed in a config file (`.plumber.yaml`), and Plumber tells you if your project complies. When running locally from your git repo, Plumber uses your **local `.gitlab-ci.yml`** allowing you to validate changes before pushing.
 
@@ -273,7 +274,7 @@ This creates `.plumber.yaml` with sensible [defaults](./.plumber.yaml). Customiz
 
 ### Available Controls
 
-Plumber includes 8 compliance controls. Each can be enabled/disabled and customized in [.plumber.yaml](.plumber.yaml):
+Plumber includes 9 compliance controls. Each can be enabled/disabled and customized in [.plumber.yaml](.plumber.yaml):
 
 <details>
 <summary><b>1. Container images must not use forbidden tags</b></summary>
@@ -450,6 +451,21 @@ pipelineMustIncludeTemplate:
 
 </details>
 
+<details>
+<summary><b>9. Pipeline must not enable debug trace</b></summary>
+
+Detects CI/CD pipelines that set `CI_DEBUG_TRACE` or `CI_DEBUG_SERVICES` to `"true"` in global or job-level variables. When enabled, GitLab prints ALL environment variables in job logs, including masked secrets like `CI_JOB_TOKEN`.
+
+```yaml
+pipelineMustNotEnableDebugTrace:
+  enabled: true
+  forbiddenVariables:
+    - CI_DEBUG_TRACE
+    - CI_DEBUG_SERVICES
+```
+
+</details>
+
 ### Selective Control Execution
 
 You can run or skip specific controls using their YAML key names from `.plumber.yaml`. This is useful for iterative debugging or targeted CI checks.
@@ -491,6 +507,7 @@ Controls not selected are reported as **skipped** in the output. The `--controls
 | `includesMustNotUseForbiddenVersions` |
 | `pipelineMustIncludeComponent` |
 | `pipelineMustIncludeTemplate` |
+| `pipelineMustNotEnableDebugTrace` |
 | `pipelineMustNotIncludeHardcodedJobs` |
 
 </details>
@@ -629,10 +646,10 @@ brew install plumber
 To install a specific version:
 
 ```bash
-brew install getplumber/plumber/plumber@0.1.49
+brew install getplumber/plumber/plumber@0.1.51
 ```
 
-> **Note:** Versioned formulas are keg-only. Use the full path for example `/usr/local/opt/plumber@0.1.49/bin/plumber` or run `brew link plumber@0.1.49` to add it to your PATH.
+> **Note:** Versioned formulas are keg-only. Use the full path for example `/usr/local/opt/plumber@0.1.51/bin/plumber` or run `brew link plumber@0.1.51` to add it to your PATH.
 
 ### Mise
 

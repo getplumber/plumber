@@ -72,7 +72,7 @@ func clearProgressLine(conf *configuration.Configuration) {
 }
 
 // analysisStepCount is the total number of progress steps reported during analysis.
-const analysisStepCount = 12
+const analysisStepCount = 13
 
 // RunAnalysis executes the complete pipeline analysis for a GitLab project
 func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
@@ -420,8 +420,8 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	requiredTemplatesResult := requiredTemplatesConf.Run(pipelineOriginData)
 	result.RequiredTemplatesResult = requiredTemplatesResult
 
-	reportProgress(conf, analysisStepCount, analysisStepCount, "Analysis complete")
 	// 11. Run Pipeline Must Not Enable Debug Trace control
+	reportProgress(conf, 12, analysisStepCount, "Checking debug trace variables")
 	l.Info("Running Pipeline Must Not Enable Debug Trace control")
 
 	debugTraceConf := &GitlabPipelineDebugTraceConf{}
@@ -436,6 +436,8 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 
 	debugTraceResult := debugTraceConf.Run(pipelineOriginData)
 	result.DebugTraceResult = debugTraceResult
+
+	reportProgress(conf, analysisStepCount, analysisStepCount, "Analysis complete")
 
 	l.WithFields(logrus.Fields{
 		"ciValid":   result.CiValid,
