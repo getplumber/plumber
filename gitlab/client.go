@@ -45,7 +45,7 @@ func GetNewGitlabClient(token string, instanceUrl string, conf *configuration.Co
 		}
 	} else {
 		// OAuth Token
-		client, err = gitlab.NewOAuthClient(token, gitlab.WithHTTPClient(httpClient), gitlab.WithBaseURL(sanitizedInstance))
+		client, err = gitlab.NewOAuthClient(token, gitlab.WithHTTPClient(httpClient), gitlab.WithBaseURL(sanitizedInstance)) //nolint:staticcheck // requires library upgrade to replace deprecated API
 		if err != nil {
 			l.WithError(err).Error("Failed to create GitLab OAuth client")
 			return nil, err

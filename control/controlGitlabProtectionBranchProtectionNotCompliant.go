@@ -149,7 +149,7 @@ func (c *GitlabBranchProtectionControl) Run(
 				break
 			}
 		}
-		if !matchesPattern && !(defaultMustBeProtected && branch.Default) {
+		if !matchesPattern && (!defaultMustBeProtected || !branch.Default) {
 			continue
 		}
 

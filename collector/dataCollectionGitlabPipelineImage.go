@@ -351,7 +351,8 @@ func (i *GitlabPipelineImageInfo) handlePresenceOfVariables() {
 
 		// Handle cases starting with variables - analyze separator patterns
 		if beforeFirstVar == "" {
-			if betweenVars == ":" {
+			switch betweenVars {
+			case ":":
 				// $IMAGE:$TAG or $REGISTRY:$PORT
 				if afterSecondVar == "" {
 					// Simple $IMAGE:$TAG pattern (assume image:tag, not registry:port)
@@ -373,13 +374,13 @@ func (i *GitlabPipelineImageInfo) handlePresenceOfVariables() {
 					}
 					return
 				}
-			} else if betweenVars == "@" {
+			case "@":
 				// $IMAGE@$DIGEST pattern
 				i.Registry = unknownRegistry
 				i.Name = firstVariable
 				i.Tag = secondVariable
 				return
-			} else if betweenVars == "" {
+			case "":
 				// Adjacent variables $VAR1$VAR2
 				i.Registry = unknownRegistry
 				i.Name = firstVariable + secondVariable

@@ -70,7 +70,7 @@ func (t *retryableTransport) RoundTrip(req *http.Request) (*http.Response, error
 		if err != nil {
 			return nil, fmt.Errorf("failed to read request body: %w", err)
 		}
-		req.Body.Close()
+		_ = req.Body.Close()
 	}
 
 	for attempt := 0; attempt <= t.config.MaxRetries; attempt++ {
@@ -107,7 +107,7 @@ func (t *retryableTransport) RoundTrip(req *http.Request) (*http.Response, error
 		// Close the response body before retrying to prevent resource leaks
 		if resp != nil && resp.Body != nil {
 			_, _ = io.Copy(io.Discard, resp.Body)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		}
 
 		// Calculate backoff duration
@@ -132,7 +132,7 @@ func (t *retryableTransport) RoundTrip(req *http.Request) (*http.Response, error
 	if resp != nil && resp.StatusCode == http.StatusTooManyRequests {
 		if resp.Body != nil {
 			_, _ = io.Copy(io.Discard, resp.Body)
-			resp.Body.Close()
+			_ = resp.Body.Close()
 		}
 
 		errorJSON := fmt.Sprintf(`{"errors":[{"message":"Rate limit exceeded after %d retry attempts","extensions":{"code":"RATE_LIMITED"}}]}`, t.config.MaxRetries)

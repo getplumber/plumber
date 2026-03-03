@@ -465,7 +465,7 @@ func writeJSONToFile(result *control.AnalysisResult, threshold, compliance float
 	if err != nil {
 		return fmt.Errorf("failed to create output file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
@@ -544,7 +544,7 @@ func writePBOMToFile(result *control.AnalysisResult, gitlabURL, branch, filePath
 	if err != nil {
 		return fmt.Errorf("failed to create PBOM file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
@@ -565,7 +565,7 @@ func writePBOMCycloneDXToFile(result *control.AnalysisResult, gitlabURL, branch,
 	if err != nil {
 		return fmt.Errorf("failed to create CycloneDX PBOM file: %w", err)
 	}
-	defer file.Close()
+	defer func() { _ = file.Close() }()
 
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")

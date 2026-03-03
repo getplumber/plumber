@@ -125,7 +125,7 @@ func SearchTags(projectPath string, token string, APIURL string, conf *configura
 	}
 
 	for page := int64(1); true; page++ {
-		options.ListOptions.Page = page
+		options.Page = page
 
 		tags, _, err := glab.Tags.ListTags(projectPath, options)
 		if err != nil {

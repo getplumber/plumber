@@ -50,7 +50,7 @@ func checkForNewerVersion(ch chan<- string) {
 		logrus.Debugf("version check: request failed: %v", err)
 		return
 	}
-	defer resp.Body.Close()
+	defer func() { _ = resp.Body.Close() }()
 
 	if resp.StatusCode != http.StatusOK {
 		logrus.Debugf("version check: unexpected HTTP status %d", resp.StatusCode)
