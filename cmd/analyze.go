@@ -233,7 +233,18 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	// Run analysis
 	fmt.Fprintf(os.Stderr, "Analyzing project: %s on %s\n", projectPath, cleanGitlabURL)
 
+	// Start progress spinner (only when printing output and not in verbose mode)
+	sp := newSpinner()
+	if printOutput && !verbose {
+		conf.ProgressFunc = func(step, total int, message string) {
+			sp.Update(step, total, message)
+		}
+		sp.InstallLogHook()
+		sp.Start()
+	}
+
 	result, err := control.RunAnalysis(conf)
+	sp.Stop()
 	if err != nil {
 		return fmt.Errorf("analysis failed: %w", err)
 	}

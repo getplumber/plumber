@@ -56,6 +56,23 @@ func shouldRunControl(controlName string, conf *configuration.Configuration) boo
 	return true
 }
 
+// reportProgress calls the optional progress callback if configured.
+func reportProgress(conf *configuration.Configuration, step, total int, message string) {
+	if conf.ProgressFunc != nil {
+		conf.ProgressFunc(step, total, message)
+	}
+}
+
+// clearProgressLine clears the spinner line before writing direct stderr output.
+func clearProgressLine(conf *configuration.Configuration) {
+	if conf.ProgressFunc != nil {
+		fmt.Fprint(os.Stderr, "\r\033[K")
+	}
+}
+
+// analysisStepCount is the total number of progress steps reported during analysis.
+const analysisStepCount = 12
+
 // RunAnalysis executes the complete pipeline analysis for a GitLab project
 func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	l := l.WithFields(logrus.Fields{
@@ -72,6 +89,7 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	///////////////////////
 	// Fetch Project Info from GitLab
 	///////////////////////
+	reportProgress(conf, 1, analysisStepCount, "Fetching project information")
 	l.Info("Fetching project information from GitLab")
 	project, err := gitlab.FetchProjectDetails(conf.ProjectPath, conf.GitlabToken, conf.GitlabURL, conf)
 	if err != nil {
@@ -138,6 +156,7 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 		if content, err := os.ReadFile(localCIPath); err == nil {
 			conf.LocalCIConfigContent = content
 			conf.UsingLocalCIConfig = true
+			clearProgressLine(conf)
 			fmt.Fprintf(os.Stderr, "Using local CI configuration (specify --branch to force upstream CI config fetch): %s\n", localCIPath)
 			l.WithField("localCIPath", localCIPath).Info("Using local CI configuration file")
 		} else {
@@ -147,6 +166,7 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 			}).Debug("Local CI config file not found, will use remote")
 		}
 	} else if conf.Branch != "" {
+		clearProgressLine(conf)
 		fmt.Fprintf(os.Stderr, "Using remote CI configuration from branch: %s\n", projectInfo.AnalyzeBranch)
 	}
 
@@ -160,6 +180,7 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	///////////////////////
 
 	// 1. Run Pipeline Origin data collection
+	reportProgress(conf, 2, analysisStepCount, "Collecting pipeline origins")
 	l.Info("Running Pipeline Origin data collection")
 	originDC := &collector.GitlabPipelineOriginDataCollection{}
 	pipelineOriginData, pipelineOriginMetrics, err := originDC.Run(projectInfo, conf.GitlabToken, conf)
@@ -211,6 +232,7 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	}
 
 	// 2. Run Pipeline Image data collection
+	reportProgress(conf, 3, analysisStepCount, "Collecting pipeline images")
 	l.Info("Running Pipeline Image data collection")
 	imageDC := &collector.GitlabPipelineImageDataCollection{}
 	pipelineImageData, pipelineImageMetrics, err := imageDC.Run(projectInfo, conf.GitlabToken, conf, pipelineOriginData)
@@ -241,6 +263,7 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	///////////////////
 
 	// 3. Run Forbidden Image Tags control
+	reportProgress(conf, 4, analysisStepCount, "Checking forbidden image tags")
 	l.Info("Running Forbidden Image Tags control")
 
 	// Load control configuration from PlumberConfig (required)
@@ -258,6 +281,7 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	result.ImageForbiddenTagsResult = forbiddenTagsResult
 
 	// 4. Run Image Authorized Sources control
+	reportProgress(conf, 5, analysisStepCount, "Checking authorized image sources")
 	l.Info("Running Image Authorized Sources control")
 
 	authorizedSourcesConf := &GitlabImageAuthorizedSourcesConf{}
@@ -274,6 +298,7 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	result.ImageAuthorizedSourcesResult = authorizedSourcesResult
 
 	// 5. Run Pipeline Must Not Include Hardcoded Jobs control
+	reportProgress(conf, 6, analysisStepCount, "Checking hardcoded jobs")
 	l.Info("Running Pipeline Must Not Include Hardcoded Jobs control")
 
 	hardcodedJobsConf := &GitlabPipelineHardcodedJobsConf{}
@@ -290,6 +315,7 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	result.HardcodedJobsResult = hardcodedJobsResult
 
 	// 6. Run Includes Must Be Up To Date control
+	reportProgress(conf, 7, analysisStepCount, "Checking includes versions")
 	l.Info("Running Includes Must Be Up To Date control")
 
 	outdatedConf := &GitlabPipelineIncludesOutdatedConf{}
@@ -306,6 +332,7 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	result.OutdatedIncludesResult = outdatedResult
 
 	// 7. Run Includes Must Not Use Forbidden Versions control
+	reportProgress(conf, 8, analysisStepCount, "Checking forbidden versions")
 	l.Info("Running Includes Must Not Use Forbidden Versions control")
 
 	forbiddenVersionConf := &GitlabPipelineIncludesForbiddenVersionConf{}
@@ -322,6 +349,7 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	result.ForbiddenVersionsIncludesResult = forbiddenVersionResult
 
 	// 8. Run Branch Must Be Protected control (if enabled)
+	reportProgress(conf, 9, analysisStepCount, "Checking branch protection")
 	if shouldRunControl(controlBranchMustBeProtected, conf) {
 		branchProtectionConfig := conf.PlumberConfig.GetBranchMustBeProtectedConfig()
 		if branchProtectionConfig != nil && branchProtectionConfig.IsEnabled() {
@@ -358,6 +386,7 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	}
 
 	// 9. Run Pipeline Must Include Component control
+	reportProgress(conf, 10, analysisStepCount, "Checking required components")
 	l.Info("Running Pipeline Must Include Component control")
 
 	requiredComponentsConf := &GitlabPipelineRequiredComponentsConf{}
@@ -374,6 +403,7 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	result.RequiredComponentsResult = requiredComponentsResult
 
 	// 10. Run Pipeline Must Include Template control
+	reportProgress(conf, 11, analysisStepCount, "Checking required templates")
 	l.Info("Running Pipeline Must Include Template control")
 
 	requiredTemplatesConf := &GitlabPipelineRequiredTemplatesConf{}
@@ -388,6 +418,8 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 
 	requiredTemplatesResult := requiredTemplatesConf.Run(pipelineOriginData)
 	result.RequiredTemplatesResult = requiredTemplatesResult
+
+	reportProgress(conf, analysisStepCount, analysisStepCount, "Analysis complete")
 
 	l.WithFields(logrus.Fields{
 		"ciValid":   result.CiValid,

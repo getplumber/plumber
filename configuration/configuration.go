@@ -46,6 +46,10 @@ type Configuration struct {
 	ControlsFilter []string
 	// SkipControlsFilter skips the listed controls when set;
 	SkipControlsFilter []string
+
+	// ProgressFunc is an optional callback invoked during analysis to report progress.
+	// step: current step number (1-based), total: total number of steps, message: description.
+	ProgressFunc func(step int, total int, message string)
 }
 
 // NewDefaultConfiguration creates a Configuration with sensible defaults
