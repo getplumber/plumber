@@ -74,7 +74,7 @@ jobs:
         with:
           version: v2.10
 
-  trivy:
+  grype:
     name: Container Scan
     runs-on: ubuntu-24.04
     steps:
@@ -83,10 +83,26 @@ jobs:
       - name: Build Docker image
         run: docker build -t plumber:ci .
 
-      - name: Trivy image scan
-        uses: aquasecurity/trivy-action@97e0b3872f55f89b95b2f65b3dbab56962816478 # 0.34.2
+      - name: Grype image scan
+        uses: anchore/scan-action@7037fa011853d5a11690026fb85feee79f4c946c # v7.3.2
         with:
-          image-ref: plumber:ci
-          format: table
-          exit-code: 1
-          severity: CRITICAL,HIGH
+          image: plumber:ci
+          fail-build: true
+          severity-cutoff: high
+
+  # trivy:
+  #   name: Container Scan (Trivy)
+  #   runs-on: ubuntu-24.04
+  #   steps:
+  #     - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+  #
+  #     - name: Build Docker image
+  #       run: docker build -t plumber:ci .
+  #
+  #     - name: Trivy image scan
+  #       uses: aquasecurity/trivy-action@97e0b3872f55f89b95b2f65b3dbab56962816478 # 0.34.2
+  #       with:
+  #         image-ref: plumber:ci
+  #         format: table
+  #         exit-code: 1
+  #         severity: CRITICAL,HIGH
