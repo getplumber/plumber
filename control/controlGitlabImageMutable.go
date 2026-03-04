@@ -97,9 +97,11 @@ type GitlabImageForbiddenTagsResult struct {
 
 // GitlabPipelineImageIssueTag represents an issue with an image using a mutable tag
 type GitlabPipelineImageIssueTag struct {
-	Link string `json:"link"`
-	Tag  string `json:"tag"`
-	Job  string `json:"job"`
+	Code   ErrorCode `json:"code"`
+	DocURL string    `json:"docUrl"`
+	Link   string    `json:"link"`
+	Tag    string    `json:"tag"`
+	Job    string    `json:"job"`
 }
 
 ///////////////////////
@@ -157,9 +159,11 @@ func (p *GitlabImageForbiddenTagsConf) Run(pipelineImageData *collector.GitlabPi
 
 			// Not pinned by digest — flag it
 			issue := GitlabPipelineImageIssueTag{
-				Link: image.Link,
-				Tag:  image.Tag,
-				Job:  image.Job,
+				Code:   CodeImageNotPinnedByDigest,
+				DocURL: CodeImageNotPinnedByDigest.DocURL(),
+				Link:   image.Link,
+				Tag:    image.Tag,
+				Job:    image.Job,
 			}
 			result.Issues = append(result.Issues, issue)
 			result.Metrics.NotPinnedByDigest++
@@ -171,9 +175,11 @@ func (p *GitlabImageForbiddenTagsConf) Run(pipelineImageData *collector.GitlabPi
 
 		if isForbiddenTag {
 			issue := GitlabPipelineImageIssueTag{
-				Link: image.Link,
-				Tag:  image.Tag,
-				Job:  image.Job,
+				Code:   CodeImageForbiddenTag,
+				DocURL: CodeImageForbiddenTag.DocURL(),
+				Link:   image.Link,
+				Tag:    image.Tag,
+				Job:    image.Job,
 			}
 			result.Issues = append(result.Issues, issue)
 			result.Metrics.UsingForbiddenTags++

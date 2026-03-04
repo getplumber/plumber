@@ -131,6 +131,8 @@ func (c *GitlabBranchProtectionControl) Run(
 
 			// Create issue for unprotected branch
 			issue := BranchProtectionIssue{
+				Code:       CodeBranchUnprotected,
+				DocURL:     CodeBranchUnprotected.DocURL(),
 				Type:       "unprotected",
 				BranchName: branch.BranchName,
 			}
@@ -155,6 +157,8 @@ func (c *GitlabBranchProtectionControl) Run(
 
 		// Check compliance issues
 		issueData := BranchProtectionIssue{
+			Code:                          CodeBranchNonCompliant,
+			DocURL:                        CodeBranchNonCompliant.DocURL(),
 			Type:                          "non_compliant",
 			BranchName:                    branch.BranchName,
 			AllowForcePush:                branch.AllowForcePush,

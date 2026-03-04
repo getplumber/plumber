@@ -88,16 +88,18 @@ type GitlabPipelineIncludesForbiddenVersionResult struct {
 // GitlabPipelineIncludesForbiddenVersionIssue represents an issue with a forbidden version
 // Issue data for mutable version usage - PolicyIssueTypeId = [11]
 type GitlabPipelineIncludesForbiddenVersionIssue struct {
-	Version               string `json:"version"`
-	LatestVersion         string `json:"latestVersion,omitempty"`
-	PlumberOriginPath     string `json:"plumberOriginPath,omitempty"`
-	GitlabIncludeLocation string `json:"gitlabIncludeLocation"`
-	GitlabIncludeType     string `json:"gitlabIncludeType"`
-	GitlabIncludeProject  string `json:"gitlabIncludeProject,omitempty"`
-	Nested                bool   `json:"nested"`
-	ComponentName         string `json:"componentName,omitempty"`
-	PlumberTemplateName   string `json:"plumberTemplateName,omitempty"`
-	OriginHash            uint64 `json:"originHash"`
+	Code                  ErrorCode `json:"code"`
+	DocURL                string    `json:"docUrl"`
+	Version               string    `json:"version"`
+	LatestVersion         string    `json:"latestVersion,omitempty"`
+	PlumberOriginPath     string    `json:"plumberOriginPath,omitempty"`
+	GitlabIncludeLocation string    `json:"gitlabIncludeLocation"`
+	GitlabIncludeType     string    `json:"gitlabIncludeType"`
+	GitlabIncludeProject  string    `json:"gitlabIncludeProject,omitempty"`
+	Nested                bool      `json:"nested"`
+	ComponentName         string    `json:"componentName,omitempty"`
+	PlumberTemplateName   string    `json:"plumberTemplateName,omitempty"`
+	OriginHash            uint64    `json:"originHash"`
 }
 
 ///////////////////////
@@ -203,6 +205,8 @@ func (p *GitlabPipelineIncludesForbiddenVersionConf) Run(pipelineOriginData *col
 
 			// Create issue for forbidden version
 			issue := GitlabPipelineIncludesForbiddenVersionIssue{
+				Code:                  CodeIncludeForbiddenVersion,
+				DocURL:                CodeIncludeForbiddenVersion.DocURL(),
 				Version:               origin.Version,
 				LatestVersion:         latestVersion,
 				PlumberOriginPath:     plumberOriginPath,

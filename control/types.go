@@ -100,8 +100,10 @@ type BranchProtectionMetrics struct {
 
 // BranchProtectionIssue represents an issue found by the branch protection control
 type BranchProtectionIssue struct {
-	Type                             string `json:"type"` // "unprotected" or "non_compliant"
-	BranchName                       string `json:"branchName"`
+	Code                             ErrorCode `json:"code"`
+	DocURL                           string    `json:"docUrl"`
+	Type                             string    `json:"type"` // "unprotected" or "non_compliant"
+	BranchName                       string    `json:"branchName"`
 	AllowForcePush                   bool   `json:"allowForcePush,omitempty"`
 	AllowForcePushDisplay            bool   `json:"allowForcePushDisplay,omitempty"`
 	CodeOwnerApprovalRequired        bool   `json:"codeOwnerApprovalRequired,omitempty"`

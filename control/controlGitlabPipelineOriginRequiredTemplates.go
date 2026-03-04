@@ -102,13 +102,17 @@ type GitlabPipelineRequiredTemplatesResult struct {
 
 // RequiredTemplateIssue represents an issue with a missing required template
 type RequiredTemplateIssue struct {
-	TemplatePath string `json:"templatePath"`
-	GroupIndex   int    `json:"groupIndex"`
+	Code         ErrorCode `json:"code"`
+	DocURL       string    `json:"docUrl"`
+	TemplatePath string    `json:"templatePath"`
+	GroupIndex   int       `json:"groupIndex"`
 }
 
 // RequiredTemplateOverriddenIssue represents an issue where a required template
 // is imported but its jobs are overridden with forbidden keywords
 type RequiredTemplateOverriddenIssue struct {
+	Code           ErrorCode             `json:"code"`
+	DocURL         string                `json:"docUrl"`
 	TemplatePath   string                `json:"templatePath"`
 	GroupIndex     int                   `json:"groupIndex"`
 	OverriddenJobs []utils.OverriddenJobDetail `json:"overriddenJobs"`
@@ -232,8 +236,8 @@ func (p *GitlabPipelineRequiredTemplatesConf) Run(pipelineOriginData *collector.
 
 					if len(overriddenJobs) > 0 {
 						group.OverriddenOrigins = append(group.OverriddenOrigins, requiredOrigin)
-						result.OverriddenIssues = append(result.OverriddenIssues, RequiredTemplateOverriddenIssue{
-							TemplatePath:   requiredOrigin,
+						result.OverriddenIssues = append(result.OverriddenIssues, RequiredTemplateOverriddenIssue{						Code:           CodeTemplateOverridden,
+						DocURL:         CodeTemplateOverridden.DocURL(),							TemplatePath:   requiredOrigin,
 							GroupIndex:     groupIdx,
 							OverriddenJobs: overriddenJobs,
 						})
@@ -273,6 +277,8 @@ func (p *GitlabPipelineRequiredTemplatesConf) Run(pipelineOriginData *collector.
 		// Create issues for missing templates
 		for _, missing := range group.MissingOrigins {
 			result.Issues = append(result.Issues, RequiredTemplateIssue{
+				Code:         CodeTemplateMissing,
+				DocURL:       CodeTemplateMissing.DocURL(),
 				TemplatePath: missing,
 				GroupIndex:   i,
 			})

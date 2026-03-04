@@ -83,9 +83,11 @@ type GitlabPipelineDebugTraceResult struct {
 
 // GitlabPipelineDebugTraceIssue represents a forbidden debug variable found in the CI config
 type GitlabPipelineDebugTraceIssue struct {
-	VariableName string `json:"variableName"`
-	Value        string `json:"value"`
-	Location     string `json:"location"` // "global" or job name
+	Code         ErrorCode `json:"code"`
+	DocURL       string    `json:"docUrl"`
+	VariableName string    `json:"variableName"`
+	Value        string    `json:"value"`
+	Location     string    `json:"location"` // "global" or job name
 }
 
 ///////////////////////
@@ -146,6 +148,8 @@ func (p *GitlabPipelineDebugTraceConf) Run(pipelineOriginData *collector.GitlabP
 			result.Metrics.TotalVariablesChecked++
 			if forbiddenSet[strings.ToUpper(key)] && isTrueValue(value) {
 				result.Issues = append(result.Issues, GitlabPipelineDebugTraceIssue{
+					Code:         CodeDebugTraceEnabled,
+					DocURL:       CodeDebugTraceEnabled.DocURL(),
 					VariableName: key,
 					Value:        value,
 					Location:     "global",
@@ -181,6 +185,8 @@ func (p *GitlabPipelineDebugTraceConf) Run(pipelineOriginData *collector.GitlabP
 			result.Metrics.TotalVariablesChecked++
 			if forbiddenSet[strings.ToUpper(key)] && isTrueValue(value) {
 				result.Issues = append(result.Issues, GitlabPipelineDebugTraceIssue{
+					Code:         CodeDebugTraceEnabled,
+					DocURL:       CodeDebugTraceEnabled.DocURL(),
 					VariableName: key,
 					Value:        value,
 					Location:     jobName,

@@ -67,7 +67,9 @@ type GitlabPipelineHardcodedJobsResult struct {
 
 // GitlabPipelineHardcodedJobIssue represents an issue with a hardcoded job
 type GitlabPipelineHardcodedJobIssue struct {
-	JobName string `json:"jobName"`
+	Code    ErrorCode `json:"code"`
+	DocURL  string    `json:"docUrl"`
+	JobName string    `json:"jobName"`
 }
 
 ///////////////////////
@@ -117,6 +119,8 @@ func (p *GitlabPipelineHardcodedJobsConf) Run(pipelineOriginData *collector.Gitl
 			l.WithField("jobName", jobName).Debug("Found hardcoded job")
 
 			issue := GitlabPipelineHardcodedJobIssue{
+				Code:    CodeJobHardcoded,
+				DocURL:  CodeJobHardcoded.DocURL(),
 				JobName: jobName,
 			}
 			result.Issues = append(result.Issues, issue)

@@ -99,13 +99,17 @@ type GitlabPipelineRequiredComponentsResult struct {
 
 // RequiredComponentIssue represents an issue with a missing required component
 type RequiredComponentIssue struct {
-	ComponentPath string `json:"componentPath"`
-	GroupIndex    int    `json:"groupIndex"`
+	Code          ErrorCode `json:"code"`
+	DocURL        string    `json:"docUrl"`
+	ComponentPath string    `json:"componentPath"`
+	GroupIndex    int       `json:"groupIndex"`
 }
 
 // RequiredComponentOverriddenIssue represents an issue where a required component
 // is imported but its jobs are overridden with forbidden keywords
 type RequiredComponentOverriddenIssue struct {
+	Code           ErrorCode             `json:"code"`
+	DocURL         string                `json:"docUrl"`
 	ComponentPath  string                `json:"componentPath"`
 	GroupIndex     int                   `json:"groupIndex"`
 	OverriddenJobs []utils.OverriddenJobDetail `json:"overriddenJobs"`
@@ -188,8 +192,8 @@ func (p *GitlabPipelineRequiredComponentsConf) Run(pipelineOriginData *collector
 
 					if len(overriddenJobs) > 0 {
 						group.OverriddenOrigins = append(group.OverriddenOrigins, requiredOrigin)
-						result.OverriddenIssues = append(result.OverriddenIssues, RequiredComponentOverriddenIssue{
-							ComponentPath:  requiredOrigin,
+						result.OverriddenIssues = append(result.OverriddenIssues, RequiredComponentOverriddenIssue{						Code:           CodeComponentOverridden,
+						DocURL:         CodeComponentOverridden.DocURL(),							ComponentPath:  requiredOrigin,
 							GroupIndex:     groupIdx,
 							OverriddenJobs: overriddenJobs,
 						})
@@ -229,6 +233,8 @@ func (p *GitlabPipelineRequiredComponentsConf) Run(pipelineOriginData *collector
 		// Create issues for missing components
 		for _, missing := range group.MissingOrigins {
 			result.Issues = append(result.Issues, RequiredComponentIssue{
+				Code:          CodeComponentMissing,
+				DocURL:        CodeComponentMissing.DocURL(),
 				ComponentPath: missing,
 				GroupIndex:    i,
 			})

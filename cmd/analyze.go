@@ -617,6 +617,7 @@ type controlSummary struct {
 	compliance float64
 	issues     int
 	skipped    bool
+	codes      []string
 }
 
 func printBanner() {
@@ -670,11 +671,16 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 			controlName = "Container images must not use forbidden tags (pinned by digest)"
 		}
 
+		imageCodes := []string{string(control.CodeImageForbiddenTag)}
+		if result.ImageForbiddenTagsResult.MustBePinnedByDigest {
+			imageCodes = []string{string(control.CodeImageNotPinnedByDigest)}
+		}
 		ctrl := controlSummary{
 			name:       controlName,
 			compliance: result.ImageForbiddenTagsResult.Compliance,
 			issues:     len(result.ImageForbiddenTagsResult.Issues),
 			skipped:    result.ImageForbiddenTagsResult.Skipped,
+			codes:      imageCodes,
 		}
 		controls = append(controls, ctrl)
 
@@ -691,7 +697,8 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 			if len(result.ImageForbiddenTagsResult.Issues) > 0 {
 				fmt.Printf("\n  %sImages Not Pinned By Digest Found:%s\n", colorYellow, colorReset)
 				for _, issue := range result.ImageForbiddenTagsResult.Issues {
-					fmt.Printf("    %s•%s Job '%s' uses image without digest pinning: %s\n", colorYellow, colorReset, issue.Job, issue.Link)
+					fmt.Printf("    %s•%s [%s] Job '%s' uses image without digest pinning: %s\n", colorYellow, colorReset, issue.Code, issue.Job, issue.Link)
+					fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
 				}
 			}
 		} else {
@@ -702,7 +709,8 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 			if len(result.ImageForbiddenTagsResult.Issues) > 0 {
 				fmt.Printf("\n  %sForbidden Tags Found:%s\n", colorYellow, colorReset)
 				for _, issue := range result.ImageForbiddenTagsResult.Issues {
-					fmt.Printf("    %s•%s Job '%s' uses forbidden tag '%s' (image: %s)\n", colorYellow, colorReset, issue.Job, issue.Tag, issue.Link)
+					fmt.Printf("    %s•%s [%s] Job '%s' uses forbidden tag '%s' (image: %s)\n", colorYellow, colorReset, issue.Code, issue.Job, issue.Tag, issue.Link)
+					fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
 				}
 			}
 		}
@@ -716,6 +724,7 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 			compliance: result.ImageAuthorizedSourcesResult.Compliance,
 			issues:     len(result.ImageAuthorizedSourcesResult.Issues),
 			skipped:    result.ImageAuthorizedSourcesResult.Skipped,
+			codes:      []string{string(control.CodeImageUnauthorizedSource)},
 		}
 		controls = append(controls, ctrl)
 
@@ -731,7 +740,8 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 			if len(result.ImageAuthorizedSourcesResult.Issues) > 0 {
 				fmt.Printf("\n  %sUnauthorized Images Found:%s\n", colorYellow, colorReset)
 				for _, issue := range result.ImageAuthorizedSourcesResult.Issues {
-					fmt.Printf("    %s•%s Job '%s' uses unauthorized image: %s\n", colorYellow, colorReset, issue.Job, issue.Link)
+					fmt.Printf("    %s•%s [%s] Job '%s' uses unauthorized image: %s\n", colorYellow, colorReset, issue.Code, issue.Job, issue.Link)
+					fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
 				}
 			}
 		}
@@ -745,6 +755,7 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 			compliance: result.BranchProtectionResult.Compliance,
 			issues:     len(result.BranchProtectionResult.Issues),
 			skipped:    result.BranchProtectionResult.Skipped,
+			codes:      []string{string(control.CodeBranchUnprotected), string(control.CodeBranchNonCompliant)},
 		}
 		controls = append(controls, ctrl)
 
@@ -765,9 +776,10 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 				fmt.Printf("\n  %sIssues Found:%s\n", colorYellow, colorReset)
 				for _, issue := range result.BranchProtectionResult.Issues {
 					if issue.Type == "unprotected" {
-						fmt.Printf("    %s•%s Branch '%s' is not protected\n", colorYellow, colorReset, issue.BranchName)
+						fmt.Printf("    %s•%s [%s] Branch '%s' is not protected\n", colorYellow, colorReset, issue.Code, issue.BranchName)
+						fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
 					} else {
-						fmt.Printf("    %s•%s Branch '%s' has non-compliant protection settings\n", colorYellow, colorReset, issue.BranchName)
+						fmt.Printf("    %s•%s [%s] Branch '%s' has non-compliant protection settings\n", colorYellow, colorReset, issue.Code, issue.BranchName)
 						if issue.AllowForcePushDisplay {
 							fmt.Printf("      └─ Force push is allowed (should be disabled)\n")
 						}
@@ -780,6 +792,7 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 						if issue.MinPushAccessLevelDisplay {
 							fmt.Printf("      └─ Push access level is too low (%d, minimum: %d)\n", issue.MinPushAccessLevel, issue.AuthorizedMinPushAccessLevel)
 						}
+						fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
 					}
 				}
 			}
@@ -794,6 +807,7 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 			compliance: result.HardcodedJobsResult.Compliance,
 			issues:     len(result.HardcodedJobsResult.Issues),
 			skipped:    result.HardcodedJobsResult.Skipped,
+			codes:      []string{string(control.CodeJobHardcoded)},
 		}
 		controls = append(controls, ctrl)
 
@@ -808,7 +822,8 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 			if len(result.HardcodedJobsResult.Issues) > 0 {
 				fmt.Printf("\n  %sHardcoded Jobs Found:%s\n", colorYellow, colorReset)
 				for _, issue := range result.HardcodedJobsResult.Issues {
-					fmt.Printf("    %s•%s Job '%s' is hardcoded (not from include/component)\n", colorYellow, colorReset, issue.JobName)
+					fmt.Printf("    %s•%s [%s] Job '%s' is hardcoded (not from include/component)\n", colorYellow, colorReset, issue.Code, issue.JobName)
+					fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
 				}
 			}
 		}
@@ -822,6 +837,7 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 			compliance: result.OutdatedIncludesResult.Compliance,
 			issues:     len(result.OutdatedIncludesResult.Issues),
 			skipped:    result.OutdatedIncludesResult.Skipped,
+			codes:      []string{string(control.CodeIncludeOutdated)},
 		}
 		controls = append(controls, ctrl)
 
@@ -836,7 +852,8 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 			if len(result.OutdatedIncludesResult.Issues) > 0 {
 				fmt.Printf("\n  %sOutdated Includes Found:%s\n", colorYellow, colorReset)
 				for _, issue := range result.OutdatedIncludesResult.Issues {
-					fmt.Printf("    %s•%s %s uses version '%s' (latest: %s)\n", colorYellow, colorReset, issue.GitlabIncludeLocation, issue.Version, issue.LatestVersion)
+					fmt.Printf("    %s•%s [%s] %s uses version '%s' (latest: %s)\n", colorYellow, colorReset, issue.Code, issue.GitlabIncludeLocation, issue.Version, issue.LatestVersion)
+					fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
 				}
 			}
 		}
@@ -850,6 +867,7 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 			compliance: result.ForbiddenVersionsIncludesResult.Compliance,
 			issues:     len(result.ForbiddenVersionsIncludesResult.Issues),
 			skipped:    result.ForbiddenVersionsIncludesResult.Skipped,
+			codes:      []string{string(control.CodeIncludeForbiddenVersion)},
 		}
 		controls = append(controls, ctrl)
 
@@ -865,7 +883,8 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 			if len(result.ForbiddenVersionsIncludesResult.Issues) > 0 {
 				fmt.Printf("\n  %sForbidden Versions Found:%s\n", colorYellow, colorReset)
 				for _, issue := range result.ForbiddenVersionsIncludesResult.Issues {
-					fmt.Printf("    %s•%s %s uses forbidden version '%s'\n", colorYellow, colorReset, issue.GitlabIncludeLocation, issue.Version)
+					fmt.Printf("    %s•%s [%s] %s uses forbidden version '%s'\n", colorYellow, colorReset, issue.Code, issue.GitlabIncludeLocation, issue.Version)
+					fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
 				}
 			}
 		}
@@ -880,6 +899,7 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 			compliance: result.RequiredComponentsResult.Compliance,
 			issues:     totalComponentIssues,
 			skipped:    result.RequiredComponentsResult.Skipped,
+			codes:      []string{string(control.CodeComponentMissing), string(control.CodeComponentOverridden)},
 		}
 		controls = append(controls, ctrl)
 
@@ -894,17 +914,19 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 			if len(result.RequiredComponentsResult.Issues) > 0 {
 				fmt.Printf("\n  %sMissing Components:%s\n", colorYellow, colorReset)
 				for _, issue := range result.RequiredComponentsResult.Issues {
-					fmt.Printf("    %s•%s %s (group %d)\n", colorYellow, colorReset, issue.ComponentPath, issue.GroupIndex+1)
+					fmt.Printf("    %s•%s [%s] %s (group %d)\n", colorYellow, colorReset, issue.Code, issue.ComponentPath, issue.GroupIndex+1)
+					fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
 				}
 			}
 
 			if len(result.RequiredComponentsResult.OverriddenIssues) > 0 {
 				fmt.Printf("\n  %sOverridden Components:%s\n", colorYellow, colorReset)
 				for _, issue := range result.RequiredComponentsResult.OverriddenIssues {
-					fmt.Printf("    %s•%s %s (group %d)\n", colorYellow, colorReset, issue.ComponentPath, issue.GroupIndex+1)
+					fmt.Printf("    %s•%s [%s] %s (group %d)\n", colorYellow, colorReset, issue.Code, issue.ComponentPath, issue.GroupIndex+1)
 					for _, job := range issue.OverriddenJobs {
 						fmt.Printf("      job %s%s%s overrides: %s\n", colorDim, job.JobName, colorReset, strings.Join(job.OverriddenKeys, ", "))
 					}
+					fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
 				}
 			}
 		}
@@ -919,6 +941,7 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 			compliance: result.RequiredTemplatesResult.Compliance,
 			issues:     totalTemplateIssues,
 			skipped:    result.RequiredTemplatesResult.Skipped,
+			codes:      []string{string(control.CodeTemplateMissing), string(control.CodeTemplateOverridden)},
 		}
 		controls = append(controls, ctrl)
 
@@ -933,17 +956,19 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 			if len(result.RequiredTemplatesResult.Issues) > 0 {
 				fmt.Printf("\n  %sMissing Templates:%s\n", colorYellow, colorReset)
 				for _, issue := range result.RequiredTemplatesResult.Issues {
-					fmt.Printf("    %s•%s %s (group %d)\n", colorYellow, colorReset, issue.TemplatePath, issue.GroupIndex+1)
+					fmt.Printf("    %s•%s [%s] %s (group %d)\n", colorYellow, colorReset, issue.Code, issue.TemplatePath, issue.GroupIndex+1)
+					fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
 				}
 			}
 
 			if len(result.RequiredTemplatesResult.OverriddenIssues) > 0 {
 				fmt.Printf("\n  %sOverridden Templates:%s\n", colorYellow, colorReset)
 				for _, issue := range result.RequiredTemplatesResult.OverriddenIssues {
-					fmt.Printf("    %s•%s %s (group %d)\n", colorYellow, colorReset, issue.TemplatePath, issue.GroupIndex+1)
+					fmt.Printf("    %s•%s [%s] %s (group %d)\n", colorYellow, colorReset, issue.Code, issue.TemplatePath, issue.GroupIndex+1)
 					for _, job := range issue.OverriddenJobs {
 						fmt.Printf("      job %s%s%s overrides: %s\n", colorDim, job.JobName, colorReset, strings.Join(job.OverriddenKeys, ", "))
 					}
+					fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
 				}
 			}
 		}
@@ -957,6 +982,7 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 			compliance: result.DebugTraceResult.Compliance,
 			issues:     len(result.DebugTraceResult.Issues),
 			skipped:    result.DebugTraceResult.Skipped,
+			codes:      []string{string(control.CodeDebugTraceEnabled)},
 		}
 		controls = append(controls, ctrl)
 
@@ -973,10 +999,11 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 				for _, issue := range result.DebugTraceResult.Issues {
 					location := issue.Location
 					if location == "global" {
-						fmt.Printf("    %s•%s %s = \"%s\" (global variables)\n", colorYellow, colorReset, issue.VariableName, issue.Value)
+						fmt.Printf("    %s•%s [%s] %s = \"%s\" (global variables)\n", colorYellow, colorReset, issue.Code, issue.VariableName, issue.Value)
 					} else {
-						fmt.Printf("    %s•%s %s = \"%s\" (job '%s')\n", colorYellow, colorReset, issue.VariableName, issue.Value, location)
+						fmt.Printf("    %s•%s [%s] %s = \"%s\" (job '%s')\n", colorYellow, colorReset, issue.Code, issue.VariableName, issue.Value, location)
 					}
+					fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
 				}
 			}
 		}
@@ -1094,7 +1121,7 @@ func printSectionHeader(name string) {
 func printIssuesTable(controls []controlSummary) {
 	fmt.Printf("  %sIssues%s\n", colorBold, colorReset)
 
-	// Calculate column widths dynamically based on longest control name
+	// Calculate column widths dynamically based on longest control name and codes
 	controlWidth := 52 // minimum width
 	for _, ctrl := range controls {
 		needed := len(ctrl.name) + 2 // +2 for padding
@@ -1102,27 +1129,39 @@ func printIssuesTable(controls []controlSummary) {
 			controlWidth = needed
 		}
 	}
+	codesWidth := 22 // enough for "PLB-0101, PLB-0102"
+	for _, ctrl := range controls {
+		codesStr := strings.Join(ctrl.codes, ", ")
+		needed := len(codesStr) + 2
+		if needed > codesWidth {
+			codesWidth = needed
+		}
+	}
 	issuesWidth := 10
 
 	// Top border
-	fmt.Printf("  %s╔%s╤%s╗%s\n",
+	fmt.Printf("  %s╔%s╤%s╤%s╗%s\n",
 		colorCyan,
 		strings.Repeat("═", controlWidth),
+		strings.Repeat("═", codesWidth),
 		strings.Repeat("═", issuesWidth),
 		colorReset)
 
 	// Header row
-	fmt.Printf("  %s║%s %-*s %s│%s %*s %s║%s\n",
+	fmt.Printf("  %s║%s %-*s %s│%s %-*s %s│%s %*s %s║%s\n",
 		colorCyan, colorReset,
 		controlWidth-2, "Control",
+		colorCyan, colorReset,
+		codesWidth-2, "Codes",
 		colorCyan, colorReset,
 		issuesWidth-2, "Issues",
 		colorCyan, colorReset)
 
 	// Header separator
-	fmt.Printf("  %s╟%s┼%s╢%s\n",
+	fmt.Printf("  %s╟%s┼%s┼%s╢%s\n",
 		colorCyan,
 		strings.Repeat("─", controlWidth),
+		strings.Repeat("─", codesWidth),
 		strings.Repeat("─", issuesWidth),
 		colorReset)
 
@@ -1140,20 +1179,31 @@ func printIssuesTable(controls []controlSummary) {
 			issueColor = colorRed
 		}
 
-		fmt.Printf("  %s║%s %-*s %s│%s %s%*s%s %s║%s\n",
+		codesStr := strings.Join(ctrl.codes, ", ")
+		if ctrl.skipped {
+			codesStr = "-"
+		}
+
+		fmt.Printf("  %s║%s %-*s %s│%s %-*s %s│%s %s%*s%s %s║%s\n",
 			colorCyan, colorReset,
 			controlWidth-2, ctrl.name,
+			colorCyan, colorReset,
+			codesWidth-2, codesStr,
 			colorCyan, colorReset,
 			issueColor, issuesWidth-2, issueStr, colorReset,
 			colorCyan, colorReset)
 	}
 
 	// Bottom border
-	fmt.Printf("  %s╚%s╧%s╝%s\n",
+	fmt.Printf("  %s╚%s╧%s╧%s╝%s\n",
 		colorCyan,
 		strings.Repeat("═", controlWidth),
+		strings.Repeat("═", codesWidth),
 		strings.Repeat("═", issuesWidth),
 		colorReset)
+
+	// Docs footer
+	fmt.Printf("  %s↳ docs: https://getplumber.io/e/<code>%s\n", colorDim, colorReset)
 }
 
 func printComplianceTable(controls []controlSummary, overallCompliance, threshold float64) {

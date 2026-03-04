@@ -75,16 +75,18 @@ type GitlabPipelineIncludesOutdatedResult struct {
 // GitlabPipelineIncludesOutdatedIssue represents an issue with an outdated include
 // Issue data for outdated origin - PolicyIssueTypeId = [10]
 type GitlabPipelineIncludesOutdatedIssue struct {
-	Version               string `json:"version"`
-	LatestVersion         string `json:"latestVersion"`
-	PlumberOriginPath     string `json:"plumberOriginPath,omitempty"`
-	GitlabIncludeLocation string `json:"gitlabIncludeLocation"`
-	GitlabIncludeType     string `json:"gitlabIncludeType"`
-	GitlabIncludeProject  string `json:"gitlabIncludeProject,omitempty"`
-	Nested                bool   `json:"nested"`
-	ComponentName         string `json:"componentName,omitempty"`
-	PlumberTemplateName   string `json:"plumberTemplateName,omitempty"`
-	OriginHash            uint64 `json:"originHash"`
+	Code                  ErrorCode `json:"code"`
+	DocURL                string    `json:"docUrl"`
+	Version               string    `json:"version"`
+	LatestVersion         string    `json:"latestVersion"`
+	PlumberOriginPath     string    `json:"plumberOriginPath,omitempty"`
+	GitlabIncludeLocation string    `json:"gitlabIncludeLocation"`
+	GitlabIncludeType     string    `json:"gitlabIncludeType"`
+	GitlabIncludeProject  string    `json:"gitlabIncludeProject,omitempty"`
+	Nested                bool      `json:"nested"`
+	ComponentName         string    `json:"componentName,omitempty"`
+	PlumberTemplateName   string    `json:"plumberTemplateName,omitempty"`
+	OriginHash            uint64    `json:"originHash"`
 }
 
 ///////////////////////
@@ -184,6 +186,8 @@ func (p *GitlabPipelineIncludesOutdatedConf) Run(pipelineOriginData *collector.G
 
 			// Create issue for outdated origin
 			issue := GitlabPipelineIncludesOutdatedIssue{
+				Code:                  CodeIncludeOutdated,
+				DocURL:                CodeIncludeOutdated.DocURL(),
 				Version:               origin.Version,
 				LatestVersion:         latestVersion,
 				PlumberOriginPath:     plumberOriginPath,

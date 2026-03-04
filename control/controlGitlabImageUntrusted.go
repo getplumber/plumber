@@ -99,9 +99,11 @@ type GitlabImageAuthorizedSourcesResult struct {
 
 // GitlabPipelineImageIssueUnauthorized represents an issue with an unauthorized image source
 type GitlabPipelineImageIssueUnauthorized struct {
-	Link   string `json:"link"`
-	Status string `json:"status"`
-	Job    string `json:"job"`
+	Code   ErrorCode `json:"code"`
+	DocURL string    `json:"docUrl"`
+	Link   string    `json:"link"`
+	Status string    `json:"status"`
+	Job    string    `json:"job"`
 }
 
 ///////////////////////
@@ -225,6 +227,8 @@ func (p *GitlabImageAuthorizedSourcesConf) Run(pipelineImageData *collector.Gitl
 			result.Metrics.Unauthorized++
 			// Add issue for unauthorized images
 			issue := GitlabPipelineImageIssueUnauthorized{
+				Code:   CodeImageUnauthorizedSource,
+				DocURL: CodeImageUnauthorizedSource.DocURL(),
 				Link:   image.Link,
 				Status: status,
 				Job:    image.Job,
