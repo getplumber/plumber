@@ -327,6 +327,7 @@ func TestValidControlNames(t *testing.T) {
 		"pipelineMustIncludeTemplate",
 		"pipelineMustNotEnableDebugTrace",
 		"pipelineMustNotIncludeHardcodedJobs",
+		"pipelineMustNotUseUnsafeVariableExpansion",
 	}
 
 	if len(names) != len(expected) {

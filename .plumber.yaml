@@ -164,7 +164,7 @@ controls:
     # Set to false to disable this control
     enabled: true
 
-    # Version patterns considered forbidden - includes using these will be flagged
+    # Version patterns considered forbidden: includes using these will be flagged
     forbiddenVersions:
       - latest
       - "~latest"
@@ -263,3 +263,68 @@ controls:
     forbiddenVariables:
       - CI_DEBUG_TRACE
       - CI_DEBUG_SERVICES
+
+  # ===========================================
+  # Pipeline must not use unsafe variable expansion
+  # ===========================================
+  # Detects user-controlled CI variables passed to commands that
+  # re-interpret their input as shell code. This is OWASP CICD-SEC-1.
+  #
+  # GitLab sets CI variables as environment variables. The shell does
+  # NOT re-parse expanded values for command substitution, so normal
+  # usage is safe. Only commands that re-interpret arguments as code
+  # create an injection surface.
+  #
+  # Flagged (re-interpretation contexts):
+  #   - eval "$CI_COMMIT_BRANCH"
+  #   - sh -c "$CI_MERGE_REQUEST_TITLE"
+  #   - bash -c "$CI_COMMIT_MESSAGE"
+  #   - dash -c / zsh -c / ksh -c
+  #   - source <(echo "$CI_COMMIT_REF_NAME")
+  #   - envsubst '$CI_COMMIT_MESSAGE' < tpl.sh | sh
+  #   - echo "$CI_COMMIT_BRANCH" | xargs sh
+  #
+  # Not flagged (safe — shell doesn't re-parse env var values):
+  #   - echo $CI_COMMIT_BRANCH
+  #   - echo "$CI_COMMIT_MESSAGE"
+  #   - curl -d "$CI_MERGE_REQUEST_TITLE" https://...
+  #   - git checkout $CI_COMMIT_REF_NAME
+  #   - printf '%s' "$CI_COMMIT_MESSAGE"
+  #
+  # Not caught (known limitation):
+  #   - sh -c $BRANCH  (where BRANCH: $CI_COMMIT_BRANCH in variables:)
+  #   Indirect aliasing is not tracked; only direct variable names.
+  pipelineMustNotUseUnsafeVariableExpansion:
+    # Set to false to disable this control
+    enabled: true
+
+    # CI/CD variables whose values come from user input and must not
+    # appear in shell re-interpretation contexts (eval, sh -c, bash -c, etc.)
+    dangerousVariables:
+      - CI_MERGE_REQUEST_TITLE
+      - CI_MERGE_REQUEST_DESCRIPTION
+      - CI_COMMIT_MESSAGE
+      - CI_COMMIT_TITLE
+      - CI_COMMIT_TAG_MESSAGE
+      - CI_COMMIT_REF_NAME
+      - CI_COMMIT_REF_SLUG
+      - CI_COMMIT_BRANCH
+      - CI_MERGE_REQUEST_SOURCE_BRANCH_NAME
+      - CI_EXTERNAL_PULL_REQUEST_SOURCE_BRANCH_NAME
+
+    # Script lines
+    #   sh -c "helm upgrade myapp . --set image.tag=$CI_COMMIT_SHA"
+    #   sh -c "terraform workspace select $CI_COMMIT_REF_SLUG"
+    #   sh -c "docker build --build-arg BRANCH=$CI_COMMIT_BRANCH ."
+    #   sh -c "aws s3 sync dist/ s3://my-bucket/$CI_COMMIT_REF_SLUG/"
+    #   bash -c "make deploy BRANCH=$CI_COMMIT_BRANCH"
+    #
+    # Allow with patterns:
+    # (Escape $ as \\$, {} as \\{ \\} in patterns.)
+    # allowedPatterns:
+    #   - "helm.*--set.*\\$CI_"
+    #   - "terraform workspace select.*\\$CI_"
+    #   - "docker build.*--build-arg.*\\$CI_"
+    #   - "aws s3 sync.*\\$CI_"
+    #   - "make deploy.*\\$CI_"
+    allowedPatterns: []

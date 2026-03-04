@@ -598,6 +598,36 @@ func GetExtends(extendsInterface interface{}) ([]string, error) {
 	}
 }
 
+// GetScriptLines extracts script lines from a script field (string or []interface{}).
+// Returns nil for nil input. Multi-line strings are split on newline boundaries.
+func GetScriptLines(scriptInterface interface{}) []string {
+	if scriptInterface == nil {
+		return nil
+	}
+
+	switch script := scriptInterface.(type) {
+	case string:
+		if script == "" {
+			return nil
+		}
+		return strings.Split(script, "\n")
+
+	case []interface{}:
+		var lines []string
+		for _, v := range script {
+			str, ok := v.(string)
+			if !ok {
+				continue
+			}
+			lines = append(lines, str)
+		}
+		return lines
+
+	default:
+		return nil
+	}
+}
+
 // ParseGitlabCI parses a .gitlab-ci.yml file
 func ParseGitlabCI(fileContent []byte) (*GitlabCIConf, error) {
 	l := logrus.WithFields(logrus.Fields{

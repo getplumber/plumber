@@ -22,6 +22,7 @@ const (
 	controlPipelineMustIncludeComponent                = "pipelineMustIncludeComponent"
 	controlPipelineMustIncludeTemplate                 = "pipelineMustIncludeTemplate"
 	controlPipelineMustNotEnableDebugTrace             = "pipelineMustNotEnableDebugTrace"
+	controlPipelineMustNotUseUnsafeVariableExpansion   = "pipelineMustNotUseUnsafeVariableExpansion"
 )
 
 // shouldRunControl applies --controls / --skip-controls filtering for a control.
@@ -72,7 +73,7 @@ func clearProgressLine(conf *configuration.Configuration) {
 }
 
 // analysisStepCount is the total number of progress steps reported during analysis.
-const analysisStepCount = 13
+const analysisStepCount = 14
 
 // RunAnalysis executes the complete pipeline analysis for a GitLab project
 func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
@@ -436,6 +437,23 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 
 	debugTraceResult := debugTraceConf.Run(pipelineOriginData)
 	result.DebugTraceResult = debugTraceResult
+
+	// 12. Run Pipeline Must Not Use Unsafe Variable Expansion control
+	reportProgress(conf, 13, analysisStepCount, "Checking unsafe variable expansion")
+	l.Info("Running Pipeline Must Not Use Unsafe Variable Expansion control")
+
+	variableInjectionConf := &GitlabPipelineVariableInjectionConf{}
+	if shouldRunControl(controlPipelineMustNotUseUnsafeVariableExpansion, conf) {
+		if err := variableInjectionConf.GetConf(conf.PlumberConfig); err != nil {
+			l.WithError(err).Error("Failed to load VariableInjection config from .plumber.yaml file")
+			return result, fmt.Errorf("invalid configuration: %w", err)
+		}
+	} else {
+		variableInjectionConf.Enabled = false
+	}
+
+	variableInjectionResult := variableInjectionConf.Run(pipelineOriginData)
+	result.VariableInjectionResult = variableInjectionResult
 
 	reportProgress(conf, analysisStepCount, analysisStepCount, "Analysis complete")
 

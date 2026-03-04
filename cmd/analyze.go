@@ -298,6 +298,11 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		controlCount++
 	}
 
+	if result.VariableInjectionResult != nil && !result.VariableInjectionResult.Skipped {
+		complianceSum += result.VariableInjectionResult.Compliance
+		controlCount++
+	}
+
 	// Calculate average compliance
 	// If no controls ran (e.g., data collection failed), compliance is 0% - we can't verify anything
 	var compliance float64 = 0
@@ -965,6 +970,39 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 						fmt.Printf("    %s•%s %s = \"%s\" (global variables)\n", colorYellow, colorReset, issue.VariableName, issue.Value)
 					} else {
 						fmt.Printf("    %s•%s %s = \"%s\" (job '%s')\n", colorYellow, colorReset, issue.VariableName, issue.Value, location)
+					}
+				}
+			}
+		}
+		fmt.Println()
+	}
+
+	// Control 10: Pipeline must not use unsafe variable expansion
+	if result.VariableInjectionResult != nil {
+		ctrl := controlSummary{
+			name:       "Pipeline must not use unsafe variable expansion",
+			compliance: result.VariableInjectionResult.Compliance,
+			issues:     len(result.VariableInjectionResult.Issues),
+			skipped:    result.VariableInjectionResult.Skipped,
+		}
+		controls = append(controls, ctrl)
+
+		printControlHeader("Pipeline must not use unsafe variable expansion", result.VariableInjectionResult.Compliance, result.VariableInjectionResult.Skipped)
+
+		if result.VariableInjectionResult.Skipped {
+			fmt.Printf("  %sStatus: SKIPPED (disabled in configuration)%s\n", colorDim, colorReset)
+		} else {
+			fmt.Printf("  Jobs Checked: %d\n", result.VariableInjectionResult.Metrics.JobsChecked)
+			fmt.Printf("  Script Lines Checked: %d\n", result.VariableInjectionResult.Metrics.TotalScriptLinesChecked)
+			fmt.Printf("  Unsafe Expansions: %d\n", result.VariableInjectionResult.Metrics.UnsafeExpansionsFound)
+
+			if len(result.VariableInjectionResult.Issues) > 0 {
+				fmt.Printf("\n  %sUnsafe Variable Expansions Found:%s\n", colorYellow, colorReset)
+				for _, issue := range result.VariableInjectionResult.Issues {
+					if issue.JobName == "(global)" {
+						fmt.Printf("    %s•%s $%s in global %s: %s\n", colorYellow, colorReset, issue.VariableName, issue.ScriptBlock, issue.ScriptLine)
+					} else {
+						fmt.Printf("    %s•%s $%s in job '%s' %s: %s\n", colorYellow, colorReset, issue.VariableName, issue.JobName, issue.ScriptBlock, issue.ScriptLine)
 					}
 				}
 			}

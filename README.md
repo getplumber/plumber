@@ -36,6 +36,7 @@ Plumber is a compliance scanner for GitLab. It reads your `.gitlab-ci.yml` and r
 - Forbidden version patterns (e.g., `main`, `HEAD`)
 - Missing required components or templates
 - Debug trace variables (`CI_DEBUG_TRACE`) leaking secrets in job logs
+- Unsafe variable injection via `eval`/`sh -c`/`bash -c` (OWASP CICD-SEC-1)
 
 **How does it work?** Plumber connects to your GitLab instance via API, analyzes your pipeline configuration, and reports any issues it finds. You define what's allowed in a config file (`.plumber.yaml`), and Plumber tells you if your project complies. When running locally from your git repo, Plumber uses your **local `.gitlab-ci.yml`** allowing you to validate changes before pushing.
 
@@ -274,7 +275,7 @@ This creates `.plumber.yaml` with sensible [defaults](./.plumber.yaml). Customiz
 
 ### Available Controls
 
-Plumber includes 9 compliance controls. Each can be enabled/disabled and customized in [.plumber.yaml](.plumber.yaml):
+Plumber includes 10 compliance controls. Each can be enabled/disabled and customized in [.plumber.yaml](.plumber.yaml):
 
 <details>
 <summary><b>1. Container images must not use forbidden tags</b></summary>
@@ -466,6 +467,47 @@ pipelineMustNotEnableDebugTrace:
 
 </details>
 
+<details>
+<summary><b>10. Pipeline must not use unsafe variable expansion</b></summary>
+
+Detects user-controlled CI variables (MR title, commit message, branch name) passed to commands that re-interpret their input as shell code. An attacker can craft a branch name or MR title to inject arbitrary commands: this is [OWASP CICD-SEC-1](https://owasp.org/www-project-top-10-ci-cd-security-risks/).
+
+GitLab sets CI variables as environment variables. The shell does **not** re-parse expanded values for command substitution, so normal usage is safe. Only commands that re-interpret their arguments as code are flagged:
+
+**Flagged**: re-interpretation contexts:
+- `eval "$CI_COMMIT_BRANCH"`
+- `sh -c "$CI_MERGE_REQUEST_TITLE"` / `bash -c` / `dash -c` / `zsh -c` / `ksh -c`
+- `source <(echo "$CI_COMMIT_REF_NAME")`
+- `envsubst '$CI_COMMIT_MESSAGE' < tpl.sh | sh`
+- `echo "$CI_COMMIT_BRANCH" | xargs sh`
+
+**Not flagged**: safe, shell doesn't re-parse env var values:
+- `echo $CI_COMMIT_BRANCH` / `echo "$CI_COMMIT_MESSAGE"`
+- `curl -d "$CI_MERGE_REQUEST_TITLE" https://...`
+- `git checkout $CI_COMMIT_REF_NAME`
+- `printf '%s' "$CI_COMMIT_MESSAGE"`
+
+> **Limitation:** only direct variable names are detected. Indirect aliasing (`variables: { B: $CI_COMMIT_BRANCH }` then `sh -c $B`) is not tracked.
+
+```yaml
+pipelineMustNotUseUnsafeVariableExpansion:
+  enabled: true
+  dangerousVariables:
+    - CI_MERGE_REQUEST_TITLE
+    - CI_MERGE_REQUEST_DESCRIPTION
+    - CI_COMMIT_MESSAGE
+    - CI_COMMIT_TITLE
+    - CI_COMMIT_TAG_MESSAGE
+    - CI_COMMIT_REF_NAME
+    - CI_COMMIT_REF_SLUG
+    - CI_COMMIT_BRANCH
+    - CI_MERGE_REQUEST_SOURCE_BRANCH_NAME
+    - CI_EXTERNAL_PULL_REQUEST_SOURCE_BRANCH_NAME
+  allowedPatterns: []
+```
+
+</details>
+
 ### Selective Control Execution
 
 You can run or skip specific controls using their YAML key names from `.plumber.yaml`. This is useful for iterative debugging or targeted CI checks.
@@ -509,6 +551,7 @@ Controls not selected are reported as **skipped** in the output. The `--controls
 | `pipelineMustIncludeTemplate` |
 | `pipelineMustNotEnableDebugTrace` |
 | `pipelineMustNotIncludeHardcodedJobs` |
+| `pipelineMustNotUseUnsafeVariableExpansion` |
 
 </details>
 
@@ -646,10 +689,10 @@ brew install plumber
 To install a specific version:
 
 ```bash
-brew install getplumber/plumber/plumber@0.1.51
+brew install getplumber/plumber/plumber@0.1.52
 ```
 
-> **Note:** Versioned formulas are keg-only. Use the full path for example `/usr/local/opt/plumber@0.1.51/bin/plumber` or run `brew link plumber@0.1.51` to add it to your PATH.
+> **Note:** Versioned formulas are keg-only. Use the full path for example `/usr/local/opt/plumber@0.1.52/bin/plumber` or run `brew link plumber@0.1.52` to add it to your PATH.
 
 ### Mise
 

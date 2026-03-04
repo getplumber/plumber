@@ -41,6 +41,9 @@ var validControlSchema = map[string][]string{
 	"pipelineMustNotEnableDebugTrace": {
 		"enabled", "forbiddenVariables",
 	},
+	"pipelineMustNotUseUnsafeVariableExpansion": {
+		"enabled", "dangerousVariables", "allowedPatterns",
+	},
 }
 
 // validControlKeys returns the list of known control names.
@@ -96,6 +99,9 @@ type ControlsConfig struct {
 
 	// PipelineMustNotEnableDebugTrace control configuration
 	PipelineMustNotEnableDebugTrace *DebugTraceControlConfig `yaml:"pipelineMustNotEnableDebugTrace,omitempty"`
+
+	// PipelineMustNotUseUnsafeVariableExpansion control configuration
+	PipelineMustNotUseUnsafeVariableExpansion *VariableInjectionControlConfig `yaml:"pipelineMustNotUseUnsafeVariableExpansion,omitempty"`
 }
 
 // ImageForbiddenTagsControlConfig configuration for the forbidden image tags control
@@ -234,6 +240,20 @@ type DebugTraceControlConfig struct {
 	// ForbiddenVariables is a list of CI/CD variable names that must not be set to "true"
 	// Defaults: CI_DEBUG_TRACE, CI_DEBUG_SERVICES
 	ForbiddenVariables []string `yaml:"forbiddenVariables,omitempty"`
+}
+
+// VariableInjectionControlConfig configuration for the unsafe variable expansion control
+type VariableInjectionControlConfig struct {
+	// Enabled controls whether this check runs
+	Enabled *bool `yaml:"enabled,omitempty"`
+
+	// DangerousVariables is a list of CI/CD variable names whose values come from user input
+	// and should not appear in script blocks where shell injection is possible
+	DangerousVariables []string `yaml:"dangerousVariables,omitempty"`
+
+	// AllowedPatterns is a list of regex patterns. Script lines matching any of these
+	// patterns will not be flagged even if they contain a dangerous variable.
+	AllowedPatterns []string `yaml:"allowedPatterns,omitempty"`
 }
 
 // RequiredTemplatesControlConfig configuration for the required templates control
@@ -494,6 +514,24 @@ func (c *PlumberConfig) GetPipelineMustNotEnableDebugTraceConfig() *DebugTraceCo
 // IsEnabled returns whether the control is enabled
 // Returns false if not properly configured
 func (c *DebugTraceControlConfig) IsEnabled() bool {
+	if c == nil || c.Enabled == nil {
+		return false
+	}
+	return *c.Enabled
+}
+
+// GetPipelineMustNotUseUnsafeVariableExpansionConfig returns the control configuration
+// Returns nil if not configured
+func (c *PlumberConfig) GetPipelineMustNotUseUnsafeVariableExpansionConfig() *VariableInjectionControlConfig {
+	if c == nil {
+		return nil
+	}
+	return c.Controls.PipelineMustNotUseUnsafeVariableExpansion
+}
+
+// IsEnabled returns whether the control is enabled
+// Returns false if not properly configured
+func (c *VariableInjectionControlConfig) IsEnabled() bool {
 	if c == nil || c.Enabled == nil {
 		return false
 	}

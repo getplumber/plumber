@@ -192,6 +192,12 @@ func generateMRComment(result *AnalysisResult, compliance, threshold float64) st
 			totalIssues += len(r.Issues)
 		}
 	}
+	if r := result.VariableInjectionResult; r != nil {
+		controls = append(controls, controlEntry{"Pipeline must not use unsafe variable expansion", r.Compliance, len(r.Issues), r.Skipped})
+		if !r.Skipped {
+			totalIssues += len(r.Issues)
+		}
+	}
 
 	// Controls summary table
 	b.WriteString("### Controls\n\n")
@@ -335,6 +341,19 @@ func writeIssueDetails(b *strings.Builder, result *AnalysisResult) {
 				fmt.Fprintf(b, "- `%s` = `%s` in global variables\n", issue.VariableName, issue.Value)
 			} else {
 				fmt.Fprintf(b, "- `%s` = `%s` in job `%s`\n", issue.VariableName, issue.Value, issue.Location)
+			}
+		}
+		b.WriteString("\n")
+	}
+
+	// Variable injection
+	if r := result.VariableInjectionResult; r != nil && !r.Skipped && len(r.Issues) > 0 {
+		b.WriteString("**Pipeline must not use unsafe variable expansion:**\n")
+		for _, issue := range r.Issues {
+			if issue.JobName == "(global)" {
+				fmt.Fprintf(b, "- `$%s` used in global `%s`: `%s`\n", issue.VariableName, issue.ScriptBlock, issue.ScriptLine)
+			} else {
+				fmt.Fprintf(b, "- `$%s` used in job `%s` `%s`: `%s`\n", issue.VariableName, issue.JobName, issue.ScriptBlock, issue.ScriptLine)
 			}
 		}
 		b.WriteString("\n")
