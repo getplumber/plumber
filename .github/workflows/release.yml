@@ -5,14 +5,14 @@ on:
     branches:
       - main
 
-permissions:
-  contents: write
-  packages: write
+permissions: {}
 
 jobs:
   release:
     name: Semantic Release
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     outputs:
       new_release_published: ${{ steps.semantic.outputs.new_release_published }}
       new_release_version: ${{ steps.semantic.outputs.new_release_version }}
@@ -22,6 +22,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           fetch-depth: 0
+          persist-credentials: false
 
       - name: Setup Node.js
         uses: actions/setup-node@6044e13b5dc448c55e2357c09f80417699197238 # v6.2.0
@@ -43,6 +44,8 @@ jobs:
   binaries:
     name: Build Binaries
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     needs: release
     if: needs.release.outputs.new_release_published == 'true'
     strategy:
@@ -61,6 +64,8 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Setup Go
         uses: actions/setup-go@4b73464bb391d4059bd26b0524d20df3927bd417 # v6.3.0
@@ -94,6 +99,8 @@ jobs:
   upload-release:
     name: Create Release & Upload Assets
     runs-on: ubuntu-24.04
+    permissions:
+      contents: write
     needs: [release, binaries]
     if: needs.release.outputs.new_release_published == 'true'
     steps:
@@ -122,11 +129,16 @@ jobs:
   docker:
     name: Build & Push Docker Image
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      packages: write
     needs: release
     if: needs.release.outputs.new_release_published == 'true'
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3.7.0
@@ -165,6 +177,8 @@ jobs:
   homebrew:
     name: Update Homebrew Tap
     runs-on: ubuntu-24.04
+    permissions:
+      contents: read
     needs: [release, upload-release]
     if: needs.release.outputs.new_release_published == 'true'
     steps:
@@ -189,6 +203,7 @@ jobs:
           repository: getplumber/homebrew-plumber
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           path: homebrew-tap
+          persist-credentials: false
 
       - name: Update formulas
         env:
@@ -199,7 +214,7 @@ jobs:
           SHA_LINUX_AMD64: ${{ steps.checksums.outputs.linux_amd64 }}
         run: |
           cd homebrew-tap/Formula
-          
+
           # Update main formula (plumber.rb)
           cat > plumber.rb << 'FORMULA'
           # typed: false
@@ -270,7 +285,7 @@ jobs:
           # Create versioned formula
           VERSION_UNDERSCORE=$(echo "${VERSION}" | tr -d '.')
           VERSIONED_FILE="plumber@${VERSION}.rb"
-          
+
           cat > "${VERSIONED_FILE}" << VERSIONED
           # typed: false
           # frozen_string_literal: true
@@ -342,3 +357,40 @@ jobs:
           git add Formula/
           git commit -m "Update to v${VERSION}"
           git push
+
+  hash:
+    name: Compute Artifact Hashes
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    needs: [release, binaries]
+    if: needs.release.outputs.new_release_published == 'true'
+    outputs:
+      hashes: ${{ steps.hash.outputs.hashes }}
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@70fc10c6e5e1ce46ad2ea6f2b72d43f7d47b13c3 # v8.0.0
+        with:
+          path: dist/
+          merge-multiple: true
+
+      - name: Compute SHA256 hashes
+        id: hash
+        working-directory: dist
+        run: |
+          echo "hashes=$(sha256sum plumber-* | base64 -w0)" >> "$GITHUB_OUTPUT"
+
+  provenance:
+    name: SLSA Provenance
+    needs: [release, hash, upload-release]
+    if: needs.release.outputs.new_release_published == 'true'
+    permissions:
+      actions: read
+      id-token: write
+      contents: write
+    # zizmor: ignore[unpinned-uses] — SLSA generator requires tag reference, not SHA
+    uses: slsa-framework/slsa-github-generator/.github/workflows/generator_generic_slsa3.yml@v2.1.0
+    with:
+      base64-subjects: "${{ needs.hash.outputs.hashes }}"
+      upload-assets: true
+      upload-tag-name: "v${{ needs.release.outputs.new_release_version }}"

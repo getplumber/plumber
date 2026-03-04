@@ -14,6 +14,8 @@
   <a href="https://github.com/getplumber/plumber/releases"><img src="https://img.shields.io/github/downloads/getplumber/plumber/total?label=Downloads" alt="GitHub Downloads"></a>
   <a href="https://hub.docker.com/r/getplumber/plumber"><img src="https://img.shields.io/docker/pulls/getplumber/plumber" alt="Docker Pulls"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MPL--2.0-blue" alt="License"></a>
+  <a href="https://securityscorecards.dev/viewer/?uri=github.com/getplumber/plumber"><img src="https://api.securityscorecards.dev/projects/github.com/getplumber/plumber/badge" alt="OpenSSF Scorecard"></a>
+  <a href="https://slsa.dev/spec/v1.0/levels#build-l3"><img src="https://slsa.dev/images/gh-badge-level3.svg" alt="SLSA 3"></a>
 </p>
 
 <p align="center">
@@ -136,7 +138,7 @@ export GITLAB_TOKEN=glpat-xxxx
 
 ### Step 4: Run Analysis
 
-Plumber auto-detects the GitLab URL and project from your git remote but requires the remote to be set to 'origin'. 
+Plumber auto-detects the GitLab URL and project from your git remote but requires the remote to be set to 'origin'.
 ```bash
 # if in git remote with remote = origin, run:
 plumber analyze
@@ -144,7 +146,7 @@ plumber analyze
 # Or specify the project explicitly:
 plumber analyze --gitlab-url https://gitlab.com --project mygroup/myproject
 ```
-   
+
 It reads your `.plumber.yaml` config and outputs a compliance report. You can also tell it to store the output in JSON format with the `--output` flag.
 
 #### Local CI Configuration
@@ -619,7 +621,7 @@ Plumber provides colorized terminal output for easy scanning:
 </p>
 
 - **Green checkmarks (✓)** indicate passing controls
-- **Red crosses (✗)** indicate failing controls  
+- **Red crosses (✗)** indicate failing controls
 - **Yellow bullets (•)** highlight specific issues found
 - Summary tables show compliance percentages at a glance
 
@@ -775,7 +777,7 @@ docker pull getplumber/plumber:latest
 docker run --rm \
   -e GITLAB_TOKEN=glpat-xxxx \
   getplumber/plumber:latest analyze \
-  --gitlab-url https://your-gitlab-instance.com \ 
+  --gitlab-url https://your-gitlab-instance.com \
   --project mygroup/myproject
 ```
 
@@ -1125,7 +1127,7 @@ Contributions are welcome! Please read our [Contributing Guide](CONTRIBUTING.md)
 
 ---
 
-## 💡 See it in action 
+## 💡 See it in action
 Check out our example projects:
 - [go-build-test-compliant](https://gitlab.com/getplumber/examples/go-build-test-compliant/-/pipelines) - A compliant project passing all checks
 - [go-build-test-non-compliant](https://gitlab.com/getplumber/examples/go-build-test-non-compliant/-/pipelines) - A non-compliant project showing detected issues
