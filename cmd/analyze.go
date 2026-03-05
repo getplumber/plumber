@@ -1017,6 +1017,7 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 			compliance: result.VariableInjectionResult.Compliance,
 			issues:     len(result.VariableInjectionResult.Issues),
 			skipped:    result.VariableInjectionResult.Skipped,
+			codes:      []string{string(control.CodeUnsafeVariableExpansion)},
 		}
 		controls = append(controls, ctrl)
 
@@ -1033,10 +1034,11 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 				fmt.Printf("\n  %sUnsafe Variable Expansions Found:%s\n", colorYellow, colorReset)
 				for _, issue := range result.VariableInjectionResult.Issues {
 					if issue.JobName == "(global)" {
-						fmt.Printf("    %s•%s $%s in global %s: %s\n", colorYellow, colorReset, issue.VariableName, issue.ScriptBlock, issue.ScriptLine)
+						fmt.Printf("    %s•%s [%s] $%s in global %s: %s\n", colorYellow, colorReset, issue.Code, issue.VariableName, issue.ScriptBlock, issue.ScriptLine)
 					} else {
-						fmt.Printf("    %s•%s $%s in job '%s' %s: %s\n", colorYellow, colorReset, issue.VariableName, issue.JobName, issue.ScriptBlock, issue.ScriptLine)
+						fmt.Printf("    %s•%s [%s] $%s in job '%s' %s: %s\n", colorYellow, colorReset, issue.Code, issue.VariableName, issue.JobName, issue.ScriptBlock, issue.ScriptLine)
 					}
+					fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
 				}
 			}
 		}

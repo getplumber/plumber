@@ -84,10 +84,12 @@ type GitlabPipelineVariableInjectionResult struct {
 
 // GitlabPipelineVariableInjectionIssue represents a dangerous variable found in a code-execution context
 type GitlabPipelineVariableInjectionIssue struct {
-	JobName      string `json:"jobName"`
-	VariableName string `json:"variableName"`
-	ScriptLine   string `json:"scriptLine"`
-	ScriptBlock  string `json:"scriptBlock"` // "script", "before_script", "after_script"
+	Code         ErrorCode `json:"code"`
+	DocURL       string    `json:"docUrl"`
+	JobName      string    `json:"jobName"`
+	VariableName string    `json:"variableName"`
+	ScriptLine   string    `json:"scriptLine"`
+	ScriptBlock  string    `json:"scriptBlock"` // "script", "before_script", "after_script"
 }
 
 ///////////////////////
@@ -254,6 +256,8 @@ func (p *GitlabPipelineVariableInjectionConf) scanScriptBlock(
 		for varName, re := range varRegexes {
 			if re.MatchString(line) {
 				result.Issues = append(result.Issues, GitlabPipelineVariableInjectionIssue{
+					Code:         CodeUnsafeVariableExpansion,
+					DocURL:       CodeUnsafeVariableExpansion.DocURL(),
 					JobName:      jobName,
 					VariableName: varName,
 					ScriptLine:   truncateLine(trimmed, 200),

@@ -51,6 +51,8 @@ const (
 const (
 	// PLB-0501: Pipeline enables CI debug trace (CI_DEBUG_TRACE or CI_DEBUG_SERVICES)
 	CodeDebugTraceEnabled ErrorCode = "PLB-0501"
+	// PLB-0502: Unsafe variable expansion in shell re-interpretation context (eval, sh -c, etc.)
+	CodeUnsafeVariableExpansion ErrorCode = "PLB-0502"
 )
 
 // ErrorCodeInfo provides metadata about an error code.
@@ -183,6 +185,14 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Remove or set CI_DEBUG_TRACE and CI_DEBUG_SERVICES to 'false' in your .gitlab-ci.yml variables section. These should only be used temporarily for debugging and never committed.",
 		DocURL:      docsBaseURL + string(CodeDebugTraceEnabled),
 		ControlName: "pipelineMustNotEnableDebugTrace",
+	},
+	CodeUnsafeVariableExpansion: {
+		Code:        CodeUnsafeVariableExpansion,
+		Title:       "Unsafe variable expansion",
+		Description: "A dangerous CI variable is expanded in a shell re-interpretation context (eval, sh -c, bash -c, source, etc.). The expanded value is executed as code, enabling command injection if the variable is user-controlled.",
+		Remediation: "Avoid passing variables to commands that re-interpret input as shell code. Use the variable in a safe context (e.g. echo, env) or sanitize/allowlist values. Configure dangerousVariables and allowedPatterns in .plumber.yaml under pipelineMustNotUseUnsafeVariableExpansion.",
+		DocURL:      docsBaseURL + string(CodeUnsafeVariableExpansion),
+		ControlName: "pipelineMustNotUseUnsafeVariableExpansion",
 	},
 }
 
