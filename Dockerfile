@@ -20,7 +20,7 @@ RUN cp .plumber.yaml internal/defaultconfig/default.yaml
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o plumber .
 
 # Final stage - Alpine (small, has shell for CI compatibility)
-FROM alpine:3.21
+FROM alpine:3.21@sha256:c3f8e73fdb79deaebaa2037150150191b9dcbfba68b4a46d70103204c53f4709
 
 # Install CA certificates for HTTPS API calls
 RUN apk --no-cache add ca-certificates

@@ -1,3 +1,4 @@
+
 <p align="center">
   <img src="assets/plumber.svg" alt="Plumber">
 </p>
@@ -5,6 +6,11 @@
 
 <p align="center">
   <b>CI/CD compliance scanner for GitLab pipelines</b>
+</p>
+<p align="center">
+  <a href="https://securityscorecards.dev/viewer/?uri=github.com/getplumber/plumber"><img src="https://img.shields.io/ossf-scorecard/github.com/getplumber/plumber?label=OpenSSF%20Scorecard&style=for-the-badge&labelColor=2b2d42&color=4a90d9" alt="OpenSSF Scorecard"></a>
+  &nbsp;&nbsp;
+  <a href="https://slsa.dev/spec/v1.0/levels#build-l3"><img src="https://img.shields.io/badge/SLSA-Level%203-4a90d9?style=for-the-badge&logo=slsa&logoColor=white&labelColor=2b2d42" alt="SLSA 3"></a>
 </p>
 
 <p align="center">
@@ -14,8 +20,6 @@
   <a href="https://github.com/getplumber/plumber/releases"><img src="https://img.shields.io/github/downloads/getplumber/plumber/total?label=Downloads" alt="GitHub Downloads"></a>
   <a href="https://hub.docker.com/r/getplumber/plumber"><img src="https://img.shields.io/docker/pulls/getplumber/plumber" alt="Docker Pulls"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MPL--2.0-blue" alt="License"></a>
-  <a href="https://securityscorecards.dev/viewer/?uri=github.com/getplumber/plumber"><img src="https://api.securityscorecards.dev/projects/github.com/getplumber/plumber/badge" alt="OpenSSF Scorecard"></a>
-  <a href="https://slsa.dev/spec/v1.0/levels#build-l3"><img src="https://slsa.dev/images/gh-badge-level3.svg" alt="SLSA 3"></a>
 </p>
 
 <p align="center">
