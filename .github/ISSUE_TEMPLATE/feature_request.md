@@ -73,3 +73,5 @@ Explain the impact. Why should this be prioritized? Who benefits?
 Link to OWASP CI/CD risks, real incidents, or competitor features
 when relevant.
 -->
+
+> **Note:** If you submit a PR for this feature, please keep "Allow edits from maintainers" enabled so we can collaborate more easily.

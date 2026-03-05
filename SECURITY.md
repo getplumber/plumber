@@ -17,8 +17,7 @@ If you discover a security vulnerability in Plumber, please report it responsibl
 
 Instead, please use one of the following methods:
 
-1. **GitHub Security Advisories** (preferred): Use [GitHub's private vulnerability reporting](https://github.com/getplumber/plumber/security/advisories/new) to submit a report directly.
-2. **Email**: Send details to the maintainers via the contact information in the repository.
+- **GitHub Security Advisories**: Use [GitHub's private vulnerability reporting](https://github.com/getplumber/plumber/security/advisories/new) to submit a report directly.
 
 ### What to include
 

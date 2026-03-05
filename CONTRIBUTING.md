@@ -93,6 +93,7 @@ Before opening an issue, please:
    - A clear title and description
    - Reference to related issues (e.g., "Fixes #123")
    - Screenshots/output examples if applicable
+   - **"Allow edits from maintainers" enabled** (checked by default on GitHub). This lets maintainers push fixes or rebases directly to your branch, which speeds up the review process.
 
 ## Development Setup
 
@@ -181,6 +182,18 @@ The expression parser (`configuration/expression_test.go`) has comprehensive tes
 ```bash
 go test ./configuration/ -v -count=1
 ```
+
+#### Fuzz Testing
+
+The project includes Go fuzz tests for the expression parser and the git remote URL parser. These exercise the parsers with random inputs to catch panics, crashes, and unexpected behavior.
+
+```bash
+# Run fuzz tests (default 10s each)
+go test -fuzz=FuzzParseRequiredExpression ./configuration/ -fuzztime=30s
+go test -fuzz=FuzzParseGitRemoteURL ./utils/ -fuzztime=30s
+```
+
+If a fuzz test finds a crash, Go saves the failing input in `testdata/fuzz/` inside the package directory. These corpus entries are committed to the repo so the regression is covered by `go test` going forward.
 
 ### Project Structure
 

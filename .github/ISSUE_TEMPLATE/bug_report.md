@@ -32,3 +32,5 @@ If applicable - with --verbose if needed
 
 ## **Additional context**
 Add any other context about the problem here.
+
+> **Note:** If you submit a PR for this bug, please keep "Allow edits from maintainers" enabled so we can collaborate on the fix more easily.
