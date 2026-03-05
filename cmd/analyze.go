@@ -69,7 +69,8 @@ Optional flags:
 
 Exit codes:
   0  Analysis passed (compliance >= threshold)
-  1  Analysis failed (compliance < threshold or error occurred)
+  1  Compliance failure (compliance < threshold)
+  2  Runtime error (configuration error, network failure, missing token, etc.)
 
 Examples:
   # Set token via environment variable
@@ -403,7 +404,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 
 	// Check compliance against threshold
 	if compliance < threshold {
-		return fmt.Errorf("compliance %.1f%% is below threshold %.1f%%", compliance, threshold)
+		return &ComplianceError{Compliance: compliance, Threshold: threshold}
 	}
 
 	return nil

@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"time"
@@ -48,7 +49,11 @@ func Execute() {
 	}
 
 	if err != nil {
-		os.Exit(1)
+		var complianceErr *ComplianceError
+		if errors.As(err, &complianceErr) {
+			os.Exit(1)
+		}
+		os.Exit(2)
 	}
 }
 
