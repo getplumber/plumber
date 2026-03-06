@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"reflect"
 	"regexp"
 	"strings"
 
@@ -23,6 +24,9 @@ var (
 	configGenerateForce  bool
 	// config validate flags
 	configValidateFile string
+	// config diff flags
+	configDiffFile    string
+	configDiffNoColor bool
 )
 
 var configCmd = &cobra.Command{
@@ -104,11 +108,35 @@ Examples:
 	RunE: runConfigGenerate,
 }
 
+var configDiffCmd = &cobra.Command{
+	Use:   "diff",
+	Short: "Display the difference between current config and defaults",
+	Long: `Display a clean, human-readable view of the differences between the current config and defaults.
+
+This command loads and parses the configuration file and the default config, and then compares them.
+
+Differences are colorized for quick scanning:
+  - Added/modified  → green
+  - Removed → red
+
+Examples:
+  # compare the .plumber.yaml in root of repo with default config
+  plumber config diff
+
+  # compare the default config with a custom config
+  plumber config diff --config custom-plumber.yaml
+
+  # View diff without colors (for piping or scripts)
+  plumber config diff --config custom-plumber.yaml --no-color`,
+	RunE: runConfigDiff,
+}
+
 func init() {
 	rootCmd.AddCommand(configCmd)
 	configCmd.AddCommand(configViewCmd)
 	configCmd.AddCommand(configGenerateCmd)
 	configCmd.AddCommand(configValidateCmd)
+	configCmd.AddCommand(configDiffCmd)
 
 	// config validate flags
 	configValidateCmd.Flags().StringVarP(&configValidateFile, "config", "c", ".plumber.yaml", "Path to configuration file")
@@ -121,6 +149,11 @@ func init() {
 	// config generate flags
 	configGenerateCmd.Flags().StringVarP(&configGenerateOutput, "output", "o", ".plumber.yaml", "Output file path")
 	configGenerateCmd.Flags().BoolVarP(&configGenerateForce, "force", "f", false, "Overwrite existing file")
+
+	// config diff flags
+	configDiffCmd.Flags().StringVarP(&configDiffFile, "config", "c", ".plumber.yaml", "Path to configuration file")
+	configDiffCmd.Flags().BoolVar(&configDiffNoColor, "no-color", false, "Disable colorized output")
+
 }
 
 func runConfigView(cmd *cobra.Command, args []string) error {
@@ -340,3 +373,178 @@ func runConfigValidate(cmd *cobra.Command, args []string) error {
 	return nil
 }
 
+func runConfigDiff(cmd *cobra.Command, args []string) error {
+
+	// Determine if we should colorize output
+	useColor := !configDiffNoColor
+	// Auto-detect: disable color if not a terminal (unless explicitly set)
+	if !cmd.Flags().Changed("no-color") {
+		if fileInfo, _ := os.Stdout.Stat(); (fileInfo.Mode() & os.ModeCharDevice) == 0 {
+			useColor = false
+		}
+	}
+
+	// Using a basic os.ReadFile call here instead of
+	// configuration.LoadPlumberConfig(), since the load
+	// plumber config method unmarshals the yaml content into
+	// a PlumberConfig object, which ignores any new keys (non-standard)
+	// introduced in the user yaml config.
+	userBytes, err := os.ReadFile(configDiffFile)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fmt.Errorf("config file not found: %s", configDiffFile)
+		}
+		return err
+	}
+
+	defaultBytes := defaultconfig.Get()
+
+	defaultMap, err := flattenYamlContentsIntoMap(defaultBytes)
+	if err != nil {
+		return fmt.Errorf("failed to convert default config into map: %w", err)
+	}
+
+	if err != nil {
+		return fmt.Errorf("failed to marshal user config: %w", err)
+	}
+
+	userMap, err := flattenYamlContentsIntoMap(userBytes)
+
+	if err != nil {
+		return fmt.Errorf("failed to convert user config into map: %w", err)
+	}
+
+	missingDefaults := make(map[string]struct{})
+	matchingUserKeys := make(map[string]struct{})
+
+	// Prints changed values
+	fmt.Println("\nControls changed from defaults:")
+	for key, val1 := range defaultMap {
+		if val2, exists := userMap[key]; exists {
+			if !reflect.DeepEqual(val1, val2) {
+				if useColor {
+					fmt.Printf("%s: ", key)
+					colorizeChanges(val1, val2)
+					fmt.Println()
+				} else {
+					fmt.Printf("%s: %v → %v\n", key, val1, val2)
+				}
+			}
+			matchingUserKeys[key] = struct{}{}
+		} else {
+			missingDefaults[key] = struct{}{}
+		}
+	}
+
+	// Prints keys present in default, but absent in user provided config
+	fmt.Println("\nNew keys in default (missing from your config):")
+	for key := range missingDefaults {
+		fmt.Println(key)
+	}
+
+	// Prints keys that are present in user provided config, but absent in default
+	fmt.Println("\nUnknown keys in your config (not in defaults):")
+	for key := range userMap {
+		if _, ok := matchingUserKeys[key]; !ok {
+			fmt.Println(key)
+		}
+	}
+
+	return nil
+}
+
+// Converts YAML contents into a map and then flattens that map
+func flattenYamlContentsIntoMap(contents []byte) (map[string]any, error) {
+
+	var convertedMap map[string]any
+	if err := yaml.Unmarshal(contents, &convertedMap); err != nil {
+		return nil, err
+	}
+	return flattenMap(convertedMap), nil
+}
+
+func flattenMap(mapToFlatten map[string]any) map[string]any {
+	result := make(map[string]any)
+	flattenRecursive("", mapToFlatten, result)
+	return result
+}
+
+// Recursively flattens the map and returns a flattened map
+// Keys are concatenated with . to indicate various levels of
+// indentation.
+func flattenRecursive(prefix string, currentMap map[string]any, result map[string]any) {
+	for key, value := range currentMap {
+		newKey := key
+		if prefix != "" {
+			newKey = prefix + "." + key
+		}
+		if childMap, ok := value.(map[string]any); ok {
+			flattenRecursive(newKey, childMap, result)
+		} else if interfaceMap, ok := value.(map[interface{}]interface{}); ok {
+			converted := make(map[string]any)
+			for k, v := range interfaceMap {
+				converted[fmt.Sprintf("%v", k)] = v
+			}
+			flattenRecursive(newKey, converted, result)
+		} else {
+			result[newKey] = value
+		}
+	}
+}
+
+// colorizeChanges Colorises the changed for easy scanning
+func colorizeChanges(val1, val2 any) {
+	typeA := reflect.TypeOf(val1)
+	typeB := reflect.TypeOf(val2)
+
+	// If both are slices, scan through both of them
+	// Prints removed items in red
+	// Prints added/modified items in green
+	if val1 != nil && val2 != nil && typeA.Kind() == reflect.Slice && typeB.Kind() == reflect.Slice {
+		slice1 := convertToInterfaceSlice(val1)
+		slice2 := convertToInterfaceSlice(val2)
+
+		set1 := make(map[any]struct{})
+		set2 := make(map[any]struct{})
+		for _, item := range slice1 {
+			set1[item] = struct{}{}
+		}
+		for _, item := range slice2 {
+			set2[item] = struct{}{}
+		}
+
+		fmt.Printf("[")
+		for value := range set1 {
+			if _, ok := set2[value]; !ok {
+				fmt.Printf(" %s%v%s ", colorRed, value, colorReset)
+			} else {
+				fmt.Printf(" %v ", value)
+			}
+		}
+		fmt.Printf("] → [")
+		for value := range set2 {
+			if _, ok := set1[value]; !ok {
+				fmt.Printf(" %s%v%s ", colorGreen, value, colorReset)
+			} else {
+				fmt.Printf(" %v ", value)
+			}
+		}
+		fmt.Printf("]")
+
+	} else {
+		// For primitives (bool, string, int), show the transformation
+		// Old value in red, new value in green
+		fmt.Printf("%s%v%s → %s%v%s", colorRed, val1, colorReset, colorGreen, val2, colorReset)
+	}
+
+}
+
+// Helper function to convert to interface slice.
+func convertToInterfaceSlice(s any) []any {
+	v := reflect.ValueOf(s)
+	res := make([]any, v.Len())
+	for i := 0; i < v.Len(); i++ {
+		res[i] = v.Index(i).Interface()
+	}
+	return res
+}
