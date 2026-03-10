@@ -948,6 +948,57 @@ Configuration validation warnings:
   - Unknown key "allowForcePushes" in control "branchMustBeProtected". Did you mean "allowForcePush"?
 ```
 
+### `plumber config diff`
+
+Compare your `.plumber.yaml` against Plumber's built-in defaults. Useful for spotting customizations, discovering new options after upgrading, and catching typos.
+
+```bash
+plumber config diff [flags]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--config`, `-c` | `.plumber.yaml` | Path to configuration file |
+| `--no-color` | `false` | Disable colorized output |
+
+The output has three sections:
+
+1. **Controls changed from defaults** - keys whose values differ from the built-in defaults. Scalar changes show `old → new`. List changes show per-item `+`/`-` lines.
+2. **New keys in default (missing from your config)** - keys added in newer Plumber versions that your config doesn't include yet, with their default values.
+3. **Unknown keys in your config (not in defaults)** - keys Plumber doesn't recognize. Includes typo suggestions via fuzzy matching when a close match exists.
+
+Color is automatically disabled when piping output.
+
+**Examples:**
+
+```bash
+# Compare the default .plumber.yaml against built-in defaults
+plumber config diff
+
+# Compare a specific config file
+plumber config diff --config custom-plumber.yaml
+
+# Without colors (for piping or scripts)
+plumber config diff --no-color
+```
+
+**Sample output:**
+
+```
+Controls changed from defaults:
+  controls.branchMustBeProtected.enabled: true → false
+  controls.containerImageMustNotUseForbiddenTags.tags:
+    - dev
+    - staging
+    + nightly
+
+New keys in default (missing from your config):
+  controls.pipelineMustNotUseUnsafeVariableExpansion.allowedPatterns (default: [])
+
+Unknown keys in your config (not in defaults):
+  controls.containerImageMustNotUseForbiddenTag ← possible typo? Did you mean "controls.containerImageMustNotUseForbiddenTags.enabled"?
+```
+
 ---
 
 ## ⚠️ Self-Hosted GitLab

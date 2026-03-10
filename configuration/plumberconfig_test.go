@@ -130,14 +130,14 @@ func TestFindClosestMatch(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			result := findClosestMatch(tt.input, validKeys)
+			result := FindClosestMatch(tt.input, validKeys)
 			if tt.expectMatch {
 				if result != tt.expectedKey {
-					t.Errorf("findClosestMatch(%q) = %q, want %q", tt.input, result, tt.expectedKey)
+					t.Errorf("FindClosestMatch(%q) = %q, want %q", tt.input, result, tt.expectedKey)
 				}
 			} else {
 				if result != "" {
-					t.Errorf("findClosestMatch(%q) = %q, want empty string", tt.input, result)
+					t.Errorf("FindClosestMatch(%q) = %q, want empty string", tt.input, result)
 				}
 			}
 		})

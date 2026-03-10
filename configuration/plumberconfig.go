@@ -55,11 +55,24 @@ func validControlNames() []string {
 	return keys
 }
 
-// ValidControlNames returns all known control names from the configuration schema;
+// ValidControlNames returns all known control names from the configuration schema.
 func ValidControlNames() []string {
 	names := validControlNames()
 	sort.Strings(names)
 	return names
+}
+
+// ValidFlatKeys returns every valid flattened key path recognized by the
+// schema, e.g. "controls.branchMustBeProtected.enabled". This includes
+// keys that may be commented out in the default config file.
+func ValidFlatKeys() map[string]struct{} {
+	keys := make(map[string]struct{})
+	for control, subKeys := range validControlSchema {
+		for _, sub := range subKeys {
+			keys["controls."+control+"."+sub] = struct{}{}
+		}
+	}
+	return keys
 }
 
 // PlumberConfig represents the .plumber.yaml configuration file structure
@@ -603,8 +616,9 @@ func min(a, b, c int) int {
 	return c
 }
 
-// findClosestMatch finds the closest matching valid key using Levenshtein distance
-func findClosestMatch(unknownKey string, validKeys []string) string {
+// FindClosestMatch finds the closest matching valid key using Levenshtein distance.
+// Returns an empty string if no reasonable match is found.
+func FindClosestMatch(unknownKey string, validKeys []string) string {
 	if len(validKeys) == 0 {
 		return ""
 	}
@@ -671,7 +685,7 @@ func ValidateKnownKeys(data []byte) []string {
 
 		// Check control name
 		if !contains(knownNames, controlName) {
-			suggestion := findClosestMatch(controlName, knownNames)
+			suggestion := FindClosestMatch(controlName, knownNames)
 			if suggestion != "" {
 				warnings = append(warnings,
 					fmt.Sprintf("Unknown control in .plumber.yaml: %q. Did you mean %q?", controlName, suggestion))
@@ -695,7 +709,7 @@ func ValidateKnownKeys(data []byte) []string {
 				continue
 			}
 			if !contains(validSubKeys, subKey) {
-				suggestion := findClosestMatch(subKey, validSubKeys)
+				suggestion := FindClosestMatch(subKey, validSubKeys)
 				if suggestion != "" {
 					warnings = append(warnings,
 						fmt.Sprintf("Unknown key %q in control %q. Did you mean %q?", subKey, controlName, suggestion))

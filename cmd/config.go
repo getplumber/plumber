@@ -5,6 +5,7 @@ import (
 	"os"
 	"reflect"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/getplumber/plumber/configuration"
@@ -374,21 +375,15 @@ func runConfigValidate(cmd *cobra.Command, args []string) error {
 }
 
 func runConfigDiff(cmd *cobra.Command, args []string) error {
-
-	// Determine if we should colorize output
 	useColor := !configDiffNoColor
-	// Auto-detect: disable color if not a terminal (unless explicitly set)
 	if !cmd.Flags().Changed("no-color") {
 		if fileInfo, _ := os.Stdout.Stat(); (fileInfo.Mode() & os.ModeCharDevice) == 0 {
 			useColor = false
 		}
 	}
 
-	// Using a basic os.ReadFile call here instead of
-	// configuration.LoadPlumberConfig(), since the load
-	// plumber config method unmarshals the yaml content into
-	// a PlumberConfig object, which ignores any new keys (non-standard)
-	// introduced in the user yaml config.
+	// Read raw bytes instead of LoadPlumberConfig so that unknown/extra
+	// keys in the user file are preserved for comparison.
 	userBytes, err := os.ReadFile(configDiffFile)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -404,53 +399,108 @@ func runConfigDiff(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to convert default config into map: %w", err)
 	}
 
-	if err != nil {
-		return fmt.Errorf("failed to marshal user config: %w", err)
-	}
-
 	userMap, err := flattenYamlContentsIntoMap(userBytes)
-
 	if err != nil {
 		return fmt.Errorf("failed to convert user config into map: %w", err)
 	}
 
-	missingDefaults := make(map[string]struct{})
+	printDiffReport(defaultMap, userMap, useColor)
+	return nil
+}
+
+// printDiffReport compares two flattened config maps and prints the
+// three diff sections: changed, missing from user, unknown in user.
+func printDiffReport(defaultMap, userMap map[string]any, useColor bool) {
+	defaultKeys := make([]string, 0, len(defaultMap))
+	for k := range defaultMap {
+		defaultKeys = append(defaultKeys, k)
+	}
+
+	var changed []string
+	var missingFromUser []string
 	matchingUserKeys := make(map[string]struct{})
 
-	// Prints changed values
-	fmt.Println("\nControls changed from defaults:")
-	for key, val1 := range defaultMap {
-		if val2, exists := userMap[key]; exists {
-			if !reflect.DeepEqual(val1, val2) {
-				if useColor {
-					fmt.Printf("%s: ", key)
-					colorizeChanges(val1, val2)
-					fmt.Println()
-				} else {
-					fmt.Printf("%s: %v → %v\n", key, val1, val2)
-				}
+	for key, defaultVal := range defaultMap {
+		if userVal, exists := userMap[key]; exists {
+			if !reflect.DeepEqual(defaultVal, userVal) {
+				changed = append(changed, key)
 			}
 			matchingUserKeys[key] = struct{}{}
 		} else {
-			missingDefaults[key] = struct{}{}
+			missingFromUser = append(missingFromUser, key)
 		}
 	}
 
-	// Prints keys present in default, but absent in user provided config
-	fmt.Println("\nNew keys in default (missing from your config):")
-	for key := range missingDefaults {
-		fmt.Println(key)
-	}
+	// Keys that exist in the schema but are commented out in the default
+	// file (e.g. "required" for pipelineMustIncludeComponent) should not
+	// be flagged as unknown. Treat them as changed from the implicit zero
+	// value (nil).
+	schemaKeys := configuration.ValidFlatKeys()
 
-	// Prints keys that are present in user provided config, but absent in default
-	fmt.Println("\nUnknown keys in your config (not in defaults):")
+	var unknownInUser []string
 	for key := range userMap {
-		if _, ok := matchingUserKeys[key]; !ok {
-			fmt.Println(key)
+		if _, ok := matchingUserKeys[key]; ok {
+			continue
+		}
+		if _, ok := schemaKeys[key]; ok {
+			defaultMap[key] = nil
+			changed = append(changed, key)
+			continue
+		}
+		unknownInUser = append(unknownInUser, key)
+	}
+
+	sort.Strings(changed)
+	sort.Strings(missingFromUser)
+	sort.Strings(unknownInUser)
+
+	// --- Controls changed from defaults ---
+	fmt.Println("\nControls changed from defaults:")
+	if len(changed) == 0 {
+		fmt.Println("  (none)")
+	} else {
+		for _, key := range changed {
+			printChange(key, defaultMap[key], userMap[key], useColor)
 		}
 	}
 
-	return nil
+	// --- New keys in default (missing from your config) ---
+	fmt.Println("\nNew keys in default (missing from your config):")
+	if len(missingFromUser) == 0 {
+		fmt.Println("  (none)")
+	} else {
+		for _, key := range missingFromUser {
+			defaultVal := defaultMap[key]
+			if useColor {
+				fmt.Printf("  %s%s%s (default: %v)\n", colorYellow, key, colorReset, defaultVal)
+			} else {
+				fmt.Printf("  %s (default: %v)\n", key, defaultVal)
+			}
+		}
+	}
+
+	// --- Unknown keys in your config (not in defaults) ---
+	fmt.Println("\nUnknown keys in your config (not in defaults):")
+	if len(unknownInUser) == 0 {
+		fmt.Println("  (none)")
+	} else {
+		for _, key := range unknownInUser {
+			suggestion := configuration.FindClosestMatch(key, defaultKeys)
+			if useColor {
+				if suggestion != "" {
+					fmt.Printf("  %s%s%s ← possible typo? Did you mean %q?\n", colorRed, key, colorReset, suggestion)
+				} else {
+					fmt.Printf("  %s%s%s\n", colorRed, key, colorReset)
+				}
+			} else {
+				if suggestion != "" {
+					fmt.Printf("  %s ← possible typo? Did you mean %q?\n", key, suggestion)
+				} else {
+					fmt.Printf("  %s\n", key)
+				}
+			}
+		}
+	}
 }
 
 // Converts YAML contents into a map and then flattens that map
@@ -492,59 +542,91 @@ func flattenRecursive(prefix string, currentMap map[string]any, result map[strin
 	}
 }
 
-// colorizeChanges Colorises the changed for easy scanning
-func colorizeChanges(val1, val2 any) {
-	typeA := reflect.TypeOf(val1)
-	typeB := reflect.TypeOf(val2)
+// printChange prints a single changed key with appropriate formatting.
+// Slices get a multi-line add/remove diff; scalars get a one-line "old → new".
+func printChange(key string, defaultVal, userVal any, useColor bool) {
+	isDefaultSlice := defaultVal != nil && reflect.TypeOf(defaultVal).Kind() == reflect.Slice
+	isUserSlice := userVal != nil && reflect.TypeOf(userVal).Kind() == reflect.Slice
 
-	// If both are slices, scan through both of them
-	// Prints removed items in red
-	// Prints added/modified items in green
-	if val1 != nil && val2 != nil && typeA.Kind() == reflect.Slice && typeB.Kind() == reflect.Slice {
-		slice1 := convertToInterfaceSlice(val1)
-		slice2 := convertToInterfaceSlice(val2)
-
-		set1 := make(map[any]struct{})
-		set2 := make(map[any]struct{})
-		for _, item := range slice1 {
-			set1[item] = struct{}{}
-		}
-		for _, item := range slice2 {
-			set2[item] = struct{}{}
-		}
-
-		fmt.Printf("[")
-		for value := range set1 {
-			if _, ok := set2[value]; !ok {
-				fmt.Printf(" %s%v%s ", colorRed, value, colorReset)
-			} else {
-				fmt.Printf(" %v ", value)
-			}
-		}
-		fmt.Printf("] → [")
-		for value := range set2 {
-			if _, ok := set1[value]; !ok {
-				fmt.Printf(" %s%v%s ", colorGreen, value, colorReset)
-			} else {
-				fmt.Printf(" %v ", value)
-			}
-		}
-		fmt.Printf("]")
-
-	} else {
-		// For primitives (bool, string, int), show the transformation
-		// Old value in red, new value in green
-		fmt.Printf("%s%v%s → %s%v%s", colorRed, val1, colorReset, colorGreen, val2, colorReset)
+	if isDefaultSlice && isUserSlice {
+		printSliceDiff(key, defaultVal, userVal, useColor)
+		return
 	}
 
+	oldDisplay := formatDiffValue(defaultVal)
+	newDisplay := formatDiffValue(userVal)
+
+	if useColor {
+		fmt.Printf("  %s: %s%s%s → %s%s%s\n", key,
+			colorRed, oldDisplay, colorReset,
+			colorGreen, newDisplay, colorReset)
+	} else {
+		fmt.Printf("  %s: %s → %s\n", key, oldDisplay, newDisplay)
+	}
 }
 
-// Helper function to convert to interface slice.
-func convertToInterfaceSlice(s any) []any {
-	v := reflect.ValueOf(s)
-	res := make([]any, v.Len())
-	for i := 0; i < v.Len(); i++ {
-		res[i] = v.Index(i).Interface()
+func formatDiffValue(v any) string {
+	if v == nil {
+		return "(unset)"
 	}
-	return res
+	return fmt.Sprintf("%v", v)
+}
+
+// printSliceDiff shows added/removed items in a compact, multi-line format:
+//
+//	key:
+//	  - removed_item
+//	  + added_item
+func printSliceDiff(key string, defaultVal, userVal any, useColor bool) {
+	slice1 := toStringSlice(defaultVal)
+	slice2 := toStringSlice(userVal)
+
+	set1 := make(map[string]struct{}, len(slice1))
+	set2 := make(map[string]struct{}, len(slice2))
+	for _, s := range slice1 {
+		set1[s] = struct{}{}
+	}
+	for _, s := range slice2 {
+		set2[s] = struct{}{}
+	}
+
+	var removed, added []string
+	for _, s := range slice1 {
+		if _, ok := set2[s]; !ok {
+			removed = append(removed, s)
+		}
+	}
+	for _, s := range slice2 {
+		if _, ok := set1[s]; !ok {
+			added = append(added, s)
+		}
+	}
+
+	sort.Strings(removed)
+	sort.Strings(added)
+
+	fmt.Printf("  %s:\n", key)
+	for _, s := range removed {
+		if useColor {
+			fmt.Printf("    %s- %s%s\n", colorRed, s, colorReset)
+		} else {
+			fmt.Printf("    - %s\n", s)
+		}
+	}
+	for _, s := range added {
+		if useColor {
+			fmt.Printf("    %s+ %s%s\n", colorGreen, s, colorReset)
+		} else {
+			fmt.Printf("    + %s\n", s)
+		}
+	}
+}
+
+func toStringSlice(v any) []string {
+	rv := reflect.ValueOf(v)
+	out := make([]string, rv.Len())
+	for i := 0; i < rv.Len(); i++ {
+		out[i] = fmt.Sprintf("%v", rv.Index(i).Interface())
+	}
+	return out
 }
