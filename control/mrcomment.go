@@ -198,6 +198,12 @@ func generateMRComment(result *AnalysisResult, compliance, threshold float64) st
 			totalIssues += len(r.Issues)
 		}
 	}
+	if r := result.SecurityJobsWeakenedResult; r != nil {
+		controls = append(controls, controlEntry{"Security jobs must not be weakened", r.Compliance, len(r.Issues), r.Skipped})
+		if !r.Skipped {
+			totalIssues += len(r.Issues)
+		}
+	}
 
 	// Controls summary table
 	b.WriteString("### Controls\n\n")
@@ -355,6 +361,15 @@ func writeIssueDetails(b *strings.Builder, result *AnalysisResult) {
 			} else {
 				fmt.Fprintf(b, "- `$%s` used in job `%s` `%s`: `%s`\n", issue.VariableName, issue.JobName, issue.ScriptBlock, issue.ScriptLine)
 			}
+		}
+		b.WriteString("\n")
+	}
+
+	// Security jobs weakened
+	if r := result.SecurityJobsWeakenedResult; r != nil && !r.Skipped && len(r.Issues) > 0 {
+		b.WriteString("**Security jobs must not be weakened:**\n")
+		for _, issue := range r.Issues {
+			fmt.Fprintf(b, "- Job `%s`: %s\n", issue.JobName, issue.Detail)
 		}
 		b.WriteString("\n")
 	}

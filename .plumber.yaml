@@ -313,7 +313,6 @@ controls:
       - CI_EXTERNAL_PULL_REQUEST_SOURCE_BRANCH_NAME
 
     # Script lines
-    #   sh -c "helm upgrade myapp . --set image.tag=$CI_COMMIT_SHA"
     #   sh -c "terraform workspace select $CI_COMMIT_REF_SLUG"
     #   sh -c "docker build --build-arg BRANCH=$CI_COMMIT_BRANCH ."
     #   sh -c "aws s3 sync dist/ s3://my-bucket/$CI_COMMIT_REF_SLUG/"
@@ -328,3 +327,69 @@ controls:
     #   - "aws s3 sync.*\\$CI_"
     #   - "make deploy.*\\$CI_"
     allowedPatterns: []
+
+  # ===========================================
+  # Security jobs must not be weakened
+  # ===========================================
+  # Detects GitLab CI security scanning jobs (SAST, Secret Detection,
+  # Container Scanning, Dependency Scanning, DAST, License Scanning)
+  # that have been weakened through overrides in .gitlab-ci.yml.
+  #
+  # Even when security templates are properly included, a developer
+  # (or attacker) can silently neutralize them by:
+  #   - Setting allow_failure: true (failures become invisible)
+  #   - Overriding rules: with when: never or when: manual
+  #   - Setting when: manual at job level (job never runs automatically)
+  #
+  # The pipeline still "includes" the security template, giving a false
+  # sense of compliance while the actual scanning is disabled.
+  #
+  # Maps to OWASP CICD-SEC-4 (Poisoned Pipeline Execution).
+  #
+  # Best practice: Security jobs should run automatically and block the
+  # pipeline on failure.
+  securityJobsMustNotBeWeakened:
+    # Set to false to disable this control
+    enabled: true
+
+    # Job name patterns considered "security jobs" (supports wildcards).
+    # or any other jobs you want to be considered security jobs.
+    securityJobPatterns:
+      - "*-sast"
+      - "secret_detection"
+      - "container_scanning"
+      - "*_dependency_scanning"
+      - "gemnasium-*"
+      - "dast"
+      - "dast_*"
+      - "license_scanning"
+
+    # Detects security jobs with allow_failure: true.
+    # Example:
+    #   semgrep-sast:
+    #     allow_failure: true
+    # Off by default because GitLab templates ship with allow_failure: true.
+    # Opt-in for orgs that want security checks to block the pipeline.
+    allowFailureMustBeFalse:
+      enabled: false
+
+    # Detects security jobs whose rules: block is overridden with
+    # when: never (job will never run) or when: manual (requires manual click).
+    # Example:
+    #   semgrep-sast:
+    #     rules:
+    #       - when: never
+    # Example:
+    #   secret_detection:
+    #     rules:
+    #       - when: manual
+    rulesMustNotBeRedefined:
+      enabled: true
+
+    # Detects security jobs with when: manual set at job level.
+    # Same effect as a rules override, but written differently.
+    # Example:
+    #   semgrep-sast:
+    #     when: manual
+    whenMustNotBeManual:
+      enabled: true

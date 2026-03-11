@@ -44,6 +44,10 @@ var validControlSchema = map[string][]string{
 	"pipelineMustNotUseUnsafeVariableExpansion": {
 		"enabled", "dangerousVariables", "allowedPatterns",
 	},
+	"securityJobsMustNotBeWeakened": {
+		"enabled", "securityJobPatterns",
+		"allowFailureMustBeFalse", "rulesMustNotBeRedefined", "whenMustNotBeManual",
+	},
 }
 
 // validControlKeys returns the list of known control names.
@@ -115,6 +119,9 @@ type ControlsConfig struct {
 
 	// PipelineMustNotUseUnsafeVariableExpansion control configuration
 	PipelineMustNotUseUnsafeVariableExpansion *VariableInjectionControlConfig `yaml:"pipelineMustNotUseUnsafeVariableExpansion,omitempty"`
+
+	// SecurityJobsMustNotBeWeakened control configuration
+	SecurityJobsMustNotBeWeakened *SecurityJobsWeakenedControlConfig `yaml:"securityJobsMustNotBeWeakened,omitempty"`
 }
 
 // ImageForbiddenTagsControlConfig configuration for the forbidden image tags control
@@ -267,6 +274,34 @@ type VariableInjectionControlConfig struct {
 	// AllowedPatterns is a list of regex patterns. Script lines matching any of these
 	// patterns will not be flagged even if they contain a dangerous variable.
 	AllowedPatterns []string `yaml:"allowedPatterns,omitempty"`
+}
+
+// SecurityJobsWeakenedControlConfig configuration for the security jobs weakening control
+type SecurityJobsWeakenedControlConfig struct {
+	// Enabled controls whether this check runs
+	Enabled *bool `yaml:"enabled,omitempty"`
+
+	// SecurityJobPatterns is a list of job name patterns considered "security jobs" (supports wildcards)
+	SecurityJobPatterns []string `yaml:"securityJobPatterns,omitempty"`
+
+	// Sub-control toggles (sit directly under the control, no wrapper)
+	AllowFailureMustBeFalse *SecurityJobsSubControlToggle `yaml:"allowFailureMustBeFalse,omitempty"`
+	RulesMustNotBeRedefined *SecurityJobsSubControlToggle `yaml:"rulesMustNotBeRedefined,omitempty"`
+	WhenMustNotBeManual     *SecurityJobsSubControlToggle `yaml:"whenMustNotBeManual,omitempty"`
+}
+
+// SecurityJobsSubControlToggle is a simple enabled/disabled toggle for a sub-control
+type SecurityJobsSubControlToggle struct {
+	Enabled *bool `yaml:"enabled,omitempty"`
+}
+
+// IsEnabled returns whether the sub-control toggle is enabled.
+// Returns the provided default if the toggle or its Enabled field is nil.
+func (t *SecurityJobsSubControlToggle) IsEnabled(defaultVal bool) bool {
+	if t == nil || t.Enabled == nil {
+		return defaultVal
+	}
+	return *t.Enabled
 }
 
 // RequiredTemplatesControlConfig configuration for the required templates control
@@ -545,6 +580,24 @@ func (c *PlumberConfig) GetPipelineMustNotUseUnsafeVariableExpansionConfig() *Va
 // IsEnabled returns whether the control is enabled
 // Returns false if not properly configured
 func (c *VariableInjectionControlConfig) IsEnabled() bool {
+	if c == nil || c.Enabled == nil {
+		return false
+	}
+	return *c.Enabled
+}
+
+// GetSecurityJobsMustNotBeWeakenedConfig returns the control configuration
+// Returns nil if not configured
+func (c *PlumberConfig) GetSecurityJobsMustNotBeWeakenedConfig() *SecurityJobsWeakenedControlConfig {
+	if c == nil {
+		return nil
+	}
+	return c.Controls.SecurityJobsMustNotBeWeakened
+}
+
+// IsEnabled returns whether the control is enabled
+// Returns false if not properly configured
+func (c *SecurityJobsWeakenedControlConfig) IsEnabled() bool {
 	if c == nil || c.Enabled == nil {
 		return false
 	}

@@ -47,6 +47,7 @@ Plumber is a compliance scanner for GitLab. It reads your `.gitlab-ci.yml` and r
 - Missing required components or templates
 - Debug trace variables (`CI_DEBUG_TRACE`) leaking secrets in job logs
 - Unsafe variable injection via `eval`/`sh -c`/`bash -c` (OWASP CICD-SEC-1)
+- Weakened security jobs (`allow_failure: true`, `when: manual`, `rules: [{when: never}]`) on SAST, Secret Detection, and other scanners (OWASP CICD-SEC-4)
 
 **How does it work?** Plumber connects to your GitLab instance via API, analyzes your pipeline configuration, and reports any issues it finds. You define what's allowed in a config file (`.plumber.yaml`), and Plumber tells you if your project complies. When running locally from your git repo, Plumber uses your **local `.gitlab-ci.yml`** allowing you to validate changes before pushing.
 
@@ -518,6 +519,83 @@ pipelineMustNotUseUnsafeVariableExpansion:
 
 </details>
 
+<details>
+<summary><b>11. Security jobs must not be weakened</b></summary>
+
+GitLab lets you override any property of an included job. This means someone can include a security template but silently neutralize it. The pipeline still looks compliant, but the scanning is disabled. Maps to [OWASP CICD-SEC-4](https://owasp.org/www-project-top-10-ci-cd-security-risks/) (Poisoned Pipeline Execution).
+
+This control detects three weakening patterns on security jobs (SAST, Secret Detection, Container Scanning, Dependency Scanning, DAST, License Scanning). Each is a separate sub-control you can toggle independently.
+
+**`allowFailureMustBeFalse`** (default: off, opt-in)
+
+Scanner fails? Pipeline still green. GitLab templates ship with `allow_failure: true` by default, so this sub-control is opt-in for orgs that want security checks to be blocking.
+
+```yaml
+# Flagged: security scanner silently becomes non-blocking
+include:
+  - template: Security/SAST.gitlab-ci.yml
+
+semgrep-sast:
+  allow_failure: true  # failures are ignored
+```
+
+**`rulesMustNotBeRedefined`** (default: on)
+
+Overriding the `rules:` block can prevent the job from running at all, or make it manual:
+
+```yaml
+# Flagged: scanner will never run
+include:
+  - template: Security/SAST.gitlab-ci.yml
+
+semgrep-sast:
+  rules:
+    - when: never
+
+# Also flagged: scanner only runs if someone manually triggers it
+secret_detection:
+  rules:
+    - when: manual
+      allow_failure: true
+```
+
+**`whenMustNotBeManual`** (default: on)
+
+Similar to the rules override, but set at job level instead of inside `rules:`:
+
+```yaml
+# Flagged: job only runs if manually triggered
+include:
+  - template: Security/SAST.gitlab-ci.yml
+
+semgrep-sast:
+  when: manual
+```
+
+Security jobs are identified by matching job names against `securityJobPatterns` (wildcards supported). Add or remove patterns to match your pipeline's security jobs.
+
+```yaml
+securityJobsMustNotBeWeakened:
+  enabled: true
+  securityJobPatterns:
+    - "*-sast"
+    - "secret_detection"
+    - "container_scanning"
+    - "*_dependency_scanning"
+    - "gemnasium-*"
+    - "dast"
+    - "dast_*"
+    - "license_scanning"
+  allowFailureMustBeFalse:
+    enabled: false
+  rulesMustNotBeRedefined:
+    enabled: true
+  whenMustNotBeManual:
+    enabled: true
+```
+
+</details>
+
 ### Selective Control Execution
 
 You can run or skip specific controls using their YAML key names from `.plumber.yaml`. This is useful for iterative debugging or targeted CI checks.
@@ -562,6 +640,7 @@ Controls not selected are reported as **skipped** in the output. The `--controls
 | `pipelineMustNotEnableDebugTrace` |
 | `pipelineMustNotIncludeHardcodedJobs` |
 | `pipelineMustNotUseUnsafeVariableExpansion` |
+| `securityJobsMustNotBeWeakened` |
 
 </details>
 

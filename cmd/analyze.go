@@ -303,6 +303,11 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		controlCount++
 	}
 
+	if result.SecurityJobsWeakenedResult != nil && !result.SecurityJobsWeakenedResult.Skipped {
+		complianceSum += result.SecurityJobsWeakenedResult.Compliance
+		controlCount++
+	}
+
 	// Calculate average compliance
 	// If no controls ran (e.g., data collection failed), compliance is 0% - we can't verify anything
 	var compliance float64 = 0
@@ -1004,6 +1009,34 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 					} else {
 						fmt.Printf("    %s•%s $%s in job '%s' %s: %s\n", colorYellow, colorReset, issue.VariableName, issue.JobName, issue.ScriptBlock, issue.ScriptLine)
 					}
+				}
+			}
+		}
+		fmt.Println()
+	}
+
+	// Control 11: Security jobs must not be weakened
+	if result.SecurityJobsWeakenedResult != nil {
+		ctrl := controlSummary{
+			name:       "Security jobs must not be weakened",
+			compliance: result.SecurityJobsWeakenedResult.Compliance,
+			issues:     len(result.SecurityJobsWeakenedResult.Issues),
+			skipped:    result.SecurityJobsWeakenedResult.Skipped,
+		}
+		controls = append(controls, ctrl)
+
+		printControlHeader("Security jobs must not be weakened", result.SecurityJobsWeakenedResult.Compliance, result.SecurityJobsWeakenedResult.Skipped)
+
+		if result.SecurityJobsWeakenedResult.Skipped {
+			fmt.Printf("  %sStatus: SKIPPED (disabled in configuration)%s\n", colorDim, colorReset)
+		} else {
+			fmt.Printf("  Security Jobs Found: %d\n", result.SecurityJobsWeakenedResult.Metrics.SecurityJobsFound)
+			fmt.Printf("  Weakened Jobs: %d\n", result.SecurityJobsWeakenedResult.Metrics.WeakenedJobs)
+
+			if len(result.SecurityJobsWeakenedResult.Issues) > 0 {
+				fmt.Printf("\n  %sWeakened Security Jobs Found:%s\n", colorYellow, colorReset)
+				for _, issue := range result.SecurityJobsWeakenedResult.Issues {
+					fmt.Printf("    %s•%s Job '%s': %s\n", colorYellow, colorReset, issue.JobName, issue.Detail)
 				}
 			}
 		}

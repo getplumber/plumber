@@ -23,6 +23,7 @@ const (
 	controlPipelineMustIncludeTemplate                 = "pipelineMustIncludeTemplate"
 	controlPipelineMustNotEnableDebugTrace             = "pipelineMustNotEnableDebugTrace"
 	controlPipelineMustNotUseUnsafeVariableExpansion   = "pipelineMustNotUseUnsafeVariableExpansion"
+	controlSecurityJobsMustNotBeWeakened               = "securityJobsMustNotBeWeakened"
 )
 
 // shouldRunControl applies --controls / --skip-controls filtering for a control.
@@ -73,7 +74,7 @@ func clearProgressLine(conf *configuration.Configuration) {
 }
 
 // analysisStepCount is the total number of progress steps reported during analysis.
-const analysisStepCount = 14
+const analysisStepCount = 15
 
 // RunAnalysis executes the complete pipeline analysis for a GitLab project
 func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
@@ -454,6 +455,23 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 
 	variableInjectionResult := variableInjectionConf.Run(pipelineOriginData)
 	result.VariableInjectionResult = variableInjectionResult
+
+	// 13. Run Security Jobs Must Not Be Weakened control
+	reportProgress(conf, 14, analysisStepCount, "Checking security jobs weakening")
+	l.Info("Running Security Jobs Must Not Be Weakened control")
+
+	securityJobsWeakenedConf := &GitlabSecurityJobsWeakenedConf{}
+	if shouldRunControl(controlSecurityJobsMustNotBeWeakened, conf) {
+		if err := securityJobsWeakenedConf.GetConf(conf.PlumberConfig); err != nil {
+			l.WithError(err).Error("Failed to load SecurityJobsWeakened config from .plumber.yaml file")
+			return result, fmt.Errorf("invalid configuration: %w", err)
+		}
+	} else {
+		securityJobsWeakenedConf.Enabled = false
+	}
+
+	securityJobsWeakenedResult := securityJobsWeakenedConf.Run(pipelineOriginData)
+	result.SecurityJobsWeakenedResult = securityJobsWeakenedResult
 
 	reportProgress(conf, analysisStepCount, analysisStepCount, "Analysis complete")
 
