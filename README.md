@@ -935,10 +935,11 @@ export PLUMBER_NO_UPDATE_CHECK=1
 
 ### Exit Codes
 
-| Code | Meaning |
-|------|---------|
-| `0` | Compliance ≥ threshold |
-| `1` | Compliance < threshold or error |
+| Exit Code | Meaning |
+|-----------|----------|
+| `0` | Analysis passed (compliance ≥ threshold) |
+| `1` | Compliance failure (compliance < threshold) |
+| `2` | Runtime error (config error, network failure, missing token, etc.) |
 
 ### `plumber config generate`
 
