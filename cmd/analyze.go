@@ -1052,6 +1052,7 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 			compliance: result.SecurityJobsWeakenedResult.Compliance,
 			issues:     len(result.SecurityJobsWeakenedResult.Issues),
 			skipped:    result.SecurityJobsWeakenedResult.Skipped,
+			codes:      []string{string(control.CodeSecurityJobWeakened)},
 		}
 		controls = append(controls, ctrl)
 
@@ -1066,7 +1067,8 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 			if len(result.SecurityJobsWeakenedResult.Issues) > 0 {
 				fmt.Printf("\n  %sWeakened Security Jobs Found:%s\n", colorYellow, colorReset)
 				for _, issue := range result.SecurityJobsWeakenedResult.Issues {
-					fmt.Printf("    %s•%s Job '%s': %s\n", colorYellow, colorReset, issue.JobName, issue.Detail)
+					fmt.Printf("    %s•%s [%s] Job '%s': %s\n", colorYellow, colorReset, issue.Code, issue.JobName, issue.Detail)
+					fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
 				}
 			}
 		}
@@ -1131,7 +1133,7 @@ func printIssuesTable(controls []controlSummary) {
 			controlWidth = needed
 		}
 	}
-	codesWidth := 22 // enough for "PLB-0101, PLB-0102"
+	codesWidth := 22 // enough for "ISSUE-29, ISSUE-30"
 	for _, ctrl := range controls {
 		codesStr := strings.Join(ctrl.codes, ", ")
 		needed := len(codesStr) + 2
@@ -1205,7 +1207,7 @@ func printIssuesTable(controls []controlSummary) {
 		colorReset)
 
 	// Docs footer
-	fmt.Printf("  %s↳ docs: https://getplumber.io/e/<code>%s\n", colorDim, colorReset)
+	fmt.Printf("  %s↳ docs: https://getplumber.io/docs/use-plumber/issues/<code>%s\n", colorDim, colorReset)
 }
 
 func printComplianceTable(controls []controlSummary, overallCompliance, threshold float64) {

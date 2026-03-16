@@ -778,10 +778,10 @@ brew install plumber
 To install a specific version:
 
 ```bash
-brew install getplumber/plumber/plumber@0.1.66
+brew install getplumber/plumber/plumber@0.1.67
 ```
 
-> **Note:** Versioned formulas are keg-only. Use the full path for example `/usr/local/opt/plumber@0.1.66/bin/plumber` or run `brew link plumber@0.1.66` to add it to your PATH.
+> **Note:** Versioned formulas are keg-only. Use the full path for example `/usr/local/opt/plumber@0.1.67/bin/plumber` or run `brew link plumber@0.1.67` to add it to your PATH.
 
 ### Mise
 
@@ -1280,6 +1280,7 @@ Check out our example projects:
 ### English
 
 - [Your GitLab Pipelines Are Probably Non-Compliant — Here's How to Fix That in 5 Minutes](https://medium.com/@moukarzeljoseph/your-gitlab-pipelines-are-probably-non-compliant-heres-how-to-fix-that-in-5-minutes-5009614a1fb1) — Medium
+- [OpenSSF and SLSA3](https://getplumber.io/blog/openssf-and-salsa) - Plumber blog
 
 ### Français
 

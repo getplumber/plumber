@@ -1,63 +1,65 @@
 package control
 
-// docsBaseURL is the base URL for Plumber error code documentation.
-// Each error code has a short URL that redirects to the full documentation page.
-const docsBaseURL = "https://getplumber.io/e/"
+// docsBaseURL is the base URL for Plumber issue documentation.
+// Each issue code links to its dedicated documentation page.
+const docsBaseURL = "https://getplumber.io/docs/use-plumber/issues/"
 
-// ErrorCode represents a unique Plumber error code (PLB-XXXX format).
+// ErrorCode represents a unique Plumber issue code (ISSUE-XX format).
 type ErrorCode string
 
-// Error codes for container image controls (PLB-01xx)
+// Issue codes for container image controls
 const (
-	// PLB-0101: Container image uses a forbidden tag (e.g., latest, dev)
-	CodeImageForbiddenTag ErrorCode = "PLB-0101"
-	// PLB-0102: Container image is not pinned by digest
-	CodeImageNotPinnedByDigest ErrorCode = "PLB-0102"
-	// PLB-0103: Container image comes from an unauthorized registry
-	CodeImageUnauthorizedSource ErrorCode = "PLB-0103"
+	// ISSUE-3: Container image uses a forbidden tag (e.g., latest, dev)
+	CodeImageForbiddenTag ErrorCode = "ISSUE-3"
+	// ISSUE-33: Container image is not pinned by digest
+	CodeImageNotPinnedByDigest ErrorCode = "ISSUE-33"
+	// ISSUE-2: Container image comes from an unauthorized registry
+	CodeImageUnauthorizedSource ErrorCode = "ISSUE-2"
 )
 
-// Error codes for branch protection controls (PLB-02xx)
+// Issue codes for branch protection controls
 const (
-	// PLB-0201: Branch is not protected
-	CodeBranchUnprotected ErrorCode = "PLB-0201"
-	// PLB-0202: Branch has non-compliant protection settings
-	CodeBranchNonCompliant ErrorCode = "PLB-0202"
+	// ISSUE-14: Branch is not protected
+	CodeBranchUnprotected ErrorCode = "ISSUE-14"
+	// ISSUE-27: Branch has non-compliant protection settings
+	CodeBranchNonCompliant ErrorCode = "ISSUE-27"
 )
 
-// Error codes for pipeline origin controls (PLB-03xx)
+// Issue codes for pipeline origin controls
 const (
-	// PLB-0301: Job is hardcoded (not sourced from include/component)
-	CodeJobHardcoded ErrorCode = "PLB-0301"
-	// PLB-0302: Include uses an outdated version
-	CodeIncludeOutdated ErrorCode = "PLB-0302"
-	// PLB-0303: Include uses a forbidden version
-	CodeIncludeForbiddenVersion ErrorCode = "PLB-0303"
+	// ISSUE-8: Job is hardcoded (not sourced from include/component)
+	CodeJobHardcoded ErrorCode = "ISSUE-8"
+	// ISSUE-10: Include uses an outdated version
+	CodeIncludeOutdated ErrorCode = "ISSUE-10"
+	// ISSUE-11: Include uses a forbidden version
+	CodeIncludeForbiddenVersion ErrorCode = "ISSUE-11"
 )
 
-// Error codes for required includes controls (PLB-04xx)
+// Issue codes for required includes controls
 const (
-	// PLB-0401: Required component is missing from the pipeline
-	CodeComponentMissing ErrorCode = "PLB-0401"
-	// PLB-0402: Required component jobs are overridden
-	CodeComponentOverridden ErrorCode = "PLB-0402"
-	// PLB-0403: Required template is missing from the pipeline
-	CodeTemplateMissing ErrorCode = "PLB-0403"
-	// PLB-0404: Required template jobs are overridden
-	CodeTemplateOverridden ErrorCode = "PLB-0404"
+	// ISSUE-29: Required component is missing from the pipeline
+	CodeComponentMissing ErrorCode = "ISSUE-29"
+	// ISSUE-30: Required component jobs are overridden
+	CodeComponentOverridden ErrorCode = "ISSUE-30"
+	// ISSUE-12: Required template is missing from the pipeline
+	CodeTemplateMissing ErrorCode = "ISSUE-12"
+	// ISSUE-13: Required template jobs are overridden
+	CodeTemplateOverridden ErrorCode = "ISSUE-13"
 )
 
-// Error codes for security controls (PLB-05xx)
+// Issue codes for security controls
 const (
-	// PLB-0501: Pipeline enables CI debug trace (CI_DEBUG_TRACE or CI_DEBUG_SERVICES)
-	CodeDebugTraceEnabled ErrorCode = "PLB-0501"
-	// PLB-0502: Unsafe variable expansion in shell re-interpretation context (eval, sh -c, etc.)
-	CodeUnsafeVariableExpansion ErrorCode = "PLB-0502"
+	// ISSUE-34: Pipeline enables CI debug trace (CI_DEBUG_TRACE or CI_DEBUG_SERVICES)
+	CodeDebugTraceEnabled ErrorCode = "ISSUE-34"
+	// ISSUE-35: Unsafe variable expansion in shell re-interpretation context (eval, sh -c, etc.)
+	CodeUnsafeVariableExpansion ErrorCode = "ISSUE-35"
+	// ISSUE-36: Security job is weakened (allow_failure, rules override, when: manual)
+	CodeSecurityJobWeakened ErrorCode = "ISSUE-36"
 )
 
-// ErrorCodeInfo provides metadata about an error code.
+// ErrorCodeInfo provides metadata about an issue code.
 type ErrorCodeInfo struct {
-	// Code is the unique error code (e.g., PLB-0101).
+	// Code is the unique issue code (e.g., ISSUE-3).
 	Code ErrorCode `json:"code"`
 	// Title is a short human-readable title.
 	Title string `json:"title"`
@@ -65,13 +67,13 @@ type ErrorCodeInfo struct {
 	Description string `json:"description"`
 	// Remediation provides guidance on how to fix the issue.
 	Remediation string `json:"remediation"`
-	// DocURL is a direct link to the documentation for this error.
+	// DocURL is a direct link to the documentation for this issue.
 	DocURL string `json:"docUrl"`
 	// ControlName is the .plumber.yaml control key this code belongs to.
 	ControlName string `json:"controlName"`
 }
 
-// errorCodeRegistry maps error codes to their metadata.
+// errorCodeRegistry maps issue codes to their metadata.
 var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 	// Container image controls
 	CodeImageForbiddenTag: {
@@ -194,9 +196,17 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		DocURL:      docsBaseURL + string(CodeUnsafeVariableExpansion),
 		ControlName: "pipelineMustNotUseUnsafeVariableExpansion",
 	},
+	CodeSecurityJobWeakened: {
+		Code:        CodeSecurityJobWeakened,
+		Title:       "Security job weakened",
+		Description: "A security job in the pipeline has been weakened by setting allow_failure to true, overriding rules with when: never or when: manual, or setting when to manual. This can cause critical security scans to be skipped or require manual intervention.",
+		Remediation: "Ensure security jobs run automatically and block the pipeline on failure. Remove allow_failure: true, do not override rules with when: never or when: manual, and do not set when: manual on security jobs.",
+		DocURL:      docsBaseURL + string(CodeSecurityJobWeakened),
+		ControlName: "securityJobsMustNotBeWeakened",
+	},
 }
 
-// LookupCode returns the ErrorCodeInfo for a given error code, or nil if not found.
+// LookupCode returns the ErrorCodeInfo for a given issue code, or nil if not found.
 func LookupCode(code ErrorCode) *ErrorCodeInfo {
 	info, ok := errorCodeRegistry[code]
 	if !ok {
@@ -205,7 +215,7 @@ func LookupCode(code ErrorCode) *ErrorCodeInfo {
 	return &info
 }
 
-// AllCodes returns all registered error codes sorted by code.
+// AllCodes returns all registered issue codes sorted by code.
 func AllCodes() []ErrorCodeInfo {
 	codes := make([]ErrorCodeInfo, 0, len(errorCodeRegistry))
 	for _, info := range errorCodeRegistry {
@@ -222,7 +232,7 @@ func AllCodes() []ErrorCodeInfo {
 	return codes
 }
 
-// DocURL returns the documentation URL for a given error code.
+// DocURL returns the documentation URL for a given issue code.
 func (c ErrorCode) DocURL() string {
 	info := LookupCode(c)
 	if info == nil {
@@ -231,7 +241,7 @@ func (c ErrorCode) DocURL() string {
 	return info.DocURL
 }
 
-// String returns the string representation of an error code.
+// String returns the string representation of an issue code.
 func (c ErrorCode) String() string {
 	return string(c)
 }

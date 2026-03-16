@@ -92,9 +92,11 @@ type GitlabSecurityJobsWeakenedResult struct {
 
 // GitlabSecurityJobsWeakenedIssue represents a weakened security job
 type GitlabSecurityJobsWeakenedIssue struct {
-	JobName    string `json:"jobName"`
-	SubControl string `json:"subControl"` // "allowFailureMustBeFalse", "rulesMustNotBeRedefined", "whenMustNotBeManual"
-	Detail     string `json:"detail"`
+	Code       ErrorCode `json:"code"`
+	DocURL     string    `json:"docUrl"`
+	JobName    string    `json:"jobName"`
+	SubControl string    `json:"subControl"` // "allowFailureMustBeFalse", "rulesMustNotBeRedefined", "whenMustNotBeManual"
+	Detail     string    `json:"detail"`
 }
 
 ///////////////////////
@@ -171,6 +173,8 @@ func (p *GitlabSecurityJobsWeakenedConf) Run(pipelineOriginData *collector.Gitla
 			}
 			if isAllowFailureTrue(job.AllowFailure) {
 				result.Issues = append(result.Issues, GitlabSecurityJobsWeakenedIssue{
+					Code:       CodeSecurityJobWeakened,
+					DocURL:     CodeSecurityJobWeakened.DocURL(),
 					JobName:    jobName,
 					SubControl: "allowFailureMustBeFalse",
 					Detail:     "allow_failure is true (should be false for blocking security)",
@@ -216,21 +220,25 @@ func (p *GitlabSecurityJobsWeakenedConf) Run(pipelineOriginData *collector.Gitla
 			for _, rule := range rulesOverride {
 				whenVal := strings.ToLower(strings.TrimSpace(rule.When))
 				if whenVal == "never" {
-					result.Issues = append(result.Issues, GitlabSecurityJobsWeakenedIssue{
-						JobName:    jobName,
-						SubControl: "rulesMustNotBeRedefined",
-						Detail:     "rules overridden with 'when: never', job will not run",
-					})
+				result.Issues = append(result.Issues, GitlabSecurityJobsWeakenedIssue{
+					Code:       CodeSecurityJobWeakened,
+					DocURL:     CodeSecurityJobWeakened.DocURL(),
+					JobName:    jobName,
+					SubControl: "rulesMustNotBeRedefined",
+					Detail:     "rules overridden with 'when: never', job will not run",
+				})
 					weakenedSet[jobName] = true
 					l.WithField("job", jobName).Debug("Security job has rules overridden with when: never")
 					break
 				}
 				if whenVal == "manual" {
-					result.Issues = append(result.Issues, GitlabSecurityJobsWeakenedIssue{
-						JobName:    jobName,
-						SubControl: "rulesMustNotBeRedefined",
-						Detail:     "rules overridden with 'when: manual', job requires manual trigger",
-					})
+				result.Issues = append(result.Issues, GitlabSecurityJobsWeakenedIssue{
+					Code:       CodeSecurityJobWeakened,
+					DocURL:     CodeSecurityJobWeakened.DocURL(),
+					JobName:    jobName,
+					SubControl: "rulesMustNotBeRedefined",
+					Detail:     "rules overridden with 'when: manual', job requires manual trigger",
+				})
 					weakenedSet[jobName] = true
 					l.WithField("job", jobName).Debug("Security job has rules overridden with when: manual")
 					break
@@ -251,11 +259,13 @@ func (p *GitlabSecurityJobsWeakenedConf) Run(pipelineOriginData *collector.Gitla
 				continue
 			}
 			if isWhenManual(job.When) {
-				result.Issues = append(result.Issues, GitlabSecurityJobsWeakenedIssue{
-					JobName:    jobName,
-					SubControl: "whenMustNotBeManual",
-					Detail:     "when set to 'manual', job requires manual trigger",
-				})
+			result.Issues = append(result.Issues, GitlabSecurityJobsWeakenedIssue{
+				Code:       CodeSecurityJobWeakened,
+				DocURL:     CodeSecurityJobWeakened.DocURL(),
+				JobName:    jobName,
+				SubControl: "whenMustNotBeManual",
+				Detail:     "when set to 'manual', job requires manual trigger",
+			})
 				weakenedSet[jobName] = true
 				l.WithField("job", jobName).Debug("Security job has when: manual")
 			}
