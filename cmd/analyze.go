@@ -309,6 +309,11 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		controlCount++
 	}
 
+	if result.UnverifiedScriptsResult != nil && !result.UnverifiedScriptsResult.Skipped {
+		complianceSum += result.UnverifiedScriptsResult.Compliance
+		controlCount++
+	}
+
 	// Calculate average compliance
 	// If no controls ran (e.g., data collection failed), compliance is 0% - we can't verify anything
 	var compliance float64 = 0
@@ -1068,6 +1073,41 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 				fmt.Printf("\n  %sWeakened Security Jobs Found:%s\n", colorYellow, colorReset)
 				for _, issue := range result.SecurityJobsWeakenedResult.Issues {
 					fmt.Printf("    %s•%s [%s] Job '%s': %s\n", colorYellow, colorReset, issue.Code, issue.JobName, issue.Detail)
+					fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
+				}
+			}
+		}
+		fmt.Println()
+	}
+
+	// Control 12: Pipeline must not execute unverified scripts
+	if result.UnverifiedScriptsResult != nil {
+		ctrl := controlSummary{
+			name:       "Pipeline must not execute unverified scripts",
+			compliance: result.UnverifiedScriptsResult.Compliance,
+			issues:     len(result.UnverifiedScriptsResult.Issues),
+			skipped:    result.UnverifiedScriptsResult.Skipped,
+			codes:      []string{string(control.CodeUnverifiedScriptExecution)},
+		}
+		controls = append(controls, ctrl)
+
+		printControlHeader("Pipeline must not execute unverified scripts", result.UnverifiedScriptsResult.Compliance, result.UnverifiedScriptsResult.Skipped)
+
+		if result.UnverifiedScriptsResult.Skipped {
+			fmt.Printf("  %sStatus: SKIPPED (disabled in configuration)%s\n", colorDim, colorReset)
+		} else {
+			fmt.Printf("  Jobs Checked: %d\n", result.UnverifiedScriptsResult.Metrics.JobsChecked)
+			fmt.Printf("  Script Lines Checked: %d\n", result.UnverifiedScriptsResult.Metrics.TotalScriptLinesChecked)
+			fmt.Printf("  Unverified Scripts: %d\n", result.UnverifiedScriptsResult.Metrics.UnverifiedScriptsFound)
+
+			if len(result.UnverifiedScriptsResult.Issues) > 0 {
+				fmt.Printf("\n  %sUnverified Script Executions Found:%s\n", colorYellow, colorReset)
+				for _, issue := range result.UnverifiedScriptsResult.Issues {
+					if issue.JobName == "(global)" {
+						fmt.Printf("    %s•%s [%s] Global %s: %s\n", colorYellow, colorReset, issue.Code, issue.ScriptBlock, issue.ScriptLine)
+					} else {
+						fmt.Printf("    %s•%s [%s] Job '%s' %s: %s\n", colorYellow, colorReset, issue.Code, issue.JobName, issue.ScriptBlock, issue.ScriptLine)
+					}
 					fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
 				}
 			}

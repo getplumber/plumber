@@ -43,6 +43,8 @@ const (
 	CodeComponentOverridden ErrorCode = "ISSUE-409"
 	// ISSUE-410: Security job is weakened (allow_failure, rules override, when: manual)
 	CodeSecurityJobWeakened ErrorCode = "ISSUE-410"
+	// ISSUE-411: Pipeline downloads and executes a script without integrity verification (curl|bash, wget|sh)
+	CodeUnverifiedScriptExecution ErrorCode = "ISSUE-411"
 )
 
 // Issue codes for access and authorization controls (5xx)
@@ -179,6 +181,14 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Ensure security jobs run automatically and block the pipeline on failure. Remove allow_failure: true, do not override rules with when: never or when: manual, and do not set when: manual on security jobs.",
 		DocURL:      docsBaseURL + string(CodeSecurityJobWeakened),
 		ControlName: "securityJobsMustNotBeWeakened",
+	},
+	CodeUnverifiedScriptExecution: {
+		Code:        CodeUnverifiedScriptExecution,
+		Title:       "Unverified script execution",
+		Description: "A CI/CD job downloads and immediately executes a script from the internet (e.g., curl | bash, wget | sh) without verifying its integrity. An attacker who compromises the remote URL can serve a modified script that exfiltrates secrets.",
+		Remediation: "Download the script to a file first, verify its checksum against a known-good value, then execute it. Alternatively, vendor the script into your repository or use a trusted package manager.",
+		DocURL:      docsBaseURL + string(CodeUnverifiedScriptExecution),
+		ControlName: "pipelineMustNotExecuteUnverifiedScripts",
 	},
 
 	// Access and authorization controls (5xx)

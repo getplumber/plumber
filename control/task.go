@@ -24,6 +24,7 @@ const (
 	controlPipelineMustNotEnableDebugTrace             = "pipelineMustNotEnableDebugTrace"
 	controlPipelineMustNotUseUnsafeVariableExpansion   = "pipelineMustNotUseUnsafeVariableExpansion"
 	controlSecurityJobsMustNotBeWeakened               = "securityJobsMustNotBeWeakened"
+	controlPipelineMustNotExecuteUnverifiedScripts    = "pipelineMustNotExecuteUnverifiedScripts"
 )
 
 // shouldRunControl applies --controls / --skip-controls filtering for a control.
@@ -74,7 +75,7 @@ func clearProgressLine(conf *configuration.Configuration) {
 }
 
 // analysisStepCount is the total number of progress steps reported during analysis.
-const analysisStepCount = 15
+const analysisStepCount = 16
 
 // RunAnalysis executes the complete pipeline analysis for a GitLab project
 func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
@@ -472,6 +473,23 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 
 	securityJobsWeakenedResult := securityJobsWeakenedConf.Run(pipelineOriginData)
 	result.SecurityJobsWeakenedResult = securityJobsWeakenedResult
+
+	// 14. Run Pipeline Must Not Execute Unverified Scripts control
+	reportProgress(conf, 15, analysisStepCount, "Checking unverified script execution")
+	l.Info("Running Pipeline Must Not Execute Unverified Scripts control")
+
+	unverifiedScriptsConf := &GitlabPipelineUnverifiedScriptsConf{}
+	if shouldRunControl(controlPipelineMustNotExecuteUnverifiedScripts, conf) {
+		if err := unverifiedScriptsConf.GetConf(conf.PlumberConfig); err != nil {
+			l.WithError(err).Error("Failed to load UnverifiedScripts config from .plumber.yaml file")
+			return result, fmt.Errorf("invalid configuration: %w", err)
+		}
+	} else {
+		unverifiedScriptsConf.Enabled = false
+	}
+
+	unverifiedScriptsResult := unverifiedScriptsConf.Run(pipelineOriginData)
+	result.UnverifiedScriptsResult = unverifiedScriptsResult
 
 	reportProgress(conf, analysisStepCount, analysisStepCount, "Analysis complete")
 

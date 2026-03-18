@@ -286,7 +286,7 @@ This creates `.plumber.yaml` with sensible [defaults](./.plumber.yaml). Customiz
 
 ### Available Controls
 
-Plumber includes 11 compliance controls. Each can be enabled/disabled and customized in [.plumber.yaml](.plumber.yaml):
+Plumber includes 12 compliance controls. Each can be enabled/disabled and customized in [.plumber.yaml](.plumber.yaml):
 
 <details>
 <summary><b>1. Container images must not use forbidden tags</b></summary>
@@ -596,6 +596,31 @@ securityJobsMustNotBeWeakened:
 
 </details>
 
+<details>
+<summary><b>12. Pipeline must not execute unverified scripts</b></summary>
+
+Detects CI/CD jobs that download and immediately execute scripts from the internet without integrity verification. Patterns like `curl | bash` or `wget | sh` are a well-documented supply chain attack vector: an attacker who compromises the remote URL can serve a modified script that exfiltrates secrets.
+
+**Detected patterns:**
+- Direct pipe to shell: `curl ... | bash`, `wget ... | sh`, `curl ... | python`, etc.
+- Download-and-execute: `curl -o script.sh ... && bash script.sh`
+- Download-redirect-execute: `curl ... > install.sh; sh install.sh`
+
+Lines that include checksum verification (e.g., `sha256sum`, `gpg --verify`) between the download and execution are automatically excluded.
+
+**Configuration:**
+
+```yaml
+pipelineMustNotExecuteUnverifiedScripts:
+  enabled: true
+  trustedUrls: []
+    # - https://internal-artifacts.example.com/*
+```
+
+Add trusted URL patterns to `trustedUrls` (supports wildcards) to suppress findings for known-good sources.
+
+</details>
+
 ### Selective Control Execution
 
 You can run or skip specific controls using their YAML key names from `.plumber.yaml`. This is useful for iterative debugging or targeted CI checks.
@@ -638,6 +663,7 @@ Controls not selected are reported as **skipped** in the output. The `--controls
 | `pipelineMustIncludeComponent` |
 | `pipelineMustIncludeTemplate` |
 | `pipelineMustNotEnableDebugTrace` |
+| `pipelineMustNotExecuteUnverifiedScripts` |
 | `pipelineMustNotIncludeHardcodedJobs` |
 | `pipelineMustNotUseUnsafeVariableExpansion` |
 | `securityJobsMustNotBeWeakened` |
@@ -778,10 +804,10 @@ brew install plumber
 To install a specific version:
 
 ```bash
-brew install getplumber/plumber/plumber@0.1.67
+brew install getplumber/plumber/plumber@0.1.69
 ```
 
-> **Note:** Versioned formulas are keg-only. Use the full path for example `/usr/local/opt/plumber@0.1.67/bin/plumber` or run `brew link plumber@0.1.67` to add it to your PATH.
+> **Note:** Versioned formulas are keg-only. Use the full path for example `/usr/local/opt/plumber@0.1.69/bin/plumber` or run `brew link plumber@0.1.69` to add it to your PATH.
 
 ### Mise
 

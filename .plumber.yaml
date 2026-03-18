@@ -393,3 +393,26 @@ controls:
     #     when: manual
     whenMustNotBeManual:
       enabled: true
+
+  # ── Pipeline must not execute unverified scripts ─────────────────
+  #
+  # Detects jobs that download and immediately execute scripts from the
+  # internet without integrity verification (e.g., curl | bash, wget | sh).
+  #
+  # This is a well-documented supply chain attack vector: an attacker who
+  # compromises the remote URL can serve a modified script that exfiltrates
+  # CI/CD secrets ($CI_JOB_TOKEN, deploy keys, custom variables).
+  #
+  # Maps to OWASP CICD-SEC-3 (Dependency Chain Abuse) and CICD-SEC-8
+  # (Ungoverned Usage of 3rd Party Services).
+  #
+  # Best practice: download scripts to a file, verify a checksum against a
+  # known-good value, then execute. Or vendor the script into your repo.
+  pipelineMustNotExecuteUnverifiedScripts:
+    # Set to false to disable this control
+    enabled: true
+
+    # URLs that are trusted and should not trigger findings.
+    # Supports wildcards (e.g., https://internal-artifacts.example.com/*).
+    trustedUrls: []
+      # - https://internal-artifacts.example.com/*

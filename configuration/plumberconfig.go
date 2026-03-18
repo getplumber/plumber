@@ -48,6 +48,9 @@ var validControlSchema = map[string][]string{
 		"enabled", "securityJobPatterns",
 		"allowFailureMustBeFalse", "rulesMustNotBeRedefined", "whenMustNotBeManual",
 	},
+	"pipelineMustNotExecuteUnverifiedScripts": {
+		"enabled", "trustedUrls",
+	},
 }
 
 // validControlKeys returns the list of known control names.
@@ -122,6 +125,9 @@ type ControlsConfig struct {
 
 	// SecurityJobsMustNotBeWeakened control configuration
 	SecurityJobsMustNotBeWeakened *SecurityJobsWeakenedControlConfig `yaml:"securityJobsMustNotBeWeakened,omitempty"`
+
+	// PipelineMustNotExecuteUnverifiedScripts control configuration
+	PipelineMustNotExecuteUnverifiedScripts *UnverifiedScriptsControlConfig `yaml:"pipelineMustNotExecuteUnverifiedScripts,omitempty"`
 }
 
 // ImageForbiddenTagsControlConfig configuration for the forbidden image tags control
@@ -302,6 +308,16 @@ func (t *SecurityJobsSubControlToggle) IsEnabled(defaultVal bool) bool {
 		return defaultVal
 	}
 	return *t.Enabled
+}
+
+// UnverifiedScriptsControlConfig configuration for the unverified script execution control
+type UnverifiedScriptsControlConfig struct {
+	// Enabled controls whether this check runs
+	Enabled *bool `yaml:"enabled,omitempty"`
+
+	// TrustedUrls is a list of URL patterns that should not trigger findings.
+	// Supports wildcards (e.g., "https://internal-artifacts.example.com/*").
+	TrustedUrls []string `yaml:"trustedUrls,omitempty"`
 }
 
 // RequiredTemplatesControlConfig configuration for the required templates control
@@ -598,6 +614,24 @@ func (c *PlumberConfig) GetSecurityJobsMustNotBeWeakenedConfig() *SecurityJobsWe
 // IsEnabled returns whether the control is enabled
 // Returns false if not properly configured
 func (c *SecurityJobsWeakenedControlConfig) IsEnabled() bool {
+	if c == nil || c.Enabled == nil {
+		return false
+	}
+	return *c.Enabled
+}
+
+// GetPipelineMustNotExecuteUnverifiedScriptsConfig returns the control configuration
+// Returns nil if not configured
+func (c *PlumberConfig) GetPipelineMustNotExecuteUnverifiedScriptsConfig() *UnverifiedScriptsControlConfig {
+	if c == nil {
+		return nil
+	}
+	return c.Controls.PipelineMustNotExecuteUnverifiedScripts
+}
+
+// IsEnabled returns whether the control is enabled
+// Returns false if not properly configured
+func (c *UnverifiedScriptsControlConfig) IsEnabled() bool {
 	if c == nil || c.Enabled == nil {
 		return false
 	}
