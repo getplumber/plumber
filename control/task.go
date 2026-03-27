@@ -121,6 +121,15 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 		"archived":      project.Archived,
 	}).Info("Project information fetched")
 
+	// Apply --ci-config-path override before converting to ProjectInfo so that
+	// all downstream code (local file resolution, remote fetch) uses the custom path.
+	if conf.CIConfigPathOverride != "" {
+		project.CiConfPath = conf.CIConfigPathOverride
+		clearProgressLine(conf)
+		fmt.Fprintf(os.Stderr, "Using custom CI config path: %s\n", conf.CIConfigPathOverride)
+		l.WithField("ciConfigPathOverride", conf.CIConfigPathOverride).Info("CI config path overridden by --ci-config-path flag")
+	}
+
 	// Convert to ProjectInfo for collectors
 	projectInfo := project.ToProjectInfo()
 

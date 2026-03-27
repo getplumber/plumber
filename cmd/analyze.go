@@ -31,6 +31,7 @@ var (
 	badge             bool
 	controlsFilter    string
 	skipControls      string
+	ciConfigPath      string
 )
 
 var analyzeCmd = &cobra.Command{
@@ -66,6 +67,7 @@ Optional flags:
   --controls         Run only listed controls (comma-separated)
   --skip-controls    Skip listed controls (comma-separated)
   --fail-warnings    Treat configuration warnings as errors (exit 2)
+  --ci-config-path   Override the CI configuration file path (default: auto-detected from GitLab project settings, usually .gitlab-ci.yml)
 
 Exit codes:
   0  Analysis passed (compliance >= threshold)
@@ -87,6 +89,9 @@ Examples:
 
   # Analyze and save JSON to file (no stdout)
   plumber analyze --gitlab-url https://gitlab.com --project mygroup/myproject --print=false --output results.json
+
+  # Analyze a project that uses a custom CI configuration file path
+  plumber analyze --ci-config-path my-custom-ci.yml
 `,
 	RunE: runAnalyze,
 }
@@ -111,6 +116,7 @@ func init() {
 	analyzeCmd.Flags().StringVar(&controlsFilter, "controls", "", "Run only listed controls (comma-separated)")
 	analyzeCmd.Flags().StringVar(&skipControls, "skip-controls", "", "Skip listed controls (comma-separated)")
 	analyzeCmd.Flags().BoolVar(&failWarnings, "fail-warnings", false, "Treat configuration warnings as errors (exit 2)")
+	analyzeCmd.Flags().StringVar(&ciConfigPath, "ci-config-path", "", "Override the CI configuration file path (default: auto-detected from GitLab project settings, usually .gitlab-ci.yml)")
 }
 
 func runAnalyze(cmd *cobra.Command, args []string) error {
@@ -218,6 +224,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	conf.GitRepoRoot = gitRepoRoot
 	conf.ControlsFilter = controlsFilterList
 	conf.SkipControlsFilter = skipControlsList
+	conf.CIConfigPathOverride = ciConfigPath
 
 	// Determine if the local git repo matches the project being analyzed.
 	// Local CI file support only applies when the local repo IS the analyzed project.

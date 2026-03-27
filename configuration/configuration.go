@@ -26,6 +26,9 @@ type Configuration struct {
 	GitlabRetryMaxBackoff     time.Duration // Maximum backoff time for GitLab API retries
 	GitlabRetryBackoffFactor  float64       // Backoff multiplication factor for exponential backoff
 
+	// CI configuration path override (from --ci-config-path flag)
+	CIConfigPathOverride string // When set, overrides the project's CI config file path (e.g., "my-custom-ci.yml")
+
 	// Local CI configuration (from local filesystem)
 	LocalCIConfigContent []byte // Content of local .gitlab-ci.yml (nil if using remote)
 	UsingLocalCIConfig   bool   // True when using local CI config file

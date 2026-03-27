@@ -49,7 +49,7 @@ Plumber is a compliance scanner for GitLab. It reads your `.gitlab-ci.yml` and r
 - Unsafe variable injection via `eval`/`sh -c`/`bash -c` (OWASP CICD-SEC-1)
 - Weakened security jobs (`allow_failure: true`, `when: manual`, `rules: [{when: never}]`) on SAST, Secret Detection, and other scanners (OWASP CICD-SEC-4)
 
-**How does it work?** Plumber connects to your GitLab instance via API, analyzes your pipeline configuration, and reports any issues it finds. You define what's allowed in a config file (`.plumber.yaml`), and Plumber tells you if your project complies. When running locally from your git repo, Plumber uses your **local `.gitlab-ci.yml`** allowing you to validate changes before pushing.
+**How does it work?** Plumber connects to your GitLab instance via API, analyzes your pipeline configuration, and reports any issues it finds. You define what's allowed in a config file (`.plumber.yaml`), and Plumber tells you if your project complies. When running locally from your git repo, Plumber uses your **local CI configuration file** (`.gitlab-ci.yml` by default, or a [custom path](#custom-ci-configuration-file-path)) allowing you to validate changes before pushing.
 
 <p align="center">
   <img src="assets/component.gif" alt="Plumber Demo" width="700">
@@ -160,9 +160,14 @@ It reads your `.plumber.yaml` config and outputs a compliance report. You can al
 
 #### Local CI Configuration
 
-When running from your project's git repository, Plumber automatically uses your **local `.gitlab-ci.yml`** instead of fetching it from the remote. This lets you validate changes before pushing.
+When running from your project's git repository, Plumber automatically uses your **local CI configuration file** instead of fetching it from the remote. This lets you validate changes before pushing.
 
-The source of the `.gitlab-ci.yml` is resolved by priority:
+The CI configuration file path is resolved by priority:
+
+1. **`--ci-config-path` is specified** → uses that path (both locally and remotely)
+2. **Auto-detected from GitLab project settings** → uses the project's configured CI config path (usually `.gitlab-ci.yml`)
+
+The source of the CI configuration file (local vs. remote) is resolved by priority:
 
 1. **`--branch` is specified** → always uses the remote file from that branch
 2. **In a git repo** and the local repo matches the analyzed project → uses the local file
@@ -171,6 +176,27 @@ The source of the `.gitlab-ci.yml` is resolved by priority:
 If the local CI configuration is invalid, Plumber exits with an error showing the specific validation messages from GitLab so you can fix issues before pushing.
 
 > **Note:** When using local CI configuration, `include:local` files are also read from your local filesystem. Other include types (components, templates, project files, remote URLs) are always resolved from their remote sources. Jobs from `include:local` files are treated as hardcoded by the analysis since they are project-specific and not from reusable external sources.
+
+#### Custom CI Configuration File Path
+
+Some GitLab projects use a [custom CI/CD configuration file](https://docs.gitlab.com/ci/pipelines/settings/#specify-a-custom-cicd-configuration-file) instead of the default `.gitlab-ci.yml`. Plumber auto-detects this from the GitLab project settings, but you can also override it explicitly with the `--ci-config-path` flag:
+
+```bash
+# Analyze a project that uses a custom CI file
+plumber analyze --ci-config-path my-custom-ci.yml
+
+# Combine with other flags
+plumber analyze --gitlab-url https://gitlab.com --project mygroup/myproject --ci-config-path .gitlab/ci/main.yml
+```
+
+In the [GitLab CI Component](#option-2-gitlab-ci-component), use the `ci_config_path` input:
+
+```yaml
+include:
+  - component: gitlab.com/getplumber/plumber/plumber@v0.1.29
+    inputs:
+      ci_config_path: my-custom-ci.yml
+```
 
 > 💡 **Like what you see?** Add Plumber to your CI/CD with the [GitLab CI Component](#option-2-gitlab-ci-component) for automated checks on every pipeline.
 
@@ -953,6 +979,7 @@ plumber analyze [flags]
 | `--controls` | No | — | Run only listed controls (comma-separated). Cannot be used with `--skip-controls` |
 | `--skip-controls` | No | — | Skip listed controls (comma-separated). Cannot be used with `--controls` |
 | `--fail-warnings` | No | `false` | Treat configuration warnings (unknown keys) as errors (exit 2) |
+| `--ci-config-path` | No | auto-detect | Override the CI configuration file path (default: auto-detected from GitLab project settings, usually `.gitlab-ci.yml`). See [Custom CI Configuration File Path](#custom-ci-configuration-file-path) |
 | `--verbose`, `-v` | No | `false` | Enable verbose/debug output for troubleshooting |
 
 > \* Auto-detected from git remote (`origin`) if not specified. Supports both SSH and HTTPS remote URLs.

@@ -18,6 +18,9 @@ spec:
     server_url:
       description: "GitLab instance URL"
       default: $CI_SERVER_URL
+    ci_config_path:
+      description: "CI configuration file path. Defaults to the GitLab predefined variable $CI_CONFIG_PATH (usually .gitlab-ci.yml). Override to point at a different file."
+      default: $CI_CONFIG_PATH
     
     # Control configuration
     # Default conf can be found at https://gitlab.com/getplumber/plumber/-/blob/main/.plumber.yaml
@@ -108,6 +111,12 @@ spec:
 #       inputs:
 #         config_file: "configs/my-plumber.yaml"  # relative to repo root
 #
+# With a custom CI configuration file path (or override $CI_CONFIG_PATH in project CI/CD variables):
+#   include:
+#     - component: gitlab.com/getplumber/plumber/plumber@v0.1.0
+#       inputs:
+#         ci_config_path: "my-custom-ci.yml"
+#
 # With other custom inputs:
 #   include:
 #     - component: gitlab.com/getplumber/plumber/plumber@v0.1.0
@@ -189,6 +198,7 @@ spec:
         --config "$CONFIG_PATH" \
         --threshold "$[[ inputs.threshold ]]" \
         --print="$[[ inputs.print_output ]]" \
+        --ci-config-path "$[[ inputs.ci_config_path ]]" \
         $OUTPUT_FLAG \
         $PBOM_FLAG \
         $PBOM_CDX_FLAG \
