@@ -1,3 +1,4 @@
+# Source of truth: https://github.com/getplumber/plumber/blob/main/templates/plumber.yml
 spec:
   inputs:
     # Authentication
@@ -56,7 +57,7 @@ spec:
       default: ".pre"
     image:
       description: "Docker image to use for the job"
-      default: "getplumber/plumber:0.1"
+      default: "getplumber/plumber:0.2"
     allow_failure:
       description: "Allow the job to fail without failing the pipeline"
       default: false
@@ -107,19 +108,19 @@ spec:
 #
 # With custom config file:
 #   include:
-#     - component: gitlab.com/getplumber/plumber/plumber@v0.1.0
+#     - component: gitlab.com/getplumber/plumber/plumber@v0.2.0
 #       inputs:
 #         config_file: "configs/my-plumber.yaml"  # relative to repo root
 #
 # With a custom CI configuration file path (or override $CI_CONFIG_PATH in project CI/CD variables):
 #   include:
-#     - component: gitlab.com/getplumber/plumber/plumber@v0.1.0
+#     - component: gitlab.com/getplumber/plumber/plumber@v0.2.0
 #       inputs:
 #         ci_config_path: "my-custom-ci.yml"
 #
 # With other custom inputs:
 #   include:
-#     - component: gitlab.com/getplumber/plumber/plumber@v0.1.0
+#     - component: gitlab.com/getplumber/plumber/plumber@v0.2.0
 #       inputs:
 #         threshold: 80
 #         output_file: results.json

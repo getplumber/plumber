@@ -193,7 +193,7 @@ In the [GitLab CI Component](#option-2-gitlab-ci-component), use the `ci_config_
 
 ```yaml
 include:
-  - component: gitlab.com/getplumber/plumber/plumber@v0.1.29
+  - component: gitlab.com/getplumber/plumber/plumber@v0.2.0
     inputs:
       ci_config_path: my-custom-ci.yml
 ```
@@ -235,7 +235,7 @@ workflow:
     - if: $CI_COMMIT_TAG
 
 include:
-  - component: gitlab.com/getplumber/plumber/plumber@v0.1.29
+  - component: gitlab.com/getplumber/plumber/plumber@v0.2.0
     # inputs:
     #   stage: .pre | by default runs in .pre which only runs if there is at least another CI job in another stage
 ```
@@ -260,7 +260,7 @@ Override any input to fit your needs:
 
 ```yaml
 include:
-  - component: gitlab.com/getplumber/plumber/plumber@v0.1.29
+  - component: gitlab.com/getplumber/plumber/plumber@v0.2.0
     inputs:
       threshold: 80                           # Minimum % to pass (default: 100)
       config_file: configs/my-plumber.yaml    # Custom config path
@@ -669,7 +669,7 @@ plumber analyze --skip-controls branchMustBeProtected
 
 ```yaml
 include:
-  - component: gitlab.com/getplumber/plumber/plumber@v0.1.29
+  - component: gitlab.com/getplumber/plumber/plumber@v0.2.0
     inputs:
       controls: containerImageMustNotUseForbiddenTags,containerImageMustComeFromAuthorizedSources
 ```
@@ -776,7 +776,7 @@ Automatically post compliance summaries on merge requests to catch issues before
 
 ```yaml
 include:
-  - component: gitlab.com/getplumber/plumber/plumber@v0.1.29
+  - component: gitlab.com/getplumber/plumber/plumber@v0.2.0
     inputs:
       mr_comment: true  # Requires api scope on token
 ```
@@ -799,7 +799,7 @@ Display a live compliance badge on your project's overview page.
 
 ```yaml
 include:
-  - component: gitlab.com/getplumber/plumber/plumber@v0.1.29
+  - component: gitlab.com/getplumber/plumber/plumber@v0.2.0
     inputs:
       badge: true  # Requires api scope on token
 ```
@@ -830,10 +830,10 @@ brew install plumber
 To install a specific version:
 
 ```bash
-brew install getplumber/plumber/plumber@0.1.73
+brew install getplumber/plumber/plumber@0.2.0
 ```
 
-> **Note:** Versioned formulas are keg-only. Use the full path for example `/usr/local/opt/plumber@0.1.73/bin/plumber` or run `brew link plumber@0.1.73` to add it to your PATH.
+> **Note:** Versioned formulas are keg-only. Use the full path for example `/usr/local/opt/plumber@0.2.0/bin/plumber` or run `brew link plumber@0.2.0` to add it to your PATH.
 
 ### Mise
 
@@ -1187,7 +1187,7 @@ Import the upstream repository directly into your GitLab instance.
 The imported project comes with upstream tags. The preferred method is to run a pipeline on an existing tag to trigger the release:
 
 - Go to **CI/CD → Pipelines → Run pipeline**
-- Select an imported tag (e.g., `v0.1.29`) from the branch/tag dropdown
+- Select an imported tag (e.g., `v0.2.0`) from the branch/tag dropdown
 - Click **Run pipeline**: this creates a release for that tag in the CI/CD Catalog
 
 Alternatively, create a new tag manually, but this might conflict later on when you want to fetch remote tags:
@@ -1220,7 +1220,7 @@ workflow:
     - if: $CI_COMMIT_TAG
 
 include:
-  - component: gitlab.example.com/infrastructure/plumber/plumber@v0.1.29
+  - component: gitlab.example.com/infrastructure/plumber/plumber@v0.2.0
     # inputs:
     #   stage: .pre | by default runs in .pre which only runs if there is at least another CI job in another stage
 ```
@@ -1268,7 +1268,7 @@ Fork the project on gitlab.com first, then set up a pull mirror on your self-hos
 The mirrored project comes with upstream tags. The preferred method is to run a pipeline on an existing tag to trigger the release:
 
 - Go to **CI/CD → Pipelines → Run pipeline**
-- Select an imported tag (e.g., `v0.1.29`) from the branch/tag dropdown
+- Select an imported tag (e.g., `v0.2.0`) from the branch/tag dropdown
 - Click **Run pipeline**: this creates a release for that tag in the CI/CD Catalog
 
 Alternatively, create a new tag manually:
@@ -1301,7 +1301,7 @@ workflow:
     - if: $CI_COMMIT_TAG
 
 include:
-  - component: gitlab.example.com/infrastructure/plumber/plumber@v0.1.29
+  - component: gitlab.example.com/infrastructure/plumber/plumber@v0.2.0
     # inputs:
     #   stage: .pre | by default runs in .pre which only runs if there is at least another CI job in another stage
 ```
