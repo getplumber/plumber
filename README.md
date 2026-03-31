@@ -312,7 +312,7 @@ This creates `.plumber.yaml` with sensible [defaults](./.plumber.yaml). Customiz
 
 ### Available Controls
 
-Plumber includes 12 compliance controls. Each can be enabled/disabled and customized in [.plumber.yaml](.plumber.yaml):
+Plumber includes 13 compliance controls. Each can be enabled/disabled and customized in [.plumber.yaml](.plumber.yaml):
 
 <details>
 <summary><b>1. Container images must not use forbidden tags</b></summary>
@@ -647,6 +647,33 @@ Add trusted URL patterns to `trustedUrls` (supports wildcards) to suppress findi
 
 </details>
 
+<details>
+<summary><b>13. Pipeline must not override job variables</b></summary>
+
+Detects CI/CD variables that are redefined in the pipeline configuration file when they should only be set in GitLab CI/CD Settings > Variables. This is a generic control: you can protect any variable name, not just security-related ones.
+
+An attacker who can modify `.gitlab-ci.yml` could override variables like `SECURE_ANALYZERS_PREFIX` to point to a fake scanner registry, or set `SAST_DISABLED: "true"` to silently disable security scanners. The pipeline still appears green, but no actual scanning occurs.
+
+**Configuration:**
+
+```yaml
+pipelineMustNotOverrideJobVariables:
+  enabled: true
+  variables:
+    - SECURE_ANALYZERS_PREFIX
+    - SAST_DISABLED
+    - SAST_EXCLUDED_PATHS
+    - SECRET_DETECTION_DISABLED
+    - CONTAINER_SCANNING_DISABLED
+    - DAST_DISABLED
+    - DEPENDENCY_SCANNING_DISABLED
+    - LICENSE_SCANNING_DISABLED
+```
+
+Add any variable name you want to protect to the `variables` list. Variables are matched case-insensitively across global and per-job `variables:` blocks.
+
+</details>
+
 ### Selective Control Execution
 
 You can run or skip specific controls using their YAML key names from `.plumber.yaml`. This is useful for iterative debugging or targeted CI checks.
@@ -691,6 +718,7 @@ Controls not selected are reported as **skipped** in the output. The `--controls
 | `pipelineMustNotEnableDebugTrace` |
 | `pipelineMustNotExecuteUnverifiedScripts` |
 | `pipelineMustNotIncludeHardcodedJobs` |
+| `pipelineMustNotOverrideJobVariables` |
 | `pipelineMustNotUseUnsafeVariableExpansion` |
 | `securityJobsMustNotBeWeakened` |
 
@@ -830,10 +858,10 @@ brew install plumber
 To install a specific version:
 
 ```bash
-brew install getplumber/plumber/plumber@0.1.75
+brew install getplumber/plumber/plumber@0.1.76
 ```
 
-> **Note:** Versioned formulas are keg-only. Use the full path for example `/usr/local/opt/plumber@0.1.75/bin/plumber` or run `brew link plumber@0.1.75` to add it to your PATH.
+> **Note:** Versioned formulas are keg-only. Use the full path for example `/usr/local/opt/plumber@0.1.76/bin/plumber` or run `brew link plumber@0.1.76` to add it to your PATH.
 
 ### Mise
 

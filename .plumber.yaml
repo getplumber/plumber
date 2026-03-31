@@ -394,6 +394,43 @@ controls:
     whenMustNotBeManual:
       enabled: true
 
+  # ===========================================
+  # Pipeline must not override job variables
+  # ===========================================
+  # Detects CI/CD variables that are redefined in the pipeline configuration
+  # file (.gitlab-ci.yml) when they should only be set in GitLab CI/CD
+  # Settings > Variables.
+  #
+  # An attacker who can modify .gitlab-ci.yml could override variables like
+  # SECURE_ANALYZERS_PREFIX to point to a fake registry, or set
+  # SAST_DISABLED: "true" to silently disable security scanners. The pipeline
+  # still appears green, but no actual scanning occurs.
+  #
+  # This control is generic: add any variable name you want to protect,
+  # not just security-related ones.
+  #
+  # Best practice: Set controlled variables in GitLab CI/CD Settings as
+  # protected/masked variables, never in the YAML file.
+  pipelineMustNotOverrideJobVariables:
+    # Set to false to disable this control
+    enabled: true
+
+    # CI/CD variable names that must not be defined in the pipeline config.
+    # They should only be set in GitLab CI/CD Settings > Variables or defined in the imported templates or components.
+    variables:
+      - SECURE_ANALYZERS_PREFIX
+      - SAST_DISABLED
+      - SAST_EXCLUDED_PATHS
+      - SAST_EXCLUDED_ANALYZERS
+      - SECRET_DETECTION_DISABLED
+      - SECRET_DETECTION_EXCLUDED_PATHS
+      - CONTAINER_SCANNING_DISABLED
+      - DAST_DISABLED
+      - DEPENDENCY_SCANNING_DISABLED
+      - LICENSE_SCANNING_DISABLED
+      # Add your organization's controlled variables below:
+      # - MY_CUSTOM_PROTECTED_VAR
+
   # ── Pipeline must not execute unverified scripts ─────────────────
   #
   # Detects jobs that download and immediately execute scripts from the

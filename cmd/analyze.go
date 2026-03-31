@@ -321,6 +321,11 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		controlCount++
 	}
 
+	if result.JobVariablesOverrideResult != nil && !result.JobVariablesOverrideResult.Skipped {
+		complianceSum += result.JobVariablesOverrideResult.Compliance
+		controlCount++
+	}
+
 	// Calculate average compliance
 	// If no controls ran (e.g., data collection failed), compliance is 0% - we can't verify anything
 	var compliance float64 = 0
@@ -1114,6 +1119,41 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 						fmt.Printf("    %s•%s [%s] Global %s: %s\n", colorYellow, colorReset, issue.Code, issue.ScriptBlock, issue.ScriptLine)
 					} else {
 						fmt.Printf("    %s•%s [%s] Job '%s' %s: %s\n", colorYellow, colorReset, issue.Code, issue.JobName, issue.ScriptBlock, issue.ScriptLine)
+					}
+					fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
+				}
+			}
+		}
+		fmt.Println()
+	}
+
+	// Control 13: Pipeline must not override job variables
+	if result.JobVariablesOverrideResult != nil {
+		ctrl := controlSummary{
+			name:       "Pipeline must not override job variables",
+			compliance: result.JobVariablesOverrideResult.Compliance,
+			issues:     len(result.JobVariablesOverrideResult.Issues),
+			skipped:    result.JobVariablesOverrideResult.Skipped,
+			codes:      []string{string(control.CodeJobVariableOverridden)},
+		}
+		controls = append(controls, ctrl)
+
+		printControlHeader("Pipeline must not override job variables", result.JobVariablesOverrideResult.Compliance, result.JobVariablesOverrideResult.Skipped)
+
+		if result.JobVariablesOverrideResult.Skipped {
+			fmt.Printf("  %sStatus: SKIPPED (disabled in configuration)%s\n", colorDim, colorReset)
+		} else {
+			fmt.Printf("  Variables Checked: %d\n", result.JobVariablesOverrideResult.Metrics.TotalVariablesChecked)
+			fmt.Printf("  Overridden Found: %d\n", result.JobVariablesOverrideResult.Metrics.OverriddenFound)
+
+			if len(result.JobVariablesOverrideResult.Issues) > 0 {
+				fmt.Printf("\n  %sOverridden Variables Found:%s\n", colorYellow, colorReset)
+				for _, issue := range result.JobVariablesOverrideResult.Issues {
+					location := issue.Location
+					if location == "global" {
+						fmt.Printf("    %s•%s [%s] %s = \"%s\" (global variables)\n", colorYellow, colorReset, issue.Code, issue.VariableName, issue.Value)
+					} else {
+						fmt.Printf("    %s•%s [%s] %s = \"%s\" (job '%s')\n", colorYellow, colorReset, issue.Code, issue.VariableName, issue.Value, location)
 					}
 					fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
 				}

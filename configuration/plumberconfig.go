@@ -51,6 +51,9 @@ var validControlSchema = map[string][]string{
 	"pipelineMustNotExecuteUnverifiedScripts": {
 		"enabled", "trustedUrls",
 	},
+	"pipelineMustNotOverrideJobVariables": {
+		"enabled", "variables",
+	},
 }
 
 // validControlKeys returns the list of known control names.
@@ -128,6 +131,9 @@ type ControlsConfig struct {
 
 	// PipelineMustNotExecuteUnverifiedScripts control configuration
 	PipelineMustNotExecuteUnverifiedScripts *UnverifiedScriptsControlConfig `yaml:"pipelineMustNotExecuteUnverifiedScripts,omitempty"`
+
+	// PipelineMustNotOverrideJobVariables control configuration
+	PipelineMustNotOverrideJobVariables *JobVariablesOverrideControlConfig `yaml:"pipelineMustNotOverrideJobVariables,omitempty"`
 }
 
 // ImageForbiddenTagsControlConfig configuration for the forbidden image tags control
@@ -318,6 +324,17 @@ type UnverifiedScriptsControlConfig struct {
 	// TrustedUrls is a list of URL patterns that should not trigger findings.
 	// Supports wildcards (e.g., "https://internal-artifacts.example.com/*").
 	TrustedUrls []string `yaml:"trustedUrls,omitempty"`
+}
+
+// JobVariablesOverrideControlConfig configuration for the job variable override control
+type JobVariablesOverrideControlConfig struct {
+	// Enabled controls whether this check runs
+	Enabled *bool `yaml:"enabled,omitempty"`
+
+	// Variables is a list of CI/CD variable names that must not be defined
+	// in the pipeline configuration file. They should only be set via
+	// GitLab CI/CD Settings > Variables.
+	Variables []string `yaml:"variables,omitempty"`
 }
 
 // RequiredTemplatesControlConfig configuration for the required templates control
@@ -632,6 +649,24 @@ func (c *PlumberConfig) GetPipelineMustNotExecuteUnverifiedScriptsConfig() *Unve
 // IsEnabled returns whether the control is enabled
 // Returns false if not properly configured
 func (c *UnverifiedScriptsControlConfig) IsEnabled() bool {
+	if c == nil || c.Enabled == nil {
+		return false
+	}
+	return *c.Enabled
+}
+
+// GetPipelineMustNotOverrideJobVariablesConfig returns the control configuration
+// Returns nil if not configured
+func (c *PlumberConfig) GetPipelineMustNotOverrideJobVariablesConfig() *JobVariablesOverrideControlConfig {
+	if c == nil {
+		return nil
+	}
+	return c.Controls.PipelineMustNotOverrideJobVariables
+}
+
+// IsEnabled returns whether the control is enabled
+// Returns false if not properly configured
+func (c *JobVariablesOverrideControlConfig) IsEnabled() bool {
 	if c == nil || c.Enabled == nil {
 		return false
 	}

@@ -210,6 +210,12 @@ func generateMRComment(result *AnalysisResult, compliance, threshold float64) st
 			totalIssues += len(r.Issues)
 		}
 	}
+	if r := result.JobVariablesOverrideResult; r != nil {
+		controls = append(controls, controlEntry{"Pipeline must not override job variables", r.Compliance, len(r.Issues), r.Skipped})
+		if !r.Skipped {
+			totalIssues += len(r.Issues)
+		}
+	}
 
 	// Controls summary table
 	b.WriteString("### Controls\n\n")
@@ -388,6 +394,19 @@ func writeIssueDetails(b *strings.Builder, result *AnalysisResult) {
 				fmt.Fprintf(b, "- `%s` Global `%s`: `%s` ([docs](%s))\n", issue.Code, issue.ScriptBlock, issue.ScriptLine, issue.DocURL)
 			} else {
 				fmt.Fprintf(b, "- `%s` Job `%s` `%s`: `%s` ([docs](%s))\n", issue.Code, issue.JobName, issue.ScriptBlock, issue.ScriptLine, issue.DocURL)
+			}
+		}
+		b.WriteString("\n")
+	}
+
+	// Job variable overrides
+	if r := result.JobVariablesOverrideResult; r != nil && !r.Skipped && len(r.Issues) > 0 {
+		b.WriteString("**Pipeline must not override job variables:**\n")
+		for _, issue := range r.Issues {
+			if issue.Location == "global" {
+				fmt.Fprintf(b, "- `%s` `%s` = `%s` in global variables ([docs](%s))\n", issue.Code, issue.VariableName, issue.Value, issue.DocURL)
+			} else {
+				fmt.Fprintf(b, "- `%s` `%s` = `%s` in job `%s` ([docs](%s))\n", issue.Code, issue.VariableName, issue.Value, issue.Location, issue.DocURL)
 			}
 		}
 		b.WriteString("\n")

@@ -23,6 +23,8 @@ const (
 	CodeDebugTraceEnabled ErrorCode = "ISSUE-203"
 	// ISSUE-204: Unsafe variable expansion in shell re-interpretation context (eval, sh -c, etc.)
 	CodeUnsafeVariableExpansion ErrorCode = "ISSUE-204"
+	// ISSUE-205: A variable that should only be set in CI/CD Settings is overridden in the pipeline config
+	CodeJobVariableOverridden ErrorCode = "ISSUE-205"
 )
 
 // Issue codes for pipeline composition controls (4xx)
@@ -115,6 +117,14 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Avoid passing variables to commands that re-interpret input as shell code. Use the variable in a safe context (e.g. echo, env) or sanitize/allowlist values. Configure dangerousVariables and allowedPatterns in .plumber.yaml under pipelineMustNotUseUnsafeVariableExpansion.",
 		DocURL:      docsBaseURL + string(CodeUnsafeVariableExpansion),
 		ControlName: "pipelineMustNotUseUnsafeVariableExpansion",
+	},
+	CodeJobVariableOverridden: {
+		Code:        CodeJobVariableOverridden,
+		Title:       "Job variable overrides controlled variable",
+		Description: "A CI/CD variable that should only be set in GitLab CI/CD Settings (as a protected or project-level variable) is redefined in the pipeline configuration. This can neutralize security scanners, disable protections, or alter intended behavior.",
+		Remediation: "Remove the variable from .gitlab-ci.yml and set it in GitLab CI/CD Settings > Variables instead. Configure the list of controlled variables in .plumber.yaml under pipelineMustNotOverrideJobVariables.variables.",
+		DocURL:      docsBaseURL + string(CodeJobVariableOverridden),
+		ControlName: "pipelineMustNotOverrideJobVariables",
 	},
 
 	// Pipeline composition controls (4xx)

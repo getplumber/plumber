@@ -24,7 +24,8 @@ const (
 	controlPipelineMustNotEnableDebugTrace             = "pipelineMustNotEnableDebugTrace"
 	controlPipelineMustNotUseUnsafeVariableExpansion   = "pipelineMustNotUseUnsafeVariableExpansion"
 	controlSecurityJobsMustNotBeWeakened               = "securityJobsMustNotBeWeakened"
-	controlPipelineMustNotExecuteUnverifiedScripts    = "pipelineMustNotExecuteUnverifiedScripts"
+	controlPipelineMustNotExecuteUnverifiedScripts     = "pipelineMustNotExecuteUnverifiedScripts"
+	controlPipelineMustNotOverrideJobVariables         = "pipelineMustNotOverrideJobVariables"
 )
 
 // shouldRunControl applies --controls / --skip-controls filtering for a control.
@@ -75,7 +76,7 @@ func clearProgressLine(conf *configuration.Configuration) {
 }
 
 // analysisStepCount is the total number of progress steps reported during analysis.
-const analysisStepCount = 16
+const analysisStepCount = 17
 
 // RunAnalysis executes the complete pipeline analysis for a GitLab project
 func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
@@ -499,6 +500,23 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 
 	unverifiedScriptsResult := unverifiedScriptsConf.Run(pipelineOriginData)
 	result.UnverifiedScriptsResult = unverifiedScriptsResult
+
+	// 15. Run Pipeline Must Not Override Job Variables control
+	reportProgress(conf, 16, analysisStepCount, "Checking job variable overrides")
+	l.Info("Running Pipeline Must Not Override Job Variables control")
+
+	jobVarOverrideConf := &GitlabPipelineJobVariablesOverrideConf{}
+	if shouldRunControl(controlPipelineMustNotOverrideJobVariables, conf) {
+		if err := jobVarOverrideConf.GetConf(conf.PlumberConfig); err != nil {
+			l.WithError(err).Error("Failed to load JobVariablesOverride config from .plumber.yaml file")
+			return result, fmt.Errorf("invalid configuration: %w", err)
+		}
+	} else {
+		jobVarOverrideConf.Enabled = false
+	}
+
+	jobVarOverrideResult := jobVarOverrideConf.Run(pipelineOriginData)
+	result.JobVariablesOverrideResult = jobVarOverrideResult
 
 	reportProgress(conf, analysisStepCount, analysisStepCount, "Analysis complete")
 

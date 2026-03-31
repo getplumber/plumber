@@ -39,6 +39,7 @@ type AnalysisResult struct {
 	VariableInjectionResult         *GitlabPipelineVariableInjectionResult       `json:"variableInjectionResult,omitempty"`
 	SecurityJobsWeakenedResult      *GitlabSecurityJobsWeakenedResult            `json:"securityJobsWeakenedResult,omitempty"`
 	UnverifiedScriptsResult         *GitlabPipelineUnverifiedScriptsResult       `json:"unverifiedScriptsResult,omitempty"`
+	JobVariablesOverrideResult      *GitlabPipelineJobVariablesOverrideResult    `json:"jobVariablesOverrideResult,omitempty"`
 
 	// Raw collected data (not included in JSON output, used for PBOM generation)
 	PipelineImageData  *collector.GitlabPipelineImageData  `json:"-"`
