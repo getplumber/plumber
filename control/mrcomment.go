@@ -216,6 +216,12 @@ func generateMRComment(result *AnalysisResult, compliance, threshold float64) st
 			totalIssues += len(r.Issues)
 		}
 	}
+	if r := result.DockerInDockerResult; r != nil {
+		controls = append(controls, controlEntry{"Pipeline must not use Docker-in-Docker", r.Compliance, len(r.Issues), r.Skipped})
+		if !r.Skipped {
+			totalIssues += len(r.Issues)
+		}
+	}
 
 	// Controls summary table
 	b.WriteString("### Controls\n\n")
@@ -394,6 +400,19 @@ func writeIssueDetails(b *strings.Builder, result *AnalysisResult) {
 				fmt.Fprintf(b, "- `%s` Global `%s`: `%s` ([docs](%s))\n", issue.Code, issue.ScriptBlock, issue.ScriptLine, issue.DocURL)
 			} else {
 				fmt.Fprintf(b, "- `%s` Job `%s` `%s`: `%s` ([docs](%s))\n", issue.Code, issue.JobName, issue.ScriptBlock, issue.ScriptLine, issue.DocURL)
+			}
+		}
+		b.WriteString("\n")
+	}
+
+	// Docker-in-Docker
+	if r := result.DockerInDockerResult; r != nil && !r.Skipped && len(r.Issues) > 0 {
+		b.WriteString("**Pipeline must not use Docker-in-Docker:**\n")
+		for _, issue := range r.Issues {
+			if issue.Code == CodeDockerInDockerUsage {
+				fmt.Fprintf(b, "- `%s` Job `%s` uses DinD service: `%s` ([docs](%s))\n", issue.Code, issue.JobName, issue.ServiceImage, issue.DocURL)
+			} else {
+				fmt.Fprintf(b, "- `%s` Job `%s`: %s ([docs](%s))\n", issue.Code, issue.JobName, issue.Detail, issue.DocURL)
 			}
 		}
 		b.WriteString("\n")

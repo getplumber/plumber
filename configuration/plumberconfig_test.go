@@ -329,6 +329,7 @@ func TestValidControlNames(t *testing.T) {
 		"pipelineMustNotExecuteUnverifiedScripts",
 		"pipelineMustNotIncludeHardcodedJobs",
 		"pipelineMustNotOverrideJobVariables",
+		"pipelineMustNotUseDockerInDocker",
 		"pipelineMustNotUseUnsafeVariableExpansion",
 		"securityJobsMustNotBeWeakened",
 	}

@@ -54,6 +54,9 @@ var validControlSchema = map[string][]string{
 	"pipelineMustNotOverrideJobVariables": {
 		"enabled", "variables",
 	},
+	"pipelineMustNotUseDockerInDocker": {
+		"enabled", "detectInsecureDaemon",
+	},
 }
 
 // validControlKeys returns the list of known control names.
@@ -134,6 +137,9 @@ type ControlsConfig struct {
 
 	// PipelineMustNotOverrideJobVariables control configuration
 	PipelineMustNotOverrideJobVariables *JobVariablesOverrideControlConfig `yaml:"pipelineMustNotOverrideJobVariables,omitempty"`
+
+	// PipelineMustNotUseDockerInDocker control configuration
+	PipelineMustNotUseDockerInDocker *DockerInDockerControlConfig `yaml:"pipelineMustNotUseDockerInDocker,omitempty"`
 }
 
 // ImageForbiddenTagsControlConfig configuration for the forbidden image tags control
@@ -335,6 +341,17 @@ type JobVariablesOverrideControlConfig struct {
 	// in the pipeline configuration file. They should only be set via
 	// GitLab CI/CD Settings > Variables.
 	Variables []string `yaml:"variables,omitempty"`
+}
+
+// DockerInDockerControlConfig configuration for the Docker-in-Docker detection control
+type DockerInDockerControlConfig struct {
+	// Enabled controls whether this check runs
+	Enabled *bool `yaml:"enabled,omitempty"`
+
+	// DetectInsecureDaemon when true, also flags insecure daemon configuration
+	// (DOCKER_TLS_CERTDIR="" or DOCKER_HOST pointing to non-TLS port 2375)
+	// in jobs that use a DinD service.
+	DetectInsecureDaemon *bool `yaml:"detectInsecureDaemon,omitempty"`
 }
 
 // RequiredTemplatesControlConfig configuration for the required templates control
@@ -671,6 +688,33 @@ func (c *JobVariablesOverrideControlConfig) IsEnabled() bool {
 		return false
 	}
 	return *c.Enabled
+}
+
+// GetPipelineMustNotUseDockerInDockerConfig returns the control configuration
+// Returns nil if not configured
+func (c *PlumberConfig) GetPipelineMustNotUseDockerInDockerConfig() *DockerInDockerControlConfig {
+	if c == nil {
+		return nil
+	}
+	return c.Controls.PipelineMustNotUseDockerInDocker
+}
+
+// IsEnabled returns whether the control is enabled
+// Returns false if not properly configured
+func (c *DockerInDockerControlConfig) IsEnabled() bool {
+	if c == nil || c.Enabled == nil {
+		return false
+	}
+	return *c.Enabled
+}
+
+// IsDetectInsecureDaemonEnabled returns whether insecure daemon detection is enabled.
+// Defaults to true when the field is nil.
+func (c *DockerInDockerControlConfig) IsDetectInsecureDaemonEnabled() bool {
+	if c == nil || c.DetectInsecureDaemon == nil {
+		return true
+	}
+	return *c.DetectInsecureDaemon
 }
 
 // IsEnabled returns whether the control is enabled

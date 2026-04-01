@@ -453,3 +453,24 @@ controls:
     # Supports wildcards (e.g., https://internal-artifacts.example.com/*).
     trustedUrls: []
       # - https://internal-artifacts.example.com/*
+
+  # ── Pipeline must not use Docker-in-Docker ──────────────────────
+  #
+  # Detects CI/CD jobs that use Docker-in-Docker (dind) services.
+  # Running a Docker daemon inside a CI container on shared runners
+  # in privileged mode enables container escape, lateral movement,
+  # and access to secrets from other jobs on the same runner.
+  #
+  # This is a well-known attack vector documented in GitLab CI
+  # security best practices.
+  #
+  # Best practice: Use Kaniko or Buildah for container image builds
+  # instead of Docker-in-Docker.
+  pipelineMustNotUseDockerInDocker:
+    # Set to false to disable this control
+    enabled: true
+
+    # When true, also flags insecure daemon configuration
+    # (DOCKER_TLS_CERTDIR="" or DOCKER_HOST tcp://...:2375)
+    # in jobs that use a DinD service.
+    detectInsecureDaemon: true

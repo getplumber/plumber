@@ -26,6 +26,7 @@ const (
 	controlSecurityJobsMustNotBeWeakened               = "securityJobsMustNotBeWeakened"
 	controlPipelineMustNotExecuteUnverifiedScripts     = "pipelineMustNotExecuteUnverifiedScripts"
 	controlPipelineMustNotOverrideJobVariables         = "pipelineMustNotOverrideJobVariables"
+	controlPipelineMustNotUseDockerInDocker            = "pipelineMustNotUseDockerInDocker"
 )
 
 // shouldRunControl applies --controls / --skip-controls filtering for a control.
@@ -76,7 +77,7 @@ func clearProgressLine(conf *configuration.Configuration) {
 }
 
 // analysisStepCount is the total number of progress steps reported during analysis.
-const analysisStepCount = 17
+const analysisStepCount = 18
 
 // RunAnalysis executes the complete pipeline analysis for a GitLab project
 func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
@@ -517,6 +518,23 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 
 	jobVarOverrideResult := jobVarOverrideConf.Run(pipelineOriginData)
 	result.JobVariablesOverrideResult = jobVarOverrideResult
+
+	// 16. Run Pipeline Must Not Use Docker-in-Docker control
+	reportProgress(conf, 17, analysisStepCount, "Checking Docker-in-Docker services")
+	l.Info("Running Pipeline Must Not Use Docker-in-Docker control")
+
+	dockerInDockerConf := &GitlabPipelineDockerInDockerConf{}
+	if shouldRunControl(controlPipelineMustNotUseDockerInDocker, conf) {
+		if err := dockerInDockerConf.GetConf(conf.PlumberConfig); err != nil {
+			l.WithError(err).Error("Failed to load DockerInDocker config from .plumber.yaml file")
+			return result, fmt.Errorf("invalid configuration: %w", err)
+		}
+	} else {
+		dockerInDockerConf.Enabled = false
+	}
+
+	dockerInDockerResult := dockerInDockerConf.Run(pipelineOriginData)
+	result.DockerInDockerResult = dockerInDockerResult
 
 	reportProgress(conf, analysisStepCount, analysisStepCount, "Analysis complete")
 

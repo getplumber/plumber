@@ -47,6 +47,10 @@ const (
 	CodeSecurityJobWeakened ErrorCode = "ISSUE-410"
 	// ISSUE-411: Pipeline downloads and executes a script without integrity verification (curl|bash, wget|sh)
 	CodeUnverifiedScriptExecution ErrorCode = "ISSUE-411"
+	// ISSUE-412: CI/CD job uses a Docker-in-Docker (dind) service
+	CodeDockerInDockerUsage ErrorCode = "ISSUE-412"
+	// ISSUE-413: CI/CD job uses Docker-in-Docker with insecure daemon configuration
+	CodeDockerInDockerInsecure ErrorCode = "ISSUE-413"
 )
 
 // Issue codes for access and authorization controls (5xx)
@@ -199,6 +203,23 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Download the script to a file first, verify its checksum against a known-good value, then execute it. Alternatively, vendor the script into your repository or use a trusted package manager.",
 		DocURL:      docsBaseURL + string(CodeUnverifiedScriptExecution),
 		ControlName: "pipelineMustNotExecuteUnverifiedScripts",
+	},
+
+	CodeDockerInDockerUsage: {
+		Code:        CodeDockerInDockerUsage,
+		Title:       "Docker-in-Docker service detected",
+		Description: "A CI/CD job uses a Docker-in-Docker (dind) service. On shared runners running in privileged mode, this enables container escape, lateral movement, and access to secrets from other jobs on the same runner.",
+		Remediation: "Replace Docker-in-Docker with a safer alternative such as Kaniko or Buildah for building container images. These tools do not require privileged mode and avoid the security risks of running a Docker daemon inside a CI container.",
+		DocURL:      docsBaseURL + string(CodeDockerInDockerUsage),
+		ControlName: "pipelineMustNotUseDockerInDocker",
+	},
+	CodeDockerInDockerInsecure: {
+		Code:        CodeDockerInDockerInsecure,
+		Title:       "Docker-in-Docker with insecure daemon configuration",
+		Description: "A CI/CD job uses Docker-in-Docker with an insecure daemon configuration. Setting DOCKER_TLS_CERTDIR to an empty string or using DOCKER_HOST with tcp://...:2375 disables TLS encryption between the CI job and the Docker daemon, allowing network-level eavesdropping and command injection.",
+		Remediation: "If Docker-in-Docker is required, ensure TLS is enabled: do not set DOCKER_TLS_CERTDIR to an empty string, and use tcp://docker:2376 (TLS) instead of tcp://docker:2375 (plaintext). Prefer Kaniko or Buildah to avoid this pattern entirely.",
+		DocURL:      docsBaseURL + string(CodeDockerInDockerInsecure),
+		ControlName: "pipelineMustNotUseDockerInDocker",
 	},
 
 	// Access and authorization controls (5xx)

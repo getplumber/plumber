@@ -48,6 +48,7 @@ Plumber is a compliance scanner for GitLab. It reads your `.gitlab-ci.yml` and r
 - Debug trace variables (`CI_DEBUG_TRACE`) leaking secrets in job logs
 - Unsafe variable injection via `eval`/`sh -c`/`bash -c` (OWASP CICD-SEC-1)
 - Weakened security jobs (`allow_failure: true`, `when: manual`, `rules: [{when: never}]`) on SAST, Secret Detection, and other scanners (OWASP CICD-SEC-4)
+- Docker-in-Docker (dind) services enabling container escape on shared runners
 
 **How does it work?** Plumber connects to your GitLab instance via API, analyzes your pipeline configuration, and reports any issues it finds. You define what's allowed in a config file (`.plumber.yaml`), and Plumber tells you if your project complies. When running locally from your git repo, Plumber uses your **local CI configuration file** (`.gitlab-ci.yml` by default, or a [custom path](#custom-ci-configuration-file-path)) allowing you to validate changes before pushing.
 
@@ -312,7 +313,7 @@ This creates `.plumber.yaml` with sensible [defaults](./.plumber.yaml). Customiz
 
 ### Available Controls
 
-Plumber includes 13 compliance controls. Each can be enabled/disabled and customized in [.plumber.yaml](.plumber.yaml):
+Plumber includes 14 compliance controls. Each can be enabled/disabled and customized in [.plumber.yaml](.plumber.yaml):
 
 <details>
 <summary><b>1. Container images must not use forbidden tags</b></summary>
@@ -674,6 +675,25 @@ Add any variable name you want to protect to the `variables` list. Variables are
 
 </details>
 
+<details>
+<summary><b>14. Pipeline must not use Docker-in-Docker</b></summary>
+
+Detects CI/CD jobs that use Docker-in-Docker (dind) services. Running a Docker daemon inside a CI container on shared runners in privileged mode enables container escape, lateral movement, and access to secrets from other jobs on the same runner.
+
+When `detectInsecureDaemon` is enabled (default: true), the control also flags jobs where TLS is disabled (`DOCKER_TLS_CERTDIR=""`) or the Docker host uses the plaintext port (`tcp://docker:2375`).
+
+**Configuration:**
+
+```yaml
+pipelineMustNotUseDockerInDocker:
+  enabled: true
+  detectInsecureDaemon: true
+```
+
+Consider using [Kaniko](https://github.com/GoogleContainerTools/kaniko) or [Buildah](https://github.com/containers/buildah) as safer alternatives for building container images in CI/CD.
+
+</details>
+
 ### Selective Control Execution
 
 You can run or skip specific controls using their YAML key names from `.plumber.yaml`. This is useful for iterative debugging or targeted CI checks.
@@ -719,6 +739,7 @@ Controls not selected are reported as **skipped** in the output. The `--controls
 | `pipelineMustNotExecuteUnverifiedScripts` |
 | `pipelineMustNotIncludeHardcodedJobs` |
 | `pipelineMustNotOverrideJobVariables` |
+| `pipelineMustNotUseDockerInDocker` |
 | `pipelineMustNotUseUnsafeVariableExpansion` |
 | `securityJobsMustNotBeWeakened` |
 
@@ -858,10 +879,10 @@ brew install plumber
 To install a specific version:
 
 ```bash
-brew install getplumber/plumber/plumber@0.1.76
+brew install getplumber/plumber/plumber@0.1.77
 ```
 
-> **Note:** Versioned formulas are keg-only. Use the full path for example `/usr/local/opt/plumber@0.1.76/bin/plumber` or run `brew link plumber@0.1.76` to add it to your PATH.
+> **Note:** Versioned formulas are keg-only. Use the full path for example `/usr/local/opt/plumber@0.1.77/bin/plumber` or run `brew link plumber@0.1.77` to add it to your PATH.
 
 ### Mise
 

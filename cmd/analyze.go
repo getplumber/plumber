@@ -326,6 +326,11 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		controlCount++
 	}
 
+	if result.DockerInDockerResult != nil && !result.DockerInDockerResult.Skipped {
+		complianceSum += result.DockerInDockerResult.Compliance
+		controlCount++
+	}
+
 	// Calculate average compliance
 	// If no controls ran (e.g., data collection failed), compliance is 0% - we can't verify anything
 	var compliance float64 = 0
@@ -1154,6 +1159,42 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 						fmt.Printf("    %s•%s [%s] %s = \"%s\" (global variables)\n", colorYellow, colorReset, issue.Code, issue.VariableName, issue.Value)
 					} else {
 						fmt.Printf("    %s•%s [%s] %s = \"%s\" (job '%s')\n", colorYellow, colorReset, issue.Code, issue.VariableName, issue.Value, location)
+					}
+					fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
+				}
+			}
+		}
+		fmt.Println()
+	}
+
+	// Control 14: Pipeline must not use Docker-in-Docker
+	if result.DockerInDockerResult != nil {
+		ctrl := controlSummary{
+			name:       "Pipeline must not use Docker-in-Docker",
+			compliance: result.DockerInDockerResult.Compliance,
+			issues:     len(result.DockerInDockerResult.Issues),
+			skipped:    result.DockerInDockerResult.Skipped,
+			codes:      []string{string(control.CodeDockerInDockerUsage), string(control.CodeDockerInDockerInsecure)},
+		}
+		controls = append(controls, ctrl)
+
+		printControlHeader("Pipeline must not use Docker-in-Docker", result.DockerInDockerResult.Compliance, result.DockerInDockerResult.Skipped)
+
+		if result.DockerInDockerResult.Skipped {
+			fmt.Printf("  %sStatus: SKIPPED (disabled in configuration)%s\n", colorDim, colorReset)
+		} else {
+			fmt.Printf("  Jobs Checked: %d\n", result.DockerInDockerResult.Metrics.TotalJobsChecked)
+			fmt.Printf("  DinD Services Found: %d\n", result.DockerInDockerResult.Metrics.DindServicesFound)
+			fmt.Printf("  Insecure Daemon Config: %d\n", result.DockerInDockerResult.Metrics.InsecureDaemonFound)
+
+			if len(result.DockerInDockerResult.Issues) > 0 {
+				fmt.Printf("\n  %sDocker-in-Docker Issues Found:%s\n", colorYellow, colorReset)
+				for _, issue := range result.DockerInDockerResult.Issues {
+					if issue.Code == control.CodeDockerInDockerUsage {
+						fmt.Printf("    %s•%s [%s] Job '%s' uses DinD service: %s\n", colorYellow, colorReset, issue.Code, issue.JobName, issue.ServiceImage)
+						fmt.Printf("      %sConsider using Kaniko or Buildah instead%s\n", colorDim, colorReset)
+					} else {
+						fmt.Printf("    %s•%s [%s] Job '%s': %s\n", colorYellow, colorReset, issue.Code, issue.JobName, issue.Detail)
 					}
 					fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
 				}
