@@ -84,6 +84,7 @@ Choose **one** of these methods. You don't need both:
   - [Project Badges](#project-badges)
 - [Installation](#-installation)
 - [CLI Reference](#-cli-reference)
+  - [`plumber explain`](#plumber-explain)
 - [Self-Hosted GitLab](#%EF%B8%8F-self-hosted-gitlab)
 - [Troubleshooting](#-troubleshooting)
 - [See it in action](#-see-it-in-action)
@@ -879,10 +880,10 @@ brew install plumber
 To install a specific version:
 
 ```bash
-brew install getplumber/plumber/plumber@0.1.77
+brew install getplumber/plumber/plumber@0.1.82
 ```
 
-> **Note:** Versioned formulas are keg-only. Use the full path for example `/usr/local/opt/plumber@0.1.77/bin/plumber` or run `brew link plumber@0.1.77` to add it to your PATH.
+> **Note:** Versioned formulas are keg-only. Use the full path for example `/usr/local/opt/plumber@0.1.82/bin/plumber` or run `brew link plumber@0.1.82` to add it to your PATH.
 
 ### Mise
 
@@ -1202,6 +1203,64 @@ New keys in default (missing from your config):
 
 Unknown keys in your config (not in defaults):
   controls.containerImageMustNotUseForbiddenTag ← possible typo? Did you mean "controls.containerImageMustNotUseForbiddenTags.enabled"?
+```
+
+### `plumber explain`
+
+Look up detailed information about a Plumber issue code directly in the terminal. Useful for understanding what an issue means, why it matters, and how to fix it — without leaving your current context.
+
+```bash
+plumber explain [ISSUE-CODE] [flags]
+```
+
+`ISSUE-CODE` supports both `ISSUE-412` and shorthand numeric form like `412`.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--list` | `false` | List all issue codes with short descriptions |
+| `--all` | `false` | Show detailed information for all issue codes |
+| `--json` | `false` | Output in JSON format |
+
+**Examples:**
+
+```bash
+# Explain a specific issue code
+plumber explain ISSUE-412
+
+# Shorthand form (equivalent)
+plumber explain 412
+
+# List all available issue codes
+plumber explain --list
+
+# Get machine-readable output
+plumber explain --json ISSUE-412
+
+# Full reference dump
+plumber explain --all
+
+# Full reference in JSON
+plumber explain --all --json
+```
+
+**Sample output:**
+
+```
+ISSUE-412: Docker-in-Docker service detected
+Control:     pipelineMustNotUseDockerInDocker
+
+Description:
+  A CI/CD job uses a Docker-in-Docker (dind) service. On shared runners
+  running in privileged mode, this enables container escape, lateral
+  movement, and access to secrets from other jobs on the same runner.
+
+Remediation:
+  Replace Docker-in-Docker with a safer alternative such as Kaniko or
+  Buildah for building container images. These tools do not require
+  privileged mode and avoid the security risks of running a Docker
+  daemon inside a CI container.
+
+Documentation: https://getplumber.io/docs/use-plumber/issues/ISSUE-412
 ```
 
 ---
