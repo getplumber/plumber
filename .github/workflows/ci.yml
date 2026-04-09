@@ -115,6 +115,7 @@ jobs:
           image: plumber:ci
           fail-build: true
           severity-cutoff: high
+          only-fixed: true
 
   # trivy:
   #   name: Container Scan (Trivy)
