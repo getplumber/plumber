@@ -84,6 +84,7 @@ Choose **one** of these methods. You don't need both:
   - [Project Badges](#project-badges)
 - [Installation](#-installation)
 - [CLI Reference](#-cli-reference)
+  - [`plumber config init`](#plumber-config-init)
   - [`plumber explain`](#plumber-explain)
 - [Self-Hosted GitLab](#%EF%B8%8F-self-hosted-gitlab)
 - [Troubleshooting](#-troubleshooting)
@@ -126,11 +127,21 @@ chmod +x plumber-* && sudo mv plumber-* /usr/local/bin/plumber
 
 > 📦 See [Installation](#-installation) for Windows, Docker, or building from source.
 
-### Step 2: Generate a Config File
+### Step 2: Create a Config File
+
+**Interactive minimal config** (recommended for first-time setup):
+
+```bash
+plumber config init
+```
+
+**Or** generate the full commented template:
 
 ```bash
 plumber config generate
 ```
+
+In non-interactive environments (for example CI), use `plumber config generate` to write the default template with comments, then trim or adjust as needed.
 
 This creates `.plumber.yaml` with [default](./.plumber.yaml) compliance rules. You can customize it later.
 
@@ -1063,9 +1074,31 @@ export PLUMBER_NO_UPDATE_CHECK=1
 | `1` | Compliance failure (compliance < threshold) |
 | `2` | Runtime error (config error, network failure, missing token, etc.) |
 
+### `plumber config init`
+
+Interactive wizard to create a **minimal** `.plumber.yaml` by choosing policy areas (images, pipeline composition, branch protection, variables). Omits controls you do not select. For every control in a selected area, the wizard asks for the fields defined in the schema (for example forbidden include refs, security job patterns and sub-checks, trusted script URLs, job variable lists, DinD options, branch protection levels, debug and unsafe-expansion variable lists, regex allowlists, and required components or templates via the `required` expression).
+
+Requires an interactive terminal. For the full default template with inline comments (including in CI), use [`plumber config generate`](#plumber-config-generate).
+
+```bash
+plumber config init [flags]
+```
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--output`, `-o` | `.plumber.yaml` | Output file path |
+| `--force`, `-f` | `false` | Overwrite existing file without asking |
+
+**Examples:**
+
+```bash
+plumber config init
+plumber config init --output ./configs/plumber.yaml
+```
+
 ### `plumber config generate`
 
-Generate a default `.plumber.yaml` configuration file.
+Writes the **official default** `.plumber.yaml`: the full template Plumber ships with, including comments and every control documented inline. Use [`plumber config init`](#plumber-config-init) instead if you want a smaller, wizard-driven file with only the checks you pick.
 
 ```bash
 plumber config generate [flags]
@@ -1079,13 +1112,8 @@ plumber config generate [flags]
 **Examples:**
 
 ```bash
-# Generate default config
 plumber config generate
-
-# Custom filename
 plumber config generate --output my-plumber.yaml
-
-# Overwrite existing conf file
 plumber config generate --force
 ```
 

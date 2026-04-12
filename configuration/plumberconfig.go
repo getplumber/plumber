@@ -465,6 +465,11 @@ func (c *PlumberConfig) validate() error {
 	return nil
 }
 
+// Validate checks structural consistency (required component/template expressions, etc.).
+func (c *PlumberConfig) Validate() error {
+	return c.validate()
+}
+
 // GetContainerImageMustNotUseForbiddenTagsConfig returns the control configuration
 // Returns nil if not configured
 func (c *PlumberConfig) GetContainerImageMustNotUseForbiddenTagsConfig() *ImageForbiddenTagsControlConfig {

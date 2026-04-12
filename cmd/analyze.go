@@ -191,7 +191,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	plumberConfig, configPath, configWarnings, err := configuration.LoadPlumberConfig(configFile)
 	if err != nil {
 		if strings.Contains(err.Error(), "config file not found") {
-			return fmt.Errorf("configuration file not found: %w. You can generate a default config with `plumber config generate`", err)
+			return fmt.Errorf("configuration file not found: %w. Create one with `plumber config generate` or `plumber config init`", err)
 		}
 		return fmt.Errorf("configuration error: %w", err)
 	}

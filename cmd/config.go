@@ -84,29 +84,35 @@ Examples:
 
 var configGenerateCmd = &cobra.Command{
 	Use:   "generate",
-	Short: "Generate a default .plumber.yaml configuration file",
-	Long: `Generate a default .plumber.yaml configuration file.
+	Short: "Write the default .plumber.yaml template (commented)",
+	Long: `Write the official default .plumber.yaml to disk: the same file shipped
+with Plumber, including comments and every control documented inline.
 
-This creates a configuration file with sensible defaults that you can
-customize for your organization's compliance requirements.
-
-The generated config includes:
-- Container image tag policies (forbid 'latest', 'dev', etc.)
-- Container image digest pinning policy
-- Trusted registry whitelist
-- Branch protection requirements
+Use this when you want the full reference template (for example the first
+commit in a repo, or CI that copies a known baseline).
 
 Examples:
-  # Generate default config in current directory
   plumber config generate
-
-  # Generate config with custom filename
-  plumber config generate --output my-plumber-config.yaml
-
-  # Overwrite existing file
+  plumber config generate --output my-plumber.yaml
   plumber config generate --force
 `,
 	RunE: runConfigGenerate,
+}
+
+var configInitCmd = &cobra.Command{
+	Use:   "init",
+	Short: "Interactive wizard for a tailored minimal .plumber.yaml",
+	Long: `Walk through policy choices in the terminal and write a minimal .plumber.yaml:
+only the controls you enable, compact YAML, no long commented tutorial.
+
+Use generate for the full default template with comments. Use init when you
+want a smaller file shaped to your project.
+
+Requires an interactive terminal (TTY). In CI or headless environments, use
+generate and edit the file, or commit a hand-tuned config.
+
+Related: https://github.com/getplumber/plumber/issues/125`,
+	RunE: runConfigInit,
 }
 
 var configDiffCmd = &cobra.Command{
@@ -136,6 +142,7 @@ func init() {
 	rootCmd.AddCommand(configCmd)
 	configCmd.AddCommand(configViewCmd)
 	configCmd.AddCommand(configGenerateCmd)
+	configCmd.AddCommand(configInitCmd)
 	configCmd.AddCommand(configValidateCmd)
 	configCmd.AddCommand(configDiffCmd)
 
@@ -150,6 +157,9 @@ func init() {
 	// config generate flags
 	configGenerateCmd.Flags().StringVarP(&configGenerateOutput, "output", "o", ".plumber.yaml", "Output file path")
 	configGenerateCmd.Flags().BoolVarP(&configGenerateForce, "force", "f", false, "Overwrite existing file")
+
+	configInitCmd.Flags().StringVarP(&configInitOutput, "output", "o", ".plumber.yaml", "Path to write the generated configuration")
+	configInitCmd.Flags().BoolVarP(&configInitForce, "force", "f", false, "Overwrite existing file without asking")
 
 	// config diff flags
 	configDiffCmd.Flags().StringVarP(&configDiffFile, "config", "c", ".plumber.yaml", "Path to configuration file")
@@ -322,6 +332,10 @@ func formatNestedArrays(input string) string {
 }
 
 func runConfigGenerate(cmd *cobra.Command, args []string) error {
+	if !verbose {
+		logrus.SetLevel(logrus.WarnLevel)
+	}
+
 	// Check if file already exists
 	if _, err := os.Stat(configGenerateOutput); err == nil {
 		if !configGenerateForce {
