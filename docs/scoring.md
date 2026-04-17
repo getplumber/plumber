@@ -1,0 +1,124 @@
+# Plumber pipeline scoring (profile `scoring-v1`)
+
+This document describes how Plumber computes the **letter score** (A–E), **points** (0–100), and **Critical malus**, as implemented in `control/scoring.go`. It matches the active profile id `scoring-v1` (`PlumberScoreProfileID`).
+
+For broader product notes (mixed languages, design history), see [`../scoring.md`](../scoring.md) in the repository root.
+
+---
+
+## Language: score vs points
+
+| Term | Meaning | In JSON (`plumberScore` / PBOM) |
+|------|---------|----------------------------------|
+| **Score** | The letter **A**, **B**, **C**, **D**, or **E**. This is what people usually mean by “what’s our Plumber score?” | `score` (string) |
+| **Points** | A number from **0** to **100** measuring pipeline risk from open issues. Higher is better. | `rawPoints`, `finalPoints` (numbers) |
+
+- **Raw points** are computed from severity losses **before** Critical malus.
+- **Final points** apply Critical malus when relevant, then the **letter score** is read from **final points only**.
+
+---
+
+## Inputs: severity counts
+
+Plumber walks every open issue on **enabled** (non-skipped) controls and assigns each issue a **severity** (Critical, High, Medium, Low) from its issue code. It then counts how many issues fall in each bucket:
+
+- `counts.critical`, `counts.high`, `counts.medium`, `counts.low`
+
+Those four integers drive the math below.
+
+---
+
+## Step 1: Loss per severity bucket
+
+For each severity with count `n > 0`, base **weight** `w`, and per-severity **cap** `C` on total loss for that bucket:
+
+| Severity | Weight `w` | Cap `C` on loss for this bucket |
+|----------|-------------|----------------------------------|
+| Critical | 30 | none (∞) |
+| High     | 30 | 100 |
+| Medium   | 10 | 30 |
+| Low      | 5  | 15 |
+
+**Uncapped loss** for that bucket:
+
+\[
+L_{\text{uncapped}} = w \times (1 + \log_2 n)
+\]
+
+**Capped loss** (what actually counts):
+
+- If the bucket has **no cap** (Critical): \(L = L_{\text{uncapped}}\).
+- Otherwise: \(L = \min(L_{\text{uncapped}}, C)\).
+
+**Why log₂(n)?** Extra occurrences of the same class of problem still hurt, but not linearly without bound.
+
+**Why caps?** So one severity bucket cannot erase the entire scale, except Critical which is intentionally uncapped so accumulating Critical issues stays painful.
+
+---
+
+## Step 2: Raw points
+
+Sum capped losses across the four severities: `totalLoss`.
+
+\[
+\text{rawPoints} = \max(0,\ 100 - \text{totalLoss})
+\]
+
+So you start from 100 and subtract the combined capped losses. Raw points cannot go below 0.
+
+---
+
+## Step 3: Critical malus → final points
+
+If **at least one** Critical issue exists (`counts.critical > 0`):
+
+- **Critical malus** applies.
+- Final points are capped: \(\text{finalPoints} = \min(\text{rawPoints},\ 30)\).
+- `criticalMalusApplied` is `true` and `criticalMalusMax` is **30** (the cap used in that `min`).
+
+If there are **no** Critical issues:
+
+- `finalPoints = rawPoints`.
+- `criticalMalusApplied` is `false`.
+
+**Rationale:** any Critical finding is treated as immediate, high-impact risk. Final points are forced into the **E band** (below 31), so the letter score cannot read better than **E** while Critical issues remain, even if raw points would otherwise be high.
+
+---
+
+## Step 4: Letter score from final points
+
+The letter **score** is derived **only** from **final points** using fixed thresholds:
+
+| Letter score | Final points (inclusive) |
+|----------------|---------------------------|
+| **A** | finalPoints ≥ 90 |
+| **B** | 71 ≤ finalPoints < 90 |
+| **C** | 51 ≤ finalPoints < 71 |
+| **D** | 31 ≤ finalPoints < 51 |
+| **E** | finalPoints < 31 |
+
+So with malus, `finalPoints = 30` maps to **E** (because 30 < 31).
+
+---
+
+## Breakdown output (`--score-point`)
+
+With `plumber analyze --score-point`, the CLI prints a **points breakdown** table: for each non-empty severity row it shows count, weight, cap, and **capped loss**, then base 100, total loss, raw points, malus line (if any), final points, and letter score. That table is the same math as this document.
+
+With `--score` only, you still get the **summary banner** (badge, final points, bar, severity counts, malus line) but not the full breakdown table.
+
+---
+
+## Where this appears
+
+| Surface | When |
+|---------|------|
+| `plumber analyze --output …` JSON | `plumberScore` object when `--score` or `--score-point` is set |
+| PBOM / CycloneDX | Same fields and CycloneDX properties (see [PBOM.md](PBOM.md)) |
+| Merge request comment | Short block with `--score`; full points list with `--score-point` |
+
+---
+
+## Stability and changes
+
+The profile id is exposed as `profileId: "scoring-v1"`. If weights, caps, malus, or letter thresholds change in code, the profile id should be bumped and this file updated so consumers can tell which rules produced a given result.

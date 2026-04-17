@@ -780,7 +780,14 @@ plumber analyze --output plumber-report.json
 
 The JSON includes all control results, compliance scores, issues found, and project metadata.
 
-With `--score` and/or `--score-point`, the JSON also includes a `plumberScore` object (letter **score** A–E, numeric **points** 0–100, severity counts) when at least one flag is set.
+With `--score` and/or `--score-point`, the JSON also includes a `plumberScore` object (letter **score** A–E, numeric **points** 0–100, severity counts, optional per-severity loss rows) when at least one flag is set.
+
+### Plumber score (letter + points)
+
+Plumber separates **letter score** (A–E) from numeric **points** (0–100). Points are computed from open issues grouped by **severity** (Critical, High, Medium, Low), using each issue’s code. **Critical malus** can cap final points when any Critical issue is present. The active ruleset is profile **`scoring-v1`**.
+
+📖 Full specification: **[docs/scoring.md](docs/scoring.md)**  
+📖 Severity per issue code: [Plumber issues docs](https://getplumber.io/docs/use-plumber/issues/)
 
 ### Pipeline Bill of Materials (PBOM)
 
@@ -797,7 +804,7 @@ The PBOM includes:
 - **Compliance status** for each dependency
 - **Override detection** - includes whose jobs are overridden with forbidden CI/CD keywords
 
-With `--score` / `--score-point`, the PBOM JSON includes a top-level `plumberScore` object. CycloneDX output adds `plumber:score-*`, `plumber:points-*`, and letter `plumber:score` metadata (see [docs/PBOM.md](docs/PBOM.md)).
+With `--score` / `--score-point`, the PBOM JSON includes a top-level `plumberScore` object. CycloneDX output adds `plumber:score-*`, `plumber:points-*`, and letter `plumber:score` metadata (see [docs/PBOM.md](docs/PBOM.md); calculation in [docs/scoring.md](docs/scoring.md)).
 
 ### CycloneDX SBOM
 
@@ -828,6 +835,7 @@ Plumber provides colorized terminal output for easy scanning:
 - **Red crosses (✗)** indicate failing controls
 - **Yellow bullets (•)** highlight specific issues found
 - Summary tables show compliance percentages at a glance
+- With **`--score`** / **`--score-point`**, issue lines show **severity** tags (e.g. CRIT / HIGH / MED / LOW) from issue codes; the **Controls** table includes a severity rollup; the **Plumber score** banner (and optional **points breakdown**) appears **after** the compliance tables (see [docs/scoring.md](docs/scoring.md))
 
 ---
 
@@ -896,10 +904,10 @@ brew install plumber
 To install a specific version:
 
 ```bash
-brew install getplumber/plumber/plumber@0.1.82
+brew install getplumber/plumber/plumber@0.1.84
 ```
 
-> **Note:** Versioned formulas are keg-only. Use the full path for example `/usr/local/opt/plumber@0.1.82/bin/plumber` or run `brew link plumber@0.1.82` to add it to your PATH.
+> **Note:** Versioned formulas are keg-only. Use the full path for example `/usr/local/opt/plumber@0.1.84/bin/plumber` or run `brew link plumber@0.1.84` to add it to your PATH.
 
 ### Mise
 
@@ -1049,6 +1057,8 @@ plumber analyze [flags]
 | `--fail-warnings` | No | `false` | Treat configuration warnings (unknown keys) as errors (exit 2) |
 | `--ci-config-path` | No | auto-detect | Override the CI configuration file path (default: auto-detected from GitLab project settings, usually `.gitlab-ci.yml`). See [Custom CI Configuration File Path](#custom-ci-configuration-file-path) |
 | `--verbose`, `-v` | No | `false` | Enable verbose/debug output for troubleshooting |
+
+> **Plumber score:** how letter **A–E**, numeric **points**, and **Critical malus** are computed is documented in **[docs/scoring.md](docs/scoring.md)** (profile `scoring-v1`). Issue **severities** come from each issue’s documented code ([issues](https://getplumber.io/docs/use-plumber/issues/)).
 
 > \* Auto-detected from git remote (`origin`) if not specified. Supports both SSH and HTTPS remote URLs.
 

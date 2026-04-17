@@ -103,7 +103,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 	},
 	CodeImageForbiddenTag: {
 		Code:        CodeImageForbiddenTag,
-		Severity:    SeverityMedium,
+		Severity:    SeverityHigh,
 		Title:       "Forbidden container image tag",
 		Description: "A container image in the pipeline uses a tag that is forbidden by the configuration (e.g., 'latest', 'dev'). Mutable tags make builds non-reproducible because the underlying image can change without notice.",
 		Remediation: "Pin the image to a specific immutable version tag (e.g., 'python:3.12.1' instead of 'python:latest'). Configure forbidden tags in .plumber.yaml under containerImageMustNotUseForbiddenTags.forbiddenTags.",
@@ -112,7 +112,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 	},
 	CodeImageNotPinnedByDigest: {
 		Code:        CodeImageNotPinnedByDigest,
-		Severity:    SeverityCritical,
+		Severity:    SeverityHigh,
 		Title:       "Container image is not pinned by digest",
 		Description: "A container image in the pipeline is not pinned by its SHA256 digest. Without digest pinning, a tag can be reassigned to a different image, introducing supply chain risks.",
 		Remediation: "Pin the image using its digest: 'image: registry.example.com/myimage@sha256:abc123...'. You can find the digest with 'docker inspect --format={{.RepoDigests}} <image>'.",
@@ -132,7 +132,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 	},
 	CodeUnsafeVariableExpansion: {
 		Code:        CodeUnsafeVariableExpansion,
-		Severity:    SeverityCritical,
+		Severity:    SeverityHigh,
 		Title:       "Unsafe variable expansion",
 		Description: "A dangerous CI variable is expanded in a shell re-interpretation context (eval, sh -c, bash -c, source, etc.). The expanded value is executed as code, enabling command injection if the variable is user-controlled.",
 		Remediation: "Avoid passing variables to commands that re-interpret input as shell code. Use the variable in a safe context (e.g. echo, env) or sanitize/allowlist values. Configure dangerousVariables and allowedPatterns in .plumber.yaml under pipelineMustNotUseUnsafeVariableExpansion.",
@@ -141,7 +141,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 	},
 	CodeJobVariableOverridden: {
 		Code:        CodeJobVariableOverridden,
-		Severity:    SeverityHigh,
+		Severity:    SeverityCritical,
 		Title:       "Job variable overrides controlled variable",
 		Description: "A CI/CD variable that should only be set in GitLab CI/CD Settings (as a protected or project-level variable) is redefined in the pipeline configuration. This can neutralize security scanners, disable protections, or alter intended behavior.",
 		Remediation: "Remove the variable from .gitlab-ci.yml and set it in GitLab CI/CD Settings > Variables instead. Configure the list of controlled variables in .plumber.yaml under pipelineMustNotOverrideJobVariables.variables.",

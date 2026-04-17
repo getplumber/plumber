@@ -5,8 +5,8 @@ import (
 	"sort"
 )
 
-// PlumberScoreProfileID identifies the scoring rules version (see plumber-cli/scoring.md).
-const PlumberScoreProfileID = "scoring-v9"
+// PlumberScoreProfileID identifies the scoring rules version (see docs/scoring.md).
+const PlumberScoreProfileID = "scoring-v1"
 
 // SeverityCounts is the number of detected issues per documented severity bucket.
 type SeverityCounts struct {
@@ -18,12 +18,12 @@ type SeverityCounts struct {
 
 // SeverityLoss is points lost for one severity bucket after weight, log growth, and cap.
 type SeverityLoss struct {
-	Severity       IssueSeverity `json:"severity"`
-	Count          int           `json:"count"`
-	Weight         float64       `json:"weight"`
-	Cap            float64       `json:"cap,omitempty"` // omitted when infinite (critical)
-	UncappedLoss   float64       `json:"uncappedLoss"`
-	CappedLoss     float64       `json:"cappedLoss"`
+	Severity     IssueSeverity `json:"severity"`
+	Count        int           `json:"count"`
+	Weight       float64       `json:"weight"`
+	Cap          float64       `json:"cap,omitempty"` // omitted when infinite (critical)
+	UncappedLoss float64       `json:"uncappedLoss"`
+	CappedLoss   float64       `json:"cappedLoss"`
 }
 
 // PlumberScoreResult is the official result: letter Score (A–E) derived from numeric Points (0–100).
@@ -185,9 +185,9 @@ func CriticalIssueCodesSorted(result *AnalysisResult) []string {
 	return out
 }
 
-// ComputePlumberScore applies the official v9 scoring rules from scoring.md.
+// ComputePlumberScore applies the scoring-v1 rules (see docs/scoring.md).
 func ComputePlumberScore(counts SeverityCounts) PlumberScoreResult {
-	// weights and caps per scoring.md
+	// weights and caps (documented in docs/scoring.md)
 	const (
 		w_crit = 30.0
 		w_high = 30.0
