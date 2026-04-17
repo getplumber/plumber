@@ -6,6 +6,7 @@ import (
 	"os"
 	"sort"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
@@ -29,6 +30,8 @@ var (
 	pbomCycloneDXFile string
 	mrComment         bool
 	badge             bool
+	showScore        bool
+	showScorePoint   bool
 	controlsFilter    string
 	skipControls      string
 	ciConfigPath      string
@@ -64,6 +67,8 @@ Optional flags:
   --pbom-cyclonedx   Write PBOM in CycloneDX format for integration with security tools
   --mr-comment       Post/update a compliance comment on the merge request (requires api scope, merge request pipeline only)
   --badge            Create/update a Plumber compliance badge on the project (requires api scope; only runs on default branch)
+  --score            Letter score, points, bar, and counts in stdout (banner only); points + score in JSON/PBOM/CycloneDX; badge/MR use letter when set (optional)
+  --score-point      Same as --score plus full points breakdown in stdout and MR comment (optional; wins if both set)
   --controls         Run only listed controls (comma-separated)
   --skip-controls    Skip listed controls (comma-separated)
   --fail-warnings    Treat configuration warnings as errors (exit 2)
@@ -113,6 +118,8 @@ func init() {
 	analyzeCmd.Flags().StringVar(&pbomCycloneDXFile, "pbom-cyclonedx", "", "Write PBOM in CycloneDX format (for security tool integration)")
 	analyzeCmd.Flags().BoolVar(&mrComment, "mr-comment", false, "Post/update a compliance comment on the merge request (requires api scope token; only works in merge request pipelines)")
 	analyzeCmd.Flags().BoolVar(&badge, "badge", false, "Create/update a Plumber compliance badge on the project (requires api scope; only runs on default branch)")
+	analyzeCmd.Flags().BoolVar(&showScore, "score", false, "Banner: letter score, points, bar, severity counts on stdout; points + score in JSON, PBOM, CycloneDX; badge shows letter when set")
+	analyzeCmd.Flags().BoolVar(&showScorePoint, "score-point", false, "Like --score plus full points breakdown in stdout and MR comment; overrides --score when both are set")
 	analyzeCmd.Flags().StringVar(&controlsFilter, "controls", "", "Run only listed controls (comma-separated)")
 	analyzeCmd.Flags().StringVar(&skipControls, "skip-controls", "", "Skip listed controls (comma-separated)")
 	analyzeCmd.Flags().BoolVar(&failWarnings, "fail-warnings", false, "Treat configuration warnings as errors (exit 2)")
@@ -167,6 +174,10 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	if controlsFilter != "" && skipControls != "" {
 		return fmt.Errorf("--controls and --skip-controls cannot be used together")
 	}
+
+	// --score-point implies score output; if both --score and --score-point are set, points mode wins for breakdown/MR text.
+	scoreMode := showScore || showScorePoint
+	scorePointMode := showScorePoint
 
 	controlsFilterList, err := parseControlsFilter(controlsFilter)
 	if err != nil {
@@ -338,16 +349,23 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		compliance = complianceSum / float64(controlCount)
 	}
 
+	var scoreResult *control.PlumberScoreResult
+	if scoreMode {
+		counts := control.AggregateSeverityCounts(result)
+		s := control.ComputePlumberScore(counts)
+		scoreResult = &s
+	}
+
 	// Print text output to stdout if enabled
 	if printOutput {
-		if err := outputText(result, threshold, compliance, controlCount); err != nil {
+		if err := outputText(result, threshold, compliance, controlCount, scoreResult, scoreMode, scorePointMode); err != nil {
 			return err
 		}
 	}
 
 	// Write JSON to file if specified
 	if outputFile != "" {
-		if err := writeJSONToFile(result, threshold, compliance, outputFile); err != nil {
+		if err := writeJSONToFile(result, threshold, compliance, outputFile, scoreResult, scoreMode); err != nil {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "Results written to: %s\n", outputFile)
@@ -355,7 +373,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 
 	// Write PBOM to file if specified
 	if pbomFile != "" {
-		if err := writePBOMToFile(result, cleanGitlabURL, defaultBranch, pbomFile); err != nil {
+		if err := writePBOMToFile(result, cleanGitlabURL, defaultBranch, pbomFile, scoreResult, scoreMode); err != nil {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "PBOM written to: %s\n", pbomFile)
@@ -363,7 +381,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 
 	// Write CycloneDX PBOM to file if specified
 	if pbomCycloneDXFile != "" {
-		if err := writePBOMCycloneDXToFile(result, cleanGitlabURL, defaultBranch, pbomCycloneDXFile); err != nil {
+		if err := writePBOMCycloneDXToFile(result, cleanGitlabURL, defaultBranch, pbomCycloneDXFile, scoreResult, scoreMode); err != nil {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "PBOM (CycloneDX) written to: %s\n", pbomCycloneDXFile)
@@ -373,7 +391,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	if mrComment {
 		if mrIID := glabCI.DetectMergeRequestIID(); mrIID != 0 {
 			fmt.Fprintf(os.Stderr, "Merge request pipeline detected (MR !%d), posting compliance comment...\n", mrIID)
-			if err := control.ManageMergeRequestComment(result.ProjectID, mrIID, result, compliance, threshold, conf); err != nil {
+			if err := control.ManageMergeRequestComment(result.ProjectID, mrIID, result, compliance, threshold, conf, scoreResult, scoreMode, scorePointMode); err != nil {
 				// Log but don't fail the analysis for a comment error
 				fmt.Fprintf(os.Stderr, "Warning: failed to post merge request comment: %v\n", err)
 			} else {
@@ -413,7 +431,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 
 		if shouldUpdateBadge {
 			fmt.Fprintf(os.Stderr, "Updating project compliance badge...\n")
-			if err := control.ManageProjectBadge(result.ProjectID, compliance, threshold, conf); err != nil {
+			if err := control.ManageProjectBadge(result.ProjectID, compliance, threshold, conf, scoreResult, scoreMode); err != nil {
 				// Log but don't fail the analysis for a badge error
 				fmt.Fprintf(os.Stderr, "Warning: failed to update project badge: %v\n", err)
 			} else {
@@ -495,18 +513,23 @@ func parseControlsFilter(raw string) ([]string, error) {
 	return controls, nil
 }
 
-func writeJSONToFile(result *control.AnalysisResult, threshold, compliance float64, filePath string) error {
+func writeJSONToFile(result *control.AnalysisResult, threshold, compliance float64, filePath string, score *control.PlumberScoreResult, scoreMode bool) error {
 	// Create output with threshold info
 	output := struct {
 		*control.AnalysisResult
-		Threshold  float64 `json:"threshold"`
-		Compliance float64 `json:"compliance"`
-		Passed     bool    `json:"passed"`
+		Threshold    float64                     `json:"threshold"`
+		Compliance   float64                     `json:"compliance"`
+		Passed       bool                        `json:"passed"`
+		PlumberScore *control.PlumberScoreResult `json:"plumberScore,omitempty"`
 	}{
 		AnalysisResult: result,
 		Threshold:      threshold,
 		Compliance:     compliance,
 		Passed:         compliance >= threshold,
+	}
+	if scoreMode && score != nil {
+		s := *score
+		output.PlumberScore = &s
 	}
 
 	// Create/overwrite the file
@@ -581,13 +604,34 @@ func buildIncludeOverrideData(result *control.AnalysisResult) *pbom.IncludeOverr
 	return data
 }
 
-func writePBOMToFile(result *control.AnalysisResult, gitlabURL, branch, filePath string) error {
+func pbomPlumberScoreSummary(score *control.PlumberScoreResult, scoreMode bool) *pbom.PlumberScoreSummary {
+	if score == nil || !scoreMode {
+		return nil
+	}
+	return &pbom.PlumberScoreSummary{
+		ProfileID:            score.ProfileID,
+		RawPoints:            score.RawPoints,
+		FinalPoints:          score.FinalPoints,
+		Score:                score.Score,
+		CriticalMalusApplied: score.CriticalMalusApplied,
+		CriticalMalusMax:     score.CriticalMalusMax,
+		Counts: pbom.PlumberScoreCounts{
+			Critical: score.Counts.Critical,
+			High:     score.Counts.High,
+			Medium:   score.Counts.Medium,
+			Low:      score.Counts.Low,
+		},
+	}
+}
+
+func writePBOMToFile(result *control.AnalysisResult, gitlabURL, branch, filePath string, score *control.PlumberScoreResult, scoreMode bool) error {
 	complianceData := buildImageComplianceData(result)
 	overrideData := buildIncludeOverrideData(result)
 	generator := pbom.NewGenerator(result.ProjectPath, result.ProjectID, gitlabURL, branch).
 		WithComplianceData(complianceData).
 		WithIncludeOverrideData(overrideData)
 	pipelineBOM := generator.Generate(result.PipelineImageData, result.PipelineOriginData)
+	pipelineBOM.PlumberScore = pbomPlumberScoreSummary(score, scoreMode)
 
 	file, err := os.Create(filePath)
 	if err != nil {
@@ -600,13 +644,14 @@ func writePBOMToFile(result *control.AnalysisResult, gitlabURL, branch, filePath
 	return encoder.Encode(pipelineBOM)
 }
 
-func writePBOMCycloneDXToFile(result *control.AnalysisResult, gitlabURL, branch, filePath string) error {
+func writePBOMCycloneDXToFile(result *control.AnalysisResult, gitlabURL, branch, filePath string, score *control.PlumberScoreResult, scoreMode bool) error {
 	complianceData := buildImageComplianceData(result)
 	overrideData := buildIncludeOverrideData(result)
 	generator := pbom.NewGenerator(result.ProjectPath, result.ProjectID, gitlabURL, branch).
 		WithComplianceData(complianceData).
 		WithIncludeOverrideData(overrideData)
 	pipelineBOM := generator.Generate(result.PipelineImageData, result.PipelineOriginData)
+	pipelineBOM.PlumberScore = pbomPlumberScoreSummary(score, scoreMode)
 
 	cycloneDX := pipelineBOM.ToCycloneDX(Version)
 
@@ -627,11 +672,92 @@ const (
 	colorRed         = "\033[31m"
 	colorGreen       = "\033[32m"
 	colorYellow      = "\033[33m"
+	colorBlue        = "\033[34m"
 	colorCyan        = "\033[36m"
 	colorGreenBright = "\033[92m"
 	colorBold        = "\033[1m"
 	colorDim         = "\033[2m"
+	colorBgRed       = "\033[41m"
+	colorBgYellow    = "\033[43m"
+	colorBlack       = "\033[30m"
+	colorWhite       = "\033[97m"
 )
+
+func severityTag(code control.ErrorCode) string {
+	switch control.SeverityForCode(code) {
+	case control.SeverityCritical:
+		return fmt.Sprintf("%s%s CRIT %s", colorBgRed, colorWhite, colorReset)
+	case control.SeverityHigh:
+		return fmt.Sprintf("%s%s HIGH %s", colorBgYellow, colorBlack, colorReset)
+	case control.SeverityMedium:
+		return fmt.Sprintf("%s MED  %s", colorCyan, colorReset)
+	case control.SeverityLow:
+		return fmt.Sprintf("%s LOW  %s", colorBlue, colorReset)
+	default:
+		return fmt.Sprintf("%s MED  %s", colorCyan, colorReset)
+	}
+}
+
+func highestSeverityLabel(c control.SeverityCounts, visibleWidth int) string {
+	pad := func(label string) string {
+		w := utf8.RuneCountInString(label)
+		if w < visibleWidth {
+			return label + strings.Repeat(" ", visibleWidth-w)
+		}
+		return label
+	}
+	switch {
+	case c.Critical > 0:
+		return fmt.Sprintf("%s%s%s%s", colorBgRed, colorWhite, pad("Critical"), colorReset)
+	case c.High > 0:
+		return fmt.Sprintf("%s%s%s%s", colorBgYellow, colorBlack, pad("High"), colorReset)
+	case c.Medium > 0:
+		return fmt.Sprintf("%s%s%s", colorCyan, pad("Medium"), colorReset)
+	case c.Low > 0:
+		return fmt.Sprintf("%s%s%s", colorBlue, pad("Low"), colorReset)
+	default:
+		return fmt.Sprintf("%s%s%s", colorDim, pad("-"), colorReset)
+	}
+}
+
+func scoreLetterColor(letter string) string {
+	switch letter {
+	case "A":
+		return colorGreen
+	case "B":
+		return colorGreenBright
+	case "C":
+		return colorYellow
+	case "D":
+		return "\033[38;5;208m" // orange
+	default:
+		return colorRed
+	}
+}
+
+func scoreBar(finalPoints float64, width int) string {
+	filled := int(finalPoints / 100.0 * float64(width))
+	if filled < 0 {
+		filled = 0
+	}
+	if filled > width {
+		filled = width
+	}
+	var barColor string
+	switch {
+	case finalPoints >= 90:
+		barColor = colorGreen
+	case finalPoints >= 71:
+		barColor = colorGreenBright
+	case finalPoints >= 51:
+		barColor = colorYellow
+	case finalPoints >= 31:
+		barColor = "\033[38;5;208m"
+	default:
+		barColor = colorRed
+	}
+	return barColor + strings.Repeat("█", filled) + colorDim + strings.Repeat("░", width-filled) + colorReset
+}
 
 // controlSummary holds summary data for a control
 type controlSummary struct {
@@ -640,6 +766,87 @@ type controlSummary struct {
 	issues     int
 	skipped    bool
 	codes      []string
+	bySeverity control.SeverityCounts // tallies from actual findings (C/H/M/L)
+}
+
+func uniqueSortedIssueCodeStrings(codes []control.ErrorCode) []string {
+	seen := make(map[string]bool)
+	var out []string
+	for _, c := range codes {
+		s := string(c)
+		if s == "" || seen[s] {
+			continue
+		}
+		seen[s] = true
+		out = append(out, s)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// compareSeverityWorstFirst compares severity tallies for "which is worse".
+// Returns negative if a is worse than b, positive if a is better, zero if equal.
+func compareSeverityWorstFirst(a, b control.SeverityCounts) int {
+	if a.Critical != b.Critical {
+		if a.Critical > b.Critical {
+			return -1
+		}
+		return 1
+	}
+	if a.High != b.High {
+		if a.High > b.High {
+			return -1
+		}
+		return 1
+	}
+	if a.Medium != b.Medium {
+		if a.Medium > b.Medium {
+			return -1
+		}
+		return 1
+	}
+	if a.Low != b.Low {
+		if a.Low > b.Low {
+			return -1
+		}
+		return 1
+	}
+	return 0
+}
+
+func sortControlSummariesForComplianceTable(s []controlSummary) {
+	sort.SliceStable(s, func(i, j int) bool {
+		a, b := s[i], s[j]
+		if a.skipped != b.skipped {
+			return !a.skipped && b.skipped
+		}
+		if a.skipped {
+			return a.name < b.name
+		}
+		if a.compliance != b.compliance {
+			return a.compliance < b.compliance
+		}
+		if cmp := compareSeverityWorstFirst(a.bySeverity, b.bySeverity); cmp != 0 {
+			return cmp < 0
+		}
+		if a.issues != b.issues {
+			return a.issues > b.issues
+		}
+		return a.name < b.name
+	})
+}
+
+func sortControlSummariesForIssuesTable(s []controlSummary) {
+	sort.SliceStable(s, func(i, j int) bool {
+		a, b := s[i], s[j]
+		if cmp := compareSeverityWorstFirst(a.bySeverity, b.bySeverity); cmp != 0 {
+			return cmp < 0
+		}
+		if a.issues != b.issues {
+			return a.issues > b.issues
+		}
+		return a.name < b.name
+	})
 }
 
 func printBanner() {
@@ -656,7 +863,7 @@ func printBanner() {
 	fmt.Printf("  %sJoin our community: %shttps://getplumber.io/discord%s\n\n", colorDim, colorCyan, colorReset)
 }
 
-func outputText(result *control.AnalysisResult, threshold, compliance float64, controlCount int) error {
+func outputText(result *control.AnalysisResult, threshold, compliance float64, controlCount int, score *control.PlumberScoreResult, scoreMode, scorePointMode bool) error {
 	// Collect control summaries for tables
 	var controls []controlSummary
 
@@ -693,16 +900,17 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 			controlName = "Container images must not use forbidden tags (pinned by digest)"
 		}
 
-		imageCodes := []string{string(control.CodeImageForbiddenTag)}
-		if result.ImageForbiddenTagsResult.MustBePinnedByDigest {
-			imageCodes = []string{string(control.CodeImageNotPinnedByDigest)}
+		ftIssueCodes := make([]control.ErrorCode, 0, len(result.ImageForbiddenTagsResult.Issues))
+		for _, issue := range result.ImageForbiddenTagsResult.Issues {
+			ftIssueCodes = append(ftIssueCodes, issue.Code)
 		}
 		ctrl := controlSummary{
 			name:       controlName,
 			compliance: result.ImageForbiddenTagsResult.Compliance,
 			issues:     len(result.ImageForbiddenTagsResult.Issues),
 			skipped:    result.ImageForbiddenTagsResult.Skipped,
-			codes:      imageCodes,
+			codes:      uniqueSortedIssueCodeStrings(ftIssueCodes),
+			bySeverity: control.SeverityCountsFromIssueCodes(ftIssueCodes),
 		}
 		controls = append(controls, ctrl)
 
@@ -719,7 +927,7 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 			if len(result.ImageForbiddenTagsResult.Issues) > 0 {
 				fmt.Printf("\n  %sImages Not Pinned By Digest Found:%s\n", colorYellow, colorReset)
 				for _, issue := range result.ImageForbiddenTagsResult.Issues {
-					fmt.Printf("    %s•%s [%s] Job '%s' uses image without digest pinning: %s\n", colorYellow, colorReset, issue.Code, issue.Job, issue.Link)
+					fmt.Printf("    %s [%s] Job '%s' uses image without digest pinning: %s\n", severityTag(issue.Code), issue.Code, issue.Job, issue.Link)
 					fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
 				}
 			}
@@ -731,7 +939,7 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 			if len(result.ImageForbiddenTagsResult.Issues) > 0 {
 				fmt.Printf("\n  %sForbidden Tags Found:%s\n", colorYellow, colorReset)
 				for _, issue := range result.ImageForbiddenTagsResult.Issues {
-					fmt.Printf("    %s•%s [%s] Job '%s' uses forbidden tag '%s' (image: %s)\n", colorYellow, colorReset, issue.Code, issue.Job, issue.Tag, issue.Link)
+					fmt.Printf("    %s [%s] Job '%s' uses forbidden tag '%s' (image: %s)\n", severityTag(issue.Code), issue.Code, issue.Job, issue.Tag, issue.Link)
 					fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
 				}
 			}
@@ -741,12 +949,17 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 
 	// Control 2: Container images must come from authorized sources
 	if result.ImageAuthorizedSourcesResult != nil {
+		authCodes := make([]control.ErrorCode, 0, len(result.ImageAuthorizedSourcesResult.Issues))
+		for _, issue := range result.ImageAuthorizedSourcesResult.Issues {
+			authCodes = append(authCodes, issue.Code)
+		}
 		ctrl := controlSummary{
 			name:       "Container images must come from authorized sources",
 			compliance: result.ImageAuthorizedSourcesResult.Compliance,
 			issues:     len(result.ImageAuthorizedSourcesResult.Issues),
 			skipped:    result.ImageAuthorizedSourcesResult.Skipped,
-			codes:      []string{string(control.CodeImageUnauthorizedSource)},
+			codes:      uniqueSortedIssueCodeStrings(authCodes),
+			bySeverity: control.SeverityCountsFromIssueCodes(authCodes),
 		}
 		controls = append(controls, ctrl)
 
@@ -762,7 +975,7 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 			if len(result.ImageAuthorizedSourcesResult.Issues) > 0 {
 				fmt.Printf("\n  %sUnauthorized Images Found:%s\n", colorYellow, colorReset)
 				for _, issue := range result.ImageAuthorizedSourcesResult.Issues {
-					fmt.Printf("    %s•%s [%s] Job '%s' uses unauthorized image: %s\n", colorYellow, colorReset, issue.Code, issue.Job, issue.Link)
+					fmt.Printf("    %s [%s] Job '%s' uses unauthorized image: %s\n", severityTag(issue.Code), issue.Code, issue.Job, issue.Link)
 					fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
 				}
 			}
@@ -772,12 +985,17 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 
 	// Control 3: Branch must be protected
 	if result.BranchProtectionResult != nil {
+		bpCodes := make([]control.ErrorCode, 0, len(result.BranchProtectionResult.Issues))
+		for _, issue := range result.BranchProtectionResult.Issues {
+			bpCodes = append(bpCodes, issue.Code)
+		}
 		ctrl := controlSummary{
 			name:       "Branch must be protected",
 			compliance: result.BranchProtectionResult.Compliance,
 			issues:     len(result.BranchProtectionResult.Issues),
 			skipped:    result.BranchProtectionResult.Skipped,
-			codes:      []string{string(control.CodeBranchUnprotected), string(control.CodeBranchNonCompliant)},
+			codes:      uniqueSortedIssueCodeStrings(bpCodes),
+			bySeverity: control.SeverityCountsFromIssueCodes(bpCodes),
 		}
 		controls = append(controls, ctrl)
 
@@ -798,10 +1016,10 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 				fmt.Printf("\n  %sIssues Found:%s\n", colorYellow, colorReset)
 				for _, issue := range result.BranchProtectionResult.Issues {
 					if issue.Type == "unprotected" {
-						fmt.Printf("    %s•%s [%s] Branch '%s' is not protected\n", colorYellow, colorReset, issue.Code, issue.BranchName)
+						fmt.Printf("    %s [%s] Branch '%s' is not protected\n", severityTag(issue.Code), issue.Code, issue.BranchName)
 						fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
 					} else {
-						fmt.Printf("    %s•%s [%s] Branch '%s' has non-compliant protection settings\n", colorYellow, colorReset, issue.Code, issue.BranchName)
+						fmt.Printf("    %s [%s] Branch '%s' has non-compliant protection settings\n", severityTag(issue.Code), issue.Code, issue.BranchName)
 						if issue.AllowForcePushDisplay {
 							fmt.Printf("      └─ Force push is allowed (should be disabled)\n")
 						}
@@ -824,12 +1042,17 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 
 	// Control 4: Pipeline must not include hardcoded jobs
 	if result.HardcodedJobsResult != nil {
+		hjCodes := make([]control.ErrorCode, 0, len(result.HardcodedJobsResult.Issues))
+		for _, issue := range result.HardcodedJobsResult.Issues {
+			hjCodes = append(hjCodes, issue.Code)
+		}
 		ctrl := controlSummary{
 			name:       "Pipeline must not include hardcoded jobs",
 			compliance: result.HardcodedJobsResult.Compliance,
 			issues:     len(result.HardcodedJobsResult.Issues),
 			skipped:    result.HardcodedJobsResult.Skipped,
-			codes:      []string{string(control.CodeJobHardcoded)},
+			codes:      uniqueSortedIssueCodeStrings(hjCodes),
+			bySeverity: control.SeverityCountsFromIssueCodes(hjCodes),
 		}
 		controls = append(controls, ctrl)
 
@@ -844,7 +1067,7 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 			if len(result.HardcodedJobsResult.Issues) > 0 {
 				fmt.Printf("\n  %sHardcoded Jobs Found:%s\n", colorYellow, colorReset)
 				for _, issue := range result.HardcodedJobsResult.Issues {
-					fmt.Printf("    %s•%s [%s] Job '%s' is hardcoded (not from include/component)\n", colorYellow, colorReset, issue.Code, issue.JobName)
+					fmt.Printf("    %s [%s] Job '%s' is hardcoded (not from include/component)\n", severityTag(issue.Code), issue.Code, issue.JobName)
 					fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
 				}
 			}
@@ -854,12 +1077,17 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 
 	// Control 5: Includes must be up to date
 	if result.OutdatedIncludesResult != nil {
+		oiCodes := make([]control.ErrorCode, 0, len(result.OutdatedIncludesResult.Issues))
+		for _, issue := range result.OutdatedIncludesResult.Issues {
+			oiCodes = append(oiCodes, issue.Code)
+		}
 		ctrl := controlSummary{
 			name:       "Includes must be up to date",
 			compliance: result.OutdatedIncludesResult.Compliance,
 			issues:     len(result.OutdatedIncludesResult.Issues),
 			skipped:    result.OutdatedIncludesResult.Skipped,
-			codes:      []string{string(control.CodeIncludeOutdated)},
+			codes:      uniqueSortedIssueCodeStrings(oiCodes),
+			bySeverity: control.SeverityCountsFromIssueCodes(oiCodes),
 		}
 		controls = append(controls, ctrl)
 
@@ -874,7 +1102,7 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 			if len(result.OutdatedIncludesResult.Issues) > 0 {
 				fmt.Printf("\n  %sOutdated Includes Found:%s\n", colorYellow, colorReset)
 				for _, issue := range result.OutdatedIncludesResult.Issues {
-					fmt.Printf("    %s•%s [%s] %s uses version '%s' (latest: %s)\n", colorYellow, colorReset, issue.Code, issue.GitlabIncludeLocation, issue.Version, issue.LatestVersion)
+					fmt.Printf("    %s [%s] %s uses version '%s' (latest: %s)\n", severityTag(issue.Code), issue.Code, issue.GitlabIncludeLocation, issue.Version, issue.LatestVersion)
 					fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
 				}
 			}
@@ -884,12 +1112,17 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 
 	// Control 6: Includes must not use forbidden versions
 	if result.ForbiddenVersionsIncludesResult != nil {
+		fvCodes := make([]control.ErrorCode, 0, len(result.ForbiddenVersionsIncludesResult.Issues))
+		for _, issue := range result.ForbiddenVersionsIncludesResult.Issues {
+			fvCodes = append(fvCodes, issue.Code)
+		}
 		ctrl := controlSummary{
 			name:       "Includes must not use forbidden versions",
 			compliance: result.ForbiddenVersionsIncludesResult.Compliance,
 			issues:     len(result.ForbiddenVersionsIncludesResult.Issues),
 			skipped:    result.ForbiddenVersionsIncludesResult.Skipped,
-			codes:      []string{string(control.CodeIncludeForbiddenVersion)},
+			codes:      uniqueSortedIssueCodeStrings(fvCodes),
+			bySeverity: control.SeverityCountsFromIssueCodes(fvCodes),
 		}
 		controls = append(controls, ctrl)
 
@@ -905,7 +1138,7 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 			if len(result.ForbiddenVersionsIncludesResult.Issues) > 0 {
 				fmt.Printf("\n  %sForbidden Versions Found:%s\n", colorYellow, colorReset)
 				for _, issue := range result.ForbiddenVersionsIncludesResult.Issues {
-					fmt.Printf("    %s•%s [%s] %s uses forbidden version '%s'\n", colorYellow, colorReset, issue.Code, issue.GitlabIncludeLocation, issue.Version)
+					fmt.Printf("    %s [%s] %s uses forbidden version '%s'\n", severityTag(issue.Code), issue.Code, issue.GitlabIncludeLocation, issue.Version)
 					fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
 				}
 			}
@@ -916,12 +1149,20 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 	// Control 7: Pipeline must include component
 	if result.RequiredComponentsResult != nil {
 		totalComponentIssues := len(result.RequiredComponentsResult.Issues) + len(result.RequiredComponentsResult.OverriddenIssues)
+		rcCodes := make([]control.ErrorCode, 0, totalComponentIssues)
+		for _, issue := range result.RequiredComponentsResult.Issues {
+			rcCodes = append(rcCodes, issue.Code)
+		}
+		for _, issue := range result.RequiredComponentsResult.OverriddenIssues {
+			rcCodes = append(rcCodes, issue.Code)
+		}
 		ctrl := controlSummary{
 			name:       "Pipeline must include component",
 			compliance: result.RequiredComponentsResult.Compliance,
 			issues:     totalComponentIssues,
 			skipped:    result.RequiredComponentsResult.Skipped,
-			codes:      []string{string(control.CodeComponentMissing), string(control.CodeComponentOverridden)},
+			codes:      uniqueSortedIssueCodeStrings(rcCodes),
+			bySeverity: control.SeverityCountsFromIssueCodes(rcCodes),
 		}
 		controls = append(controls, ctrl)
 
@@ -936,7 +1177,7 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 			if len(result.RequiredComponentsResult.Issues) > 0 {
 				fmt.Printf("\n  %sMissing Components:%s\n", colorYellow, colorReset)
 				for _, issue := range result.RequiredComponentsResult.Issues {
-					fmt.Printf("    %s•%s [%s] %s (group %d)\n", colorYellow, colorReset, issue.Code, issue.ComponentPath, issue.GroupIndex+1)
+					fmt.Printf("    %s [%s] %s (group %d)\n", severityTag(issue.Code), issue.Code, issue.ComponentPath, issue.GroupIndex+1)
 					fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
 				}
 			}
@@ -944,7 +1185,7 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 			if len(result.RequiredComponentsResult.OverriddenIssues) > 0 {
 				fmt.Printf("\n  %sOverridden Components:%s\n", colorYellow, colorReset)
 				for _, issue := range result.RequiredComponentsResult.OverriddenIssues {
-					fmt.Printf("    %s•%s [%s] %s (group %d)\n", colorYellow, colorReset, issue.Code, issue.ComponentPath, issue.GroupIndex+1)
+					fmt.Printf("    %s [%s] %s (group %d)\n", severityTag(issue.Code), issue.Code, issue.ComponentPath, issue.GroupIndex+1)
 					for _, job := range issue.OverriddenJobs {
 						fmt.Printf("      job %s%s%s overrides: %s\n", colorDim, job.JobName, colorReset, strings.Join(job.OverriddenKeys, ", "))
 					}
@@ -958,12 +1199,20 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 	// Control 8: Pipeline must include template
 	if result.RequiredTemplatesResult != nil {
 		totalTemplateIssues := len(result.RequiredTemplatesResult.Issues) + len(result.RequiredTemplatesResult.OverriddenIssues)
+		rtCodes := make([]control.ErrorCode, 0, totalTemplateIssues)
+		for _, issue := range result.RequiredTemplatesResult.Issues {
+			rtCodes = append(rtCodes, issue.Code)
+		}
+		for _, issue := range result.RequiredTemplatesResult.OverriddenIssues {
+			rtCodes = append(rtCodes, issue.Code)
+		}
 		ctrl := controlSummary{
 			name:       "Pipeline must include template",
 			compliance: result.RequiredTemplatesResult.Compliance,
 			issues:     totalTemplateIssues,
 			skipped:    result.RequiredTemplatesResult.Skipped,
-			codes:      []string{string(control.CodeTemplateMissing), string(control.CodeTemplateOverridden)},
+			codes:      uniqueSortedIssueCodeStrings(rtCodes),
+			bySeverity: control.SeverityCountsFromIssueCodes(rtCodes),
 		}
 		controls = append(controls, ctrl)
 
@@ -978,7 +1227,7 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 			if len(result.RequiredTemplatesResult.Issues) > 0 {
 				fmt.Printf("\n  %sMissing Templates:%s\n", colorYellow, colorReset)
 				for _, issue := range result.RequiredTemplatesResult.Issues {
-					fmt.Printf("    %s•%s [%s] %s (group %d)\n", colorYellow, colorReset, issue.Code, issue.TemplatePath, issue.GroupIndex+1)
+					fmt.Printf("    %s [%s] %s (group %d)\n", severityTag(issue.Code), issue.Code, issue.TemplatePath, issue.GroupIndex+1)
 					fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
 				}
 			}
@@ -986,7 +1235,7 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 			if len(result.RequiredTemplatesResult.OverriddenIssues) > 0 {
 				fmt.Printf("\n  %sOverridden Templates:%s\n", colorYellow, colorReset)
 				for _, issue := range result.RequiredTemplatesResult.OverriddenIssues {
-					fmt.Printf("    %s•%s [%s] %s (group %d)\n", colorYellow, colorReset, issue.Code, issue.TemplatePath, issue.GroupIndex+1)
+					fmt.Printf("    %s [%s] %s (group %d)\n", severityTag(issue.Code), issue.Code, issue.TemplatePath, issue.GroupIndex+1)
 					for _, job := range issue.OverriddenJobs {
 						fmt.Printf("      job %s%s%s overrides: %s\n", colorDim, job.JobName, colorReset, strings.Join(job.OverriddenKeys, ", "))
 					}
@@ -999,12 +1248,17 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 
 	// Control 9: Pipeline must not enable debug trace
 	if result.DebugTraceResult != nil {
+		dtCodes := make([]control.ErrorCode, 0, len(result.DebugTraceResult.Issues))
+		for _, issue := range result.DebugTraceResult.Issues {
+			dtCodes = append(dtCodes, issue.Code)
+		}
 		ctrl := controlSummary{
 			name:       "Pipeline must not enable debug trace",
 			compliance: result.DebugTraceResult.Compliance,
 			issues:     len(result.DebugTraceResult.Issues),
 			skipped:    result.DebugTraceResult.Skipped,
-			codes:      []string{string(control.CodeDebugTraceEnabled)},
+			codes:      uniqueSortedIssueCodeStrings(dtCodes),
+			bySeverity: control.SeverityCountsFromIssueCodes(dtCodes),
 		}
 		controls = append(controls, ctrl)
 
@@ -1021,9 +1275,9 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 				for _, issue := range result.DebugTraceResult.Issues {
 					location := issue.Location
 					if location == "global" {
-						fmt.Printf("    %s•%s [%s] %s = \"%s\" (global variables)\n", colorYellow, colorReset, issue.Code, issue.VariableName, issue.Value)
+						fmt.Printf("    %s [%s] %s = \"%s\" (global variables)\n", severityTag(issue.Code), issue.Code, issue.VariableName, issue.Value)
 					} else {
-						fmt.Printf("    %s•%s [%s] %s = \"%s\" (job '%s')\n", colorYellow, colorReset, issue.Code, issue.VariableName, issue.Value, location)
+						fmt.Printf("    %s [%s] %s = \"%s\" (job '%s')\n", severityTag(issue.Code), issue.Code, issue.VariableName, issue.Value, location)
 					}
 					fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
 				}
@@ -1034,12 +1288,17 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 
 	// Control 10: Pipeline must not use unsafe variable expansion
 	if result.VariableInjectionResult != nil {
+		viCodes := make([]control.ErrorCode, 0, len(result.VariableInjectionResult.Issues))
+		for _, issue := range result.VariableInjectionResult.Issues {
+			viCodes = append(viCodes, issue.Code)
+		}
 		ctrl := controlSummary{
 			name:       "Pipeline must not use unsafe variable expansion",
 			compliance: result.VariableInjectionResult.Compliance,
 			issues:     len(result.VariableInjectionResult.Issues),
 			skipped:    result.VariableInjectionResult.Skipped,
-			codes:      []string{string(control.CodeUnsafeVariableExpansion)},
+			codes:      uniqueSortedIssueCodeStrings(viCodes),
+			bySeverity: control.SeverityCountsFromIssueCodes(viCodes),
 		}
 		controls = append(controls, ctrl)
 
@@ -1056,9 +1315,9 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 				fmt.Printf("\n  %sUnsafe Variable Expansions Found:%s\n", colorYellow, colorReset)
 				for _, issue := range result.VariableInjectionResult.Issues {
 					if issue.JobName == "(global)" {
-						fmt.Printf("    %s•%s [%s] $%s in global %s: %s\n", colorYellow, colorReset, issue.Code, issue.VariableName, issue.ScriptBlock, issue.ScriptLine)
+						fmt.Printf("    %s [%s] $%s in global %s: %s\n", severityTag(issue.Code), issue.Code, issue.VariableName, issue.ScriptBlock, issue.ScriptLine)
 					} else {
-						fmt.Printf("    %s•%s [%s] $%s in job '%s' %s: %s\n", colorYellow, colorReset, issue.Code, issue.VariableName, issue.JobName, issue.ScriptBlock, issue.ScriptLine)
+						fmt.Printf("    %s [%s] $%s in job '%s' %s: %s\n", severityTag(issue.Code), issue.Code, issue.VariableName, issue.JobName, issue.ScriptBlock, issue.ScriptLine)
 					}
 					fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
 				}
@@ -1069,12 +1328,17 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 
 	// Control 11: Security jobs must not be weakened
 	if result.SecurityJobsWeakenedResult != nil {
+		sjCodes := make([]control.ErrorCode, 0, len(result.SecurityJobsWeakenedResult.Issues))
+		for _, issue := range result.SecurityJobsWeakenedResult.Issues {
+			sjCodes = append(sjCodes, issue.Code)
+		}
 		ctrl := controlSummary{
 			name:       "Security jobs must not be weakened",
 			compliance: result.SecurityJobsWeakenedResult.Compliance,
 			issues:     len(result.SecurityJobsWeakenedResult.Issues),
 			skipped:    result.SecurityJobsWeakenedResult.Skipped,
-			codes:      []string{string(control.CodeSecurityJobWeakened)},
+			codes:      uniqueSortedIssueCodeStrings(sjCodes),
+			bySeverity: control.SeverityCountsFromIssueCodes(sjCodes),
 		}
 		controls = append(controls, ctrl)
 
@@ -1089,7 +1353,7 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 			if len(result.SecurityJobsWeakenedResult.Issues) > 0 {
 				fmt.Printf("\n  %sWeakened Security Jobs Found:%s\n", colorYellow, colorReset)
 				for _, issue := range result.SecurityJobsWeakenedResult.Issues {
-					fmt.Printf("    %s•%s [%s] Job '%s': %s\n", colorYellow, colorReset, issue.Code, issue.JobName, issue.Detail)
+					fmt.Printf("    %s [%s] Job '%s': %s\n", severityTag(issue.Code), issue.Code, issue.JobName, issue.Detail)
 					fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
 				}
 			}
@@ -1099,12 +1363,17 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 
 	// Control 12: Pipeline must not execute unverified scripts
 	if result.UnverifiedScriptsResult != nil {
+		usCodes := make([]control.ErrorCode, 0, len(result.UnverifiedScriptsResult.Issues))
+		for _, issue := range result.UnverifiedScriptsResult.Issues {
+			usCodes = append(usCodes, issue.Code)
+		}
 		ctrl := controlSummary{
 			name:       "Pipeline must not execute unverified scripts",
 			compliance: result.UnverifiedScriptsResult.Compliance,
 			issues:     len(result.UnverifiedScriptsResult.Issues),
 			skipped:    result.UnverifiedScriptsResult.Skipped,
-			codes:      []string{string(control.CodeUnverifiedScriptExecution)},
+			codes:      uniqueSortedIssueCodeStrings(usCodes),
+			bySeverity: control.SeverityCountsFromIssueCodes(usCodes),
 		}
 		controls = append(controls, ctrl)
 
@@ -1121,9 +1390,9 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 				fmt.Printf("\n  %sUnverified Script Executions Found:%s\n", colorYellow, colorReset)
 				for _, issue := range result.UnverifiedScriptsResult.Issues {
 					if issue.JobName == "(global)" {
-						fmt.Printf("    %s•%s [%s] Global %s: %s\n", colorYellow, colorReset, issue.Code, issue.ScriptBlock, issue.ScriptLine)
+						fmt.Printf("    %s [%s] Global %s: %s\n", severityTag(issue.Code), issue.Code, issue.ScriptBlock, issue.ScriptLine)
 					} else {
-						fmt.Printf("    %s•%s [%s] Job '%s' %s: %s\n", colorYellow, colorReset, issue.Code, issue.JobName, issue.ScriptBlock, issue.ScriptLine)
+						fmt.Printf("    %s [%s] Job '%s' %s: %s\n", severityTag(issue.Code), issue.Code, issue.JobName, issue.ScriptBlock, issue.ScriptLine)
 					}
 					fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
 				}
@@ -1134,12 +1403,17 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 
 	// Control 13: Pipeline must not override job variables
 	if result.JobVariablesOverrideResult != nil {
+		jvCodes := make([]control.ErrorCode, 0, len(result.JobVariablesOverrideResult.Issues))
+		for _, issue := range result.JobVariablesOverrideResult.Issues {
+			jvCodes = append(jvCodes, issue.Code)
+		}
 		ctrl := controlSummary{
 			name:       "Pipeline must not override job variables",
 			compliance: result.JobVariablesOverrideResult.Compliance,
 			issues:     len(result.JobVariablesOverrideResult.Issues),
 			skipped:    result.JobVariablesOverrideResult.Skipped,
-			codes:      []string{string(control.CodeJobVariableOverridden)},
+			codes:      uniqueSortedIssueCodeStrings(jvCodes),
+			bySeverity: control.SeverityCountsFromIssueCodes(jvCodes),
 		}
 		controls = append(controls, ctrl)
 
@@ -1156,9 +1430,9 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 				for _, issue := range result.JobVariablesOverrideResult.Issues {
 					location := issue.Location
 					if location == "global" {
-						fmt.Printf("    %s•%s [%s] %s = \"%s\" (global variables)\n", colorYellow, colorReset, issue.Code, issue.VariableName, issue.Value)
+						fmt.Printf("    %s [%s] %s = \"%s\" (global variables)\n", severityTag(issue.Code), issue.Code, issue.VariableName, issue.Value)
 					} else {
-						fmt.Printf("    %s•%s [%s] %s = \"%s\" (job '%s')\n", colorYellow, colorReset, issue.Code, issue.VariableName, issue.Value, location)
+						fmt.Printf("    %s [%s] %s = \"%s\" (job '%s')\n", severityTag(issue.Code), issue.Code, issue.VariableName, issue.Value, location)
 					}
 					fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
 				}
@@ -1169,12 +1443,17 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 
 	// Control 14: Pipeline must not use Docker-in-Docker
 	if result.DockerInDockerResult != nil {
+		ddCodes := make([]control.ErrorCode, 0, len(result.DockerInDockerResult.Issues))
+		for _, issue := range result.DockerInDockerResult.Issues {
+			ddCodes = append(ddCodes, issue.Code)
+		}
 		ctrl := controlSummary{
 			name:       "Pipeline must not use Docker-in-Docker",
 			compliance: result.DockerInDockerResult.Compliance,
 			issues:     len(result.DockerInDockerResult.Issues),
 			skipped:    result.DockerInDockerResult.Skipped,
-			codes:      []string{string(control.CodeDockerInDockerUsage), string(control.CodeDockerInDockerInsecure)},
+			codes:      uniqueSortedIssueCodeStrings(ddCodes),
+			bySeverity: control.SeverityCountsFromIssueCodes(ddCodes),
 		}
 		controls = append(controls, ctrl)
 
@@ -1191,10 +1470,10 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 				fmt.Printf("\n  %sDocker-in-Docker Issues Found:%s\n", colorYellow, colorReset)
 				for _, issue := range result.DockerInDockerResult.Issues {
 					if issue.Code == control.CodeDockerInDockerUsage {
-						fmt.Printf("    %s•%s [%s] Job '%s' uses DinD service: %s\n", colorYellow, colorReset, issue.Code, issue.JobName, issue.ServiceImage)
+						fmt.Printf("    %s [%s] Job '%s' uses DinD service: %s\n", severityTag(issue.Code), issue.Code, issue.JobName, issue.ServiceImage)
 						fmt.Printf("      %sConsider using Kaniko or Buildah instead%s\n", colorDim, colorReset)
 					} else {
-						fmt.Printf("    %s•%s [%s] Job '%s': %s\n", colorYellow, colorReset, issue.Code, issue.JobName, issue.Detail)
+						fmt.Printf("    %s [%s] Job '%s': %s\n", severityTag(issue.Code), issue.Code, issue.JobName, issue.Detail)
 					}
 					fmt.Printf("      %s↳ docs: %s%s\n", colorDim, issue.DocURL, colorReset)
 				}
@@ -1207,6 +1486,11 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 	printSectionHeader("Summary")
 	fmt.Println()
 
+	if crit := control.CriticalIssueCodesSorted(result); len(crit) > 0 {
+		fmt.Printf("  %s▶ Critical issue codes:%s %s\n", colorRed, colorReset, strings.Join(crit, ", "))
+		fmt.Println()
+	}
+
 	// Status
 	if compliance >= threshold {
 		fmt.Printf("  Status: %s%sPASSED ✓%s\n\n", colorBold, colorGreen, colorReset)
@@ -1218,11 +1502,165 @@ func outputText(result *control.AnalysisResult, threshold, compliance float64, c
 	printIssuesTable(controls)
 	fmt.Println()
 
-	// Compliance Table
+	// Compliance Table (issues/compliance summary before Plumber score output)
 	printComplianceTable(controls, compliance, threshold)
 	fmt.Println()
 
+	// Letter score + points breakdown last on stdout (--score / --score-point)
+	printSummaryScoreBanner(score, scoreMode)
+	if scorePointMode && score != nil {
+		printScoreBreakdown(score)
+	}
+
 	return nil
+}
+
+// scoreBreakdownWidths are inner text widths (padding applied after; borders use w+2 dashes per column).
+const (
+	sbWSev  = 10
+	sbWCnt  = 5
+	sbWWgt  = 6
+	sbWCap  = 5
+	sbWLoss = 8
+)
+
+func padRunesRight(s string, w int) string {
+	n := utf8.RuneCountInString(s)
+	if n >= w {
+		return s
+	}
+	return s + strings.Repeat(" ", w-n)
+}
+
+func padRunesLeft(s string, w int) string {
+	n := utf8.RuneCountInString(s)
+	if n >= w {
+		return s
+	}
+	return strings.Repeat(" ", w-n) + s
+}
+
+func scoreBreakdownBorderTop() string {
+	parts := []int{sbWSev, sbWCnt, sbWWgt, sbWCap, sbWLoss}
+	var segs []string
+	for _, w := range parts {
+		segs = append(segs, strings.Repeat("─", w+2))
+	}
+	return "┌" + strings.Join(segs, "┬") + "┐"
+}
+
+func scoreBreakdownBorderMid() string {
+	parts := []int{sbWSev, sbWCnt, sbWWgt, sbWCap, sbWLoss}
+	var segs []string
+	for _, w := range parts {
+		segs = append(segs, strings.Repeat("─", w+2))
+	}
+	return "├" + strings.Join(segs, "┼") + "┤"
+}
+
+func scoreBreakdownBorderMidFooter() string {
+	parts := []int{sbWSev, sbWCnt, sbWWgt, sbWCap, sbWLoss}
+	var segs []string
+	for _, w := range parts {
+		segs = append(segs, strings.Repeat("─", w+2))
+	}
+	return "├" + strings.Join(segs[:4], "┴") + "┼" + segs[4] + "┤"
+}
+
+func scoreBreakdownBorderBottom() string {
+	parts := []int{sbWSev, sbWCnt, sbWWgt, sbWCap, sbWLoss}
+	var segs []string
+	for _, w := range parts {
+		segs = append(segs, strings.Repeat("─", w+2))
+	}
+	return "└" + strings.Join(segs, "┴") + "┘"
+}
+
+func scoreBreakdownSevColor(sev control.IssueSeverity) string {
+	switch sev {
+	case control.SeverityCritical:
+		return colorRed
+	case control.SeverityHigh:
+		return colorYellow
+	case control.SeverityMedium:
+		return colorCyan
+	default:
+		return colorBlue
+	}
+}
+
+func printScoreBreakdown(score *control.PlumberScoreResult) {
+	printSectionHeader("Points breakdown (beta)")
+	fmt.Println()
+	fmt.Printf("  %sProfile:%s %s\n\n", colorDim, colorReset, score.ProfileID)
+
+	var totalLoss float64
+	if len(score.Losses) > 0 {
+		fmt.Printf("  %s%s%s\n", colorDim, scoreBreakdownBorderTop(), colorReset)
+		fmt.Printf("  %s│ %s │ %s │ %s │ %s │ %s │%s\n", colorDim,
+			padRunesRight("Severity", sbWSev),
+			padRunesLeft("Count", sbWCnt),
+			padRunesLeft("Weight", sbWWgt),
+			padRunesLeft("Cap", sbWCap),
+			padRunesLeft("Loss", sbWLoss),
+			colorReset)
+		fmt.Printf("  %s%s%s\n", colorDim, scoreBreakdownBorderMid(), colorReset)
+
+		for _, l := range score.Losses {
+			capPlain := "inf"
+			if l.Severity != control.SeverityCritical {
+				capPlain = fmt.Sprintf("%.0f", l.Cap)
+			}
+			sc := scoreBreakdownSevColor(l.Severity)
+			lossStr := fmt.Sprintf("-%.1f", l.CappedLoss)
+			fmt.Printf("  %s│ %s%s%s │ %s%s%s │ %s%s%s │ %s%s%s │ %s%s%s │%s\n", colorDim,
+				sc, padRunesRight(string(l.Severity), sbWSev), colorReset,
+				colorDim, padRunesLeft(fmt.Sprintf("%d", l.Count), sbWCnt), colorReset,
+				colorDim, padRunesLeft(fmt.Sprintf("%.0f", l.Weight), sbWWgt), colorReset,
+				colorDim, padRunesLeft(capPlain, sbWCap), colorReset,
+				colorRed, padRunesLeft(lossStr, sbWLoss), colorReset,
+				colorReset)
+			totalLoss += l.CappedLoss
+		}
+		fmt.Printf("  %s%s%s\n", colorDim, scoreBreakdownBorderMidFooter(), colorReset)
+
+		mergedW := sbWSev + 3 + sbWCnt + 3 + sbWWgt + 3 + sbWCap // " │ " between four columns
+		tl := "Total loss"
+		tlPad := mergedW - utf8.RuneCountInString(tl)
+		if tlPad < 0 {
+			tlPad = 0
+		}
+		leftCell := colorBold + tl + colorReset + strings.Repeat(" ", tlPad)
+		totalStr := fmt.Sprintf("-%.1f", totalLoss)
+		fmt.Printf("  %s│ %s │ %s%s%s │%s\n", colorDim,
+			leftCell,
+			colorRed, padRunesLeft(totalStr, sbWLoss), colorReset,
+			colorReset)
+		fmt.Printf("  %s%s%s\n", colorDim, scoreBreakdownBorderBottom(), colorReset)
+		fmt.Println()
+
+		fmt.Printf("  Base points: %s100%s\n", colorGreen, colorReset)
+		fmt.Printf("  Total loss:  %s-%.1f%s\n", colorRed, totalLoss, colorReset)
+		fmt.Printf("  Raw points:  %.1f\n", score.RawPoints)
+	} else {
+		fmt.Printf("  Base points: %s100%s\n", colorGreen, colorReset)
+		fmt.Printf("  Raw points:  %.1f\n", score.RawPoints)
+	}
+	if score.CriticalMalusApplied {
+		fmt.Printf("  %sCritical malus: final points capped at %.0f%s\n", colorRed, score.CriticalMalusMax, colorReset)
+	}
+	gc := scoreLetterColor(score.Score)
+	fmt.Printf("  %sFinal points:%s %s%s%.1f / 100%s\n", colorBold, colorReset, colorBold, gc, score.FinalPoints, colorReset)
+	fmt.Printf("  %sScore:%s       %s%s%s%s\n", colorBold, colorReset, gc, colorBold, score.Score, colorReset)
+	fmt.Println()
+	fmt.Printf("  %sLetter score (from points):%s  %sA%s >=90  %s│%s  %sB%s >=71  %s│%s  %sC%s >=51  %s│%s  %sD%s >=31  %s│%s  %sE%s <31\n",
+		colorDim, colorReset,
+		colorGreen, colorReset, colorDim, colorReset,
+		colorGreenBright, colorReset, colorDim, colorReset,
+		colorYellow, colorReset, colorDim, colorReset,
+		"\033[38;5;208m", colorReset, colorDim, colorReset,
+		colorRed, colorReset)
+	fmt.Println()
 }
 
 func printControlHeader(name string, compliance float64, skipped bool) {
@@ -1250,62 +1688,134 @@ func printSectionHeader(name string) {
 	fmt.Printf("%s%s%s\n", colorDim, line, colorReset)
 }
 
-func printIssuesTable(controls []controlSummary) {
-	fmt.Printf("  %sIssues%s\n", colorBold, colorReset)
+// scoreLetterBadgeLines returns 5 pre-colored lines drawing a double-bordered badge
+// around the letter score (A–E), e.g.
+//
+//	╔═══════╗
+//	║       ║
+//	║   E   ║
+//	║       ║
+//	╚═══════╝
+//
+// The whole badge (borders + letter) is rendered in bold, using the letter's
+// tier color so it reads as a single coherent visual token.
+func scoreLetterBadgeLines(letter string) []string {
+	gc := scoreLetterColor(letter) + colorBold
+	// 7 interior columns keep the letter nicely framed (3 spaces on each side).
+	top := fmt.Sprintf("%s╔═══════╗%s", gc, colorReset)
+	mid := fmt.Sprintf("%s║       ║%s", gc, colorReset)
+	let := fmt.Sprintf("%s║   %s   ║%s", gc, letter, colorReset)
+	bot := fmt.Sprintf("%s╚═══════╝%s", gc, colorReset)
+	return []string{top, mid, let, mid, bot}
+}
 
-	// Calculate column widths dynamically based on longest control name and codes
-	controlWidth := 52 // minimum width
-	for _, ctrl := range controls {
-		needed := len(ctrl.name) + 2 // +2 for padding
+func printSummaryScoreBanner(score *control.PlumberScoreResult, scoreMode bool) {
+	if score == nil || !scoreMode {
+		return
+	}
+
+	const indent = "     "
+	const gap = "     "
+	badge := scoreLetterBadgeLines(score.Score)
+
+	fmt.Printf("  %s─── Plumber Score ─────────────────────────────────────%s\n\n", colorCyan, colorReset)
+
+	gc := scoreLetterColor(score.Score)
+	scoreLine := fmt.Sprintf("%s%s%.1f / 100 pts%s", colorBold, gc, score.FinalPoints, colorReset)
+	bar := scoreBar(score.FinalPoints, 30)
+	counts := fmt.Sprintf("%s%s Critical %s %-3d  %s%s High %s %-3d  %s Medium %s %-3d  %s Low %s %-3d",
+		colorBgRed, colorWhite, colorReset, score.Counts.Critical,
+		colorBgYellow, colorBlack, colorReset, score.Counts.High,
+		colorCyan, colorReset, score.Counts.Medium,
+		colorBlue, colorReset, score.Counts.Low)
+
+	// Side panel rows align with the 3 middle lines of the badge so the
+	// badge reads as the primary visual and the metrics sit beside it.
+	side := []string{"", scoreLine, bar, counts, ""}
+	for i, b := range badge {
+		if side[i] == "" {
+			fmt.Printf("%s%s\n", indent, b)
+		} else {
+			fmt.Printf("%s%s%s%s\n", indent, b, gap, side[i])
+		}
+	}
+
+	if score.CriticalMalusApplied {
+		fmt.Printf("\n%s%s⚠ Critical malus: final points capped at %.0f%s\n", indent, colorRed, score.CriticalMalusMax, colorReset)
+	}
+
+	fmt.Printf("\n  %s───────────────────────────────────────────────────────%s\n\n", colorDim, colorReset)
+}
+
+func printIssuesTable(controls []controlSummary) {
+	var rows []controlSummary
+	for _, c := range controls {
+		if c.issues > 0 {
+			rows = append(rows, c)
+		}
+	}
+
+	fmt.Printf("  %sControls%s\n", colorBold, colorReset)
+	if len(rows) == 0 {
+		fmt.Printf("  %s(none with open issues)%s\n", colorDim, colorReset)
+		return
+	}
+
+	sortControlSummariesForIssuesTable(rows)
+
+	controlWidth := 44
+	for _, ctrl := range rows {
+		needed := len(ctrl.name) + 2
 		if needed > controlWidth {
 			controlWidth = needed
 		}
 	}
-	codesWidth := 22 // enough for "ISSUE-29, ISSUE-30"
-	for _, ctrl := range controls {
+	codesWidth := 22
+	for _, ctrl := range rows {
 		codesStr := strings.Join(ctrl.codes, ", ")
 		needed := len(codesStr) + 2
 		if needed > codesWidth {
 			codesWidth = needed
 		}
 	}
-	issuesWidth := 10
+	sevWidth := 12
+	issuesWidth := 6
 
 	// Top border
-	fmt.Printf("  %s╔%s╤%s╤%s╗%s\n",
+	fmt.Printf("  %s╔%s╤%s╤%s╤%s╗%s\n",
 		colorCyan,
 		strings.Repeat("═", controlWidth),
 		strings.Repeat("═", codesWidth),
+		strings.Repeat("═", sevWidth),
 		strings.Repeat("═", issuesWidth),
 		colorReset)
 
 	// Header row
-	fmt.Printf("  %s║%s %-*s %s│%s %-*s %s│%s %*s %s║%s\n",
+	fmt.Printf("  %s║%s %-*s %s│%s %-*s %s│%s %-*s %s│%s %*s %s║%s\n",
 		colorCyan, colorReset,
 		controlWidth-2, "Control",
 		colorCyan, colorReset,
 		codesWidth-2, "Codes",
 		colorCyan, colorReset,
-		issuesWidth-2, "Issues",
+		sevWidth-2, "Severity",
+		colorCyan, colorReset,
+		issuesWidth-2, "#",
 		colorCyan, colorReset)
 
 	// Header separator
-	fmt.Printf("  %s╟%s┼%s┼%s╢%s\n",
+	fmt.Printf("  %s╟%s┼%s┼%s┼%s╢%s\n",
 		colorCyan,
 		strings.Repeat("─", controlWidth),
 		strings.Repeat("─", codesWidth),
+		strings.Repeat("─", sevWidth),
 		strings.Repeat("─", issuesWidth),
 		colorReset)
 
-	// Data rows
-	totalIssues := 0
-	for _, ctrl := range controls {
+	for _, ctrl := range rows {
 		issueStr := "-"
 		if !ctrl.skipped {
 			issueStr = fmt.Sprintf("%d", ctrl.issues)
-			totalIssues += ctrl.issues
 		}
-
 		issueColor := colorReset
 		if ctrl.issues > 0 {
 			issueColor = colorRed
@@ -1316,34 +1826,44 @@ func printIssuesTable(controls []controlSummary) {
 			codesStr = "-"
 		}
 
-		fmt.Printf("  %s║%s %-*s %s│%s %-*s %s│%s %s%*s%s %s║%s\n",
+		sevLabel := highestSeverityLabel(ctrl.bySeverity, sevWidth-2)
+		if ctrl.skipped || ctrl.bySeverity.Critical+ctrl.bySeverity.High+ctrl.bySeverity.Medium+ctrl.bySeverity.Low == 0 {
+			sevLabel = highestSeverityLabel(control.SeverityCounts{}, sevWidth-2)
+		}
+
+		fmt.Printf("  %s║%s %-*s %s│%s %-*s %s│%s %s %s│%s %s%*s%s %s║%s\n",
 			colorCyan, colorReset,
 			controlWidth-2, ctrl.name,
 			colorCyan, colorReset,
 			codesWidth-2, codesStr,
+			colorCyan, colorReset,
+			sevLabel,
 			colorCyan, colorReset,
 			issueColor, issuesWidth-2, issueStr, colorReset,
 			colorCyan, colorReset)
 	}
 
 	// Bottom border
-	fmt.Printf("  %s╚%s╧%s╧%s╝%s\n",
+	fmt.Printf("  %s╚%s╧%s╧%s╧%s╝%s\n",
 		colorCyan,
 		strings.Repeat("═", controlWidth),
 		strings.Repeat("═", codesWidth),
+		strings.Repeat("═", sevWidth),
 		strings.Repeat("═", issuesWidth),
 		colorReset)
 
-	// Docs footer
 	fmt.Printf("  %s↳ docs: https://getplumber.io/docs/use-plumber/issues/<code>%s\n", colorDim, colorReset)
 }
 
 func printComplianceTable(controls []controlSummary, overallCompliance, threshold float64) {
 	fmt.Printf("  %sCompliance%s\n", colorBold, colorReset)
 
+	sorted := append([]controlSummary(nil), controls...)
+	sortControlSummariesForComplianceTable(sorted)
+
 	// Calculate column widths dynamically based on longest control name
 	controlWidth := 52 // minimum width
-	for _, ctrl := range controls {
+	for _, ctrl := range sorted {
 		needed := len(ctrl.name) + 2 // +2 for padding
 		if needed > controlWidth {
 			controlWidth = needed
@@ -1379,7 +1899,7 @@ func printComplianceTable(controls []controlSummary, overallCompliance, threshol
 		colorReset)
 
 	// Data rows
-	for _, ctrl := range controls {
+	for _, ctrl := range sorted {
 		compStr := "-"
 		statusStr := "-"
 		compColor := colorReset

@@ -85,6 +85,37 @@ func (p *PBOM) ToCycloneDX(plumberVersion string) *CycloneDX {
 		Components: make([]CycloneDXComponent, 0, len(p.ContainerImages)+len(p.Includes)),
 	}
 
+	if ps := p.PlumberScore; ps != nil {
+		cdx.Metadata.Properties = append(cdx.Metadata.Properties,
+			CycloneDXProperty{Name: "plumber:score-profile", Value: ps.ProfileID},
+			CycloneDXProperty{Name: "plumber:points-raw", Value: fmt.Sprintf("%.2f", ps.RawPoints)},
+			CycloneDXProperty{Name: "plumber:points-final", Value: fmt.Sprintf("%.2f", ps.FinalPoints)},
+		)
+		if ps.Score != "" {
+			cdx.Metadata.Properties = append(cdx.Metadata.Properties,
+				CycloneDXProperty{Name: "plumber:score", Value: ps.Score})
+		}
+		cdx.Metadata.Properties = append(cdx.Metadata.Properties,
+			CycloneDXProperty{Name: "plumber:score-count-critical", Value: fmt.Sprintf("%d", ps.Counts.Critical)},
+			CycloneDXProperty{Name: "plumber:score-count-high", Value: fmt.Sprintf("%d", ps.Counts.High)},
+			CycloneDXProperty{Name: "plumber:score-count-medium", Value: fmt.Sprintf("%d", ps.Counts.Medium)},
+			CycloneDXProperty{Name: "plumber:score-count-low", Value: fmt.Sprintf("%d", ps.Counts.Low)},
+		)
+		if ps.CriticalMalusApplied {
+			cdx.Metadata.Properties = append(cdx.Metadata.Properties,
+				CycloneDXProperty{Name: "plumber:score-critical-malus", Value: "true"})
+		}
+		if cdx.Metadata.Component != nil {
+			cdx.Metadata.Component.Properties = append(cdx.Metadata.Component.Properties,
+				CycloneDXProperty{Name: "plumber:points-final", Value: fmt.Sprintf("%.2f", ps.FinalPoints)},
+			)
+			if ps.Score != "" {
+				cdx.Metadata.Component.Properties = append(cdx.Metadata.Component.Properties,
+					CycloneDXProperty{Name: "plumber:score", Value: ps.Score})
+			}
+		}
+	}
+
 	// Add container images as components
 	for i, img := range p.ContainerImages {
 		component := CycloneDXComponent{

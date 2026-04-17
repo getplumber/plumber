@@ -74,6 +74,14 @@ spec:
       description: "Create/update a Plumber compliance badge on the project (requires api scope; only runs on default branch pipelines)"
       default: false
       type: boolean
+    score:
+      description: "Banner on stdout: letter score, points, bar, and severity counts; points + score in JSON, PBOM, and CycloneDX; when badge is enabled, the badge shows the letter instead of compliance percentage"
+      default: false
+      type: boolean
+    score_point:
+      description: "Like score plus full points breakdown in stdout and MR comment; if both score and score_point are true, points mode is used"
+      default: false
+      type: boolean
     controls:
       description: "Run only listed controls (comma-separated control names). Cannot be used with skip_controls."
       default: ""
@@ -180,6 +188,14 @@ spec:
       if [ "$[[ inputs.badge ]]" = "true" ]; then
         BADGE_FLAG="--badge"
       fi
+      SCORE_FLAG=""
+      if [ "$[[ inputs.score ]]" = "true" ]; then
+        SCORE_FLAG="--score"
+      fi
+      SCORE_POINT_FLAG=""
+      if [ "$[[ inputs.score_point ]]" = "true" ]; then
+        SCORE_POINT_FLAG="--score-point"
+      fi
       CONTROLS_FLAG=""
       if [ -n "$[[ inputs.controls ]]" ]; then
         CONTROLS_FLAG="--controls $[[ inputs.controls ]]"
@@ -206,6 +222,8 @@ spec:
         $VERBOSE_FLAG \
         $MR_COMMENT_FLAG \
         $BADGE_FLAG \
+        $SCORE_FLAG \
+        $SCORE_POINT_FLAG \
         $CONTROLS_FLAG \
         $SKIP_CONTROLS_FLAG \
         $FAIL_WARNINGS_FLAG

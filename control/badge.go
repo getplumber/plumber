@@ -10,11 +10,14 @@ import (
 
 // ManageProjectBadge creates or updates the Plumber compliance badge on the project.
 // The badge shows the compliance percentage with green (passed) or red (failed) color.
+// When useLetterScore is true and ps is non-nil, the badge shows letter score (A–E) instead (see ScoreBadgeURL).
 func ManageProjectBadge(
 	projectID int,
 	compliance float64,
 	threshold float64,
 	conf *configuration.Configuration,
+	ps *PlumberScoreResult,
+	useLetterScore bool,
 ) error {
 	l := logrus.WithFields(logrus.Fields{
 		"action":     "ManageProjectBadge",
@@ -25,6 +28,9 @@ func ManageProjectBadge(
 
 	// Generate badge image URL
 	badgeImageURL := ComplianceBadgeURL(compliance, threshold)
+	if useLetterScore && ps != nil {
+		badgeImageURL = ScoreBadgeURL(ps.Score)
+	}
 
 	// Badge link URL - link to the project itself for now
 	// Could be enhanced to link to Plumber dashboard or pipeline

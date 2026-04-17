@@ -31,6 +31,28 @@ type PBOM struct {
 
 	// Summary statistics
 	Summary Summary `json:"summary"`
+
+	// PlumberScore is optional letter Score (A–E) and numeric Points (0–100); set when analyze uses --score and/or --score-point.
+	PlumberScore *PlumberScoreSummary `json:"plumberScore,omitempty"`
+}
+
+// PlumberScoreSummary mirrors control.PlumberScoreResult for JSON consumers (PBOM / SBOM).
+type PlumberScoreSummary struct {
+	ProfileID            string             `json:"profileId"`
+	RawPoints            float64            `json:"rawPoints"`
+	FinalPoints          float64            `json:"finalPoints"`
+	Score                string             `json:"score,omitempty"`
+	CriticalMalusApplied bool               `json:"criticalMalusApplied,omitempty"`
+	CriticalMalusMax     float64            `json:"criticalMalusMax,omitempty"`
+	Counts               PlumberScoreCounts `json:"counts"`
+}
+
+// PlumberScoreCounts is the number of issues per severity bucket.
+type PlumberScoreCounts struct {
+	Critical int `json:"critical"`
+	High     int `json:"high"`
+	Medium   int `json:"medium"`
+	Low      int `json:"low"`
 }
 
 // ProjectInfo contains information about the analyzed project

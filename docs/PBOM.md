@@ -81,7 +81,8 @@ The native Plumber PBOM format provides a detailed, pipeline-specific inventory 
   "project": { ... },
   "containerImages": [ ... ],
   "includes": [ ... ],
-  "summary": { ... }
+  "summary": { ... },
+  "plumberScore": { ... }
 }
 ```
 
@@ -95,6 +96,7 @@ The native Plumber PBOM format provides a detailed, pipeline-specific inventory 
 | `containerImages` | array | All container images used in the pipeline |
 | `includes` | array | All includes (components, templates, local, remote, project) |
 | `summary` | object | Aggregate statistics |
+| `plumberScore` | object | Optional. Present when `plumber analyze` is run with `--score` and/or `--score-point`. Letter score (A–E), points (0–100), and severity counts (see below). |
 
 ### `project` Object
 
@@ -217,11 +219,39 @@ All fields are always present (default to `0`).
 | `remoteIncludes` | number | Remote URL includes |
 | `templates` | number | GitLab template includes |
 
+### `plumberScore` Object (optional)
+
+Present only when analysis is run with `--score` and/or `--score-point`. Values follow the [Plumber Score](https://getplumber.io/docs/use-plumber/issues/) rules (severity weights, logarithmic accumulation, per-severity caps, Critical malus).
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `profileId` | string | Scoring profile identifier (e.g. `scoring-v9`) |
+| `rawPoints` | number | Points (0–100) after severity losses, before Critical malus |
+| `finalPoints` | number | Points (0–100) after Critical malus when applicable |
+| `score` | string | Letter score `A`–`E` derived from final points (set when either `--score` or `--score-point` is used) |
+| `criticalMalusApplied` | bool | Whether any Critical issue forced final points into the E band |
+| `criticalMalusMax` | number | Maximum final points when Critical malus applies (30) |
+| `counts` | object | Issue counts by severity: `critical`, `high`, `medium`, `low` |
+
 ---
 
 ## Format 2: CycloneDX SBOM (`--pbom-cyclonedx`)
 
 The CycloneDX output follows the [CycloneDX 1.5 specification](https://cyclonedx.org/docs/1.5/json/) for compatibility with standard security tools.
+
+When `plumber analyze` is run with `--score` and/or `--score-point`, the BOM includes **metadata properties** (and duplicate properties on the root application component). Names use the `plumber:score-*` prefix for profile and counts, `plumber:points-*` for numeric points, and `plumber:score` for the letter:
+
+| Property | Description |
+|----------|-------------|
+| `plumber:score-profile` | Scoring profile id |
+| `plumber:points-raw` | Raw points (0–100), before Critical malus |
+| `plumber:points-final` | Final points (0–100), after Critical malus |
+| `plumber:score` | Letter score `A`–`E` (when `--score` or `--score-point` is used) |
+| `plumber:score-count-critical` | Count of Critical issues |
+| `plumber:score-count-high` | Count of High issues |
+| `plumber:score-count-medium` | Count of Medium issues |
+| `plumber:score-count-low` | Count of Low issues |
+| `plumber:score-critical-malus` | `true` if Critical malus applied |
 
 ### Structure
 

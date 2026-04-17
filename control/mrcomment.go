@@ -25,6 +25,9 @@ func ManageMergeRequestComment(
 	compliance float64,
 	threshold float64,
 	conf *configuration.Configuration,
+	score *PlumberScoreResult,
+	scoreMode bool,
+	scorePointMode bool,
 ) error {
 	l := logrus.WithFields(logrus.Fields{
 		"action":          "ManageMergeRequestComment",
@@ -33,7 +36,7 @@ func ManageMergeRequestComment(
 	})
 
 	// Generate comment body
-	commentBody := generateMRComment(result, compliance, threshold)
+	commentBody := generateMRComment(result, compliance, threshold, score, scoreMode, scorePointMode)
 
 	// List existing notes to find our comment
 	notes, err := gitlab.ListMergeRequestNotes(
@@ -106,9 +109,27 @@ func ComplianceBadgeURL(compliance, threshold float64) string {
 	return fmt.Sprintf("https://img.shields.io/badge/Plumber-%s-%s", message, color)
 }
 
+// ScoreBadgeURL builds a Shields.io badge URL showing the Plumber letter score (A–E).
+func ScoreBadgeURL(letter string) string {
+	color := "red"
+	switch letter {
+	case "A":
+		color = "brightgreen"
+	case "B":
+		color = "green"
+	case "C":
+		color = "yellow"
+	case "D":
+		color = "orange"
+	case "E":
+		color = "red"
+	}
+	return fmt.Sprintf("https://img.shields.io/badge/plumber-%s-%s", letter, color)
+}
+
 // generateMRComment builds the Markdown body for the merge request comment
 // based on the analysis result.
-func generateMRComment(result *AnalysisResult, compliance, threshold float64) string {
+func generateMRComment(result *AnalysisResult, compliance, threshold float64, score *PlumberScoreResult, scoreMode, scorePointMode bool) string {
 	var b strings.Builder
 
 	// Hidden identifier so we can find this comment later
@@ -117,9 +138,29 @@ func generateMRComment(result *AnalysisResult, compliance, threshold float64) st
 	// Compliance badge (green if passed, red if failed)
 	passed := compliance >= threshold
 	badgeURL := ComplianceBadgeURL(compliance, threshold)
+	if scoreMode && score != nil {
+		badgeURL = ScoreBadgeURL(score.Score)
+	}
 	fmt.Fprintf(&b, "![Plumber](%s)\n\n", badgeURL)
 
 	b.WriteString("*If this merge request is merged, the expected pipeline compliance will be as shown above.*\n\n")
+
+	if scorePointMode && score != nil {
+		b.WriteString("### Plumber Score\n\n")
+		fmt.Fprintf(&b, "- **Profile:** `%s`\n", score.ProfileID)
+		fmt.Fprintf(&b, "- **Issues by severity:** critical %d, high %d, medium %d, low %d\n",
+			score.Counts.Critical, score.Counts.High, score.Counts.Medium, score.Counts.Low)
+		fmt.Fprintf(&b, "- **Raw points (before Critical malus):** %.1f / 100\n", score.RawPoints)
+		fmt.Fprintf(&b, "- **Final points:** %.1f / 100\n", score.FinalPoints)
+		if score.CriticalMalusApplied {
+			fmt.Fprintf(&b, "- **Critical malus:** final points capped at %.0f when any Critical issue exists\n", score.CriticalMalusMax)
+		}
+		fmt.Fprintf(&b, "- **Score (letter):** **%s**\n", score.Score)
+		b.WriteString("\n")
+	} else if scoreMode && score != nil {
+		b.WriteString("### Plumber Score\n\n")
+		fmt.Fprintf(&b, "- **Score:** **%s**\n\n", score.Score)
+	}
 
 	// Gather controls
 	type controlEntry struct {

@@ -780,6 +780,8 @@ plumber analyze --output plumber-report.json
 
 The JSON includes all control results, compliance scores, issues found, and project metadata.
 
+With `--score` and/or `--score-point`, the JSON also includes a `plumberScore` object (letter **score** A–E, numeric **points** 0–100, severity counts) when at least one flag is set.
+
 ### Pipeline Bill of Materials (PBOM)
 
 Generate a complete inventory of all dependencies in your CI/CD pipeline:
@@ -794,6 +796,8 @@ The PBOM includes:
 - **Templates** and includes with version tracking
 - **Compliance status** for each dependency
 - **Override detection** - includes whose jobs are overridden with forbidden CI/CD keywords
+
+With `--score` / `--score-point`, the PBOM JSON includes a top-level `plumberScore` object. CycloneDX output adds `plumber:score-*`, `plumber:points-*`, and letter `plumber:score` metadata (see [docs/PBOM.md](docs/PBOM.md)).
 
 ### CycloneDX SBOM
 
@@ -850,6 +854,7 @@ include:
 - Shows compliance badge with pass/fail status
 - Lists all controls with individual compliance percentages
 - Details specific issues found with job names and image references
+- With `--score-point`, includes a **Plumber Score** block (points + letter) in the comment; with `--score` only, a short letter **score** line (badge shows the letter whenever either flag is set)
 - Automatically updates on each pipeline run (doesn't create duplicate comments)
 
 > ⚠️ **Token requirement:** The `api` scope is required (not `read_api`) to create/update MR comments.
@@ -870,7 +875,7 @@ include:
 </p>
 
 **Features:**
-- Shows current compliance percentage
+- Shows current compliance percentage (or letter score **A–E** when `--score` or `--score-point` is enabled)
 - **Green** when compliance meets threshold, **red** when below
 - Only updates on default branch pipelines (not on MRs or feature branches)
 - Badge appears in GitLab's "Project information" section
@@ -1037,6 +1042,8 @@ plumber analyze [flags]
 | `--print` | No | `true` | Print text output to stdout |
 | `--mr-comment` | No | `false` | Post/update a compliance comment on the merge request (MR pipelines only: requires `api` scope) |
 | `--badge` | No | `false` | Create/update a Plumber compliance badge on the project (requires `api` scope; only runs on default branch) |
+| `--score` | No | `false` | Letter **score**, **points**, bar, and severity counts in the stdout banner (no points table); **points** + score in JSON, PBOM, CycloneDX; with `--badge`, the badge shows the letter instead of compliance % |
+| `--score-point` | No | `false` | Like `--score` plus full **points** breakdown in stdout and MR comment; if both flags are set, points mode wins |
 | `--controls` | No | — | Run only listed controls (comma-separated). Cannot be used with `--skip-controls` |
 | `--skip-controls` | No | — | Skip listed controls (comma-separated). Cannot be used with `--controls` |
 | `--fail-warnings` | No | `false` | Treat configuration warnings (unknown keys) as errors (exit 2) |
