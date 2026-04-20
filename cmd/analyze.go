@@ -1718,9 +1718,14 @@ func printSummaryScoreBanner(score *control.PlumberScoreResult, scoreMode bool) 
 	const gap = "     "
 	badge := scoreLetterBadgeLines(score.Score)
 
-	fmt.Printf("  %s─── Plumber Score ─────────────────────────────────────%s\n\n", colorCyan, colorReset)
+	fmt.Printf("  %s─── Plumber Score ─────────────────────────────────────%s\n", colorCyan, colorReset)
 
 	gc := scoreLetterColor(score.Score)
+	if meaning := control.ScoreLetterMeaning(score.Score); meaning != "" {
+		fmt.Printf("  %s%s%s%s %s%s%s\n\n", colorBold, gc, score.Score, colorReset, colorDim, meaning, colorReset)
+	} else {
+		fmt.Println()
+	}
 	scoreLine := fmt.Sprintf("%s%s%.1f / 100 pts%s", colorBold, gc, score.FinalPoints, colorReset)
 	bar := scoreBar(score.FinalPoints, 30)
 	counts := fmt.Sprintf("%s%s Critical %s %-3d  %s%s High %s %-3d  %s Medium %s %-3d  %s Low %s %-3d",

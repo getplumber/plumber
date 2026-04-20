@@ -4,6 +4,22 @@ This document describes how Plumber computes the **letter score** (A–E), **poi
 
 ---
 
+## TL;DR: what each letter means
+
+Each letter is derived from **final points** (see Step 4 for the exact thresholds).
+
+| Letter | Final points | What it means |
+|:------:|--------------|---------------|
+| **A** 🟢 | ≥ 90 | **Excellent** — very low risk, clean pipeline |
+| **B** 🟢 | 71 – 89 | **Good** — a few Low / Medium issues |
+| **C** 🟡 | 51 – 70 | **Moderate** — Medium issues or accumulating Low findings, worth fixing |
+| **D** 🟠 | 31 – 50 | **Poor** — High-severity issues impacting the pipeline |
+| **E** 🔴 | < 31 | **Critical** — at least one Critical issue or heavy accumulated losses |
+
+> **Rule of thumb:** any Critical issue forces the score into the **E** band regardless of how few other issues there are. See *Step 3: Critical malus* below.
+
+---
+
 ## Language: score vs points
 
 | Term | Meaning | In JSON (`plumberScore` / PBOM) |
@@ -39,14 +55,14 @@ For each severity with count `n > 0`, base **weight** `w`, and per-severity **ca
 
 **Uncapped loss** for that bucket:
 
-\[
-L_{\text{uncapped}} = w \times (1 + \log_2 n)
-\]
+```text
+L_uncapped = w × (1 + log2(n))
+```
 
 **Capped loss** (what actually counts):
 
-- If the bucket has **no cap** (Critical): \(L = L_{\text{uncapped}}\).
-- Otherwise: \(L = \min(L_{\text{uncapped}}, C)\).
+- If the bucket has **no cap** (Critical): `L = L_uncapped`.
+- Otherwise: `L = min(L_uncapped, C)`.
 
 **Why log₂(n)?** Extra occurrences of the same class of problem still hurt, but not linearly without bound.
 
@@ -58,9 +74,9 @@ L_{\text{uncapped}} = w \times (1 + \log_2 n)
 
 Sum capped losses across the four severities: `totalLoss`.
 
-\[
-\text{rawPoints} = \max(0,\ 100 - \text{totalLoss})
-\]
+```text
+rawPoints = max(0, 100 − totalLoss)
+```
 
 So you start from 100 and subtract the combined capped losses. Raw points cannot go below 0.
 
@@ -71,7 +87,12 @@ So you start from 100 and subtract the combined capped losses. Raw points cannot
 If **at least one** Critical issue exists (`counts.critical > 0`):
 
 - **Critical malus** applies.
-- Final points are capped: \(\text{finalPoints} = \min(\text{rawPoints},\ 30)\).
+- Final points are capped:
+
+  ```text
+  finalPoints = min(rawPoints, 30)
+  ```
+
 - `criticalMalusApplied` is `true` and `criticalMalusMax` is **30** (the cap used in that `min`).
 
 If there are **no** Critical issues:

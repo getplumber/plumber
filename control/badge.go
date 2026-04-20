@@ -28,13 +28,11 @@ func ManageProjectBadge(
 
 	// Generate badge image URL
 	badgeImageURL := ComplianceBadgeURL(compliance, threshold)
+	badgeLinkURL := conf.GitlabURL + "/" + conf.ProjectPath
 	if useLetterScore && ps != nil {
 		badgeImageURL = ScoreBadgeURL(ps.Score)
+		badgeLinkURL = PlumberScoreDocURL
 	}
-
-	// Badge link URL - link to the project itself for now
-	// Could be enhanced to link to Plumber dashboard or pipeline
-	badgeLinkURL := conf.GitlabURL + "/" + conf.ProjectPath
 
 	// List existing badges to find Plumber badge
 	badges, err := gitlab.ListProjectBadges(projectID, conf.GitlabToken, conf.GitlabURL, conf)

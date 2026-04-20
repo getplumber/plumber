@@ -8,6 +8,9 @@ import (
 // PlumberScoreProfileID identifies the scoring rules version (see docs/scoring.md).
 const PlumberScoreProfileID = "scoring-v1"
 
+// PlumberScoreDocURL is the canonical user-facing explanation of the Plumber letter score.
+const PlumberScoreDocURL = "https://github.com/getplumber/plumber/blob/main/docs/scoring.md"
+
 // SeverityCounts is the number of detected issues per documented severity bucket.
 type SeverityCounts struct {
 	Critical int `json:"critical"`
@@ -272,5 +275,25 @@ func scoreLetterFromPoints(finalPoints float64) string {
 		return "D"
 	default:
 		return "E"
+	}
+}
+
+// ScoreLetterMeaning returns a short human-readable description of what a
+// letter score implies about the pipeline. It is used by CLI banners,
+// merge request comments, and documentation so wording stays consistent.
+func ScoreLetterMeaning(letter string) string {
+	switch letter {
+	case "A":
+		return "Excellent — very low risk, clean pipeline"
+	case "B":
+		return "Good — a few Low/Medium issues"
+	case "C":
+		return "Moderate — Medium issues or accumulating Low findings, worth fixing"
+	case "D":
+		return "Poor — High-severity issues impacting the pipeline"
+	case "E":
+		return "Critical — at least one Critical issue or heavy accumulated losses"
+	default:
+		return ""
 	}
 }
