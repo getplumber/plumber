@@ -36,6 +36,38 @@ func (s *StringOrSlice) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	return nil
 }
 
+// IncludeList is a type that can unmarshal from either a scalar value or a slice.
+// GitLab CI accepts both forms:
+//   - include: "https://..."              (scalar string)
+//   - include:                            (sequence)
+//       - "https://..."
+//       - remote: "https://..."
+//       - project: foo
+//         file: bar.yml
+//
+// When GitLab serializes the merged CI configuration it may normalize a
+// single-item array into a scalar, which the plain []interface{} field cannot
+// handle. This type absorbs both representations transparently.
+type IncludeList []interface{}
+
+// UnmarshalYAML implements yaml.v2 Unmarshaler interface
+func (il *IncludeList) UnmarshalYAML(unmarshal func(interface{}) error) error {
+	// Try slice first (the common case)
+	var list []interface{}
+	if err := unmarshal(&list); err == nil {
+		*il = list
+		return nil
+	}
+
+	// Fall back to a single value (scalar string or single map)
+	var single interface{}
+	if err := unmarshal(&single); err != nil {
+		return err
+	}
+	*il = []interface{}{single}
+	return nil
+}
+
 // Data of a GitLab group
 type Group struct {
 	IdOnPlatform      int       `json:"idOnPlatform" validate:"required,number"`
@@ -176,7 +208,7 @@ type GitlabCIConf struct {
 	Default         CIConfDefault          `yaml:"default,omitempty"`
 	Spec            interface{}            `yaml:"spec,omitempty"`
 
-	Include    []interface{}          `yaml:"include,omitempty"` // Can be list of string or list of include
+	Include    IncludeList            `yaml:"include,omitempty"` // Can be list of string or list of include
 	GitlabJobs map[string]interface{} `yaml:",inline"`           // Can be a string or a map[string]GitlabJob
 	Workflow   interface{}            `yaml:"workflow,omitempty"`
 	Cache      interface{}            `yaml:"cache,omitempty"`
