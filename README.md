@@ -784,7 +784,7 @@ With `--score` and/or `--score-point`, the JSON also includes a `plumberScore` o
 
 ### Plumber score (letter + points)
 
-Plumber separates **letter score** (A–E) from numeric **points** (0–100). Points are computed from open issues grouped by **severity** (Critical, High, Medium, Low), using each issue’s code. **Critical malus** can cap final points when any Critical issue is present. The active ruleset is profile **`scoring-v1`**.
+Plumber separates **letter score** (A–E) from numeric **points** (0–100). Points are computed from open issues grouped by **severity** (Critical, High, Medium, Low), using each issue’s code. **Critical malus** can cap final points when any Critical issue is present. The active ruleset is profile **`scoring-v2`**.
 
 📖 Full specification: **[docs/scoring.md](docs/scoring.md)**  
 📖 Severity per issue code: [Plumber issues docs](https://getplumber.io/docs/use-plumber/issues/)
@@ -905,10 +905,10 @@ brew install plumber
 To install a specific version:
 
 ```bash
-brew install getplumber/plumber/plumber@0.2.7
+brew install getplumber/plumber/plumber@0.2.9
 ```
 
-> **Note:** Versioned formulas are keg-only. Use the full path for example `/usr/local/opt/plumber@0.2.7/bin/plumber` or run `brew link plumber@0.2.7` to add it to your PATH.
+> **Note:** Versioned formulas are keg-only. Use the full path for example `/usr/local/opt/plumber@0.2.9/bin/plumber` or run `brew link plumber@0.2.9` to add it to your PATH.
 
 ### Mise
 
@@ -1059,7 +1059,7 @@ plumber analyze [flags]
 | `--ci-config-path` | No | auto-detect | Override the CI configuration file path (default: auto-detected from GitLab project settings, usually `.gitlab-ci.yml`). See [Custom CI Configuration File Path](#custom-ci-configuration-file-path) |
 | `--verbose`, `-v` | No | `false` | Enable verbose/debug output for troubleshooting |
 
-> **Plumber score:** how letter **A–E**, numeric **points**, and **Critical malus** are computed is documented in **[docs/scoring.md](docs/scoring.md)** (profile `scoring-v1`). Issue **severities** come from each issue’s documented code ([issues](https://getplumber.io/docs/use-plumber/issues/)).
+> **Plumber score:** how letter **A–E**, numeric **points**, and **Critical malus** are computed is documented in **[docs/scoring.md](docs/scoring.md)** (profile `scoring-v2`). Issue **severities** come from each issue’s documented code ([issues](https://getplumber.io/docs/use-plumber/issues/)).
 
 > \* Auto-detected from git remote (`origin`) if not specified. Supports both SSH and HTTPS remote URLs.
 

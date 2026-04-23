@@ -225,7 +225,7 @@ Present only when analysis is run with `--score` and/or `--score-point`. Field m
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `profileId` | string | Scoring profile identifier (e.g. `scoring-v1`) |
+| `profileId` | string | Scoring profile identifier (e.g. `scoring-v2`) |
 | `rawPoints` | number | Points (0–100) after severity losses, before Critical malus |
 | `finalPoints` | number | Points (0–100) after Critical malus when applicable |
 | `score` | string | Letter score `A`–`E` derived from final points (set when either `--score` or `--score-point` is used) |

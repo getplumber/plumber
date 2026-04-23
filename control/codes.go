@@ -94,7 +94,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 	// Container image controls (1xx)
 	CodeImageUnauthorizedSource: {
 		Code:        CodeImageUnauthorizedSource,
-		Severity:    SeverityCritical,
+		Severity:    SeverityHigh,
 		Title:       "Untrusted image source",
 		Description: "A container image is pulled from a registry that is not listed in the authorized sources. Using untrusted registries increases supply chain attack risk.",
 		Remediation: "Use images from an authorized registry configured in .plumber.yaml under containerImageMustComeFromAuthorizedSources.authorizedSources, or add the registry to the authorized list.",
@@ -103,7 +103,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 	},
 	CodeImageForbiddenTag: {
 		Code:        CodeImageForbiddenTag,
-		Severity:    SeverityHigh,
+		Severity:    SeverityMedium,
 		Title:       "Forbidden container image tag",
 		Description: "A container image in the pipeline uses a tag that is forbidden by the configuration (e.g., 'latest', 'dev'). Mutable tags make builds non-reproducible because the underlying image can change without notice.",
 		Remediation: "Pin the image to a specific immutable version tag (e.g., 'python:3.12.1' instead of 'python:latest'). Configure forbidden tags in .plumber.yaml under containerImageMustNotUseForbiddenTags.forbiddenTags.",
@@ -132,7 +132,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 	},
 	CodeUnsafeVariableExpansion: {
 		Code:        CodeUnsafeVariableExpansion,
-		Severity:    SeverityHigh,
+		Severity:    SeverityMedium,
 		Title:       "Unsafe variable expansion",
 		Description: "A dangerous CI variable is expanded in a shell re-interpretation context (eval, sh -c, bash -c, source, etc.). The expanded value is executed as code, enabling command injection if the variable is user-controlled.",
 		Remediation: "Avoid passing variables to commands that re-interpret input as shell code. Use the variable in a safe context (e.g. echo, env) or sanitize/allowlist values. Configure dangerousVariables and allowedPatterns in .plumber.yaml under pipelineMustNotUseUnsafeVariableExpansion.",
@@ -141,7 +141,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 	},
 	CodeJobVariableOverridden: {
 		Code:        CodeJobVariableOverridden,
-		Severity:    SeverityCritical,
+		Severity:    SeverityHigh,
 		Title:       "Job variable overrides controlled variable",
 		Description: "A CI/CD variable that should only be set in GitLab CI/CD Settings (as a protected or project-level variable) is redefined in the pipeline configuration. This can neutralize security scanners, disable protections, or alter intended behavior.",
 		Remediation: "Remove the variable from .gitlab-ci.yml and set it in GitLab CI/CD Settings > Variables instead. Configure the list of controlled variables in .plumber.yaml under pipelineMustNotOverrideJobVariables.variables.",
@@ -179,7 +179,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 	},
 	CodeTemplateMissing: {
 		Code:        CodeTemplateMissing,
-		Severity:    SeverityHigh,
+		Severity:    SeverityMedium,
 		Title:       "Missing required template",
 		Description: "A CI/CD template required by the configuration is not included in the pipeline. This means a mandatory workflow step is missing.",
 		Remediation: "Add the required template to your .gitlab-ci.yml using 'include:' with the template path specified in your .plumber.yaml under pipelineMustIncludeTemplate.",
@@ -188,7 +188,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 	},
 	CodeTemplateOverridden: {
 		Code:        CodeTemplateOverridden,
-		Severity:    SeverityHigh,
+		Severity:    SeverityMedium,
 		Title:       "Forbidden override of required template",
 		Description: "A required CI/CD template is included but some of its job keys are overridden locally, which may alter the intended behavior.",
 		Remediation: "Remove the local overrides on the template's jobs. If customization is needed, check if the template provides variables for configuration instead of overriding job keys directly.",
@@ -197,7 +197,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 	},
 	CodeComponentMissing: {
 		Code:        CodeComponentMissing,
-		Severity:    SeverityHigh,
+		Severity:    SeverityMedium,
 		Title:       "Missing required component",
 		Description: "A CI/CD component required by the configuration is not included in the pipeline. This means a mandatory compliance check or security scan is missing.",
 		Remediation: "Add the required component to your .gitlab-ci.yml using 'include:' with the component path specified in your .plumber.yaml under pipelineMustIncludeComponent.",
@@ -206,7 +206,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 	},
 	CodeComponentOverridden: {
 		Code:        CodeComponentOverridden,
-		Severity:    SeverityHigh,
+		Severity:    SeverityMedium,
 		Title:       "Forbidden override of required component",
 		Description: "A required CI/CD component is included but some of its job keys are overridden locally, which may alter the intended behavior of the compliance check.",
 		Remediation: "Remove the local overrides on the component's jobs. If customization is needed, check if the component provides input variables for configuration instead of overriding job keys directly.",
@@ -215,7 +215,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 	},
 	CodeSecurityJobWeakened: {
 		Code:        CodeSecurityJobWeakened,
-		Severity:    SeverityHigh,
+		Severity:    SeverityMedium,
 		Title:       "Security job weakened",
 		Description: "A security job in the pipeline has been weakened by setting allow_failure to true, overriding rules with when: never or when: manual, or setting when to manual. This can cause critical security scans to be skipped or require manual intervention.",
 		Remediation: "Ensure security jobs run automatically and block the pipeline on failure. Remove allow_failure: true, do not override rules with when: never or when: manual, and do not set when: manual on security jobs.",
@@ -243,7 +243,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 	},
 	CodeDockerInDockerInsecure: {
 		Code:        CodeDockerInDockerInsecure,
-		Severity:    SeverityCritical,
+		Severity:    SeverityHigh,
 		Title:       "Docker-in-Docker with insecure daemon configuration",
 		Description: "A CI/CD job uses Docker-in-Docker with an insecure daemon configuration. Setting DOCKER_TLS_CERTDIR to an empty string or using DOCKER_HOST with tcp://...:2375 disables TLS encryption between the CI job and the Docker daemon, allowing network-level eavesdropping and command injection.",
 		Remediation: "If Docker-in-Docker is required, ensure TLS is enabled: do not set DOCKER_TLS_CERTDIR to an empty string, and use tcp://docker:2376 (TLS) instead of tcp://docker:2375 (plaintext). Prefer Kaniko or Buildah to avoid this pattern entirely.",
@@ -254,7 +254,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 	// Access and authorization controls (5xx)
 	CodeBranchUnprotected: {
 		Code:        CodeBranchUnprotected,
-		Severity:    SeverityCritical,
+		Severity:    SeverityHigh,
 		Title:       "Branch protection missing",
 		Description: "A branch that should be protected according to the configuration has no protection rules. Unprotected branches allow direct pushes and force pushes, bypassing code review.",
 		Remediation: "Enable branch protection in GitLab: Settings > Repository > Protected Branches. Add the branch with appropriate access levels for push and merge.",
@@ -263,7 +263,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 	},
 	CodeBranchNonCompliant: {
 		Code:        CodeBranchNonCompliant,
-		Severity:    SeverityHigh,
+		Severity:    SeverityMedium,
 		Title:       "Branch protection configuration not compliant",
 		Description: "A protected branch does not meet the required protection settings (e.g., force push allowed, access levels too permissive, code owner approval not required).",
 		Remediation: "Update branch protection settings in GitLab: Settings > Repository > Protected Branches. Ensure force push is disabled, access levels meet the minimum, and code owner approval is required per your .plumber.yaml configuration.",

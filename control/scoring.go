@@ -6,7 +6,7 @@ import (
 )
 
 // PlumberScoreProfileID identifies the scoring rules version (see docs/scoring.md).
-const PlumberScoreProfileID = "scoring-v1"
+const PlumberScoreProfileID = "scoring-v2"
 
 // PlumberScoreDocURL is the canonical user-facing explanation of the Plumber letter score.
 const PlumberScoreDocURL = "https://github.com/getplumber/plumber/blob/main/docs/scoring.md"
@@ -188,18 +188,26 @@ func CriticalIssueCodesSorted(result *AnalysisResult) []string {
 	return out
 }
 
-// ComputePlumberScore applies the scoring-v1 rules (see docs/scoring.md).
+// ComputePlumberScore applies the scoring-v2 rules (see docs/scoring.md).
+//
+// For each severity bucket with count n > 0:
+//
+//	loss = w × (1 + 0.5·log2(n))   (capped at the per-bucket cap)
+//
+// Raw points are 100 minus the sum of capped losses. When at least one
+// Critical issue is present, final points are capped at 30 (Critical malus),
+// which forces the letter score into the E band. The A–E letter is then
+// read from final points using the thresholds in scoreLetterFromPoints.
 func ComputePlumberScore(counts SeverityCounts) PlumberScoreResult {
-	// weights and caps (documented in docs/scoring.md)
 	const (
-		w_crit = 30.0
-		w_high = 30.0
-		w_med  = 10.0
-		w_low  = 5.0
+		w_crit = 25.0
+		w_high = 20.0
+		w_med  = 8.0
+		w_low  = 3.0
 
-		cap_high = 100.0
-		cap_med  = 30.0
-		cap_low  = 15.0
+		cap_high = 60.0
+		cap_med  = 20.0
+		cap_low  = 10.0
 	)
 
 	out := PlumberScoreResult{
@@ -225,7 +233,7 @@ func ComputePlumberScore(counts SeverityCounts) PlumberScoreResult {
 		if row.n <= 0 {
 			continue
 		}
-		uncapped := row.weight * (1.0 + math.Log2(float64(row.n)))
+		uncapped := row.weight * (1.0 + 0.5*math.Log2(float64(row.n)))
 		capped := uncapped
 		if !math.IsInf(row.cap, 1) {
 			capped = math.Min(uncapped, row.cap)

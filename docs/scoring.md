@@ -1,6 +1,6 @@
-# Plumber pipeline scoring (profile `scoring-v1`)
+# Plumber pipeline scoring (profile `scoring-v2`)
 
-This document describes how Plumber computes the **letter score** (A–E), **points** (0–100), and **Critical malus**, as implemented in `control/scoring.go`. It matches the active profile id `scoring-v1` (`PlumberScoreProfileID`).
+This document describes how Plumber computes the **letter score** (A–E), **points** (0–100), and **Critical malus**, as implemented in `control/scoring.go`. It matches the active profile id `scoring-v2` (`PlumberScoreProfileID`).
 
 ---
 
@@ -10,11 +10,11 @@ Each letter is derived from **final points** (see Step 4 for the exact threshold
 
 | Letter | Final points | What it means |
 |:------:|--------------|---------------|
-| **A** 🟢 | ≥ 90 | **Excellent** — very low risk, clean pipeline |
-| **B** 🟢 | 71 – 89 | **Good** — a few Low / Medium issues |
-| **C** 🟡 | 51 – 70 | **Moderate** — Medium issues or accumulating Low findings, worth fixing |
-| **D** 🟠 | 31 – 50 | **Poor** — High-severity issues impacting the pipeline |
-| **E** 🔴 | < 31 | **Critical** — at least one Critical issue or heavy accumulated losses |
+| **A** 🟢 | ≥ 90 | **Excellent**, very low risk, clean pipeline |
+| **B** 🟢 | 71 – 89 | **Good**, a few Low or Medium issues |
+| **C** 🟡 | 51 – 70 | **Moderate**, Medium issues or accumulating Low findings, worth fixing |
+| **D** 🟠 | 31 – 50 | **Poor**, High-severity issues impacting the pipeline |
+| **E** 🔴 | < 31 | **Critical**, at least one Critical issue or heavy accumulated losses |
 
 > **Rule of thumb:** any Critical issue forces the score into the **E** band regardless of how few other issues there are. See *Step 3: Critical malus* below.
 
@@ -24,7 +24,7 @@ Each letter is derived from **final points** (see Step 4 for the exact threshold
 
 | Term | Meaning | In JSON (`plumberScore` / PBOM) |
 |------|---------|----------------------------------|
-| **Score** | The letter **A**, **B**, **C**, **D**, or **E**. This is what people usually mean by “what’s our Plumber score?” | `score` (string) |
+| **Score** | The letter **A**, **B**, **C**, **D**, or **E**. This is what people usually mean by "what's our Plumber score?" | `score` (string) |
 | **Points** | A number from **0** to **100** measuring pipeline risk from open issues. Higher is better. | `rawPoints`, `finalPoints` (numbers) |
 
 - **Raw points** are computed from severity losses **before** Critical malus.
@@ -47,16 +47,16 @@ Those four integers drive the math below.
 For each severity with count `n > 0`, base **weight** `w`, and per-severity **cap** `C` on total loss for that bucket:
 
 | Severity | Weight `w` | Cap `C` on loss for this bucket |
-|----------|-------------|----------------------------------|
-| Critical | 30 | none (∞) |
-| High     | 30 | 100 |
-| Medium   | 10 | 30 |
-| Low      | 5  | 15 |
+|----------|:-----------:|:--------------------------------:|
+| Critical | 25 | none (∞) |
+| High     | 20 | 60 |
+| Medium   | 8  | 20 |
+| Low      | 3  | 10 |
 
-**Uncapped loss** for that bucket:
+**Uncapped loss** for that bucket uses a dampened logarithmic curve so repeated offenses of the same type cost less than they would under a linear or `log2` model:
 
 ```text
-L_uncapped = w × (1 + log2(n))
+L_uncapped = w × (1 + 0.5 × log2(n))
 ```
 
 **Capped loss** (what actually counts):
@@ -64,9 +64,10 @@ L_uncapped = w × (1 + log2(n))
 - If the bucket has **no cap** (Critical): `L = L_uncapped`.
 - Otherwise: `L = min(L_uncapped, C)`.
 
-**Why log₂(n)?** Extra occurrences of the same class of problem still hurt, but not linearly without bound.
+**Why `1 + 0.5·log2(n)`?** The first occurrence of a class of issue costs the full weight. Each doubling of `n` adds half a weight unit instead of a full one, so repeats still hurt but taper off smoothly.
 
-**Why caps?** So one severity bucket cannot erase the entire scale, except Critical which is intentionally uncapped so accumulating Critical issues stays painful.
+**Why caps?** So one severity bucket cannot erase the entire scale on its own. Critical stays uncapped on purpose so stacking Critical issues keeps hurting, though the malus in Step 3 already forces the letter into the **E** band.
+
 
 ---
 
@@ -140,4 +141,4 @@ With `--score` only, you still get the **summary banner** (badge, final points, 
 
 ## Stability and changes
 
-The profile id is exposed as `profileId: "scoring-v1"`. If weights, caps, malus, or letter thresholds change in code, the profile id should be bumped and this file updated so consumers can tell which rules produced a given result.
+The profile id is exposed as `profileId: "scoring-v2"`. If weights, caps, malus, or letter thresholds change in code, the profile id should be bumped and this file updated so consumers can tell which rules produced a given result.
