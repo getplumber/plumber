@@ -10,7 +10,7 @@ require (
 	github.com/machinebox/graphql v0.2.2
 	github.com/sirupsen/logrus v1.9.4
 	github.com/spf13/cobra v1.8.1
-	gitlab.com/gitlab-org/api/client-go v1.13.0
+	gitlab.com/gitlab-org/api/client-go v1.46.0
 	golang.org/x/term v0.0.0-20210927222741-03fcf44c2211
 	gopkg.in/yaml.v2 v2.4.0
 )
@@ -30,7 +30,7 @@ require (
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/rogpeppe/go-internal v1.14.1 // indirect
 	github.com/spf13/pflag v1.0.5 // indirect
-	golang.org/x/oauth2 v0.33.0 // indirect
+	golang.org/x/oauth2 v0.34.0 // indirect
 	golang.org/x/sys v0.39.0 // indirect
 	golang.org/x/text v0.32.0 // indirect
 	golang.org/x/time v0.14.0 // indirect
