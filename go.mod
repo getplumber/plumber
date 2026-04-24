@@ -6,7 +6,7 @@ require (
 	github.com/AlecAivazis/survey/v2 v2.3.7
 	github.com/IGLOU-EU/go-wildcard/v2 v2.1.0
 	github.com/google/uuid v1.6.0
-	github.com/hashicorp/go-version v1.8.0
+	github.com/hashicorp/go-version v1.9.0
 	github.com/machinebox/graphql v0.2.2
 	github.com/sirupsen/logrus v1.9.4
 	github.com/spf13/cobra v1.8.1
