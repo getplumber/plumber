@@ -4,54 +4,125 @@ import (
 	"fmt"
 	"os"
 	"sync"
-	"time"
+	"unicode/utf8"
 
+	"github.com/schollz/progressbar/v3"
 	"github.com/sirupsen/logrus"
 )
 
-// progressSpinner displays a progress indicator on stderr during long-running operations.
-// It shows an animated spinner with the current step message and a progress bar.
+// spinnerMessageWidth is the fixed cell width the Describe label
+// occupies. The bar + percent + count + elapsed/ETA add roughly
+// another 45 cells; the total line lands around 100 columns, which
+// is a comfortable fit for modern terminals. Keeping the label at
+// a fixed width avoids redraw artefacts when a new message is
+// shorter than the previous one (progressbar/v3 renders with `\r`
+// and does not clear trailing glyphs).
+const spinnerMessageWidth = 52
+
+// progressSpinner wraps schollz/progressbar/v3 to give the analyze
+// command a modern, thick-block progress bar driven by the same
+// Update(step, total, message) interface the legacy hand-rolled
+// spinner exposed. Only the visual rendering changes — no change to
+// orchestration or log plumbing is needed upstream.
 type progressSpinner struct {
-	mu      sync.Mutex
-	step    int
-	total   int
-	message string
-	done    chan struct{}
-	stopped chan struct{}
-	started bool
+	mu  sync.Mutex
+	bar *progressbar.ProgressBar
 }
 
-// newSpinner creates a new progressSpinner. Call Start() to begin animation.
+// newSpinner returns an uninitialised progressSpinner. The underlying
+// progress bar is created lazily on the first Update call, at which
+// point the total step count is known.
 func newSpinner() *progressSpinner {
-	return &progressSpinner{
-		done:    make(chan struct{}),
-		stopped: make(chan struct{}),
-	}
+	return &progressSpinner{}
 }
 
-// spinnerFrames are the spinner animation characters
-var spinnerFrames = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+// Start is a no-op kept for interface compatibility with the legacy
+// spinner — progressbar/v3 self-renders on every Set/Describe call.
+func (s *progressSpinner) Start() {}
 
-// Update sets the current progress step and message.
-// This is safe to call from any goroutine.
+// Stop finalises the progress bar and clears the line so the
+// post-analysis output starts on a clean row.
+func (s *progressSpinner) Stop() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.bar == nil {
+		return
+	}
+	_ = s.bar.Finish()
+	fmt.Fprint(os.Stderr, "\r\033[K")
+}
+
+// Update sets the progress to step/total and updates the label. It is
+// safe to call concurrently.
 func (s *progressSpinner) Update(step, total int, message string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.step = step
-	s.total = total
-	s.message = message
-}
-
-// ClearLine erases the spinner line so log output can print cleanly.
-func (s *progressSpinner) ClearLine() {
-	if s.started {
-		fmt.Fprintf(os.Stderr, "\r\033[K")
+	if s.bar == nil {
+		s.bar = progressbar.NewOptions(total,
+			progressbar.OptionSetWriter(os.Stderr),
+			progressbar.OptionShowCount(),
+			progressbar.OptionSetWidth(20),
+			progressbar.OptionSetTheme(progressbar.Theme{
+				Saucer:        "█",
+				SaucerHead:    "█",
+				SaucerPadding: "░",
+				BarStart:      "",
+				BarEnd:        "",
+			}),
+			progressbar.OptionSetRenderBlankState(true),
+			progressbar.OptionClearOnFinish(),
+		)
 	}
+	s.bar.Describe(fmt.Sprintf("  %s", padOrTruncate(message, spinnerMessageWidth)))
+	_ = s.bar.Set(step)
 }
 
-// spinnerLogHook is a logrus hook that clears the spinner line before each log entry.
+// padOrTruncate returns message cut or padded to exactly width
+// runes. Long identifiers like action names are truncated with an
+// ellipsis so the spinner line keeps a stable width and the
+// progress bar does not jump as the message changes.
+func padOrTruncate(message string, width int) string {
+	if width <= 0 {
+		return ""
+	}
+	n := utf8.RuneCountInString(message)
+	if n == width {
+		return message
+	}
+	if n < width {
+		return message + padding(width-n)
+	}
+	// Truncate with a trailing ellipsis. Common UI convention, keeps
+	// the prefix visible — which for our messages is the most
+	// informative part (`Resolving action <owner>/…`).
+	if width <= 1 {
+		return message[:width]
+	}
+	runes := []rune(message)
+	return string(runes[:width-1]) + "…"
+}
+
+func padding(n int) string {
+	if n <= 0 {
+		return ""
+	}
+	buf := make([]byte, n)
+	for i := range buf {
+		buf[i] = ' '
+	}
+	return string(buf)
+}
+
+// InstallLogHook registers a logrus hook that blanks the current line
+// before a log record is emitted. Without it the progress bar and the
+// log message would fight for the same terminal row and both would
+// end up garbled.
+func (s *progressSpinner) InstallLogHook() {
+	logrus.AddHook(&spinnerLogHook{s: s})
+}
+
 type spinnerLogHook struct {
-	spinner *progressSpinner
+	s *progressSpinner
 }
 
 func (h *spinnerLogHook) Levels() []logrus.Level {
@@ -59,91 +130,8 @@ func (h *spinnerLogHook) Levels() []logrus.Level {
 }
 
 func (h *spinnerLogHook) Fire(_ *logrus.Entry) error {
-	h.spinner.ClearLine()
+	h.s.mu.Lock()
+	defer h.s.mu.Unlock()
+	fmt.Fprint(os.Stderr, "\r\033[K")
 	return nil
-}
-
-// InstallLogHook adds a logrus hook that clears the spinner line before each log message.
-// This prevents log output from being interleaved with the spinner animation.
-func (s *progressSpinner) InstallLogHook() {
-	logrus.AddHook(&spinnerLogHook{spinner: s})
-}
-
-// Start begins the spinner animation in a background goroutine.
-// The spinner renders to stderr so it doesn't interfere with stdout output.
-func (s *progressSpinner) Start() {
-	s.started = true
-	go func() {
-		defer close(s.stopped)
-		ticker := time.NewTicker(80 * time.Millisecond)
-		defer ticker.Stop()
-		frameIdx := 0
-
-		for {
-			select {
-			case <-s.done:
-				// Render final completion state before clearing
-				s.mu.Lock()
-				step := s.step
-				total := s.total
-				msg := s.message
-				s.mu.Unlock()
-
-				if total > 0 {
-					bar := ""
-					for i := 0; i < 20; i++ {
-						bar += "█"
-					}
-					fmt.Fprintf(os.Stderr, "\r\033[K  ✓ [%s] (%d/%d) %s\n", bar, step, total, msg)
-				} else {
-					fmt.Fprintf(os.Stderr, "\r\033[K")
-				}
-				return
-			case <-ticker.C:
-				s.mu.Lock()
-				step := s.step
-				total := s.total
-				msg := s.message
-				s.mu.Unlock()
-
-				if total == 0 {
-					continue
-				}
-
-				frame := spinnerFrames[frameIdx%len(spinnerFrames)]
-				frameIdx++
-
-				// Build progress bar
-				barWidth := 20
-				filled := 0
-				if total > 0 {
-					filled = (step * barWidth) / total
-				}
-				if filled > barWidth {
-					filled = barWidth
-				}
-
-				bar := ""
-				for i := 0; i < barWidth; i++ {
-					if i < filled {
-						bar += "█"
-					} else {
-						bar += "░"
-					}
-				}
-
-				// Render: ⠋ [████████░░░░░░░░░░░░] (3/14) Collecting pipeline origins
-				line := fmt.Sprintf("\r\033[K  %s [%s] (%d/%d) %s", frame, bar, step, total, msg)
-				fmt.Fprint(os.Stderr, line)
-			}
-		}
-	}()
-}
-
-// Stop terminates the spinner animation and waits for cleanup.
-func (s *progressSpinner) Stop() {
-	if s.started {
-		close(s.done)
-		<-s.stopped // wait for the goroutine to finish rendering
-	}
 }

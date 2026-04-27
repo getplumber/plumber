@@ -1,0 +1,12 @@
+# GitHub Actions workflow — wildcard match against pattern "*-alpha".
+# Expected: 1 finding on ci. Uses the long-form container: { image: ... }.
+name: CI
+on: push
+
+jobs:
+  ci:
+    runs-on: ubuntu-latest
+    container:
+      image: node:20-alpha
+    steps:
+      - run: echo test

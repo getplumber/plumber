@@ -1,0 +1,11 @@
+# Same rule on GitHub Actions: tagged containers fire when
+# mustBePinnedByDigest is enforced. Expected: 1 finding on build.
+name: CI
+on: push
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: alpine:3.19
+    steps:
+      - run: echo build

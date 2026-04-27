@@ -1,0 +1,10 @@
+# Normal, sound if: condition. Expected: 0 findings.
+name: Deploy
+on: [push]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main' && github.event_name == 'push'
+    steps:
+      - run: ./deploy.sh

@@ -1,0 +1,14 @@
+# pull_request_target + explicit checkout of the PR head SHA.
+# Shell steps that run after the checkout see fork-controlled code
+# with base-repo secrets. Expected: 1 finding.
+name: PR Preview
+on: [pull_request_target]
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - run: npm install && npm test

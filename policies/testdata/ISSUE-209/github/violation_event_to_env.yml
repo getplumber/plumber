@@ -1,0 +1,11 @@
+# PR title written verbatim into $GITHUB_ENV. A PR titled
+#   "; NODE_OPTIONS=--require=./exfil.js #
+# poisons subsequent Node invocations. Expected: 1 finding on build.
+name: Preview
+on: [pull_request_target]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "PR_TITLE=${{ github.event.pull_request.title }}" >> $GITHUB_ENV

@@ -1,0 +1,16 @@
+# Forbidden tag 'latest' on one job. Expected: 1 finding on deploy.
+stages:
+  - build
+  - deploy
+
+build:
+  stage: build
+  image: alpine:3.19
+  script:
+    - echo build
+
+deploy:
+  stage: deploy
+  image: alpine:latest
+  script:
+    - echo deploy

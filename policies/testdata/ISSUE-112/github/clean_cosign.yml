@@ -1,0 +1,20 @@
+# Same release but with cosign signing the artefacts. Expected: 0.
+name: Release
+on: [release]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: sigstore/cosign-installer@v3
+      - run: make dist
+      - run: cosign sign-blob --yes dist/release.tar.gz > dist/release.tar.gz.sig
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/release.tar.gz
+            dist/release.tar.gz.sig

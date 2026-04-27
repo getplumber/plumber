@@ -1,0 +1,11 @@
+# Specific field extracted into an env binding — safe. Expected: 0.
+name: PR Telemetry
+on: [pull_request_target]
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    env:
+      PR_NUMBER: ${{ github.event.pull_request.number }}
+    steps:
+      - run: echo "PR number: $PR_NUMBER"

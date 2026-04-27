@@ -1,0 +1,10 @@
+# No permissions block at either level — token inherits the repo
+# default. Expected: 1 finding.
+name: Build
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: make build

@@ -1,0 +1,12 @@
+# pull_request_target but no explicit ref: — checkout falls back to
+# the base-repo SHA. No fork code in this run. Still caught by
+# ISSUE-414 but not by this narrower rule. Expected: 0 ISSUE-415.
+name: Label
+on: [pull_request_target]
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: gh pr edit --add-label automated

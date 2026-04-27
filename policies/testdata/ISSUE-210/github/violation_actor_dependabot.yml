@@ -1,0 +1,12 @@
+# Workflow gates the auto-merge on github.actor == dependabot[bot].
+# A forked account registered under that login satisfies the check
+# and gets the elevated path. Expected: 1 finding.
+name: Auto-merge Dependabot
+on: [pull_request_target]
+
+jobs:
+  merge:
+    runs-on: ubuntu-latest
+    if: github.actor == 'dependabot[bot]'
+    steps:
+      - run: gh pr merge --auto --squash "$PR_URL"

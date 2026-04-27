@@ -1,0 +1,13 @@
+# github.head_ref is the source branch name of a PR, attacker-
+# controlled for fork PRs. Interpolated directly, it is an injection
+# sink. Expected: 1 finding on bad.
+name: Injection via head_ref
+on: pull_request
+
+jobs:
+  bad:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "Building branch ${{ github.head_ref }}"
+          make release

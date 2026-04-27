@@ -1,0 +1,16 @@
+# All tags are pinned to specific versions. Expected: 0 findings.
+stages:
+  - build
+  - deploy
+
+build:
+  stage: build
+  image: alpine:3.19
+  script:
+    - echo build
+
+deploy:
+  stage: deploy
+  image: node:20.10.0
+  script:
+    - echo deploy

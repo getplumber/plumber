@@ -1,6 +1,7 @@
 package control
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -8,26 +9,18 @@ import (
 	"github.com/getplumber/plumber/collector"
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/gitlab"
+	opaengine "github.com/getplumber/plumber/internal/engine/opa"
+	"github.com/getplumber/plumber/internal/ir"
+	"github.com/getplumber/plumber/policies"
 	"github.com/sirupsen/logrus"
 )
 
-const (
-	// Control names match .plumber.yaml keys exactly.
-	controlContainerImageMustNotUseForbiddenTags       = "containerImageMustNotUseForbiddenTags"
-	controlContainerImageMustComeFromAuthorizedSources = "containerImageMustComeFromAuthorizedSources"
-	controlBranchMustBeProtected                       = "branchMustBeProtected"
-	controlPipelineMustNotIncludeHardcodedJobs         = "pipelineMustNotIncludeHardcodedJobs"
-	controlIncludesMustBeUpToDate                      = "includesMustBeUpToDate"
-	controlIncludesMustNotUseForbiddenVersions         = "includesMustNotUseForbiddenVersions"
-	controlPipelineMustIncludeComponent                = "pipelineMustIncludeComponent"
-	controlPipelineMustIncludeTemplate                 = "pipelineMustIncludeTemplate"
-	controlPipelineMustNotEnableDebugTrace             = "pipelineMustNotEnableDebugTrace"
-	controlPipelineMustNotUseUnsafeVariableExpansion   = "pipelineMustNotUseUnsafeVariableExpansion"
-	controlSecurityJobsMustNotBeWeakened               = "securityJobsMustNotBeWeakened"
-	controlPipelineMustNotExecuteUnverifiedScripts     = "pipelineMustNotExecuteUnverifiedScripts"
-	controlPipelineMustNotOverrideJobVariables         = "pipelineMustNotOverrideJobVariables"
-	controlPipelineMustNotUseDockerInDocker            = "pipelineMustNotUseDockerInDocker"
-)
+// controlBranchMustBeProtected is the sole .plumber.yaml control key
+// the task flow still references directly — to decide whether to fetch
+// branch-protection metadata from the GitLab API before invoking the
+// Rego engine. Every other control is config-driven end-to-end through
+// the catalog in catalog.go.
+const controlBranchMustBeProtected = "branchMustBeProtected"
 
 // shouldRunControl applies --controls / --skip-controls filtering for a control.
 // If --controls is set, only listed controls are eligible.
@@ -79,6 +72,189 @@ func clearProgressLine(conf *configuration.Configuration) {
 // analysisStepCount is the total number of progress steps reported during analysis.
 const analysisStepCount = 18
 
+// runRegoEngine invokes the experimental Rego/OPA rule engine on the
+// GitLab collector outputs and returns the aggregated findings. The
+// legacy Go controls always run and remain authoritative until parity
+// is reached (see phases 2+). On any failure the returned slice is nil
+// and the error is logged at Warn level so the overall analysis still
+// completes.
+func runRegoEngine(
+	l *logrus.Entry,
+	conf *configuration.Configuration,
+	project *gitlab.Project,
+	originData *collector.GitlabPipelineOriginData,
+	imageData *collector.GitlabPipelineImageData,
+	protectionData *collector.GitlabProtectionAnalysisData,
+) []opaengine.Finding {
+	pipeline := collector.ToNormalizedPipeline(
+		conf.ProjectPath,
+		project.DefaultBranch,
+		project.CiConfPath,
+		originData,
+		imageData,
+		protectionData,
+	)
+	return evaluatePolicies(l, conf.PlumberConfig, pipeline)
+}
+
+// evaluatePolicies loads the embedded Rego policies and evaluates them
+// against pipeline. Provider-agnostic: the caller is responsible for
+// building the IR from whatever data source it has.
+func evaluatePolicies(l *logrus.Entry, pc *configuration.PlumberConfig, pipeline *ir.NormalizedPipeline) []opaengine.Finding {
+	l.Info("Running Rego/OPA rule engine")
+	engine := opaengine.New()
+	if err := engine.LoadFromFS(policies.FS); err != nil {
+		l.WithError(err).Warn("Failed to load embedded Rego policies")
+		return nil
+	}
+	findings, err := engine.Evaluate(context.Background(), pipeline, buildEngineConfig(pc))
+	if err != nil {
+		l.WithError(err).Warn("Rego/OPA engine evaluation failed")
+		return nil
+	}
+	l.WithField("findingCount", len(findings)).Info("Rego/OPA engine evaluation completed")
+	return findings
+}
+
+// buildEngineConfig projects the relevant bits of the user's .plumber.yaml
+// onto a Rego-friendly map. Policies read it as `input.config.<rule>.<key>`.
+// Only the sections consumed by already-ported policies are included;
+// additional entries land with each new policy.
+func buildEngineConfig(pc *configuration.PlumberConfig) map[string]any {
+	if pc == nil {
+		return nil
+	}
+	cfg := map[string]any{}
+
+	if c := pc.Controls.ContainerImageMustNotUseForbiddenTags; c != nil {
+		if len(c.Tags) > 0 {
+			cfg["imageMutableTag"] = map[string]any{
+				"forbiddenTags": c.Tags,
+			}
+		}
+		if c.IsPinnedByDigestRequired() {
+			cfg["containerImageMustNotUseForbiddenTags"] = map[string]any{
+				"mustBePinnedByDigest": true,
+			}
+		}
+	}
+
+	if c := pc.Controls.PipelineMustNotEnableDebugTrace; c != nil && len(c.ForbiddenVariables) > 0 {
+		cfg["debugTrace"] = map[string]any{
+			"forbiddenVariables": c.ForbiddenVariables,
+		}
+	}
+
+	if c := pc.Controls.PipelineMustNotOverrideJobVariables; c != nil && len(c.Variables) > 0 {
+		cfg["jobVariablesOverride"] = map[string]any{
+			"protectedVariables": c.Variables,
+		}
+	}
+
+	if c := pc.Controls.SecurityJobsMustNotBeWeakened; c != nil && len(c.SecurityJobPatterns) > 0 {
+		cfg["securityJobsWeakened"] = map[string]any{
+			"securityJobPatterns":     c.SecurityJobPatterns,
+			"allowFailureMustBeFalse": c.AllowFailureMustBeFalse.IsEnabled(true),
+			"whenMustNotBeManual":     c.WhenMustNotBeManual.IsEnabled(true),
+			"rulesMustNotBeRedefined": c.RulesMustNotBeRedefined.IsEnabled(true),
+		}
+	}
+
+	if c := pc.Controls.PipelineMustNotUseUnsafeVariableExpansion; c != nil && len(c.DangerousVariables) > 0 {
+		cfg["unsafeVariableExpansion"] = map[string]any{
+			"dangerousVariables": c.DangerousVariables,
+			"allowedPatterns":    c.AllowedPatterns,
+		}
+	}
+
+	if c := pc.Controls.BranchMustBeProtected; c != nil {
+		entry := map[string]any{
+			"namePatterns": c.NamePatterns,
+		}
+		if c.DefaultMustBeProtected != nil {
+			entry["defaultMustBeProtected"] = *c.DefaultMustBeProtected
+		}
+		if c.AllowForcePush != nil {
+			entry["allowForcePush"] = *c.AllowForcePush
+		}
+		if c.CodeOwnerApprovalRequired != nil {
+			entry["codeOwnerApprovalRequired"] = *c.CodeOwnerApprovalRequired
+		}
+		if c.MinPushAccessLevel != nil {
+			entry["minPushAccessLevel"] = *c.MinPushAccessLevel
+		}
+		if c.MinMergeAccessLevel != nil {
+			entry["minMergeAccessLevel"] = *c.MinMergeAccessLevel
+		}
+		cfg["branchMustBeProtected"] = entry
+	}
+
+	if c := pc.Controls.IncludesMustNotUseForbiddenVersions; c != nil {
+		defaultForbidden := false
+		if c.DefaultBranchIsForbiddenVersion != nil {
+			defaultForbidden = *c.DefaultBranchIsForbiddenVersion
+		}
+		cfg["includesForbiddenVersions"] = map[string]any{
+			"forbiddenVersions":               c.ForbiddenVersions,
+			"defaultBranchIsForbiddenVersion": defaultForbidden,
+		}
+	}
+
+	if c := pc.Controls.ContainerImageMustComeFromAuthorizedSources; c != nil {
+		trustOfficial := false
+		if c.TrustDockerHubOfficialImages != nil {
+			trustOfficial = *c.TrustDockerHubOfficialImages
+		}
+		cfg["imageAuthorizedSources"] = map[string]any{
+			"trustedUrls":           c.TrustedUrls,
+			"trustDockerHubOfficial": trustOfficial,
+		}
+	}
+
+	if c := pc.Controls.PipelineMustIncludeComponent; c != nil && c.IsEnabled() {
+		if groups, err := c.GetResolvedRequiredGroups(); err == nil && len(groups) > 0 {
+			cfg["pipelineMustIncludeComponent"] = map[string]any{
+				"requiredGroups": toAnyGroups(groups),
+			}
+		}
+	}
+
+	if c := pc.Controls.PipelineMustIncludeTemplate; c != nil && c.IsEnabled() {
+		if groups, err := c.GetResolvedRequiredGroups(); err == nil && len(groups) > 0 {
+			cfg["pipelineMustIncludeTemplate"] = map[string]any{
+				"requiredGroups": toAnyGroups(groups),
+			}
+		}
+	}
+
+	if c := pc.Controls.ActionsMustBePinnedByCommitSha; c != nil && c.IsEnabled() {
+		entry := map[string]any{}
+		if len(c.TrustedOwners) > 0 {
+			entry["trustedOwners"] = c.TrustedOwners
+		}
+		cfg["actionsMustBePinnedByCommitSha"] = entry
+	}
+
+	if len(cfg) == 0 {
+		return nil
+	}
+	return cfg
+}
+
+// toAnyGroups converts a [][]string (DNF requiredGroups) into a nested
+// []any slice so OPA sees it as a plain JSON array of arrays.
+func toAnyGroups(groups [][]string) []any {
+	out := make([]any, len(groups))
+	for i, g := range groups {
+		inner := make([]any, len(g))
+		for j, p := range g {
+			inner[j] = p
+		}
+		out[i] = inner
+	}
+	return out
+}
+
 // RunAnalysis executes the complete pipeline analysis for a GitLab project
 func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	l := l.WithFields(logrus.Fields{
@@ -100,14 +276,8 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	project, err := gitlab.FetchProjectDetails(conf.ProjectPath, conf.GitlabToken, conf.GitlabURL, conf)
 	if err != nil {
 		l.WithError(err).Error("Failed to fetch project from GitLab")
-		// Cannot fetch project - compliance is 0
 		result.CiValid = false
 		result.CiMissing = true
-		result.ImageForbiddenTagsResult = &GitlabImageForbiddenTagsResult{
-			Version:    ControlTypeGitlabImageForbiddenTagsVersion,
-			Compliance: 0,
-			Error:      err.Error(),
-		}
 		return result, err
 	}
 
@@ -201,14 +371,8 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	pipelineOriginData, pipelineOriginMetrics, err := originDC.Run(projectInfo, conf.GitlabToken, conf)
 	if err != nil {
 		l.WithError(err).Error("Pipeline Origin data collection failed")
-		// Data collection failed - compliance is 0, cannot continue to controls
 		result.CiValid = false
 		result.CiMissing = true
-		result.ImageForbiddenTagsResult = &GitlabImageForbiddenTagsResult{
-			Version:    ControlTypeGitlabImageForbiddenTagsVersion,
-			Compliance: 0,
-			Error:      err.Error(),
-		}
 		return result, err
 	}
 
@@ -253,12 +417,6 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	pipelineImageData, pipelineImageMetrics, err := imageDC.Run(projectInfo, conf.GitlabToken, conf, pipelineOriginData)
 	if err != nil {
 		l.WithError(err).Error("Pipeline Image data collection failed")
-		// Data collection failed - compliance is 0, cannot continue to controls
-		result.ImageForbiddenTagsResult = &GitlabImageForbiddenTagsResult{
-			Version:    ControlTypeGitlabImageForbiddenTagsVersion,
-			Compliance: 0,
-			Error:      err.Error(),
-		}
 		return result, err
 	}
 
@@ -273,268 +431,30 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	result.PipelineImageData = pipelineImageData
 	result.PipelineOriginData = pipelineOriginData
 
-	///////////////////
-	// Run Controls
-	///////////////////
-
-	// 3. Run Forbidden Image Tags control
-	reportProgress(conf, 4, analysisStepCount, "Checking forbidden image tags")
-	l.Info("Running Forbidden Image Tags control")
-
-	// Load control configuration from PlumberConfig (required)
-	forbiddenTagsConf := &GitlabImageForbiddenTagsConf{}
-	if shouldRunControl(controlContainerImageMustNotUseForbiddenTags, conf) {
-		if err := forbiddenTagsConf.GetConf(conf.PlumberConfig); err != nil {
-			l.WithError(err).Error("Failed to load ImageForbiddenTags config from .plumber.yaml file")
-			return result, fmt.Errorf("invalid configuration: %w", err)
-		}
-	} else {
-		forbiddenTagsConf.Enabled = false
-	}
-
-	forbiddenTagsResult := forbiddenTagsConf.Run(pipelineImageData)
-	result.ImageForbiddenTagsResult = forbiddenTagsResult
-
-	// 4. Run Image Authorized Sources control
-	reportProgress(conf, 5, analysisStepCount, "Checking authorized image sources")
-	l.Info("Running Image Authorized Sources control")
-
-	authorizedSourcesConf := &GitlabImageAuthorizedSourcesConf{}
-	if shouldRunControl(controlContainerImageMustComeFromAuthorizedSources, conf) {
-		if err := authorizedSourcesConf.GetConf(conf.PlumberConfig); err != nil {
-			l.WithError(err).Error("Failed to load ImageAuthorizedSources config from .plumber.yaml file")
-			return result, fmt.Errorf("invalid configuration: %w", err)
-		}
-	} else {
-		authorizedSourcesConf.Enabled = false
-	}
-
-	authorizedSourcesResult := authorizedSourcesConf.Run(pipelineImageData)
-	result.ImageAuthorizedSourcesResult = authorizedSourcesResult
-
-	// 5. Run Pipeline Must Not Include Hardcoded Jobs control
-	reportProgress(conf, 6, analysisStepCount, "Checking hardcoded jobs")
-	l.Info("Running Pipeline Must Not Include Hardcoded Jobs control")
-
-	hardcodedJobsConf := &GitlabPipelineHardcodedJobsConf{}
-	if shouldRunControl(controlPipelineMustNotIncludeHardcodedJobs, conf) {
-		if err := hardcodedJobsConf.GetConf(conf.PlumberConfig); err != nil {
-			l.WithError(err).Error("Failed to load HardcodedJobs config from .plumber.yaml file")
-			return result, fmt.Errorf("invalid configuration: %w", err)
-		}
-	} else {
-		hardcodedJobsConf.Enabled = false
-	}
-
-	hardcodedJobsResult := hardcodedJobsConf.Run(pipelineOriginData)
-	result.HardcodedJobsResult = hardcodedJobsResult
-
-	// 6. Run Includes Must Be Up To Date control
-	reportProgress(conf, 7, analysisStepCount, "Checking includes versions")
-	l.Info("Running Includes Must Be Up To Date control")
-
-	outdatedConf := &GitlabPipelineIncludesOutdatedConf{}
-	if shouldRunControl(controlIncludesMustBeUpToDate, conf) {
-		if err := outdatedConf.GetConf(conf.PlumberConfig); err != nil {
-			l.WithError(err).Error("Failed to load IncludesOutdated config from .plumber.yaml file")
-			return result, fmt.Errorf("invalid configuration: %w", err)
-		}
-	} else {
-		outdatedConf.Enabled = false
-	}
-
-	outdatedResult := outdatedConf.Run(pipelineOriginData)
-	result.OutdatedIncludesResult = outdatedResult
-
-	// 7. Run Includes Must Not Use Forbidden Versions control
-	reportProgress(conf, 8, analysisStepCount, "Checking forbidden versions")
-	l.Info("Running Includes Must Not Use Forbidden Versions control")
-
-	forbiddenVersionConf := &GitlabPipelineIncludesForbiddenVersionConf{}
-	if shouldRunControl(controlIncludesMustNotUseForbiddenVersions, conf) {
-		if err := forbiddenVersionConf.GetConf(conf.PlumberConfig); err != nil {
-			l.WithError(err).Error("Failed to load ForbiddenVersions config from .plumber.yaml file")
-			return result, fmt.Errorf("invalid configuration: %w", err)
-		}
-	} else {
-		forbiddenVersionConf.Enabled = false
-	}
-
-	forbiddenVersionResult := forbiddenVersionConf.Run(pipelineOriginData, projectInfo.DefaultBranch)
-	result.ForbiddenVersionsIncludesResult = forbiddenVersionResult
-
-	// 8. Run Branch Must Be Protected control (if enabled)
-	reportProgress(conf, 9, analysisStepCount, "Checking branch protection")
+	// Fetch branch-protection metadata when the user configured the
+	// corresponding control — the Rego policy needs the protection
+	// settings to check every branch against the declared bar.
+	var protectionData *collector.GitlabProtectionAnalysisData
 	if shouldRunControl(controlBranchMustBeProtected, conf) {
-		branchProtectionConfig := conf.PlumberConfig.GetBranchMustBeProtectedConfig()
-		if branchProtectionConfig != nil && branchProtectionConfig.IsEnabled() {
-			l.Info("Running Branch Must Be Protected control")
-
-			// Run Protection data collection first
+		if cfg := conf.PlumberConfig.GetBranchMustBeProtectedConfig(); cfg != nil && cfg.IsEnabled() {
+			reportProgress(conf, 9, analysisStepCount, "Checking branch protection")
 			protectionDC := &collector.GitlabProtectionDataCollection{}
-			protectionData, _, err := protectionDC.Run(projectInfo, conf.GitlabToken, conf)
-			if err != nil {
-				l.WithError(err).Error("Protection data collection failed")
-				// Data collection failed - set compliance to 0 but continue
-				result.BranchProtectionResult = &GitlabBranchProtectionResult{
-					Enabled:    true,
-					Compliance: 0,
-					Version:    ControlTypeGitlabProtectionBranchProtectionNotCompliantVersion,
-					Error:      err.Error(),
-				}
+			pData, _, pErr := protectionDC.Run(projectInfo, conf.GitlabToken, conf)
+			if pErr != nil {
+				l.WithError(pErr).Warn("Protection data collection failed; branch policies will see no branches")
 			} else {
-				// Run the branch protection control
-				branchProtectionControl := NewGitlabBranchProtectionControl(branchProtectionConfig)
-				branchProtectionResult := branchProtectionControl.Run(protectionData, projectInfo)
-				result.BranchProtectionResult = branchProtectionResult
+				protectionData = pData
 			}
-		} else {
-			l.Debug("Branch Must Be Protected control is disabled or not configured")
-		}
-	} else {
-		result.BranchProtectionResult = &GitlabBranchProtectionResult{
-			Enabled:    false,
-			Skipped:    true,
-			Compliance: 100.0,
-			Version:    ControlTypeGitlabProtectionBranchProtectionNotCompliantVersion,
 		}
 	}
 
-	// 9. Run Pipeline Must Include Component control
-	reportProgress(conf, 10, analysisStepCount, "Checking required components")
-	l.Info("Running Pipeline Must Include Component control")
-
-	requiredComponentsConf := &GitlabPipelineRequiredComponentsConf{}
-	if shouldRunControl(controlPipelineMustIncludeComponent, conf) {
-		if err := requiredComponentsConf.GetConf(conf.PlumberConfig); err != nil {
-			l.WithError(err).Error("Failed to load RequiredComponents config from .plumber.yaml file")
-			return result, fmt.Errorf("invalid configuration: %w", err)
-		}
-	} else {
-		requiredComponentsConf.Enabled = false
+	// Rego/OPA rule engine evaluation. With all 19 historical Go
+	// controls retired (see docs/REFACTOR_MULTI_PROVIDER.md §8 Phase A),
+	// the engine is the single authoritative compliance path.
+	if conf.PlumberConfig.IsEngineEnabled() {
+		result.Findings = runRegoEngine(l, conf, project, pipelineOriginData, pipelineImageData, protectionData)
 	}
-
-	requiredComponentsResult := requiredComponentsConf.Run(pipelineOriginData, conf.GitlabURL)
-	result.RequiredComponentsResult = requiredComponentsResult
-
-	// 10. Run Pipeline Must Include Template control
-	reportProgress(conf, 11, analysisStepCount, "Checking required templates")
-	l.Info("Running Pipeline Must Include Template control")
-
-	requiredTemplatesConf := &GitlabPipelineRequiredTemplatesConf{}
-	if shouldRunControl(controlPipelineMustIncludeTemplate, conf) {
-		if err := requiredTemplatesConf.GetConf(conf.PlumberConfig); err != nil {
-			l.WithError(err).Error("Failed to load RequiredTemplates config from .plumber.yaml file")
-			return result, fmt.Errorf("invalid configuration: %w", err)
-		}
-	} else {
-		requiredTemplatesConf.Enabled = false
-	}
-
-	requiredTemplatesResult := requiredTemplatesConf.Run(pipelineOriginData)
-	result.RequiredTemplatesResult = requiredTemplatesResult
-
-	// 11. Run Pipeline Must Not Enable Debug Trace control
-	reportProgress(conf, 12, analysisStepCount, "Checking debug trace variables")
-	l.Info("Running Pipeline Must Not Enable Debug Trace control")
-
-	debugTraceConf := &GitlabPipelineDebugTraceConf{}
-	if shouldRunControl(controlPipelineMustNotEnableDebugTrace, conf) {
-		if err := debugTraceConf.GetConf(conf.PlumberConfig); err != nil {
-			l.WithError(err).Error("Failed to load DebugTrace config from .plumber.yaml file")
-			return result, fmt.Errorf("invalid configuration: %w", err)
-		}
-	} else {
-		debugTraceConf.Enabled = false
-	}
-
-	debugTraceResult := debugTraceConf.Run(pipelineOriginData)
-	result.DebugTraceResult = debugTraceResult
-
-	// 12. Run Pipeline Must Not Use Unsafe Variable Expansion control
-	reportProgress(conf, 13, analysisStepCount, "Checking unsafe variable expansion")
-	l.Info("Running Pipeline Must Not Use Unsafe Variable Expansion control")
-
-	variableInjectionConf := &GitlabPipelineVariableInjectionConf{}
-	if shouldRunControl(controlPipelineMustNotUseUnsafeVariableExpansion, conf) {
-		if err := variableInjectionConf.GetConf(conf.PlumberConfig); err != nil {
-			l.WithError(err).Error("Failed to load VariableInjection config from .plumber.yaml file")
-			return result, fmt.Errorf("invalid configuration: %w", err)
-		}
-	} else {
-		variableInjectionConf.Enabled = false
-	}
-
-	variableInjectionResult := variableInjectionConf.Run(pipelineOriginData)
-	result.VariableInjectionResult = variableInjectionResult
-
-	// 13. Run Security Jobs Must Not Be Weakened control
-	reportProgress(conf, 14, analysisStepCount, "Checking security jobs weakening")
-	l.Info("Running Security Jobs Must Not Be Weakened control")
-
-	securityJobsWeakenedConf := &GitlabSecurityJobsWeakenedConf{}
-	if shouldRunControl(controlSecurityJobsMustNotBeWeakened, conf) {
-		if err := securityJobsWeakenedConf.GetConf(conf.PlumberConfig); err != nil {
-			l.WithError(err).Error("Failed to load SecurityJobsWeakened config from .plumber.yaml file")
-			return result, fmt.Errorf("invalid configuration: %w", err)
-		}
-	} else {
-		securityJobsWeakenedConf.Enabled = false
-	}
-
-	securityJobsWeakenedResult := securityJobsWeakenedConf.Run(pipelineOriginData)
-	result.SecurityJobsWeakenedResult = securityJobsWeakenedResult
-
-	// 14. Run Pipeline Must Not Execute Unverified Scripts control
-	reportProgress(conf, 15, analysisStepCount, "Checking unverified script execution")
-	l.Info("Running Pipeline Must Not Execute Unverified Scripts control")
-
-	unverifiedScriptsConf := &GitlabPipelineUnverifiedScriptsConf{}
-	if shouldRunControl(controlPipelineMustNotExecuteUnverifiedScripts, conf) {
-		if err := unverifiedScriptsConf.GetConf(conf.PlumberConfig); err != nil {
-			l.WithError(err).Error("Failed to load UnverifiedScripts config from .plumber.yaml file")
-			return result, fmt.Errorf("invalid configuration: %w", err)
-		}
-	} else {
-		unverifiedScriptsConf.Enabled = false
-	}
-
-	unverifiedScriptsResult := unverifiedScriptsConf.Run(pipelineOriginData)
-	result.UnverifiedScriptsResult = unverifiedScriptsResult
-
-	// 15. Run Pipeline Must Not Override Job Variables control
-	reportProgress(conf, 16, analysisStepCount, "Checking job variable overrides")
-	l.Info("Running Pipeline Must Not Override Job Variables control")
-
-	jobVarOverrideConf := &GitlabPipelineJobVariablesOverrideConf{}
-	if shouldRunControl(controlPipelineMustNotOverrideJobVariables, conf) {
-		if err := jobVarOverrideConf.GetConf(conf.PlumberConfig); err != nil {
-			l.WithError(err).Error("Failed to load JobVariablesOverride config from .plumber.yaml file")
-			return result, fmt.Errorf("invalid configuration: %w", err)
-		}
-	} else {
-		jobVarOverrideConf.Enabled = false
-	}
-
-	jobVarOverrideResult := jobVarOverrideConf.Run(pipelineOriginData)
-	result.JobVariablesOverrideResult = jobVarOverrideResult
-
-	// 16. Run Pipeline Must Not Use Docker-in-Docker control
-	reportProgress(conf, 17, analysisStepCount, "Checking Docker-in-Docker services")
-	l.Info("Running Pipeline Must Not Use Docker-in-Docker control")
-
-	dockerInDockerConf := &GitlabPipelineDockerInDockerConf{}
-	if shouldRunControl(controlPipelineMustNotUseDockerInDocker, conf) {
-		if err := dockerInDockerConf.GetConf(conf.PlumberConfig); err != nil {
-			l.WithError(err).Error("Failed to load DockerInDocker config from .plumber.yaml file")
-			return result, fmt.Errorf("invalid configuration: %w", err)
-		}
-	} else {
-		dockerInDockerConf.Enabled = false
-	}
-
-	dockerInDockerResult := dockerInDockerConf.Run(pipelineOriginData)
-	result.DockerInDockerResult = dockerInDockerResult
+	result.ProtectionData = protectionData
 
 	reportProgress(conf, analysisStepCount, analysisStepCount, "Analysis complete")
 

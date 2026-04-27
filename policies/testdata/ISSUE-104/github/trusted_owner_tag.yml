@@ -1,0 +1,13 @@
+# When trustedOwners contains "actions" and "github", first-party
+# GitHub-owned actions can keep tag-based refs. The third-party
+# action (peaceiris) is still flagged. Expected: 1 finding (peaceiris).
+name: Release
+on: [push]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: github/codeql-action/init@v3
+      - uses: peaceiris/actions-gh-pages@v3

@@ -1,0 +1,14 @@
+# Each step names only the secrets it actually needs. This is the
+# intended pattern — no finding expected.
+name: Publish
+on: [push]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    env:
+      NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+    steps:
+      - run: npm publish
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

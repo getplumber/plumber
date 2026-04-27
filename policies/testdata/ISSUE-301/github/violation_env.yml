@@ -1,0 +1,13 @@
+# Entire secrets context serialised into an env var. Any downstream
+# command or third-party action that reads SECRETS_JSON sees every
+# secret the job has access to. Expected: 1 finding on call.
+name: Call Reusable
+on: [push]
+
+jobs:
+  call:
+    runs-on: ubuntu-latest
+    env:
+      SECRETS_JSON: ${{ toJson(secrets) }}
+    steps:
+      - run: echo "$SECRETS_JSON" | ./upload

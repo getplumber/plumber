@@ -1,0 +1,11 @@
+# Normal env vars, no deprecated-command override. Expected: 0 findings.
+name: Safe
+on: push
+
+jobs:
+  good:
+    runs-on: ubuntu-latest
+    env:
+      FOO: bar
+    steps:
+      - run: echo "ok"

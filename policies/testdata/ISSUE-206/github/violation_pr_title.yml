@@ -1,0 +1,11 @@
+# PR title is user-controlled and pasted verbatim into a shell
+# command. Combined with pull_request_target the workflow token leaks
+# to the attacker. Expected: 1 finding on bad.
+name: Injection via PR title
+on: pull_request_target
+
+jobs:
+  bad:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "Welcome, reviewing ${{ github.event.pull_request.title }}"

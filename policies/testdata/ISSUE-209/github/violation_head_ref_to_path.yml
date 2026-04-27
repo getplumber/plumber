@@ -1,0 +1,11 @@
+# A fork branch name interpolated into $GITHUB_PATH. Any PATH-resolved
+# command after this step ("npm", "bash", ...) can be hijacked.
+# Expected: 1 finding on deploy.
+name: Deploy
+on: [pull_request_target]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "/tmp/${{ github.head_ref }}/bin" >> $GITHUB_PATH

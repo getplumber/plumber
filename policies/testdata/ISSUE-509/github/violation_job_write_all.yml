@@ -1,0 +1,18 @@
+# Only one job opts into write-all. The other is restricted to contents:read.
+# Expected: 1 finding on loose.
+name: Job-level override
+on: push
+
+jobs:
+  restricted:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - run: echo "ok"
+
+  loose:
+    runs-on: ubuntu-latest
+    permissions: write-all
+    steps:
+      - run: echo "loose"

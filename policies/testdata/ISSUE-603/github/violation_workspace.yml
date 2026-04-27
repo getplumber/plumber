@@ -1,0 +1,13 @@
+# Same pitfall, dressed up as ${{ github.workspace }}. Expected: 1.
+name: Build
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ws
+          path: ${{ github.workspace }}

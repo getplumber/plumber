@@ -1,0 +1,12 @@
+# Job-level concurrency also counts as "covered". Expected: 0.
+name: Deploy
+on: [push]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    concurrency:
+      group: deploy-${{ github.ref }}
+      cancel-in-progress: false
+    steps:
+      - run: ./deploy.sh

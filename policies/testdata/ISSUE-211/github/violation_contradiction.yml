@@ -1,0 +1,14 @@
+# `false &&` short-circuits to false — the step never runs, even
+# though the author seems to want to gate on the right operand.
+# Expected: 1 finding.
+name: Nightly
+on:
+  schedule:
+    - cron: '0 0 * * *'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - if: false && github.event_name == 'schedule'
+        run: ./nightly-task.sh

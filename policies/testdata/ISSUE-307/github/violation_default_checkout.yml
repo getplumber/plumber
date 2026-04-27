@@ -1,0 +1,11 @@
+# Default actions/checkout persists GITHUB_TOKEN in .git/config.
+# Expected: 1 finding on clone.
+name: Default checkout
+on: push
+
+jobs:
+  clone:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "built"

@@ -1,0 +1,12 @@
+# Workflow-level permissions: write-all propagates to every job.
+# Expected: 1 finding on publish.
+name: Too broad
+on: push
+
+permissions: write-all
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "publish"

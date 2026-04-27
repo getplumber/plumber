@@ -1,0 +1,16 @@
+# Push-triggered workflow invokes the pypa publish action — release
+# intent in a non-release trigger. Cache is un-scoped. Expected: 1.
+name: Build and Publish
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+      - run: python -m build
+      - uses: pypa/gh-action-pypi-publish@v1

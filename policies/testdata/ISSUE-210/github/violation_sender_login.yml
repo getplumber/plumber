@@ -1,0 +1,12 @@
+# Step-level if: gating on github.event.sender.login. Same spoofable
+# pattern, different field. Expected: 1 finding.
+name: Triage
+on: [issues]
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Bot-only label
+        if: github.event.sender.login == 'my-trusted-bot'
+        run: gh issue edit --add-label automated

@@ -1,0 +1,12 @@
+# contains('main', github.ref) never matches — 'main' does not
+# contain 'refs/heads/main'. The gate never fires on main. Author
+# meant contains(github.ref, 'main') or similar. Expected: 1.
+name: Deploy
+on: [push]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: contains('main', github.ref)
+    steps:
+      - run: ./deploy.sh

@@ -1,0 +1,10 @@
+# fromJson (camelCase) on secrets with a .field projection inside a
+# run: script. Expected: 1 finding.
+name: Notify
+on: [push]
+
+jobs:
+  notify:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -H "X-Token ${{ fromJson(secrets.BLOB).apiKey }}" https://example

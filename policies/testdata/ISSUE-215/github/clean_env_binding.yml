@@ -1,0 +1,13 @@
+# Canonical fix: bind vars.REGISTRY via env: then dereference $REGISTRY
+# in the shell. Expected: 0 findings.
+name: Login
+on: [push]
+
+jobs:
+  login:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          REGISTRY: ${{ vars.REGISTRY }}
+          TOKEN: ${{ secrets.TOKEN }}
+        run: docker login "$REGISTRY" -u admin -p "$TOKEN"

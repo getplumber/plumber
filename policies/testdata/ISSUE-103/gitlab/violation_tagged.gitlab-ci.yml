@@ -1,0 +1,17 @@
+# Tagged images without a digest, flagged when mustBePinnedByDigest is on.
+# Expected: 2 findings (both jobs).
+stages:
+  - build
+  - deploy
+
+build:
+  stage: build
+  image: alpine:3.19
+  script:
+    - echo build
+
+deploy:
+  stage: deploy
+  image: node:20.10.0
+  script:
+    - echo deploy

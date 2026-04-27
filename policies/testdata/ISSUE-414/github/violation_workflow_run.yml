@@ -1,0 +1,13 @@
+# workflow_run runs with secrets regardless of the originating
+# workflow's trust boundary. Expected: 1 finding on post.
+name: After CI
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "post-run"

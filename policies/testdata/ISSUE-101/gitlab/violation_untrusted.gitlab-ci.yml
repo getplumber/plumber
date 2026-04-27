@@ -1,0 +1,4 @@
+build:
+  image: ghcr.io/attacker/unknown:1.0
+  script:
+    - echo build

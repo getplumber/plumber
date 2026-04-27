@@ -1,0 +1,11 @@
+# Reusable workflow called with secrets: inherit — every caller
+# secret is forwarded. If the reusable workflow is compromised
+# (upstream maintainer, tag retag), it sees the full set.
+# Expected: 1 finding on call.
+name: Call
+on: [push]
+
+jobs:
+  call:
+    uses: acme/shared/.github/workflows/publish.yml@v1
+    secrets: inherit

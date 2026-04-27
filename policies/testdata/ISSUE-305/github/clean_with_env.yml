@@ -1,0 +1,13 @@
+# Environment: production gates the deploy — required reviewers /
+# wait timers are configurable on the environment. Expected: 0.
+name: Publish
+on: [release]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - run: python -m build
+      - run: twine upload --password ${{ secrets.PYPI_API_TOKEN }} dist/*

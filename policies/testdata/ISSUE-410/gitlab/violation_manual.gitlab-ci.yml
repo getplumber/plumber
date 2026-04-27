@@ -1,0 +1,6 @@
+sast:
+  stage: test
+  image: alpine:3.19
+  when: manual
+  script:
+    - echo SAST

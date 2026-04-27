@@ -57,6 +57,9 @@ var validControlSchema = map[string][]string{
 	"pipelineMustNotUseDockerInDocker": {
 		"enabled", "detectInsecureDaemon",
 	},
+	"actionsMustBePinnedByCommitSha": {
+		"enabled", "trustedOwners",
+	},
 }
 
 // validControlKeys returns the list of known control names.
@@ -75,6 +78,9 @@ func ValidControlNames() []string {
 	return names
 }
 
+// validEngineKeys lists the sub-keys recognized under the top-level "engine" section.
+var validEngineKeys = []string{"enabled"}
+
 // ValidFlatKeys returns every valid flattened key path recognized by the
 // schema, e.g. "controls.branchMustBeProtected.enabled". This includes
 // keys that may be commented out in the default config file.
@@ -84,6 +90,9 @@ func ValidFlatKeys() map[string]struct{} {
 		for _, sub := range subKeys {
 			keys["controls."+control+"."+sub] = struct{}{}
 		}
+	}
+	for _, sub := range validEngineKeys {
+		keys["engine."+sub] = struct{}{}
 	}
 	return keys
 }
@@ -95,6 +104,28 @@ type PlumberConfig struct {
 
 	// Controls configuration
 	Controls ControlsConfig `yaml:"controls"`
+
+	// Engine configuration for the Rego/OPA rule engine (multi-provider refactor).
+	// When nil or Enabled is false, the legacy Go controls run as today.
+	Engine *EngineConfig `yaml:"engine,omitempty"`
+}
+
+// EngineConfig configures the Rego/OPA rule engine introduced by the
+// multi-provider refactor.
+type EngineConfig struct {
+	// Enabled turns on the Rego/OPA rule engine. Default: true.
+	// The engine runs in shadow mode alongside the legacy Go controls
+	// until they are removed — see docs/REFACTOR_MULTI_PROVIDER.md §8.
+	Enabled *bool `yaml:"enabled,omitempty"`
+}
+
+// IsEngineEnabled returns true when the Rego/OPA engine must run.
+// Defaults to true when the section, the field, or the config itself is nil.
+func (c *PlumberConfig) IsEngineEnabled() bool {
+	if c == nil || c.Engine == nil || c.Engine.Enabled == nil {
+		return true
+	}
+	return *c.Engine.Enabled
 }
 
 // ControlsConfig holds configuration for all controls
@@ -140,6 +171,32 @@ type ControlsConfig struct {
 
 	// PipelineMustNotUseDockerInDocker control configuration
 	PipelineMustNotUseDockerInDocker *DockerInDockerControlConfig `yaml:"pipelineMustNotUseDockerInDocker,omitempty"`
+
+	// ActionsMustBePinnedByCommitSha control configuration (GitHub Actions only)
+	ActionsMustBePinnedByCommitSha *ActionsPinnedByShaControlConfig `yaml:"actionsMustBePinnedByCommitSha,omitempty"`
+}
+
+// ActionsPinnedByShaControlConfig configures the GitHub Actions supply-
+// chain pinning check (ISSUE-104). Only meaningful on GitHub workflows.
+type ActionsPinnedByShaControlConfig struct {
+	// Enabled controls whether this check runs
+	Enabled *bool `yaml:"enabled,omitempty"`
+
+	// TrustedOwners lists action-owner prefixes that are exempt from the
+	// pin-by-SHA requirement. Only owners inside the workflow's existing
+	// trust boundary should be listed here — "actions" and "github"
+	// cover the first-party GitHub-owned actions the runtime trusts
+	// implicitly. Adding a third-party owner here re-opens the exact
+	// supply-chain risk the check exists to close.
+	TrustedOwners []string `yaml:"trustedOwners,omitempty"`
+}
+
+// IsEnabled returns whether the control is enabled
+func (c *ActionsPinnedByShaControlConfig) IsEnabled() bool {
+	if c == nil || c.Enabled == nil {
+		return false
+	}
+	return *c.Enabled
 }
 
 // ImageForbiddenTagsControlConfig configuration for the forbidden image tags control
