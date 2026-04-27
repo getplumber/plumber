@@ -1,0 +1,15 @@
+# pull_request_target gives the workflow the base repo's token and
+# secrets while being trivially influenceable by the PR author. The
+# moment the workflow checks out the PR head or runs fork code,
+# secrets leak. Expected: 1 finding on preview.
+name: PR preview
+on:
+  pull_request_target:
+    types: [opened, synchronize]
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "preview"

@@ -1,0 +1,4 @@
+build:
+  image: alpine:3.19
+  script:
+    - echo build

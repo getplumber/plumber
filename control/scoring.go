@@ -3,6 +3,8 @@ package control
 import (
 	"math"
 	"sort"
+
+	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 )
 
 // PlumberScoreProfileID identifies the scoring rules version (see docs/scoring.md).
@@ -48,86 +50,19 @@ type PlumberScoreResult struct {
 	Losses []SeverityLoss `json:"losses"`
 }
 
-// forEachIssueCode invokes fn for every issue code from enabled (non-skipped) controls.
+// forEachIssueCode invokes fn for every issue code emitted by the
+// Rego/OPA rule engine. The legacy Go controls still populate their
+// per-control *Result fields in AnalysisResult for JSON backwards
+// compatibility (Phase A.2 of the refactor), but scoring and
+// aggregation read from the Rego Findings list — the single source
+// of truth now that all 19 codes are ported. See
+// docs/REFACTOR_MULTI_PROVIDER.md §8 Phase A.
 func forEachIssueCode(result *AnalysisResult, fn func(ErrorCode)) {
 	if result == nil {
 		return
 	}
-	if r := result.ImageForbiddenTagsResult; r != nil && !r.Skipped {
-		for _, issue := range r.Issues {
-			fn(issue.Code)
-		}
-	}
-	if r := result.ImageAuthorizedSourcesResult; r != nil && !r.Skipped {
-		for _, issue := range r.Issues {
-			fn(issue.Code)
-		}
-	}
-	if r := result.BranchProtectionResult; r != nil && !r.Skipped {
-		for _, issue := range r.Issues {
-			fn(issue.Code)
-		}
-	}
-	if r := result.HardcodedJobsResult; r != nil && !r.Skipped {
-		for _, issue := range r.Issues {
-			fn(issue.Code)
-		}
-	}
-	if r := result.OutdatedIncludesResult; r != nil && !r.Skipped {
-		for _, issue := range r.Issues {
-			fn(issue.Code)
-		}
-	}
-	if r := result.ForbiddenVersionsIncludesResult; r != nil && !r.Skipped {
-		for _, issue := range r.Issues {
-			fn(issue.Code)
-		}
-	}
-	if r := result.RequiredComponentsResult; r != nil && !r.Skipped {
-		for _, issue := range r.Issues {
-			fn(issue.Code)
-		}
-		for _, issue := range r.OverriddenIssues {
-			fn(issue.Code)
-		}
-	}
-	if r := result.RequiredTemplatesResult; r != nil && !r.Skipped {
-		for _, issue := range r.Issues {
-			fn(issue.Code)
-		}
-		for _, issue := range r.OverriddenIssues {
-			fn(issue.Code)
-		}
-	}
-	if r := result.DebugTraceResult; r != nil && !r.Skipped {
-		for _, issue := range r.Issues {
-			fn(issue.Code)
-		}
-	}
-	if r := result.VariableInjectionResult; r != nil && !r.Skipped {
-		for _, issue := range r.Issues {
-			fn(issue.Code)
-		}
-	}
-	if r := result.SecurityJobsWeakenedResult; r != nil && !r.Skipped {
-		for _, issue := range r.Issues {
-			fn(issue.Code)
-		}
-	}
-	if r := result.UnverifiedScriptsResult; r != nil && !r.Skipped {
-		for _, issue := range r.Issues {
-			fn(issue.Code)
-		}
-	}
-	if r := result.JobVariablesOverrideResult; r != nil && !r.Skipped {
-		for _, issue := range r.Issues {
-			fn(issue.Code)
-		}
-	}
-	if r := result.DockerInDockerResult; r != nil && !r.Skipped {
-		for _, issue := range r.Issues {
-			fn(issue.Code)
-		}
+	for _, f := range result.Findings {
+		fn(ErrorCode(f.Code))
 	}
 }
 
@@ -284,6 +219,23 @@ func scoreLetterFromPoints(finalPoints float64) string {
 	default:
 		return "E"
 	}
+}
+
+// FindingsByControl groups Rego findings by their declared ControlName
+// (from the issue-code registry). Findings whose code has no registry
+// entry land under the "" key so the caller can still surface them if
+// they want. The map values preserve the input order so downstream
+// tables read deterministically.
+func FindingsByControl(findings []opaengine.Finding) map[string][]opaengine.Finding {
+	out := map[string][]opaengine.Finding{}
+	for _, f := range findings {
+		control := ""
+		if info := LookupCode(ErrorCode(f.Code)); info != nil {
+			control = info.ControlName
+		}
+		out[control] = append(out[control], f)
+	}
+	return out
 }
 
 // ScoreLetterMeaning returns a short human-readable description of what a

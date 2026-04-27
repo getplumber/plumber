@@ -1,0 +1,10 @@
+# A regular job (runs-on + steps). No reusable-workflow call here,
+# and no secrets context exposed. Expected: 0 findings.
+name: Build
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo build

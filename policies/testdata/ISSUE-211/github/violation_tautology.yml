@@ -1,0 +1,12 @@
+# `always() ||` short-circuits the whole OR — the right operand is
+# ignored, the job always runs regardless of the condition the author
+# thought they were adding. Expected: 1 finding.
+name: Deploy
+on: [push]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    if: always() || github.ref == 'refs/heads/main'
+    steps:
+      - run: ./deploy.sh

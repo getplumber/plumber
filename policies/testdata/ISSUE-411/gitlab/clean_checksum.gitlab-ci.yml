@@ -1,0 +1,4 @@
+install:
+  image: alpine:3.19
+  script:
+    - curl -sSL https://example.com/install.sh -o install.sh && sha256sum -c install.sha256 && bash install.sh

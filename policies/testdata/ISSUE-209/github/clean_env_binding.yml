@@ -1,0 +1,15 @@
+# Safe pattern: the PR title is bound through env: first, then the
+# sticky file is populated from the env var. Shell expansion quotes
+# the value, so injection payloads don't break out. Expected: 0.
+name: Preview
+on: [pull_request_target]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          TITLE: ${{ github.event.pull_request.title }}
+        run: |
+          # The redirect sees "$TITLE", not the template literal.
+          echo "PR_TITLE=$TITLE" >> $GITHUB_ENV

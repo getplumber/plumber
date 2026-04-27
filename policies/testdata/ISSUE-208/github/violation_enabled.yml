@@ -1,0 +1,12 @@
+# Job re-enables the deprecated `::set-env::` / `::add-path::` commands.
+# Expected: 1 finding on bad.
+name: Insecure
+on: push
+
+jobs:
+  bad:
+    runs-on: ubuntu-latest
+    env:
+      ACTIONS_ALLOW_UNSECURE_COMMANDS: 'true'
+    steps:
+      - run: echo "bad"

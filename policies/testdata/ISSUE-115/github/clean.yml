@@ -1,0 +1,18 @@
+# No superfluous action — gh pr create called directly. Expected: 0.
+name: Auto-PR
+on: [schedule]
+
+jobs:
+  open-pr:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: actions/checkout@v4
+      - run: |
+          echo "change" > NEW.md
+          git checkout -b automated
+          git commit -am "bump"
+          git push -u origin automated
+          gh pr create --title automated --body ""

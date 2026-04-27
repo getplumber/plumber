@@ -1,0 +1,11 @@
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: daily
+    insecure-external-code-execution: allow
+  - package-ecosystem: pip
+    directory: /
+    schedule:
+      interval: daily

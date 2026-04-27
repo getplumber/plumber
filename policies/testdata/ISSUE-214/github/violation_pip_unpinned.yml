@@ -1,0 +1,12 @@
+# `pip install requests` without a version or requirements file.
+# Expected: 1 finding on test.
+name: Test
+on: [push]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: pip install requests
+      - run: pytest

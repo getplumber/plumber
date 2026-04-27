@@ -1,0 +1,15 @@
+# Release workflow but the cache key weaves github.ref_name — a PR
+# run can not populate the same key. Expected: 0 findings.
+name: Release
+on: [release]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          key: release-${{ github.ref_name }}-${{ hashFiles('**/package-lock.json') }}
+          path: ~/.npm
+      - uses: JS-DevTools/npm-publish@v3

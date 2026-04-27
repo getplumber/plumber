@@ -1,0 +1,6 @@
+deploy:
+  image: alpine:3.19
+  variables:
+    DEPLOY_ENV: "prod"
+  script:
+    - echo deploy

@@ -68,7 +68,6 @@ L_uncapped = w × (1 + 0.5 × log2(n))
 
 **Why caps?** So one severity bucket cannot erase the entire scale on its own. Critical stays uncapped on purpose so stacking Critical issues keeps hurting, though the malus in Step 3 already forces the letter into the **E** band.
 
-
 ---
 
 ## Step 2: Raw points

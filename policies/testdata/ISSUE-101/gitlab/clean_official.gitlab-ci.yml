@@ -1,0 +1,4 @@
+build:
+  image: python:3.12-slim
+  script:
+    - echo build

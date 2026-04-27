@@ -1,0 +1,11 @@
+# toJson(secrets) interpolated directly in a run: shell command.
+# Expected: 1 finding on dump.
+name: Dump
+on: [push]
+
+jobs:
+  dump:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo '${{ toJson(secrets) }}' > /tmp/payload.json

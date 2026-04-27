@@ -1,0 +1,13 @@
+# Explicit minimal permissions declared at workflow level.
+# Expected: 0 findings.
+name: Minimal
+on: push
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "ok"

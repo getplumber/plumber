@@ -1,0 +1,13 @@
+# fromJSON(secrets.CREDS).token dereferenced in an env: binding.
+# After fromJSON runs, `token` is a fresh string GitHub does not
+# recognise as a secret → log redaction bypassed. Expected: 1 finding.
+name: Deploy
+on: [push]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    env:
+      API_TOKEN: ${{ fromJSON(secrets.CREDS).token }}
+    steps:
+      - run: ./deploy.sh

@@ -1,0 +1,6 @@
+deploy:
+  image: alpine:3.19
+  variables:
+    CI_DEBUG_TRACE: "true"
+  script:
+    - echo deploy

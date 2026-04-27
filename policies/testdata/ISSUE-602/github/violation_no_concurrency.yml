@@ -1,0 +1,10 @@
+# No concurrency block at either level — successive pushes on the
+# same branch race on caches and external state. Expected: 1 finding.
+name: Deploy
+on: [push]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - run: ./deploy.sh

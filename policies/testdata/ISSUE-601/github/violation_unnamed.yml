@@ -1,0 +1,10 @@
+# No top-level `name:` — GitHub uses the file path as the display
+# identifier. Required-status-check settings that reference the file
+# path will silently break if the file is renamed. Expected: 1.
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo build

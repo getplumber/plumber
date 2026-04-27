@@ -1,0 +1,16 @@
+# Reusable workflow that runs `make ${{ inputs.test-command }}`.
+# A caller that proxies github.event.* into test-command flips the
+# surface to PR-author-controlled. Expected: 1 finding on run.
+name: Acceptance tests
+on:
+  workflow_call:
+    inputs:
+      test-command:
+        type: string
+        required: true
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - run: make ${{ inputs.test-command }}

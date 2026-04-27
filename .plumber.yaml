@@ -69,7 +69,6 @@ controls:
       - docker.io/docker:*
       - docker.io/getplumber/plumber:*
       - getplumber/plumber:*
-      - docker.io/getplumber/plumber@sha256:*
 
       # GitLab registry patterns
       - $CI_REGISTRY_IMAGE:*
@@ -548,3 +547,43 @@ controls:
     # (DOCKER_TLS_CERTDIR="" or DOCKER_HOST tcp://...:2375)
     # in jobs that use a DinD service.
     detectInsecureDaemon: true
+
+  # ===========================================
+  # Actions must be pinned by commit SHA (GitHub Actions only)
+  # ===========================================
+  # Flags workflow steps whose `uses:` reference is not a 40-character
+  # commit SHA. Tag/branch refs (v4, main) are mutable: if the action's
+  # maintainer is compromised, or retags a release, the caller workflow
+  # silently runs new code with its secrets. This is the vector behind
+  # the March 2025 tj-actions/changed-files compromise (CVE-2025-30066).
+  #
+  # Enabled by default: pin-by-SHA is the single highest-value
+  # supply-chain control on GitHub Actions, and the default
+  # trustedOwners list exempts first-party (`actions/*`, `github/*`)
+  # actions so the initial signal on a fresh repo stays focused on
+  # the third-party surface. Pair with Dependabot
+  # (`version-update-strategy: sha-and-version`) to keep pins fresh.
+  # Disable (`enabled: false`) if the project is not yet ready to
+  # migrate off tag pins — the other 29 rules remain active.
+  actionsMustBePinnedByCommitSha:
+    enabled: true
+
+    # Action-owner prefixes exempt from the pin-by-SHA requirement.
+    # Only list owners already inside the workflow's trust boundary.
+    # "actions" and "github" cover the first-party GitHub-owned
+    # actions the runtime trusts implicitly; anything else re-opens
+    # the supply-chain risk this check exists to close.
+    trustedOwners:
+      - actions
+      - github
+
+# ===========================================
+# Engine — experimental Rego/OPA rule engine
+# ===========================================
+# Opt-in, off by default. When enabled, Plumber will evaluate the
+# multi-provider Rego policies. The engine runs in shadow mode
+# alongside the legacy Go controls until they are removed — see
+# docs/REFACTOR_MULTI_PROVIDER.md §8 (Phase A).
+engine:
+  # Turn the Rego/OPA engine on. Default: true.
+  enabled: true

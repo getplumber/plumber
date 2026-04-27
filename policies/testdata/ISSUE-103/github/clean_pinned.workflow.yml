@@ -1,0 +1,11 @@
+# Digest-pinned container image. Expected: 0 findings.
+name: CI
+on: push
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine@sha256:c5b1261d6d3e43071626931fc004f70149baeba2c8ec672bd4f27761f8e1ad6b
+    steps:
+      - run: echo build

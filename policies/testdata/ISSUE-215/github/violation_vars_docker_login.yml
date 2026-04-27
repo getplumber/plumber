@@ -1,0 +1,11 @@
+# `vars.REGISTRY` inlined into a docker login script. If an org-level
+# variable is misconfigured or a maintainer account is compromised,
+# the template expands arbitrary shell. Expected: 1 finding.
+name: Login
+on: [push]
+
+jobs:
+  login:
+    runs-on: ubuntu-latest
+    steps:
+      - run: docker login ${{ vars.REGISTRY }} -u admin -p ${{ secrets.TOKEN }}

@@ -1,0 +1,15 @@
+# pypa/gh-action-pypi-publish with a static token. Long-lived secret,
+# no repo/workflow scoping — trusted publishing would close this.
+# Expected: 1 finding.
+name: Publish
+on: [release]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python -m build
+      - uses: pypa/gh-action-pypi-publish@v1
+        with:
+          password: ${{ secrets.PYPI_API_TOKEN }}

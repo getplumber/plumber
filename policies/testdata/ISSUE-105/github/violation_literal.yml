@@ -1,0 +1,16 @@
+# password is a string literal committed to git history. Anyone with
+# clone access can retrieve it; rotation requires history rewriting.
+# Expected: 1 finding on build.
+name: Build
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/example/private:latest
+      credentials:
+        username: myuser
+        password: hunter2
+    steps:
+      - run: echo build

@@ -1,0 +1,9 @@
+# Wildcard match against pattern '*-alpha'. Expected: 1 finding on ci.
+stages:
+  - test
+
+ci:
+  stage: test
+  image: node:20-alpha
+  script:
+    - echo test

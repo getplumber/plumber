@@ -1,0 +1,15 @@
+# All third-party actions pinned by 40-character commit SHA.
+# peaceiris/actions-gh-pages@4f9cc6602b3c52e6dd3ff78e1a74bbf0d0a45c9a
+# is a real commit SHA from v3.9.3 (March 2024). Expected: 0 findings.
+name: Release
+on: [push]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: peaceiris/actions-gh-pages@4f9cc6602b3c52e6dd3ff78e1a74bbf0d0a45c9a
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./public

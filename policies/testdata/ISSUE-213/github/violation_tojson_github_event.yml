@@ -1,0 +1,12 @@
+# toJson(github.event) serialised into an env var — any downstream
+# consumer sees every user-controllable field. Expected: 1 finding.
+name: PR Telemetry
+on: [pull_request_target]
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    env:
+      PAYLOAD: ${{ toJson(github.event) }}
+    steps:
+      - run: echo "$PAYLOAD" > /tmp/event.json

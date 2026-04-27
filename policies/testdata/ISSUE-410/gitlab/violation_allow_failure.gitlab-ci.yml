@@ -1,0 +1,6 @@
+sast:
+  stage: test
+  image: alpine:3.19
+  allow_failure: true
+  script:
+    - echo SAST

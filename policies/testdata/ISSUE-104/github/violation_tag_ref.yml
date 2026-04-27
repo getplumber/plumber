@@ -1,0 +1,18 @@
+# actions/checkout@v4 is a mutable tag. The maintainer can retag v4 to
+# point at any commit — or an attacker who compromises the maintainer's
+# account can do the same. Pin by 40-char commit SHA instead. Expected:
+# 2 findings (checkout + setup-node — both mutable refs; peaceiris IS
+# a third-party action so it is flagged too).
+name: Release
+on: [push]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v3
+      - uses: peaceiris/actions-gh-pages@v3
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./public

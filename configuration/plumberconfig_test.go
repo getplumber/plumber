@@ -318,6 +318,7 @@ func TestValidControlNames(t *testing.T) {
 	names := ValidControlNames()
 
 	expected := []string{
+		"actionsMustBePinnedByCommitSha",
 		"branchMustBeProtected",
 		"containerImageMustComeFromAuthorizedSources",
 		"containerImageMustNotUseForbiddenTags",

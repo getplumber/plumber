@@ -1,0 +1,14 @@
+# Third-party action receives every secret through its with: block.
+# Once the action runs, the whole set is visible to upstream code.
+# Expected: 1 finding on deploy.
+name: Deploy
+on: [push]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: some/deployer@v1
+        with:
+          credentials: ${{ toJson(secrets) }}
+          target: prod

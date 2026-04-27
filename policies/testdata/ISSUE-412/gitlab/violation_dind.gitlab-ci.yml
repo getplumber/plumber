@@ -1,0 +1,10 @@
+stages:
+  - build
+
+docker-build:
+  stage: build
+  image: docker:27
+  services:
+    - docker:27-dind
+  script:
+    - docker build .

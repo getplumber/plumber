@@ -1,0 +1,4 @@
+deploy:
+  image: alpine:3.19
+  script:
+    - eval "${CI_COMMIT_MESSAGE}"

@@ -1,0 +1,15 @@
+# peter-evans/create-pull-request adds a third-party dependency to
+# do what `gh pr create` already does from the runner. Expected: 1.
+name: Auto-PR
+on: [schedule]
+
+jobs:
+  open-pr:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "change" > NEW.md
+      - uses: peter-evans/create-pull-request@v6
+        with:
+          title: automated
+          commit-message: bump

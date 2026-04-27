@@ -1,0 +1,16 @@
+# Release workflow restores actions/cache with a key that does not
+# reference the release ref — a PR-populated entry on the same key
+# slides into the published build. Expected: 1 finding.
+name: Release
+on: [release]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          key: deps-${{ hashFiles('**/package-lock.json') }}
+          path: ~/.npm
+      - uses: JS-DevTools/npm-publish@v3

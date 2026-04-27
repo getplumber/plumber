@@ -1,0 +1,13 @@
+# Release-triggered publish job uses a PyPI token but declares no
+# environment: — no reviewer stands between release and the token.
+# Expected: 1 finding.
+name: Publish
+on: [release]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: python -m build
+      - run: twine upload --password ${{ secrets.PYPI_API_TOKEN }} dist/*

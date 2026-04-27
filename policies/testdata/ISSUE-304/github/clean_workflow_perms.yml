@@ -1,0 +1,12 @@
+# Workflow-level permissions propagate to every job. Expected: 0.
+name: Build
+on: [push]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: make build

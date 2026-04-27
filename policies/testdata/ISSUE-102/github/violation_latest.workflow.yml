@@ -1,0 +1,17 @@
+# GitHub Actions workflow — forbidden tag "latest" on the deploy job.
+# Expected: 1 finding on deploy.
+name: CI
+on: push
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container: alpine:3.19
+    steps:
+      - run: echo build
+
+  deploy:
+    runs-on: ubuntu-latest
+    container: alpine:latest
+    steps:
+      - run: echo deploy

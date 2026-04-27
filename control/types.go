@@ -2,6 +2,7 @@ package control
 
 import (
 	"github.com/getplumber/plumber/collector"
+	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	"github.com/sirupsen/logrus"
 )
 
@@ -26,25 +27,17 @@ type AnalysisResult struct {
 	// Pipeline image data
 	PipelineImageMetrics *PipelineImageMetricsSummary `json:"pipelineImageMetrics,omitempty"`
 
-	// Control results
-	ImageForbiddenTagsResult        *GitlabImageForbiddenTagsResult               `json:"imageForbiddenTagsResult,omitempty"`
-	ImageAuthorizedSourcesResult    *GitlabImageAuthorizedSourcesResult           `json:"imageAuthorizedSourcesResult,omitempty"`
-	BranchProtectionResult          *GitlabBranchProtectionResult                 `json:"branchProtectionResult,omitempty"`
-	HardcodedJobsResult             *GitlabPipelineHardcodedJobsResult            `json:"hardcodedJobsResult,omitempty"`
-	OutdatedIncludesResult          *GitlabPipelineIncludesOutdatedResult         `json:"outdatedIncludesResult,omitempty"`
-	ForbiddenVersionsIncludesResult *GitlabPipelineIncludesForbiddenVersionResult `json:"forbiddenVersionsIncludesResult,omitempty"`
-	RequiredComponentsResult        *GitlabPipelineRequiredComponentsResult       `json:"requiredComponentsResult,omitempty"`
-	RequiredTemplatesResult         *GitlabPipelineRequiredTemplatesResult        `json:"requiredTemplatesResult,omitempty"`
-	DebugTraceResult                *GitlabPipelineDebugTraceResult              `json:"debugTraceResult,omitempty"`
-	VariableInjectionResult         *GitlabPipelineVariableInjectionResult       `json:"variableInjectionResult,omitempty"`
-	SecurityJobsWeakenedResult      *GitlabSecurityJobsWeakenedResult            `json:"securityJobsWeakenedResult,omitempty"`
-	UnverifiedScriptsResult         *GitlabPipelineUnverifiedScriptsResult       `json:"unverifiedScriptsResult,omitempty"`
-	JobVariablesOverrideResult      *GitlabPipelineJobVariablesOverrideResult    `json:"jobVariablesOverrideResult,omitempty"`
-	DockerInDockerResult            *GitlabPipelineDockerInDockerResult          `json:"dockerInDockerResult,omitempty"`
+	// Findings from the Rego/OPA rule engine. Single source of truth
+	// for compliance results since all legacy Go controls were retired
+	// (see docs/REFACTOR_MULTI_PROVIDER.md §8 Phase A).
+	Findings []opaengine.Finding `json:"findings,omitempty"`
 
-	// Raw collected data (not included in JSON output, used for PBOM generation)
-	PipelineImageData  *collector.GitlabPipelineImageData  `json:"-"`
-	PipelineOriginData *collector.GitlabPipelineOriginData `json:"-"`
+	// Raw collected data (not included in JSON output, used for PBOM generation
+	// and for the per-control aggregated stats block printed under each
+	// control header in the terminal output).
+	PipelineImageData  *collector.GitlabPipelineImageData    `json:"-"`
+	PipelineOriginData *collector.GitlabPipelineOriginData   `json:"-"`
+	ProtectionData     *collector.GitlabProtectionAnalysisData `json:"-"`
 }
 
 // PipelineOriginMetricsSummary is a simplified version of origin metrics for output

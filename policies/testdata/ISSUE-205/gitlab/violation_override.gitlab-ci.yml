@@ -1,0 +1,6 @@
+deploy:
+  image: alpine:3.19
+  variables:
+    PROD_TOKEN: "hardcoded-token"
+  script:
+    - echo deploy

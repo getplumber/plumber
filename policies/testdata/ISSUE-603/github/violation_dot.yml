@@ -1,0 +1,15 @@
+# upload-artifact with path=. bundles .git/ — if checkout persisted
+# the token (ISSUE-307) it leaks. Expected: 1 finding.
+name: Build
+on: [push]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: workspace
+          path: .
