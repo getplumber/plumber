@@ -69,6 +69,7 @@ controls:
       - docker.io/docker:*
       - docker.io/getplumber/plumber:*
       - getplumber/plumber:*
+      - docker.io/getplumber/plumber@sha256:*
 
       # GitLab registry patterns
       - $CI_REGISTRY_IMAGE:*
