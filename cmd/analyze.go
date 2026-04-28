@@ -510,6 +510,10 @@ func writeJSONToFile(result *control.AnalysisResult, pc *configuration.PlumberCo
 	for k, v := range legacyResultsByName(result, pc) {
 		output[k] = v
 	}
+	// Drop the flat Rego findings list from the file: consumers should use
+	// the per-control *Result blocks (issues/metrics/compliance), matching
+	// the pre–flat-findings JSON shape.
+	delete(output, "findings")
 
 	// Create/overwrite the file
 	file, err := os.Create(filePath)
