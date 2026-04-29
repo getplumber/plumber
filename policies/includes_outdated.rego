@@ -14,10 +14,12 @@ deny contains finding if {
 	inc.ref != ""
 	inc.current != ""
 	inc.ref != inc.current
+	not _ref_is_forbidden_version(inc.ref)
+	_is_semver_like(inc.ref)
 	finding := {
 		"code":                  "ISSUE-403",
 		"severity":              "medium",
-		"message":               sprintf("include %q pinned to %q; latest is %q", [inc.source, inc.ref, inc.current]),
+		"message":               sprintf("%s uses version '%s' (latest: %s)", [inc.source, inc.ref, inc.current]),
 		"job":                   inc.source,
 		"version":               inc.ref,
 		"latestVersion":         inc.current,
@@ -28,3 +30,23 @@ deny contains finding if {
 		"originHash":            object.get(inc, "originHash", 0),
 	}
 }
+
+# A ref pinned to a configured forbidden version (e.g. `main`,
+# `master`, `HEAD`) is already flagged by ISSUE-404. Comparing it to
+# the latest semver release is a category error — the user is asking
+# for a mutable ref by design, so "outdated" is meaningless. Mirrors
+# the legacy IsUpToDate behaviour where mutable refs were treated as
+# up-to-date.
+_ref_is_forbidden_version(ref) if {
+	some forbidden in input.config.includesForbiddenVersions.forbiddenVersions
+	glob.match(forbidden, null, ref)
+}
+
+# Outdated comparison only makes sense for refs that look like a
+# version number. Mutable branch/tag pointers (`main`, `master`,
+# `HEAD`, `develop`, ...) have no meaningful "latest" — they ARE the
+# tip of a branch — so we skip them regardless of user config. A
+# semver-like ref optionally starts with `v`, then a numeric major
+# component, optional minor/patch parts, and an optional pre-release
+# or build suffix.
+_is_semver_like(ref) if regex.match(`^v?\d+(\.\d+)*([-+].*)?$`, ref)

@@ -112,6 +112,7 @@ func evaluatePolicies(l *logrus.Entry, pc *configuration.PlumberConfig, pipeline
 		l.WithError(err).Warn("Rego/OPA engine evaluation failed")
 		return nil
 	}
+	findings = FilterFindingsByEnabledControls(findings, pc)
 	l.WithField("findingCount", len(findings)).Info("Rego/OPA engine evaluation completed")
 	return findings
 }
@@ -208,6 +209,12 @@ func buildEngineConfig(pc *configuration.PlumberConfig) map[string]any {
 		cfg["imageAuthorizedSources"] = map[string]any{
 			"trustedUrls":           c.TrustedUrls,
 			"trustDockerHubOfficial": trustOfficial,
+		}
+	}
+
+	if c := pc.Controls.PipelineMustNotExecuteUnverifiedScripts; c != nil && len(c.TrustedUrls) > 0 {
+		cfg["unverifiedScripts"] = map[string]any{
+			"trustedUrls": c.TrustedUrls,
 		}
 	}
 

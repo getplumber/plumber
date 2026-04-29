@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/getplumber/plumber/internal/ir"
@@ -69,7 +70,12 @@ func scanDockerfiles(rootDir string) []ir.Dockerfile {
 	// Stage 1: root + common build dirs one level down.
 	candidates := map[string]struct{}{}
 	collectDockerfileCandidates(rootDir, 2, candidates)
+	paths := make([]string, 0, len(candidates))
 	for path := range candidates {
+		paths = append(paths, path)
+	}
+	sort.Strings(paths)
+	for _, path := range paths {
 		df, err := parseDockerfileBases(path)
 		if err != nil {
 			continue

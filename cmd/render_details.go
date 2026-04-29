@@ -1,13 +1,17 @@
 package cmd
 
 import (
+	"cmp"
 	"fmt"
+	"slices"
 	"sort"
 	"strings"
 
+	"github.com/getplumber/plumber/collector"
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
+	"github.com/getplumber/plumber/utils"
 )
 
 // statLine is a single labelled metric rendered above the findings
@@ -29,6 +33,8 @@ type detailedFinding struct {
 	Message  string
 	DocURL   string
 	Location string
+	// DetailLines is optional (e.g. ISSUE-505: one headline, several sub-reasons).
+	DetailLines []string
 }
 
 // findingGroup collects everything needed to render one per-rule
@@ -66,6 +72,9 @@ func renderFindingGroups(groups []findingGroup) {
 			for _, f := range g.Findings {
 				tag := severityTag(f.Code)
 				fmt.Printf("     %s [%s] %s\n", tag, f.Code, f.Message)
+				for _, line := range f.DetailLines {
+					fmt.Printf("      └─ %s\n", line)
+				}
 				if f.Location != "" {
 					// The bare path is emitted last so VS Code, iTerm
 					// and similar tools detect it as a clickable
@@ -96,18 +105,109 @@ func formatFindingLocation(f opaengine.Finding) string {
 	return f.File
 }
 
+// detailLinesFromFinding unpacks ISSUE-505 structured reasons into CLI sub-lines.
+func detailLinesFromFinding(f opaengine.Finding) []string {
+	if f.Code != string(control.CodeBranchNonCompliant) || f.Data == nil {
+		return nil
+	}
+	raw, ok := f.Data["reasons"]
+	if !ok || raw == nil {
+		return nil
+	}
+	lines := reasonsArrayToStrings(raw)
+	if len(lines) == 0 {
+		return nil
+	}
+	return sortBranchProtectionDetailLines(lines)
+}
+
+func reasonsArrayToStrings(raw interface{}) []string {
+	switch v := raw.(type) {
+	case []string:
+		return v
+	case []interface{}:
+		out := make([]string, 0, len(v))
+		for _, x := range v {
+			if s, ok := x.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	default:
+		return nil
+	}
+}
+
+// sortBranchProtectionDetailLines applies a stable product order (force push,
+// code owner, then other reasons lexicographically).
+func sortBranchProtectionDetailLines(lines []string) []string {
+	if len(lines) < 2 {
+		return lines
+	}
+	out := slices.Clone(lines)
+	slices.SortFunc(out, func(a, b string) int {
+		return cmp.Or(
+			cmp.Compare(branchProtectionDetailRank(a), branchProtectionDetailRank(b)),
+			cmp.Compare(a, b),
+		)
+	})
+	return out
+}
+
+func branchProtectionDetailRank(s string) int {
+	switch {
+	case strings.HasPrefix(s, "Force push"):
+		return 0
+	case strings.HasPrefix(s, "Code owner"):
+		return 1
+	case strings.HasPrefix(s, "Merge access level"):
+		return 2
+	case strings.HasPrefix(s, "Push access level"):
+		return 3
+	default:
+		return 50
+	}
+}
+
+// sortBranchProtectionFindingsForDisplay prints ISSUE-505 before ISSUE-501 so the
+// protected-but-misconfigured branch appears above plain unprotected branches.
+func sortBranchProtectionFindingsForDisplay(findings []opaengine.Finding) {
+	if len(findings) < 2 {
+		return
+	}
+	rank := func(code string) int {
+		switch code {
+		case "ISSUE-505":
+			return 0
+		case "ISSUE-501":
+			return 1
+		default:
+			return 10
+		}
+	}
+	slices.SortFunc(findings, func(a, b opaengine.Finding) int {
+		return cmp.Or(
+			cmp.Compare(rank(a.Code), rank(b.Code)),
+			cmp.Compare(a.Job, b.Job),
+			cmp.Compare(a.Message, b.Message),
+		)
+	})
+}
+
 // buildGitLabControlStats returns the legacy aggregated metrics that
 // the v0.2.x analyzer printed under each control header — the
 // "Total Images: 9 / Authorized: 9 / Unauthorized: 0" block. The
 // Rego engine emits findings only, so we recompute the totals here
 // from the IR data still attached to AnalysisResult, the user
-// configuration (for "checked-list" sizes), and the findingsCount we
-// just bucketed for the control. Each control name matches the entry
+// configuration (for "checked-list" sizes), and the per-control
+// findings list (for denominators and code-specific counts such as
+// ISSUE-102 / ISSUE-505). Each control name matches the entry
 // registered by control.GitLabControls().
-func buildGitLabControlStats(controlName string, result *control.AnalysisResult, pc *configuration.PlumberConfig, findingsCount int) []statLine {
+func buildGitLabControlStats(controlName string, result *control.AnalysisResult, pc *configuration.PlumberConfig, findings []opaengine.Finding) []statLine {
 	if result == nil {
 		return nil
 	}
+	findingsCount := len(findings)
 	jobTotal := uint(0)
 	if result.PipelineOriginMetrics != nil {
 		jobTotal = result.PipelineOriginMetrics.JobTotal
@@ -131,11 +231,23 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 		if notPinned < 0 {
 			notPinned = 0
 		}
-		return []statLine{
-			{"Total Images", fmt.Sprintf("%d", total)},
-			{"Pinned By Digest", fmt.Sprintf("%d", pinned)},
-			{"Not Pinned By Digest", fmt.Sprintf("%d", notPinned)},
+		usingForbidden := 0
+		for _, f := range findings {
+			if f.Code == string(control.CodeImageForbiddenTag) {
+				usingForbidden++
+			}
 		}
+		lines := []statLine{
+			{"Total Images", fmt.Sprintf("%d", total)},
+		}
+		if pc != nil && pc.Controls.ContainerImageMustNotUseForbiddenTags.IsPinnedByDigestRequired() {
+			lines = append(lines,
+				statLine{"Pinned By Digest", fmt.Sprintf("%d", pinned)},
+				statLine{"Not Pinned By Digest", fmt.Sprintf("%d", notPinned)},
+			)
+		}
+		lines = append(lines, statLine{"Using Forbidden Tags", fmt.Sprintf("%d", usingForbidden)})
+		return lines
 	case "containerImageMustComeFromAuthorizedSources":
 		total := 0
 		if result.PipelineImageMetrics != nil {
@@ -228,37 +340,27 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 			{"Weakened Jobs", fmt.Sprintf("%d", findingsCount)},
 		}
 	case "pipelineMustIncludeComponent":
-		groups := 0
+		var resolved [][]string
 		if pc != nil && pc.Controls.PipelineMustIncludeComponent != nil {
-			cfg := pc.Controls.PipelineMustIncludeComponent
-			groups = len(cfg.RequiredGroups)
-			if groups == 0 && cfg.Required != "" {
-				groups = 1
+			if g, err := pc.Controls.PipelineMustIncludeComponent.GetResolvedRequiredGroups(); err == nil {
+				resolved = g
 			}
 		}
-		satisfied := groups - findingsCount
-		if satisfied < 0 {
-			satisfied = 0
-		}
+		satisfied := countSatisfiedGroups(resolved, result, "component")
 		return []statLine{
-			{"Requirement Groups", fmt.Sprintf("%d", groups)},
+			{"Requirement Groups", fmt.Sprintf("%d", len(resolved))},
 			{"Satisfied Groups", fmt.Sprintf("%d", satisfied)},
 		}
 	case "pipelineMustIncludeTemplate":
-		groups := 0
+		var resolved [][]string
 		if pc != nil && pc.Controls.PipelineMustIncludeTemplate != nil {
-			cfg := pc.Controls.PipelineMustIncludeTemplate
-			groups = len(cfg.RequiredGroups)
-			if groups == 0 && cfg.Required != "" {
-				groups = 1
+			if g, err := pc.Controls.PipelineMustIncludeTemplate.GetResolvedRequiredGroups(); err == nil {
+				resolved = g
 			}
 		}
-		satisfied := groups - findingsCount
-		if satisfied < 0 {
-			satisfied = 0
-		}
+		satisfied := countSatisfiedGroups(resolved, result, "template")
 		return []statLine{
-			{"Requirement Groups", fmt.Sprintf("%d", groups)},
+			{"Requirement Groups", fmt.Sprintf("%d", len(resolved))},
 			{"Satisfied Groups", fmt.Sprintf("%d", satisfied)},
 		}
 	case "pipelineMustNotUseDockerInDocker":
@@ -269,11 +371,18 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 		}
 	case "branchMustBeProtected":
 		total, toProtect, protected, unprotected := _branchProtectionCounts(result, pc)
+		nonCompliant := 0
+		for _, f := range findings {
+			if f.Code == string(control.CodeBranchNonCompliant) {
+				nonCompliant++
+			}
+		}
 		return []statLine{
 			{"Total Branches", fmt.Sprintf("%d", total)},
 			{"Branches to Protect", fmt.Sprintf("%d", toProtect)},
 			{"Protected Branches", fmt.Sprintf("%d", protected)},
 			{"Unprotected", fmt.Sprintf("%d", unprotected)},
+			{"Non-Compliant", fmt.Sprintf("%d", nonCompliant)},
 		}
 	}
 	return nil
@@ -568,6 +677,65 @@ func _serviceLooksLikeDind(item interface{}) bool {
 	return false
 }
 
+// countSatisfiedGroups returns how many DNF requirement groups have
+// every required component (or template) actually present in the
+// pipeline. Mirrors the rego matching rules in component_missing /
+// template_missing: an origin matches when its cleaned location, the
+// raw location, or any Plumber-augmented path equals the required
+// entry. The kindFilter is "component" for ISSUE-408 and "template"
+// for ISSUE-405 (anything that is not "component" or "hardcoded").
+func countSatisfiedGroups(groups [][]string, result *control.AnalysisResult, kindFilter string) int {
+	if result == nil || result.PipelineOriginData == nil || len(groups) == 0 {
+		return 0
+	}
+	satisfied := 0
+	for _, group := range groups {
+		if len(group) == 0 {
+			continue
+		}
+		all := true
+		for _, required := range group {
+			if !originGroupMatch(required, result.PipelineOriginData, kindFilter) {
+				all = false
+				break
+			}
+		}
+		if all {
+			satisfied++
+		}
+	}
+	return satisfied
+}
+
+func originGroupMatch(required string, data *collector.GitlabPipelineOriginData, kindFilter string) bool {
+	cleanRequired := utils.CleanOriginPath(required)
+	for i := range data.Origins {
+		o := &data.Origins[i]
+		if !originKindMatches(o.OriginType, kindFilter) {
+			continue
+		}
+		loc := o.GitlabIncludeOrigin.Location
+		if loc == required || utils.CleanOriginPath(loc) == cleanRequired {
+			return true
+		}
+		if o.PlumberOrigin.Path != "" && o.PlumberOrigin.Path == required {
+			return true
+		}
+	}
+	return false
+}
+
+func originKindMatches(originType, kindFilter string) bool {
+	switch kindFilter {
+	case "component":
+		return originType == "component"
+	case "template":
+		return originType != "component" && originType != "hardcoded" && originType != ""
+	default:
+		return false
+	}
+}
+
 // findingGroupsFromRegoFindings converts the Rego engine's flat
 // findings list into groups keyed by ControlName (from the issue-code
 // registry). Used by the GitHub analyze path; will also be used by
@@ -601,10 +769,11 @@ func findingGroupsFromRegoFindings(findings []opaengine.Finding) []findingGroup 
 			order = append(order, key)
 		}
 		b.items = append(b.items, detailedFinding{
-			Code:     control.ErrorCode(f.Code),
-			Message:  f.Message,
-			DocURL:   docURL,
-			Location: formatFindingLocation(f),
+			Code:        control.ErrorCode(f.Code),
+			Message:     f.Message,
+			DocURL:      docURL,
+			Location:    formatFindingLocation(f),
+			DetailLines: detailLinesFromFinding(f),
 		})
 	}
 	sort.Strings(order)

@@ -1,6 +1,9 @@
 package control
 
-import "github.com/getplumber/plumber/configuration"
+import (
+	"github.com/getplumber/plumber/configuration"
+	opaengine "github.com/getplumber/plumber/internal/engine/opa"
+)
 
 // ControlEntry is the canonical per-control view consumed by the
 // analyze renderer, the MR comment builder and any future output path.
@@ -131,6 +134,84 @@ func GitLabControls(pc *configuration.PlumberConfig) []ControlEntry {
 		})
 	}
 	return entries
+}
+
+// DisabledControlNames returns the set of control names the user has
+// explicitly disabled in .plumber.yaml (controls present in the config
+// with `enabled: false`). Controls absent from the config are NOT
+// included — they fall back to the embedded default which has them
+// enabled.
+func DisabledControlNames(pc *configuration.PlumberConfig) map[string]bool {
+	out := map[string]bool{}
+	if pc == nil {
+		return out
+	}
+	c := &pc.Controls
+	if cfg := c.ContainerImageMustNotUseForbiddenTags; cfg != nil && !cfg.IsEnabled() {
+		out["containerImageMustNotUseForbiddenTags"] = true
+	}
+	if cfg := c.ContainerImageMustComeFromAuthorizedSources; cfg != nil && !cfg.IsEnabled() {
+		out["containerImageMustComeFromAuthorizedSources"] = true
+	}
+	if cfg := c.BranchMustBeProtected; cfg != nil && !cfg.IsEnabled() {
+		out["branchMustBeProtected"] = true
+	}
+	if cfg := c.PipelineMustNotIncludeHardcodedJobs; cfg != nil && !cfg.IsEnabled() {
+		out["pipelineMustNotIncludeHardcodedJobs"] = true
+	}
+	if cfg := c.IncludesMustBeUpToDate; cfg != nil && !cfg.IsEnabled() {
+		out["includesMustBeUpToDate"] = true
+	}
+	if cfg := c.IncludesMustNotUseForbiddenVersions; cfg != nil && !cfg.IsEnabled() {
+		out["includesMustNotUseForbiddenVersions"] = true
+	}
+	if cfg := c.PipelineMustIncludeComponent; cfg != nil && !cfg.IsEnabled() {
+		out["pipelineMustIncludeComponent"] = true
+	}
+	if cfg := c.PipelineMustIncludeTemplate; cfg != nil && !cfg.IsEnabled() {
+		out["pipelineMustIncludeTemplate"] = true
+	}
+	if cfg := c.PipelineMustNotEnableDebugTrace; cfg != nil && !cfg.IsEnabled() {
+		out["pipelineMustNotEnableDebugTrace"] = true
+	}
+	if cfg := c.PipelineMustNotUseUnsafeVariableExpansion; cfg != nil && !cfg.IsEnabled() {
+		out["pipelineMustNotUseUnsafeVariableExpansion"] = true
+	}
+	if cfg := c.SecurityJobsMustNotBeWeakened; cfg != nil && !cfg.IsEnabled() {
+		out["securityJobsMustNotBeWeakened"] = true
+	}
+	if cfg := c.PipelineMustNotExecuteUnverifiedScripts; cfg != nil && !cfg.IsEnabled() {
+		out["pipelineMustNotExecuteUnverifiedScripts"] = true
+	}
+	if cfg := c.PipelineMustNotOverrideJobVariables; cfg != nil && !cfg.IsEnabled() {
+		out["pipelineMustNotOverrideJobVariables"] = true
+	}
+	if cfg := c.PipelineMustNotUseDockerInDocker; cfg != nil && !cfg.IsEnabled() {
+		out["pipelineMustNotUseDockerInDocker"] = true
+	}
+	if cfg := c.ActionsMustBePinnedByCommitSha; cfg != nil && !cfg.IsEnabled() {
+		out["actionsMustBePinnedByCommitSha"] = true
+	}
+	return out
+}
+
+// FilterFindingsByEnabledControls drops findings whose ControlName is
+// disabled in pc. Findings whose code is unknown or has no ControlName
+// are kept (defensive: better surfaced than silently swallowed).
+func FilterFindingsByEnabledControls(findings []opaengine.Finding, pc *configuration.PlumberConfig) []opaengine.Finding {
+	disabled := DisabledControlNames(pc)
+	if len(disabled) == 0 {
+		return findings
+	}
+	out := make([]opaengine.Finding, 0, len(findings))
+	for _, f := range findings {
+		info := LookupCode(ErrorCode(f.Code))
+		if info != nil && info.ControlName != "" && disabled[info.ControlName] {
+			continue
+		}
+		out = append(out, f)
+	}
+	return out
 }
 
 // ApplyFindings fills in Compliance for each catalog entry based on

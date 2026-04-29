@@ -13,11 +13,13 @@ const CycloneDXSpecVersion = "1.5"
 
 // CycloneDX represents a CycloneDX SBOM
 // Spec: https://cyclonedx.org/docs/1.5/json/
+// Struct field order matches a natural read path: BOM header, identifiers,
+// metadata (project/tool), dependency components last.
 type CycloneDX struct {
 	BOMFormat    string               `json:"bomFormat"`
 	SpecVersion  string               `json:"specVersion"`
-	SerialNumber string               `json:"serialNumber"`
 	Version      int                  `json:"version"`
+	SerialNumber string               `json:"serialNumber"`
 	Metadata     CycloneDXMetadata    `json:"metadata"`
 	Components   []CycloneDXComponent `json:"components"`
 }

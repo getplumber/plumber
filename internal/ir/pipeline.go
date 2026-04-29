@@ -93,6 +93,15 @@ type Job struct {
 	AllowFailure bool              `json:"allowFailure,omitempty"`
 	When         string            `json:"when,omitempty"`
 	Variables    map[string]string `json:"variables,omitempty"`
+	// LocalVariables is the raw `variables:` map authored by the
+	// project itself (root .gitlab-ci.yml or workflow file), before any
+	// merge with upstream component/template definitions. Empty when
+	// the user did not declare a `variables:` block on this job —
+	// distinguishing "user wrote SAST_DISABLED here" from "upstream
+	// template ships SAST_DISABLED". Variable-override policies must
+	// read this field, never the merged Variables, to avoid punishing
+	// projects for variables their upstream catalogs already set.
+	LocalVariables map[string]string `json:"localVariables,omitempty"`
 	// Rules captures the job's `rules:` block (GitLab CI). Each entry
 	// is a {if, when, allow_failure, exists, changes, …} map; rules
 	// such as `- when: never` neutralise the job at runtime even when

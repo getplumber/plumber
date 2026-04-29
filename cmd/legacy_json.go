@@ -4,6 +4,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/getplumber/plumber/collector"
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
 	"github.com/getplumber/plumber/gitlab"
@@ -143,18 +144,207 @@ func projectFindings(findings []opaengine.Finding, jobNameKey string) []map[stri
 	return out
 }
 
-// _sortedFindings returns the findings sorted alphabetically by Job.
-// Stable's iteration order is not deterministic on its own (Go map
-// range), but consumers writing snapshot tests pin a stable order;
-// alphabetic-by-job matches what the v0.2.x output produced often
-// enough to keep diffs minimal across the example projects.
+// _sortedFindings returns findings in a stable total order so legacy JSON
+// issues[] do not flip between runs when Job matches (e.g. two codes on the
+// same job). Primary key is Job, then Code, File, Line, Message — aligned
+// with the OPA engine aggregate sort.
 func _sortedFindings(findings []opaengine.Finding) []opaengine.Finding {
 	out := make([]opaengine.Finding, len(findings))
 	copy(out, findings)
 	sort.SliceStable(out, func(i, j int) bool {
-		return out[i].Job < out[j].Job
+		a, b := out[i], out[j]
+		switch {
+		case a.Job != b.Job:
+			return a.Job < b.Job
+		case a.Code != b.Code:
+			return a.Code < b.Code
+		case a.File != b.File:
+			return a.File < b.File
+		case a.Line != b.Line:
+			return a.Line < b.Line
+		default:
+			return a.Message < b.Message
+		}
 	})
 	return out
+}
+
+// _branchProtectionEntryForName returns the first GitLab protection rule
+// whose pattern matches the branch name, consistent with the
+// protectionByBranch indexing in buildBranchProtectionBlock.
+func _branchProtectionEntryForName(data *collector.GitlabProtectionAnalysisData, branchName string) *gitlab.BranchProtection {
+	if data == nil || branchName == "" {
+		return nil
+	}
+	for i := range data.BranchProtections {
+		p := &data.BranchProtections[i]
+		if _matchesAnyGlob(branchName, []string{p.ProtectionPattern}) {
+			return p
+		}
+	}
+	return nil
+}
+
+// enrichBranchProtection505IssueMaps restores the v0.2.x issue shape for
+// ISSUE-505: *Display flags and codeOwnerApprovalRequired from the
+// protection API (Rego alone cannot express the legacy display semantics).
+func enrichBranchProtection505IssueMaps(issues []map[string]any, result *control.AnalysisResult, pc *configuration.PlumberConfig) {
+	var cfg *configuration.BranchProtectionControlConfig
+	if pc != nil {
+		cfg = pc.Controls.BranchMustBeProtected
+	}
+	allowForcePushPolicy := false
+	if cfg != nil && cfg.AllowForcePush != nil {
+		allowForcePushPolicy = *cfg.AllowForcePush
+	}
+	codeOwnerPolicy := false
+	if cfg != nil && cfg.CodeOwnerApprovalRequired != nil {
+		codeOwnerPolicy = *cfg.CodeOwnerApprovalRequired
+	}
+	minMergePolicy := 0
+	if cfg != nil && cfg.MinMergeAccessLevel != nil {
+		minMergePolicy = *cfg.MinMergeAccessLevel
+	}
+	minPushPolicy := 0
+	if cfg != nil && cfg.MinPushAccessLevel != nil {
+		minPushPolicy = *cfg.MinPushAccessLevel
+	}
+	for _, issue := range issues {
+		code, _ := issue["code"].(string)
+		if code != string(control.CodeBranchNonCompliant) {
+			continue
+		}
+		branchName, _ := issue["branchName"].(string)
+		if branchName == "" {
+			if j, ok := issue["job"].(string); ok {
+				branchName = j
+			}
+		}
+		if branchName == "" {
+			continue
+		}
+		if result == nil || result.ProtectionData == nil {
+			continue
+		}
+		p := _branchProtectionEntryForName(result.ProtectionData, branchName)
+		if p == nil {
+			continue
+		}
+		branchAllow := p.AllowForcePush
+		branchCodeOwner := p.CodeOwnerApprovalRequired
+		branchMinMerge := _minAccessLevelGitlab(p.MergeAccessLevels)
+		branchMinPush := _minAccessLevelGitlab(p.PushAccessLevels)
+		issue["codeOwnerApprovalRequired"] = branchCodeOwner
+		// controlGitlabProtectionBranchProtectionNotCompliant.go display bits
+		if !allowForcePushPolicy && branchAllow {
+			issue["allowForcePushDisplay"] = true
+		} else {
+			delete(issue, "allowForcePushDisplay")
+		}
+		if codeOwnerPolicy && !branchCodeOwner {
+			issue["codeOwnerApprovalRequiredDisplay"] = true
+		} else {
+			delete(issue, "codeOwnerApprovalRequiredDisplay")
+		}
+		if branchMinMerge != 0 && (minMergePolicy == 0 || minMergePolicy > branchMinMerge) {
+			issue["minMergeAccessLevelDisplay"] = true
+		} else {
+			delete(issue, "minMergeAccessLevelDisplay")
+		}
+		if branchMinPush != 0 && (minPushPolicy == 0 || minPushPolicy > branchMinPush) {
+			issue["minPushAccessLevelDisplay"] = true
+		} else {
+			delete(issue, "minPushAccessLevelDisplay")
+		}
+	}
+}
+
+func _originByIncludeSource(data *collector.GitlabPipelineOriginData, source string) *collector.GitlabPipelineOriginDataFull {
+	if data == nil || source == "" {
+		return nil
+	}
+	cleanedWant := utils.CleanOriginPath(source)
+	for i := range data.Origins {
+		o := &data.Origins[i]
+		loc := o.GitlabIncludeOrigin.Location
+		if loc == "" {
+			loc = o.GitlabComponent.ComponentIncludePath
+		}
+		if loc == source || (loc != "" && utils.CleanOriginPath(loc) == cleanedWant) {
+			return o
+		}
+	}
+	return nil
+}
+
+// enrichForbiddenVersion404IssueMaps restores the v0.1.x
+// GitlabPipelineIncludesForbiddenVersionIssue fields from
+// collector data (Rego only emits a slim finding).
+func enrichForbiddenVersion404IssueMaps(issues []map[string]any, result *control.AnalysisResult) {
+	if result == nil || result.PipelineOriginData == nil {
+		return
+	}
+	for _, issue := range issues {
+		code, _ := issue["code"].(string)
+		if code != string(control.CodeIncludeForbiddenVersion) {
+			continue
+		}
+		src, _ := issue["job"].(string)
+		if src == "" {
+			continue
+		}
+		o := _originByIncludeSource(result.PipelineOriginData, src)
+		if o == nil {
+			continue
+		}
+		latest := ""
+		plumberPath := ""
+		if o.FromPlumber {
+			latest = o.PlumberOrigin.LatestVersion
+			plumberPath = o.PlumberOrigin.Path
+		} else if o.FromGitlabCatalog {
+			latest = o.GitlabComponent.ComponentLatestVersion
+		}
+		templateName := plumberPath
+		if templateName != "" && strings.Contains(templateName, "/") {
+			templateName = templateName[strings.LastIndex(templateName, "/")+1:]
+		}
+		componentName := o.GitlabComponent.ComponentName
+		if o.GitlabIncludeOrigin.Type == "component" && componentName == "" && o.GitlabIncludeOrigin.Location != "" {
+			loc := o.GitlabIncludeOrigin.Location
+			if strings.Contains(loc, "/") {
+				componentName = loc[strings.LastIndex(loc, "/")+1:]
+			}
+		}
+		issue["version"] = o.Version
+		if latest != "" {
+			issue["latestVersion"] = latest
+		}
+		if plumberPath != "" {
+			issue["plumberOriginPath"] = plumberPath
+		}
+		includeLoc := o.GitlabIncludeOrigin.Location
+		if includeLoc == "" {
+			includeLoc = o.GitlabComponent.ComponentIncludePath
+		}
+		if includeLoc != "" {
+			issue["gitlabIncludeLocation"] = includeLoc
+		}
+		if t := o.GitlabIncludeOrigin.Type; t != "" {
+			issue["gitlabIncludeType"] = t
+		}
+		if pr := o.GitlabIncludeOrigin.Project; pr != "" {
+			issue["gitlabIncludeProject"] = pr
+		}
+		issue["nested"] = o.Nested
+		if componentName != "" {
+			issue["componentName"] = componentName
+		}
+		if templateName != "" {
+			issue["plumberTemplateName"] = templateName
+		}
+		issue["originHash"] = o.OriginHash
+	}
 }
 
 func buildImageForbiddenTagsBlock(c legacyCommon, result *control.AnalysisResult, pc *configuration.PlumberConfig, findings []opaengine.Finding) map[string]any {
@@ -193,7 +383,7 @@ func buildImageForbiddenTagsBlock(c legacyCommon, result *control.AnalysisResult
 			"ciMissing":          0,
 		},
 		"compliance":           c.Compliance,
-		"version":              "0.3.0",
+		"version":              "0.4.0",
 		"ciValid":              c.CiValid,
 		"ciMissing":            c.CiMissing,
 		"skipped":              c.Skipped,
@@ -349,7 +539,9 @@ func buildBranchProtectionBlock(c legacyCommon, result *control.AnalysisResult, 
 		},
 	}
 	if len(findings) > 0 {
-		block["issues"] = projectFindings(findings, "")
+		issues := projectFindings(findings, "")
+		enrichBranchProtection505IssueMaps(issues, result, pc)
+		block["issues"] = issues
 	}
 	return block
 }
@@ -440,8 +632,10 @@ func buildForbiddenVersionsBlock(c legacyCommon, result *control.AnalysisResult,
 	if usingAuthorized < 0 {
 		usingAuthorized = 0
 	}
+	issues := projectFindings(findings, "job")
+	enrichForbiddenVersion404IssueMaps(issues, result)
 	return map[string]any{
-		"issues": projectFindings(findings, "job"),
+		"issues": issues,
 		"metrics": map[string]any{
 			"total":                  total,
 			"usingForbiddenVersion":  usingForbidden,

@@ -8,10 +8,14 @@
 package opa
 
 import (
+	"bytes"
+	"cmp"
 	"context"
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"slices"
+	"sort"
 	"strings"
 
 	"github.com/open-policy-agent/opa/v1/rego"
@@ -167,8 +171,15 @@ func (e *Engine) Evaluate(ctx context.Context, pipeline *ir.NormalizedPipeline, 
 		return nil, fmt.Errorf("evaluate: build input: %w", err)
 	}
 
+	names := make([]string, 0, len(e.modules))
+	for name := range e.modules {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+
 	var findings []Finding
-	for name, source := range e.modules {
+	for _, name := range names {
+		source := e.modules[name]
 		moduleFindings, err := evalModule(ctx, name, source, input)
 		if err != nil {
 			return nil, fmt.Errorf("evaluate module %q: %w", name, err)
@@ -176,7 +187,36 @@ func (e *Engine) Evaluate(ctx context.Context, pipeline *ir.NormalizedPipeline, 
 		findings = append(findings, moduleFindings...)
 	}
 	enrichFindingsWithJobLocation(findings, pipeline)
+	sortFindingsInPlace(findings)
 	return findings, nil
+}
+
+// sortFindingsInPlace orders findings deterministically for stable JSON and CLI output.
+func sortFindingsInPlace(findings []Finding) {
+	slices.SortFunc(findings, compareFindings)
+}
+
+func compareFindings(a, b Finding) int {
+	return cmp.Or(
+		cmp.Compare(a.Code, b.Code),
+		cmp.Compare(a.Job, b.Job),
+		cmp.Compare(a.File, b.File),
+		cmp.Compare(a.Line, b.Line),
+		cmp.Compare(a.Severity, b.Severity),
+		cmp.Compare(a.Message, b.Message),
+		bytes.Compare(marshalDataForSort(a.Data), marshalDataForSort(b.Data)),
+	)
+}
+
+func marshalDataForSort(d map[string]any) []byte {
+	if len(d) == 0 {
+		return []byte("{}")
+	}
+	raw, err := json.Marshal(d)
+	if err != nil {
+		return []byte{}
+	}
+	return raw
 }
 
 // docURLBase is the canonical issues documentation root. Every

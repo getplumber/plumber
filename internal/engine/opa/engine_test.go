@@ -90,6 +90,68 @@ deny contains finding if {
 	}
 }
 
+func TestEvaluateFindingsSorted(t *testing.T) {
+	const zebra = `package zebra
+
+deny contains finding if {
+	input.pipeline.provider == "gitlab"
+	finding := {"code": "ZEB-001", "severity": "low", "message": "zebra"}
+}`
+	const alpha = `package alpha
+
+deny contains finding if {
+	input.pipeline.provider == "gitlab"
+	finding := {"code": "ALP-001", "severity": "low", "message": "alpha"}
+}`
+
+	engine := New()
+	engine.LoadModule("zebra", zebra)
+	engine.LoadModule("alpha", alpha)
+
+	pipeline := &ir.NormalizedPipeline{Provider: ir.ProviderGitLab}
+	findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(findings) != 2 {
+		t.Fatalf("expected 2 findings, got %d", len(findings))
+	}
+	if findings[0].Code != "ALP-001" || findings[1].Code != "ZEB-001" {
+		t.Fatalf("expected findings sorted by code ALP-001 then ZEB-001, got %q then %q",
+			findings[0].Code, findings[1].Code)
+	}
+}
+
+func TestEvaluateFindingsSortedTieBreakByJob(t *testing.T) {
+	const mod = `package tiebreak
+
+deny contains finding if {
+	input.pipeline.provider == "gitlab"
+	finding := {"code": "SAME", "job": "zzz"}
+}
+
+deny contains finding if {
+	input.pipeline.provider == "gitlab"
+	finding := {"code": "SAME", "job": "aaa"}
+}
+`
+
+	engine := New()
+	engine.LoadModule("tiebreak", mod)
+	pipeline := &ir.NormalizedPipeline{Provider: ir.ProviderGitLab}
+	findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(findings) != 2 {
+		t.Fatalf("expected 2 findings, got %d", len(findings))
+	}
+	if findings[0].Job != "aaa" || findings[1].Job != "zzz" {
+		t.Fatalf("expected tie-break by job: aaa then zzz, got %q then %q",
+			findings[0].Job, findings[1].Job)
+	}
+}
+
 func TestLoadFromFS(t *testing.T) {
 	fsys := fstest.MapFS{
 		"first.rego":  &fstest.MapFile{Data: []byte("package first")},

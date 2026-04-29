@@ -297,6 +297,7 @@ func buildJobs(origin *GitlabPipelineOriginData, imagesByJob map[string]ir.Image
 			job.OriginLine = line
 		}
 		enrichFromMergedConf(&job, name, origin.MergedConf)
+		enrichLocalVariables(&job, name, origin.Conf)
 		jobs = append(jobs, job)
 	}
 	// Deterministic order so the IR (and downstream findings) do not
@@ -383,6 +384,35 @@ func indexJobOriginKind(origin *GitlabPipelineOriginData) map[string]string {
 		}
 	}
 	return out
+}
+
+// enrichLocalVariables sets job.LocalVariables to the variables block
+// authored directly in the project's CI file. Read from the raw,
+// pre-merge conf so upstream-component / template-defined variables
+// stay out: that distinction is what variable-override policies
+// (ISSUE-205) need to avoid punishing projects for variables their
+// catalogs already ship. When the project did not declare a local
+// `variables:` block on this job (or did not redeclare the job at
+// all), the field is left nil.
+func enrichLocalVariables(job *ir.Job, name string, conf *gitlab.GitlabCIConf) {
+	if conf == nil {
+		return
+	}
+	rawJob, ok := conf.GitlabJobs[name]
+	if !ok {
+		return
+	}
+	data, err := yaml.Marshal(rawJob)
+	if err != nil {
+		return
+	}
+	var parsed gitlab.GitlabJob
+	if err := yaml.Unmarshal(data, &parsed); err != nil {
+		return
+	}
+	if vars := extractGitLabVariables(parsed.Variables); len(vars) > 0 {
+		job.LocalVariables = vars
+	}
 }
 
 // enrichFromMergedConf harvests the GitLab CI merged configuration to

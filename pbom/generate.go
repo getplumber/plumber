@@ -1,6 +1,7 @@
 package pbom
 
 import (
+	"sort"
 	"time"
 
 	"github.com/getplumber/plumber/collector"
@@ -24,12 +25,12 @@ type IncludeOverrideData struct {
 
 // Generator creates PBOMs from pipeline analysis data
 type Generator struct {
-	projectPath       string
-	projectID         int
-	gitlabURL         string
-	branch            string
-	complianceData    *ImageComplianceData
-	includeOverrides  *IncludeOverrideData
+	projectPath      string
+	projectID        int
+	gitlabURL        string
+	branch           string
+	complianceData   *ImageComplianceData
+	includeOverrides *IncludeOverrideData
 }
 
 // NewGenerator creates a new PBOM generator
@@ -102,16 +103,23 @@ func (g *Generator) processImages(imageData *collector.GitlabPipelineImageData) 
 		}
 	}
 
-	// Convert to PBOM format
-	images := make([]ContainerImage, 0, len(imageJobMap))
-	for link, jobs := range imageJobMap {
+	// Convert to PBOM format in stable order (sorted image link — map iteration is not deterministic).
+	links := make([]string, 0, len(imageJobMap))
+	for link := range imageJobMap {
+		links = append(links, link)
+	}
+	sort.Strings(links)
+
+	images := make([]ContainerImage, 0, len(links))
+	for _, link := range links {
+		jobs := imageJobMap[link]
 		info := imageInfoMap[link]
 		img := ContainerImage{
 			Image:    link,
 			Registry: info.Registry,
 			Name:     info.Name,
 			Tag:      info.Tag,
-			Jobs:     uniqueStrings(jobs),
+			Jobs:     uniqueSortedStrings(jobs),
 		}
 
 		// Enrich with compliance data if available
@@ -221,17 +229,16 @@ func (g *Generator) calculateSummary(pbom *PBOM) Summary {
 	return summary
 }
 
-// uniqueStrings returns a slice with duplicate strings removed
-func uniqueStrings(input []string) []string {
+// uniqueSortedStrings removes duplicates and sorts for stable PBOM JSON.
+func uniqueSortedStrings(input []string) []string {
 	seen := make(map[string]struct{})
-	result := make([]string, 0, len(input))
-
 	for _, s := range input {
-		if _, exists := seen[s]; !exists {
-			seen[s] = struct{}{}
-			result = append(result, s)
-		}
+		seen[s] = struct{}{}
 	}
-
-	return result
+	out := make([]string, 0, len(seen))
+	for s := range seen {
+		out = append(out, s)
+	}
+	sort.Strings(out)
+	return out
 }

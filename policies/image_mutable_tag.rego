@@ -20,7 +20,7 @@ deny contains finding if {
 	finding := {
 		"code":     "ISSUE-102",
 		"severity": "high",
-		"message":  sprintf("job %q uses forbidden image tag %q", [job.name, tag]),
+		"message":  sprintf("Job '%s' uses forbidden tag '%s' (image: %s)", [job.name, tag, _full_ref(job.image)]),
 		"job":      job.name,
 		"tag":      tag,
 		"link":     _full_ref(job.image),

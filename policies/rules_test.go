@@ -63,6 +63,12 @@ func parseGitLabCI(t *testing.T, data []byte) *ir.NormalizedPipeline {
 		}
 		if vars := parseVariablesField(section["variables"]); len(vars) > 0 {
 			job.Variables = vars
+			// Fixtures are user-authored .gitlab-ci.yml files: every
+			// `variables:` block on a job is the project's own. Mirror
+			// the production collector by exposing them as
+			// LocalVariables too so policies that distinguish "user
+			// wrote this" from merged-in upstream see them.
+			job.LocalVariables = vars
 		}
 		if af, ok := section["allow_failure"].(bool); ok {
 			job.AllowFailure = af
@@ -769,11 +775,19 @@ func TestIssue413_DockerInDockerInsecure(t *testing.T) {
 }
 
 // TestIssue203_DebugTrace flags jobs enabling CI_DEBUG_TRACE.
+// The legacy Go control disables itself when forbiddenVariables is
+// empty, so the Rego policy mirrors that contract: cfg must declare
+// the list explicitly — there is no built-in default.
 func TestIssue203_DebugTrace(t *testing.T) {
+	cfg := map[string]any{
+		"debugTrace": map[string]any{
+			"forbiddenVariables": []string{"CI_DEBUG_TRACE", "CI_DEBUG_SERVICES"},
+		},
+	}
 	runGitLabPolicyCases(t, "ISSUE-203", []policyCase{
 		{"violation_debug_enabled.gitlab-ci.yml", []string{"deploy"}},
 		{"clean.gitlab-ci.yml", nil},
-	}, nil)
+	}, cfg)
 }
 
 // TestIssue411_UnverifiedScripts flags pipe-to-shell patterns.
@@ -861,6 +875,7 @@ func TestIssue505_BranchNonCompliant(t *testing.T) {
 	}
 	cfg := map[string]any{
 		"branchMustBeProtected": map[string]any{
+			"namePatterns":              []string{"main", "low-push"},
 			"allowForcePush":            false,
 			"codeOwnerApprovalRequired": true,
 			"minPushAccessLevel":        40,
@@ -870,8 +885,10 @@ func TestIssue505_BranchNonCompliant(t *testing.T) {
 	pipeline := &ir.NormalizedPipeline{
 		Provider: ir.ProviderGitLab,
 		Branches: []ir.Branch{
-			{Name: "main", Protected: true, AllowForcePush: true},
+			// main: force push + code owner failures only — push/merge match policy.
+			{Name: "main", Protected: true, AllowForcePush: true, MinPushAccessLevel: 40, MinMergeAccessLevel: 40},
 			{Name: "compliant", Protected: true, CodeOwnerApprovalRequired: true, MinPushAccessLevel: 40, MinMergeAccessLevel: 40},
+			// low-push: push level 30 < 40 (more permissive than required).
 			{Name: "low-push", Protected: true, CodeOwnerApprovalRequired: true, MinPushAccessLevel: 30, MinMergeAccessLevel: 40},
 			{Name: "unprotected", Protected: false},
 		},
@@ -881,16 +898,160 @@ func TestIssue505_BranchNonCompliant(t *testing.T) {
 		t.Fatalf("evaluate: %v", err)
 	}
 	hits := map[string]bool{}
+	issue505ByJob := map[string]opaengine.Finding{}
 	for _, f := range findings {
 		if f.Code == "ISSUE-505" {
+			if issue505ByJob[f.Job].Code != "" {
+				t.Fatalf("expected at most one ISSUE-505 per branch, got duplicate for %q", f.Job)
+			}
+			issue505ByJob[f.Job] = f
 			hits[f.Job] = true
 		}
 	}
 	if !hits["main"] || !hits["low-push"] {
 		t.Fatalf("expected main and low-push flagged, got %v", hits)
 	}
+	mainF := issue505ByJob["main"]
+	if !strings.Contains(mainF.Message, "main") || !strings.Contains(mainF.Message, "non-compliant") {
+		t.Fatalf("unexpected ISSUE-505 message for main: %q", mainF.Message)
+	}
+	raw, _ := mainF.Data["reasons"].([]interface{})
+	if len(raw) != 2 {
+		t.Fatalf("expected 2 sub-reasons for main, got %v (Data=%v)", raw, mainF.Data)
+	}
 	if hits["compliant"] || hits["unprotected"] {
 		t.Fatalf("unexpected flag on compliant/unprotected: %v", hits)
+	}
+}
+
+// TestIssue505_AccessLevelStrictestPolicy: GitLab access level 0 = "No one".
+// When policy sets min*AccessLevel: 0, any non-zero branch level is too
+// permissive and should fire (legacy parity).
+func TestIssue505_AccessLevelStrictestPolicy(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFS(policies.FS); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	cfg := map[string]any{
+		"branchMustBeProtected": map[string]any{
+			"namePatterns":        []string{"main"},
+			"minPushAccessLevel":  0,
+			"minMergeAccessLevel": 0,
+		},
+	}
+	pipeline := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitLab,
+		Branches: []ir.Branch{
+			{Name: "main", Protected: true, MinPushAccessLevel: 40, MinMergeAccessLevel: 40},
+		},
+	}
+	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 finding, got %d: %+v", len(findings), findings)
+	}
+	reasons := toStringSlice(findings[0].Data["reasons"])
+	want := map[string]bool{
+		"Merge access level is too low (40, minimum: 0)": false,
+		"Push access level is too low (40, minimum: 0)":  false,
+	}
+	for _, r := range reasons {
+		if _, ok := want[r]; ok {
+			want[r] = true
+		}
+	}
+	for k, hit := range want {
+		if !hit {
+			t.Fatalf("missing reason %q in %v", k, reasons)
+		}
+	}
+}
+
+// TestIssue505_AccessLevelSkipsWhenIRZero: legacy guard — when GitLab does
+// not report a level (cur == 0), no access-level finding is emitted, even if
+// policy requires a positive minimum.
+func TestIssue505_AccessLevelSkipsWhenIRZero(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFS(policies.FS); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	cfg := map[string]any{
+		"branchMustBeProtected": map[string]any{
+			"namePatterns":        []string{"main"},
+			"minPushAccessLevel":  40,
+			"minMergeAccessLevel": 40,
+		},
+	}
+	pipeline := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitLab,
+		Branches: []ir.Branch{
+			{Name: "main", Protected: true},
+		},
+	}
+	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	for _, f := range findings {
+		if f.Code != "ISSUE-505" {
+			continue
+		}
+		for _, r := range toStringSlice(f.Data["reasons"]) {
+			if strings.Contains(r, "access level") {
+				t.Fatalf("did not expect access-level reason when IR is 0: %q", r)
+			}
+		}
+	}
+}
+
+func toStringSlice(raw any) []string {
+	switch v := raw.(type) {
+	case []string:
+		return v
+	case []interface{}:
+		out := make([]string, 0, len(v))
+		for _, x := range v {
+			if s, ok := x.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// TestIssue505_NotInPolicyScope ensures ISSUE-501 scope matches ISSUE-505:
+// a protected but misconfigured branch that does not match namePatterns and
+// is not the default branch when defaultMustBeProtected is false produces no ISSUE-505.
+func TestIssue505_NotInPolicyScope(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFS(policies.FS); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	cfg := map[string]any{
+		"branchMustBeProtected": map[string]any{
+			"defaultMustBeProtected": false,
+			"namePatterns":           []string{"master", "release/*"},
+			"allowForcePush":         false,
+		},
+	}
+	pipeline := &ir.NormalizedPipeline{
+		Provider:      ir.ProviderGitLab,
+		DefaultBranch: "main",
+		Branches: []ir.Branch{
+			{Name: "main", Protected: true, AllowForcePush: true},
+		},
+	}
+	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	for _, f := range findings {
+		if f.Code == "ISSUE-505" {
+			t.Fatalf("expected no ISSUE-505 when main is out of policy scope, got %+v", f)
+		}
 	}
 }
 
@@ -908,11 +1069,13 @@ func TestIssue404_IncludesForbiddenVersion(t *testing.T) {
 		},
 	}
 	pipeline := &ir.NormalizedPipeline{
-		Provider: ir.ProviderGitLab,
+		Provider:      ir.ProviderGitLab,
+		DefaultBranch: "main",
 		Includes: []ir.Include{
 			{Kind: "component", Source: "plumber/a", Ref: "dev"},
 			{Kind: "component", Source: "plumber/b", Ref: "main"},
 			{Kind: "component", Source: "plumber/c", Ref: "1.0.0"},
+			{Kind: "hardcoded", Source: "plumber/d", Ref: "main"}, // skipped
 		},
 	}
 	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
@@ -987,7 +1150,7 @@ func TestIssue101_ImageAuthorizedSources(t *testing.T) {
 	}
 	cfg := map[string]any{
 		"imageAuthorizedSources": map[string]any{
-			"trustedUrls":           []string{"registry.company.com/*"},
+			"trustedUrls":            []string{"registry.company.com/*"},
 			"trustDockerHubOfficial": true,
 		},
 	}
@@ -1053,6 +1216,308 @@ func TestIssue205_JobVariableOverride(t *testing.T) {
 		{"violation_override.gitlab-ci.yml", []string{"deploy"}},
 		{"clean.gitlab-ci.yml", nil},
 	}, cfg)
+}
+
+// TestIssue404_WildcardForbiddenVersion locks in legacy go-wildcard
+// parity: a `v*` pattern in forbiddenVersions must match `v1.0.0`
+// just like the legacy gitlab.CheckItemMatchToPatterns helper.
+// Hardcoded includes are skipped regardless of ref.
+func TestIssue404_WildcardForbiddenVersion(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFS(policies.FS); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	cfg := map[string]any{
+		"includesForbiddenVersions": map[string]any{
+			"forbiddenVersions": []string{"v*"},
+		},
+	}
+	pipeline := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitLab,
+		Includes: []ir.Include{
+			{Kind: "component", Source: "plumber/a", Ref: "v1.0.0"},  // matches v*
+			{Kind: "component", Source: "plumber/b", Ref: "1.0.0"},   // no match
+			{Kind: "hardcoded", Source: "plumber/c", Ref: "v9.9.9"},  // skipped (kind)
+		},
+	}
+	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	hits := []string{}
+	for _, f := range findings {
+		if f.Code == "ISSUE-404" {
+			hits = append(hits, f.Job)
+		}
+	}
+	if len(hits) != 1 || hits[0] != "plumber/a" {
+		t.Fatalf("expected only [plumber/a] flagged via wildcard, got %v", hits)
+	}
+}
+
+// TestIssue204_SourceAndDotSourcing covers the two patterns that were
+// missing from the Rego port: `source script.sh` and `. script.sh`.
+// Both re-parse the file as shell, so a tainted variable used in one
+// is just as dangerous as `eval`.
+func TestIssue204_SourceAndDotSourcing(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFS(policies.FS); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	cfg := map[string]any{
+		"unsafeVariableExpansion": map[string]any{
+			"dangerousVariables": []string{"CI_COMMIT_MESSAGE"},
+			"allowedPatterns":    []string{},
+		},
+	}
+	pipeline := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitLab,
+		Jobs: []ir.Job{
+			{Name: "src", Scripts: []string{`source ${CI_COMMIT_MESSAGE}`}},
+			{Name: "dot", Scripts: []string{`. ${CI_COMMIT_MESSAGE}`}},
+			{Name: "comment", Scripts: []string{`# eval $CI_COMMIT_MESSAGE`}}, // skipped
+			{Name: "echo", Scripts: []string{`echo $CI_COMMIT_MESSAGE`}},     // safe
+		},
+	}
+	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	hits := []string{}
+	for _, f := range findings {
+		if f.Code == "ISSUE-204" {
+			hits = append(hits, f.Job)
+		}
+	}
+	sort.Strings(hits)
+	want := []string{"dot", "src"}
+	if !stringSlicesEqual(hits, want) {
+		t.Fatalf("expected %v, got %v", want, hits)
+	}
+}
+
+// TestIssue204_VariableWordBoundary locks in the legacy regex
+// `\$VAR(?:[^a-zA-Z0-9_]|$)` so `$CI_COMMIT_MESSAGE` is flagged but
+// `$CI_COMMIT_MESSAGE_OTHER` is not. The naive `contains` form (the
+// previous Rego implementation) over-matched.
+func TestIssue204_VariableWordBoundary(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFS(policies.FS); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	cfg := map[string]any{
+		"unsafeVariableExpansion": map[string]any{
+			"dangerousVariables": []string{"CI_COMMIT_BRANCH"},
+			"allowedPatterns":    []string{},
+		},
+	}
+	pipeline := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitLab,
+		Jobs: []ir.Job{
+			{Name: "exact", Scripts: []string{`eval "$CI_COMMIT_BRANCH"`}},
+			{Name: "prefix-only", Scripts: []string{`eval "$CI_COMMIT_BRANCH_OTHER"`}},
+		},
+	}
+	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	hits := []string{}
+	for _, f := range findings {
+		if f.Code == "ISSUE-204" {
+			hits = append(hits, f.Job)
+		}
+	}
+	if len(hits) != 1 || hits[0] != "exact" {
+		t.Fatalf("expected only [exact] flagged, got %v", hits)
+	}
+}
+
+// TestIssue412_DindLatestAndRegistryPrefix locks in two legacy
+// behaviours of isDindImage: `docker:latest` is dind, and a
+// registry-prefixed `<host>/docker:dind` is dind. A non-`docker`
+// image with `dind` in the tag (e.g. `nginx:dind`) must NOT match.
+func TestIssue412_DindLatestAndRegistryPrefix(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFS(policies.FS); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	pipeline := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitLab,
+		Jobs: []ir.Job{
+			{Name: "latest", Services: []ir.Image{{Name: "docker", Tag: "latest"}}},
+			{Name: "registry-dind", Services: []ir.Image{{Name: "registry.gitlab.com/group/docker", Tag: "dind"}}},
+			{Name: "bare-docker", Services: []ir.Image{{Name: "docker"}}},        // no tag → not dind
+			{Name: "nginx-dind", Services: []ir.Image{{Name: "nginx", Tag: "dind"}}}, // wrong name → not dind
+		},
+	}
+	findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	hits := []string{}
+	for _, f := range findings {
+		if f.Code == "ISSUE-412" {
+			hits = append(hits, f.Job)
+		}
+	}
+	sort.Strings(hits)
+	want := []string{"latest", "registry-dind"}
+	if !stringSlicesEqual(hits, want) {
+		t.Fatalf("expected %v, got %v", want, hits)
+	}
+}
+
+// TestIssue412_OneFindingPerJob mirrors the legacy `break` after the
+// first matched dind service. Even with two dind services on the same
+// job, the policy must emit a single finding.
+func TestIssue412_OneFindingPerJob(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFS(policies.FS); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	pipeline := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitLab,
+		Jobs: []ir.Job{{
+			Name: "build",
+			Services: []ir.Image{
+				{Name: "docker", Tag: "27-dind"},
+				{Name: "docker", Tag: "dind"},
+			},
+		}},
+	}
+	findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	count := 0
+	for _, f := range findings {
+		if f.Code == "ISSUE-412" {
+			count++
+		}
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly 1 ISSUE-412 finding, got %d", count)
+	}
+}
+
+// TestIssue203_TruthyAndCaseInsensitive locks in legacy parity:
+//   - Variable name comparison is case-insensitive (`ci_debug_trace`
+//     matches `CI_DEBUG_TRACE`).
+//   - Truthy values are `true`, `1`, `yes` (case-insensitive,
+//     trimmed).
+//   - When forbiddenVariables is empty / cfg absent, no findings fire
+//     (the legacy GetConf path skips the control).
+func TestIssue203_TruthyAndCaseInsensitive(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFS(policies.FS); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	cfg := map[string]any{
+		"debugTrace": map[string]any{
+			"forbiddenVariables": []string{"CI_DEBUG_TRACE"},
+		},
+	}
+	pipeline := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitLab,
+		Jobs: []ir.Job{
+			{Name: "lower", Variables: map[string]string{"ci_debug_trace": "true"}},
+			{Name: "one", Variables: map[string]string{"CI_DEBUG_TRACE": "1"}},
+			{Name: "yes-padded", Variables: map[string]string{"CI_DEBUG_TRACE": " YES "}},
+			{Name: "off", Variables: map[string]string{"CI_DEBUG_TRACE": "false"}},
+		},
+	}
+	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	hits := []string{}
+	for _, f := range findings {
+		if f.Code == "ISSUE-203" {
+			hits = append(hits, f.Job)
+		}
+	}
+	sort.Strings(hits)
+	want := []string{"lower", "one", "yes-padded"}
+	if !stringSlicesEqual(hits, want) {
+		t.Fatalf("expected %v, got %v", want, hits)
+	}
+
+	// No cfg → no findings (legacy parity: control is skipped when
+	// forbiddenVariables is empty / unset).
+	noCfg, err := engine.Evaluate(context.Background(), pipeline, nil)
+	if err != nil {
+		t.Fatalf("evaluate (no cfg): %v", err)
+	}
+	for _, f := range noCfg {
+		if f.Code == "ISSUE-203" {
+			t.Fatalf("expected no ISSUE-203 findings without cfg, got %+v", f)
+		}
+	}
+}
+
+// TestIssue101_VarNotationAndUnknownRegistry locks in two legacy
+// parity guarantees:
+//   - `${VAR}` and `$VAR` notations normalize to the same form before
+//     glob matching, so a pattern written either way matches a
+//     reference written the other way.
+//   - The "unknown" registry literal emitted by the GitLab image
+//     collector is treated as no registry, so the trustedUrls glob
+//     compares against just `name:tag`.
+func TestIssue101_VarNotationAndUnknownRegistry(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFS(policies.FS); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+
+	t.Run("var_notation_normalised", func(t *testing.T) {
+		cfg := map[string]any{
+			"imageAuthorizedSources": map[string]any{
+				"trustedUrls": []string{"registry.company.com/${PROJECT}/*"},
+			},
+		}
+		pipeline := &ir.NormalizedPipeline{
+			Provider: ir.ProviderGitLab,
+			Jobs: []ir.Job{{
+				Name: "build",
+				// Reference written with $PROJECT (no braces) — must still match.
+				Image: &ir.Image{Name: "$PROJECT/app", Tag: "1.0", Registry: "registry.company.com"},
+			}},
+		}
+		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		for _, f := range findings {
+			if f.Code == "ISSUE-101" {
+				t.Fatalf("expected match after var-notation normalisation, got finding %+v", f)
+			}
+		}
+	})
+
+	t.Run("unknown_registry_treated_as_no_registry", func(t *testing.T) {
+		cfg := map[string]any{
+			"imageAuthorizedSources": map[string]any{
+				"trustedUrls": []string{"local-image:*"},
+			},
+		}
+		pipeline := &ir.NormalizedPipeline{
+			Provider: ir.ProviderGitLab,
+			Jobs: []ir.Job{{
+				Name:  "build",
+				Image: &ir.Image{Name: "local-image", Tag: "1.0", Registry: "unknown"},
+			}},
+		}
+		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		for _, f := range findings {
+			if f.Code == "ISSUE-101" {
+				t.Fatalf("expected unknown-registry image to match `local-image:*` glob, got %+v", f)
+			}
+		}
+	})
 }
 
 type policyCase struct {
@@ -1256,9 +1721,9 @@ func TestIssue406_TemplateOverridden(t *testing.T) {
 		Provider: ir.ProviderGitLab,
 		Includes: []ir.Include{
 			{
-				Kind:   "project",
-				Source: "group/templates/templates/go/go.yml",
-				Path:   "group/templates/templates/go/go.yml",
+				Kind:    "project",
+				Source:  "group/templates/templates/go/go.yml",
+				Path:    "group/templates/templates/go/go.yml",
 				AltPath: "templates/go/go",
 				OverriddenJobs: []ir.OverriddenJob{
 					{Name: "build", Keys: []string{"script"}},

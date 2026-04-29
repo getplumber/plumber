@@ -112,7 +112,7 @@ func runGitHubAnalyze(cmd *cobra.Command, info *utils.GitRemoteInfo) error {
 	}
 
 	if len(result.Findings) > 0 {
-		return fmt.Errorf("found %d finding(s)", len(result.Findings))
+		return &ComplianceError{Compliance: compliance, Threshold: threshold}
 	}
 	return nil
 }

@@ -13,6 +13,7 @@ deny contains finding if {
 	input.config.pipelineMustIncludeTemplate
 	groups := input.config.pipelineMustIncludeTemplate.requiredGroups
 	count(groups) > 0
+	not _any_group_satisfied(groups)
 	some i, j
 	group := groups[i]
 	required := group[j]
@@ -22,6 +23,16 @@ deny contains finding if {
 		"severity": "high",
 		"message":  sprintf("required template %q is missing from the pipeline (group %d)", [required, i]),
 		"job":      required,
+	}
+}
+
+# DNF: only emit findings when no group is fully satisfied.
+_any_group_satisfied(groups) if {
+	some i
+	group := groups[i]
+	count(group) > 0
+	every required in group {
+		_template_present(required)
 	}
 }
 

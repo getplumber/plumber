@@ -5,7 +5,8 @@
 
 
 <p align="center">
-  <b>CI/CD compliance scanner for GitLab pipelines</b>
+  <b>CI/CD compliance scanner for GitLab pipelines</b><br/>
+  <sub>Also scans GitHub Actions workflows locally when <code>origin</code> is GitHub (no API token).</sub>
 </p>
 <p align="center">
   <a href="https://securityscorecards.dev/viewer/?uri=github.com/getplumber/plumber"><img src="https://img.shields.io/ossf-scorecard/github.com/getplumber/plumber?label=OpenSSF%20Scorecard&style=for-the-badge&labelColor=2b2d42&color=4a90d9" alt="OpenSSF Scorecard"></a>
@@ -37,7 +38,7 @@
 
 ## 🤔 What is Plumber?
 
-Plumber is a compliance scanner for GitLab. It reads your `.gitlab-ci.yml` and repository settings, then checks for security and compliance issues like:
+Plumber is a compliance scanner for CI/CD. On **GitLab**, it reads your `.gitlab-ci.yml` (and related includes) and repository settings via the API. On **GitHub**, when you run it from a clone whose `origin` points at GitHub and you do not pass `--gitlab-url` / `--project`, it scans **local** `.github/workflows/*.{yml,yaml}` with the same Rego policy engine (no GitHub API call, no token). It checks for issues like:
 
 - Container images using mutable tags (`latest`, `dev`)
 - Container images from untrusted registries
@@ -51,7 +52,7 @@ Plumber is a compliance scanner for GitLab. It reads your `.gitlab-ci.yml` and r
 - Weakened security jobs (`allow_failure: true`, `when: manual`, `rules: [{when: never}]`) on SAST, Secret Detection, and other scanners (OWASP CICD-SEC-4)
 - Docker-in-Docker (dind) services enabling container escape on shared runners
 
-**How does it work?** Plumber connects to your GitLab instance via API, analyzes your pipeline configuration, and reports any issues it finds. You define what's allowed in a config file (`.plumber.yaml`), and Plumber tells you if your project complies. When running locally from your git repo, Plumber uses your **local CI configuration file** (`.gitlab-ci.yml` by default, or a [custom path](#custom-ci-configuration-file-path)) allowing you to validate changes before pushing.
+**How does it work?** On GitLab, Plumber connects via API, analyzes your pipeline configuration, and reports issues. You define what's allowed in `.plumber.yaml`. When your local clone is the analyzed project, Plumber can use your **local** `.gitlab-ci.yml` (or a [custom path](#custom-ci-configuration-file-path)) so you can validate before push. On the **GitHub local** path, analysis is offline from workflow files only; compliance is **binary** (any finding fails the run) until per-control percentage parity lands; `--threshold` does not gate pass/fail yet. **`GITLAB_TOKEN` is only required for the GitLab API path.** To analyze GitLab while standing in a GitHub clone, pass `--gitlab-url` and `--project` explicitly (that forces the GitLab analyzer).
 
 <p align="center">
   <img src="assets/component.gif" alt="Plumber Demo" width="700">
@@ -74,6 +75,7 @@ Choose **one** of these methods. You don't need both:
 - [CLI](#option-1-cli)
 - [GitLab CI Component](#option-2-gitlab-ci-component)
 - [Configuration](#%EF%B8%8F-configuration)
+  - [Multi-provider configuration (roadmap)](#multi-provider-configuration-roadmap)
   - [Available Controls](#available-controls)
 - [Artifacts & Outputs](#-artifacts--outputs)
   - [JSON Report](#json-report)
@@ -324,9 +326,24 @@ Flags:
 
 This creates `.plumber.yaml` with sensible [defaults](./.plumber.yaml). Customize it to fit your needs.
 
+### Multi-provider configuration (roadmap)
+
+Plumber already uses a **single** root file (`.plumber.yaml`) with a shared `controls:` map and an optional `engine:` section (see the repo [`.plumber.yaml`](./.plumber.yaml)). **GitLab** and **GitHub** policies today draw from that surface where codes overlap; GitHub-only checks use issue codes that map through the same registry.
+
+**Near term (minimal churn):** keep one file. Prefer documenting provider-specific knobs inline next to each control (as today) until GitHub reaches feature parity with GitLab for reporting (threshold, PBOM, MR/badge).
+
+**When GitLab and GitHub diverge more clearly**, choose one of:
+
+| Approach | Pros | Cons |
+|----------|------|------|
+| **Single file, nested keys** (e.g. `controls.foo.gitlab` / `controls.foo.github` or `providers.gitlab` / `providers.github`) | One place to review policy | Larger schema; loader must merge defaults carefully |
+| **Split files** (e.g. `.plumber.yaml` + `.plumber.github.yaml`, or `include:` from the main file) | Clear ownership per platform | Extra paths to document and validate in CI |
+
+**Recommendation for later:** add optional includes first (`extends` / `include` list in YAML), then introduce nested overrides only where one control truly differs by platform. That avoids breaking existing repos that rely on the flat `controls` keys.
+
 ### Available Controls
 
-Plumber includes 14 compliance controls. Each can be enabled/disabled and customized in [.plumber.yaml](.plumber.yaml):
+Plumber documents **14** primary GitLab-oriented controls in this section (the defaults in [`.plumber.yaml`](./.plumber.yaml)); Rego also enforces **additional GitHub-specific issue codes** when you run the local GitHub Actions path. See the codebase issue registry and [docs](docs/) for the full code list. Each can be enabled/disabled and customized in [.plumber.yaml](.plumber.yaml):
 
 <details>
 <summary><b>1. Container images must not use forbidden tags</b></summary>
@@ -1029,7 +1046,14 @@ make build # or make install to build and copy to /usr/local/bin/
 
 ### `plumber analyze`
 
-Run compliance analysis on a GitLab project.
+Runs the compliance analyzer. **Behavior depends on the git remote (and flags):**
+
+| Mode | When | What runs |
+|------|------|-----------|
+| **GitLab** | `origin` is a GitLab host, or you pass `--gitlab-url` and `--project` | Fetches CI config and project data via the GitLab API (requires `GITLAB_TOKEN`). Uses per-control compliance and `--threshold`. |
+| **GitHub (local)** | `origin` is GitHub **and** you do **not** set `--gitlab-url` or `--project` | Reads `.github/workflows/*.{yml,yaml}` from the repo root only; **no** API token. Pass/fail is **any finding** (binary) for now; **`--threshold` does not** change exit code. **`--pbom` / `--pbom-cyclonedx`**, **`--mr-comment`**, and **`--badge`** are GitLab-only today. |
+
+To **force GitLab** analysis from a machine that has a GitHub `origin` (e.g. a fork), set `--gitlab-url` and `--project` explicitly.
 
 ```bash
 plumber analyze [flags]
@@ -1042,11 +1066,11 @@ plumber analyze [flags]
 | `--gitlab-url` | No* | auto-detect | GitLab instance URL |
 | `--project` | No* | auto-detect | Project path (e.g., `group/project`) |
 | `--config` | No | `.plumber.yaml` | Path to config file |
-| `--threshold` | No | `100` | Minimum compliance % to pass (0-100) |
-| `--branch` | No | default | Branch to analyze |
+| `--threshold` | No | `100` | Minimum compliance % to pass (0-100). **Gates exit code on the GitLab path only** (not the GitHub local path yet). |
+| `--branch` | No | default | Branch to analyze (GitLab API path; informational on GitHub local scan) |
 | `--output` | No | — | Write JSON results to file |
-| `--pbom` | No | — | Write PBOM (Pipeline Bill of Materials) to file |
-| `--pbom-cyclonedx` | No | — | Write PBOM in CycloneDX SBOM format |
+| `--pbom` | No | — | Write PBOM (Pipeline Bill of Materials) to file (**GitLab path**; ignored on GitHub local scan) |
+| `--pbom-cyclonedx` | No | — | Write PBOM in CycloneDX SBOM format (**GitLab path**; ignored on GitHub local scan) |
 | `--print` | No | `true` | Print text output to stdout |
 | `--mr-comment` | No | `false` | Post/update a compliance comment on the merge request (MR pipelines only: requires `api` scope) |
 | `--badge` | No | `false` | Create/update a Plumber compliance badge on the project (requires `api` scope; only runs on default branch) |
@@ -1066,7 +1090,7 @@ plumber analyze [flags]
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `GITLAB_TOKEN` | Yes | GitLab API token with `read_api` + `read_repository` scopes (from a Maintainer or higher). Use `api` scope instead if `--mr-comment` or `--badge` is enabled. |
+| `GITLAB_TOKEN` | **Yes** for the **GitLab API** path | GitLab API token with `read_api` + `read_repository` scopes (Maintainer or higher). Use `api` scope instead if `--mr-comment` or `--badge` is enabled. **Not used** on the GitHub local workflow scan. |
 | `PLUMBER_NO_UPDATE_CHECK` | No | Set to any value (e.g., `1`) to disable the automatic version check. |
 
 ### Automatic Version Check
@@ -1087,9 +1111,9 @@ export PLUMBER_NO_UPDATE_CHECK=1
 
 | Exit Code | Meaning |
 |-----------|----------|
-| `0` | Analysis passed (compliance ≥ threshold) |
-| `1` | Compliance failure (compliance < threshold) |
-| `2` | Runtime error (config error, network failure, missing token, etc.) |
+| `0` | Analysis passed: GitLab path — compliance ≥ threshold; GitHub local path — **no** findings |
+| `1` | Compliance failure: GitLab — compliance below `--threshold`; GitHub local — one or more findings |
+| `2` | Runtime error (config error, network failure, missing token on GitLab path, etc.) |
 
 ### `plumber config init`
 

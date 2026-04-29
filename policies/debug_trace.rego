@@ -3,25 +3,33 @@
 # GitLab Runner prints every environment variable, including masked
 # secrets, to the job log — a well-documented secret-leak path.
 #
-# The list of forbidden variable names is configurable in
-# .plumber.yaml under
-# pipelineMustNotEnableDebugTrace.forbiddenVariables.
+# Parity with the legacy Go control (controlGitlabPipelineDebugTrace.go):
+#   - Variable name comparison is case-insensitive.
+#   - Truthy values are `true`, `1`, `yes` (case-insensitive, trimmed).
+#   - The control is a no-op unless the user populates
+#     `pipelineMustNotEnableDebugTrace.forbiddenVariables` in
+#     .plumber.yaml — there is no built-in default list. This matches
+#     the legacy GetConf path that disables the control when the
+#     forbiddenVariables list is empty.
 package debug_trace
 
 import rego.v1
 
 deny contains finding if {
+	count(input.config.debugTrace.forbiddenVariables) > 0
 	some i
 	job := input.pipeline.jobs[i]
-	some var_name in _forbidden_variables
-	_variable_enabled(job.variables, var_name)
+	some var_name in input.config.debugTrace.forbiddenVariables
+	some k, v in job.variables
+	upper(k) == upper(var_name)
+	_is_truthy(v)
 	finding := {
 		"code":         "ISSUE-203",
 		"severity":     "critical",
-		"message":      sprintf("job %q enables %q, which prints secret values to the job log", [job.name, var_name]),
+		"message":      sprintf("%s = %q (job %q)", [k, v, job.name]),
 		"job":          job.name,
-		"variableName": var_name,
-		"value":        job.variables[var_name],
+		"variableName": k,
+		"value":        v,
 		"location":     job.name,
 	}
 }
@@ -30,23 +38,23 @@ deny contains finding if {
 # apply to every job, so emit one finding for the pipeline rather than
 # duplicating per job.
 deny contains finding if {
-	some var_name in _forbidden_variables
-	_variable_enabled(input.pipeline.globalVariables, var_name)
+	count(input.config.debugTrace.forbiddenVariables) > 0
+	some var_name in input.config.debugTrace.forbiddenVariables
+	some k, v in input.pipeline.globalVariables
+	upper(k) == upper(var_name)
+	_is_truthy(v)
 	finding := {
 		"code":         "ISSUE-203",
 		"severity":     "critical",
-		"message":      sprintf("pipeline-level global variable %q is enabled, which prints secret values to every job's log", [var_name]),
-		"variableName": var_name,
-		"value":        input.pipeline.globalVariables[var_name],
+		"message":      sprintf("%s = %q (global variables)", [k, v]),
+		"variableName": k,
+		"value":        v,
 		"location":     "global",
 	}
 }
 
-_forbidden_variables := vars if {
-	vars := input.config.debugTrace.forbiddenVariables
-	count(vars) > 0
-} else := ["CI_DEBUG_TRACE", "CI_DEBUG_SERVICES"]
+_is_truthy(v) if lower(trim_space(v)) == "true"
 
-_variable_enabled(vars, name) if {
-	vars[name] == "true"
-}
+_is_truthy(v) if lower(trim_space(v)) == "1"
+
+_is_truthy(v) if lower(trim_space(v)) == "yes"

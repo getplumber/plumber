@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -42,19 +43,18 @@ var (
 
 var analyzeCmd = &cobra.Command{
 	Use:          "analyze",
-	Short:        "Analyze a GitLab project's CI/CD pipeline",
+	Short:        "Analyze CI/CD configuration (GitLab via API, or local GitHub Actions when origin is GitHub)",
 	SilenceUsage: true, // Don't print usage on errors (e.g., threshold failures)
-	Long: `Analyze a GitLab project's CI/CD pipeline for compliance issues.
+	Long: `Analyze CI/CD configuration for compliance issues.
 
-This command connects to a GitLab instance, retrieves the project's CI/CD
-configuration, and runs various checks including:
-- Pipeline origin analysis (components, templates, local files)
-- Pipeline image analysis (registries, tags)
-- Mutable image tag detection
-- Image digest pinning enforcement
+GitLab path (when the git remote is GitLab, or when you pass --gitlab-url and --project):
+  Connects to GitLab, retrieves CI/CD configuration and project settings, and runs
+  checks including pipeline origins, images, tags, and branch protection.
+  Required environment variable: GITLAB_TOKEN
 
-Required environment variables:
-  GITLAB_TOKEN    GitLab API token (required)
+GitHub path (when origin is GitHub and --gitlab-url / --project are not set):
+  Scans local .github/workflows only (Rego). No GitLab token. Some flags apply only
+  to the GitLab API path (see README).
 
 Flags (auto-detected from git remote if not specified):
   --gitlab-url    GitLab instance URL (auto-detected from git remote)
@@ -515,16 +515,117 @@ func writeJSONToFile(result *control.AnalysisResult, pc *configuration.PlumberCo
 	// the pre–flat-findings JSON shape.
 	delete(output, "findings")
 
-	// Create/overwrite the file
-	file, err := os.Create(filePath)
+	// Encode with intentional key order so readers see project/context first,
+	// scoring next, then per-control *Result blocks (not Go map lexical order).
+	payload, err := marshalLegacyAnalysisJSONObject(output)
 	if err != nil {
+		return fmt.Errorf("marshal ordered analysis JSON: %w", err)
+	}
+	if err := os.WriteFile(filePath, payload, 0o644); err != nil {
 		return fmt.Errorf("failed to create output file: %w", err)
 	}
-	defer func() { _ = file.Close() }()
+	return nil
+}
 
-	encoder := json.NewEncoder(file)
-	encoder.SetIndent("", "  ")
-	return encoder.Encode(output)
+// analysisJSONLegacyKeyHead is the canonical top-level key order before any
+// *Result control blocks so analysis.json reads: project → CI context →
+// outcome/score → findings (per-control).
+var analysisJSONLegacyKeyHead = []string{
+	"projectPath", "projectId", "defaultBranch",
+	"ciConfigSource", "ciValid", "ciMissing", "ciErrors",
+	"pipelineOriginMetrics", "pipelineImageMetrics",
+	"compliance", "threshold", "passed", "plumberScore",
+}
+
+func legacyAnalysisJSONKeyOrder(m map[string]any) []string {
+	seen := make(map[string]bool, len(m))
+	order := make([]string, 0, len(m))
+	for _, k := range analysisJSONLegacyKeyHead {
+		if _, ok := m[k]; ok {
+			order = append(order, k)
+			seen[k] = true
+		}
+	}
+	var suffixResult []string
+	for k := range m {
+		if seen[k] {
+			continue
+		}
+		if strings.HasSuffix(k, "Result") {
+			suffixResult = append(suffixResult, k)
+		}
+	}
+	sort.Strings(suffixResult)
+	for _, k := range suffixResult {
+		order = append(order, k)
+		seen[k] = true
+	}
+	var rest []string
+	for k := range m {
+		if !seen[k] {
+			rest = append(rest, k)
+		}
+	}
+	sort.Strings(rest)
+	order = append(order, rest...)
+	return order
+}
+
+func marshalLegacyAnalysisJSONObject(output map[string]any) ([]byte, error) {
+	keys := legacyAnalysisJSONKeyOrder(output)
+	step := "  "
+	var buf bytes.Buffer
+	buf.WriteString("{\n")
+	first := true
+	for _, k := range keys {
+		v, ok := output[k]
+		if !ok {
+			continue
+		}
+		if !first {
+			buf.WriteString(",\n")
+		}
+		first = false
+
+		keyBytes, err := json.Marshal(k)
+		if err != nil {
+			return nil, fmt.Errorf("key %s: %w", k, err)
+		}
+		rawVal, err := json.Marshal(v)
+		if err != nil {
+			return nil, fmt.Errorf("%s value: %w", k, err)
+		}
+
+		buf.WriteString(step)
+		buf.Write(keyBytes)
+		buf.WriteString(": ")
+		if len(rawVal) > 0 && (rawVal[0] == '{' || rawVal[0] == '[') {
+			rawIndented, err := json.MarshalIndent(v, "", step)
+			if err != nil {
+				return nil, fmt.Errorf("%s indentation: %w", k, err)
+			}
+			trimmed := bytes.TrimSpace(rawIndented)
+			lines := bytes.Split(trimmed, []byte("\n"))
+			if len(lines) == 1 {
+				buf.Write(lines[0])
+				continue
+			}
+			// Opening bracket on the same line as the key; body lines indented.
+			buf.Write(lines[0])
+			buf.WriteByte('\n')
+			for i := 1; i < len(lines)-1; i++ {
+				buf.WriteString(step)
+				buf.Write(lines[i])
+				buf.WriteByte('\n')
+			}
+			buf.WriteString(step)
+			buf.Write(lines[len(lines)-1])
+			continue
+		}
+		buf.Write(rawVal)
+	}
+	buf.WriteString("\n}\n")
+	return buf.Bytes(), nil
 }
 
 // buildImageComplianceData extracts compliance results into a lookup map for the PBOM generator
@@ -857,7 +958,7 @@ func printBanner() {
 		styleMuted.Render("v"+Version),
 	)
 	fmt.Printf("  %s %s\n\n",
-		styleMuted.Render("Join us:"),
+		styleMuted.Render("Join our community:"),
 		styleAccent.Render("https://getplumber.io/discord"),
 	)
 }
@@ -904,16 +1005,20 @@ func outputText(result *control.AnalysisResult, pc *configuration.PlumberConfig,
 	groups := make([]findingGroup, 0, len(entries))
 	for _, e := range entries {
 		findings := findingsByControl[e.ControlName]
+		if e.ControlName == "branchMustBeProtected" {
+			sortBranchProtectionFindingsForDisplay(findings)
+		}
 		codes := make([]control.ErrorCode, 0, len(findings))
 		items := make([]detailedFinding, 0, len(findings))
 		for _, f := range findings {
 			code := control.ErrorCode(f.Code)
 			codes = append(codes, code)
 			items = append(items, detailedFinding{
-				Code:     code,
-				Message:  f.Message,
-				DocURL:   code.DocURL(),
-				Location: formatFindingLocation(f),
+				Code:        code,
+				Message:     f.Message,
+				DocURL:      code.DocURL(),
+				Location:    formatFindingLocation(f),
+				DetailLines: detailLinesFromFinding(f),
 			})
 		}
 		compliance := 100.0
@@ -932,7 +1037,7 @@ func outputText(result *control.AnalysisResult, pc *configuration.PlumberConfig,
 			Title:      e.DisplayName,
 			Compliance: compliance,
 			Skipped:    e.Skipped,
-			Stats:      buildGitLabControlStats(e.ControlName, result, pc, len(items)),
+			Stats:      buildGitLabControlStats(e.ControlName, result, pc, findings),
 			Findings:   items,
 		})
 	}

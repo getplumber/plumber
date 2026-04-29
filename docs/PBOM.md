@@ -74,15 +74,17 @@ The native Plumber PBOM format provides a detailed, pipeline-specific inventory 
 
 ### Structure
 
+Top-level keys are emitted in this order (human-readable flow: context → aggregates → score → inventories):
+
 ```json
 {
   "pbomVersion": "1.0.0",
   "generatedAt": "2026-02-09T15:26:20Z",
   "project": { ... },
-  "containerImages": [ ... ],
-  "includes": [ ... ],
   "summary": { ... },
-  "plumberScore": { ... }
+  "plumberScore": { ... },
+  "containerImages": [ ... ],
+  "includes": [ ... ]
 }
 ```
 
@@ -93,10 +95,10 @@ The native Plumber PBOM format provides a detailed, pipeline-specific inventory 
 | `pbomVersion` | string | PBOM specification version (currently `"1.0.0"`) |
 | `generatedAt` | string | ISO 8601 timestamp of generation |
 | `project` | object | Information about the analyzed project |
-| `containerImages` | array | All container images used in the pipeline |
-| `includes` | array | All includes (components, templates, local, remote, project) |
 | `summary` | object | Aggregate statistics |
 | `plumberScore` | object | Optional. Present when `plumber analyze` is run with `--score` and/or `--score-point`. Letter score (A–E), points (0–100), and severity counts (see below; per-code detail is exposed in the JSON `--output` only). |
+| `containerImages` | array | All container images used in the pipeline |
+| `includes` | array | All includes (components, templates, local, remote, project) |
 
 ### `project` Object
 
@@ -151,14 +153,14 @@ Each entry represents a CI/CD include dependency. Fields vary by include type: o
 | `fromCatalog` | bool | Whether it comes from the GitLab CI/CD Catalog. Only for `component` type. |
 | `nested` | bool | Whether this is a nested include (included by another include). Only present when `true`. |
 | `overridden` | bool | Whether this include's jobs are overridden with forbidden CI/CD keywords. Only present when `true`. |
-| `overriddenJobs` | array | Details of which jobs are overridden and with which keywords. Only present when `overridden` is `true`. |
+| `overriddenJobs` | array | Details of which jobs are overridden and with which keywords. Only present when `overridden` is `true`. JSON uses camelCase (`overriddenJobs`, `overriddenKeys`), not snake_case. |
 
 Each entry in `overriddenJobs[]`:
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `jobName` | string | Name of the overridden job |
-| `overriddenKeys` | string[] | Forbidden CI/CD keywords found in the override (e.g., `script`, `image`, `rules`) |
+| `overriddenKeys` | string[] | CI/CD job keys redefined locally on top of the upstream include (the same “forbidden override” keywords Plumber uses for compliance, e.g., `script`, `image`, `rules`) |
 
 **Example (component):**
 
@@ -259,8 +261,8 @@ When `plumber analyze` is run with `--score` and/or `--score-point`, the BOM inc
 {
   "bomFormat": "CycloneDX",
   "specVersion": "1.5",
-  "serialNumber": "urn:uuid:...",
   "version": 1,
+  "serialNumber": "urn:uuid:...",
   "metadata": { ... },
   "components": [ ... ]
 }
@@ -272,8 +274,8 @@ When `plumber analyze` is run with `--score` and/or `--score-point`, the BOM inc
 |-------|------|-------------|
 | `bomFormat` | string | Always `"CycloneDX"` |
 | `specVersion` | string | CycloneDX spec version (`"1.5"`) |
-| `serialNumber` | string | Unique BOM identifier (URN UUID) |
 | `version` | number | BOM version (always `1`) |
+| `serialNumber` | string | Unique BOM identifier (URN UUID) |
 | `metadata` | object | BOM metadata (timestamp, tool, subject) |
 | `components` | array | All pipeline components |
 

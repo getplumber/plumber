@@ -17,23 +17,20 @@ const Version = "1.0.0"
 
 // PBOM represents a Pipeline Bill of Materials - an inventory of all
 // dependencies used in a CI/CD pipeline.
+// JSON field order follows encode/json struct order: version stamp, project
+// context, aggregate summary, score, then inventories (read top-to-bottom).
 type PBOM struct {
-	// Metadata
 	PBOMVersion string    `json:"pbomVersion"`
 	GeneratedAt time.Time `json:"generatedAt"`
 
-	// Project information
 	Project ProjectInfo `json:"project"`
 
-	// Pipeline dependencies
-	ContainerImages []ContainerImage `json:"containerImages"`
-	Includes        []Include        `json:"includes"`
-
-	// Summary statistics
 	Summary Summary `json:"summary"`
 
-	// PlumberScore is optional letter Score (A–E) and numeric Points (0–100); set when analyze uses --score and/or --score-point.
 	PlumberScore *PlumberScoreSummary `json:"plumberScore,omitempty"`
+
+	ContainerImages []ContainerImage `json:"containerImages"`
+	Includes        []Include        `json:"includes"`
 }
 
 // PlumberScoreSummary mirrors control.PlumberScoreResult for JSON consumers (PBOM / SBOM).
@@ -77,8 +74,8 @@ type ContainerImage struct {
 	Jobs []string `json:"jobs"`
 
 	// Compliance status (from analysis, if available)
-	Authorized    *bool `json:"authorized,omitempty"`
-	ForbiddenTag  *bool `json:"forbiddenTag,omitempty"`
+	Authorized   *bool `json:"authorized,omitempty"`
+	ForbiddenTag *bool `json:"forbiddenTag,omitempty"`
 }
 
 // Include represents an include/component/template used in the pipeline
@@ -105,7 +102,7 @@ type Include struct {
 	Nested bool `json:"nested,omitempty"`
 
 	// Override information (populated from control results)
-	Overridden     bool                       `json:"overridden,omitempty"`
+	Overridden     bool                        `json:"overridden,omitempty"`
 	OverriddenJobs []utils.OverriddenJobDetail `json:"overriddenJobs,omitempty"`
 }
 
