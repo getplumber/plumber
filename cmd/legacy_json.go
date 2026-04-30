@@ -354,7 +354,7 @@ func buildImageForbiddenTagsBlock(c legacyCommon, result *control.AnalysisResult
 	if result.PipelineImageData != nil {
 		total = len(result.PipelineImageData.Images)
 		for _, img := range result.PipelineImageData.Images {
-			if !strings.Contains(img.Link, "@sha256:") {
+			if !utils.HasDigestPin(img.Link) {
 				notPinned++
 			}
 		}

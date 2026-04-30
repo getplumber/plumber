@@ -216,13 +216,14 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 	case "containerImageMustNotUseForbiddenTags":
 		// Two distinct user intents share this control: forbid mutable
 		// tags, OR require a digest pin. The pin-by-digest variant
-		// counts how many images carry an `@sha256:` reference.
+		// counts how many images carry an OCI digest reference (any
+		// algorithm — sha256, sha512, …).
 		total := 0
 		pinned := 0
 		if result.PipelineImageData != nil {
 			total = len(result.PipelineImageData.Images)
 			for _, img := range result.PipelineImageData.Images {
-				if strings.Contains(img.Link, "@sha256:") {
+				if utils.HasDigestPin(img.Link) {
 					pinned++
 				}
 			}

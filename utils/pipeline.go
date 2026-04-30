@@ -1,6 +1,26 @@
 package utils
 
-import "strings"
+import (
+	"regexp"
+	"strings"
+)
+
+// digestPinRegex matches an OCI image digest pin: `@<algo>:<hex>`.
+// Algorithm is lowercase alphanumeric (sha256, sha512, ...) per the
+// OCI image spec. Using a regex instead of `strings.Contains(@sha256:)`
+// avoids false negatives on sha512 / future digest algorithms.
+var digestPinRegex = regexp.MustCompile(`@[a-z0-9]+:[a-fA-F0-9]+`)
+
+// HasDigestPin reports whether ref contains a digest reference using
+// any algorithm allowed by the OCI image spec — sha256 today, sha512
+// already in production at some registries, and any future algorithm
+// without a code change. Empty refs return false.
+func HasDigestPin(ref string) bool {
+	if ref == "" {
+		return false
+	}
+	return digestPinRegex.MatchString(ref)
+}
 
 // OverriddenJobDetail captures which job was overridden and with which forbidden CI/CD keywords.
 // Shared across control (detection) and pbom (reporting) packages.

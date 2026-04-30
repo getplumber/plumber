@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/getplumber/plumber/internal/ir"
+	"github.com/getplumber/plumber/utils"
 )
 
 // scanRenovateConfig looks for the usual Renovate config names at
@@ -177,7 +178,7 @@ func parseDockerfileBases(path string) (ir.Dockerfile, error) {
 		bases = append(bases, ir.DockerfileBase{
 			Image:          resolved,
 			Line:           lineNum,
-			PinnedByDigest: strings.Contains(resolved, "@sha256:"),
+			PinnedByDigest: utils.HasDigestPin(resolved),
 		})
 	}
 	if err := sc.Err(); err != nil {
