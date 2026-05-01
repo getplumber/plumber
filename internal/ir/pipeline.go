@@ -25,10 +25,21 @@ type NormalizedPipeline struct {
 
 	// GlobalVariables are pipeline-level variables declared at the top
 	// of the source (e.g. `variables:` block at the root of
-	// .gitlab-ci.yml). Rules that scan for forbidden values
-	// (CI_DEBUG_TRACE, secret-name patterns, controlled overrides) read
-	// both these globals and the per-job Variables map.
+	// .gitlab-ci.yml). Includes the merge with upstream component /
+	// template defaults — convenient for "what will actually be set at
+	// runtime" checks (CI_DEBUG_TRACE leaking secrets, insecure
+	// DOCKER_TLS_CERTDIR …).
 	GlobalVariables map[string]string `json:"globalVariables,omitempty"`
+
+	// LocalGlobalVariables are the pipeline-level variables the user
+	// wrote directly at the root of their CI file, before any merge
+	// with included templates or components. Empty when the user did
+	// not declare a `variables:` block at the root. Used by policies
+	// that must distinguish "user-authored override" from "shipped by
+	// upstream template" — notably ISSUE-205 (variable-override).
+	// Mirrors the raw-conf scan in
+	// controlGitlabPipelineJobVariablesOverride.go.
+	LocalGlobalVariables map[string]string `json:"localGlobalVariables,omitempty"`
 
 	// RenovateConfigPath is the file path where a Renovate config was
 	// discovered (`renovate.json`, `.renovaterc`, `renovate.json5`,

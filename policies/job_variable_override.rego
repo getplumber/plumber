@@ -34,16 +34,19 @@ deny contains finding if {
 
 # Pipeline-level globals override the platform-only contract just as
 # job-level definitions do. Emit once per protected variable defined
-# at the global block.
+# at the global block. Reads localGlobalVariables — the user's raw
+# `variables:` at the root of the CI file — so variables shipped by
+# included templates or components don't false-positive. Mirrors the
+# legacy rawConf scan in controlGitlabPipelineJobVariablesOverride.go.
 deny contains finding if {
 	some var_name in _protected_variables
-	input.pipeline.globalVariables[var_name]
+	input.pipeline.localGlobalVariables[var_name]
 	finding := {
 		"code":         "ISSUE-205",
 		"severity":     "critical",
-		"message":      sprintf("%s = %q (global variables)", [var_name, input.pipeline.globalVariables[var_name]]),
+		"message":      sprintf("%s = %q (global variables)", [var_name, input.pipeline.localGlobalVariables[var_name]]),
 		"variableName": var_name,
-		"value":        input.pipeline.globalVariables[var_name],
+		"value":        input.pipeline.localGlobalVariables[var_name],
 		"location":     "global",
 	}
 }

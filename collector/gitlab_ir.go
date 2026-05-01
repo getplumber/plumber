@@ -50,6 +50,11 @@ func ToNormalizedPipeline(
 			pipeline.GlobalVariables = globals
 		}
 	}
+	if origin != nil && origin.Conf != nil {
+		if globals := extractGitLabVariables(origin.Conf.GlobalVariables); len(globals) > 0 {
+			pipeline.LocalGlobalVariables = globals
+		}
+	}
 
 	return pipeline
 }
