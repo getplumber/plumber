@@ -31,11 +31,14 @@ import (
 //   - allowForcePush = api.AllowForcePushes.Enabled.
 //   - codeOwnerApprovalRequired = api.RequiredPullRequestReviews
 //     .RequireCodeOwnerReviews.
-//   - min*AccessLevel: GitHub has no numeric access ladder. We map
-//     "branch has push restrictions configured" to 30 (Developer in
-//     GitLab terms), nothing-configured to 0. This lets the rego
-//     min-access-level guards fire when `restrictions:` is unset on
-//     a critical branch — matches the spirit of the GitLab control.
+//   - min*AccessLevel: deliberately left 0 on GitHub. GitLab uses a
+//     numeric 0..60 access ladder where 0 = "no one allowed"
+//     (strictest). The legacy ISSUE-505 rule treats config min=0 as
+//     "always violates", which would false-positive on every
+//     GitHub branch that simply requires PR reviews. GitHub has no
+//     equivalent ladder; encoding an approximation produced
+//     misleading findings. The other ISSUE-505 reasons
+//     (allowForcePush, codeOwnerApprovalRequired) still apply.
 func FetchGitHubBranchProtection(host, owner, repo string) ([]ir.Branch, error) {
 	if owner == "" || repo == "" {
 		return nil, fmt.Errorf("owner and repo are required")
@@ -74,17 +77,8 @@ func FetchGitHubBranchProtection(host, owner, repo string) ([]ir.Branch, error) 
 			if detail != nil {
 				entry.AllowForcePush = detail.AllowForcePushes.Enabled
 				entry.CodeOwnerApprovalRequired = detail.RequiredPullRequestReviews.RequireCodeOwnerReviews
-				if detail.Restrictions != nil &&
-					(len(detail.Restrictions.Users) > 0 ||
-						len(detail.Restrictions.Teams) > 0 ||
-						len(detail.Restrictions.Apps) > 0) {
-					// Push restrictions configured → at least
-					// Developer-equivalent in GitLab terms.
-					entry.MinPushAccessLevel = 30
-				}
-				if detail.RequiredPullRequestReviews.RequiredApprovingReviewCount > 0 {
-					entry.MinMergeAccessLevel = 30
-				}
+				// MinMergeAccessLevel / MinPushAccessLevel
+				// intentionally left 0 — see package doc.
 			}
 		}
 		out = append(out, entry)
@@ -108,14 +102,37 @@ type remoteBranchProtection struct {
 		Enabled bool `json:"enabled"`
 	} `json:"allow_force_pushes"`
 	RequiredPullRequestReviews struct {
-		RequireCodeOwnerReviews      bool `json:"require_code_owner_reviews"`
-		RequiredApprovingReviewCount int  `json:"required_approving_review_count"`
+		RequireCodeOwnerReviews bool `json:"require_code_owner_reviews"`
 	} `json:"required_pull_request_reviews"`
-	Restrictions *struct {
-		Users []any `json:"users"`
-		Teams []any `json:"teams"`
-		Apps  []any `json:"apps"`
-	} `json:"restrictions"`
+}
+
+// remoteRepoMetadata is the subset of /repos/{o}/{r} we need today —
+// only the default_branch field. Used so the rego rule's
+// `defaultMustBeProtected` clause can match against the repo's
+// actual default rather than relying on a possibly-empty CLI flag.
+type remoteRepoMetadata struct {
+	DefaultBranch string `json:"default_branch"`
+}
+
+// FetchGitHubDefaultBranch resolves the repo's default branch name
+// via the REST API. Returns an empty string with no error when the
+// repo can't be queried (degraded mode), which keeps the
+// `defaultMustBeProtected` rule a silent no-op rather than a noisy
+// crash.
+func FetchGitHubDefaultBranch(host, owner, repo string) (string, error) {
+	rest, err := newGitHubRESTClient(host)
+	if err != nil {
+		return "", fmt.Errorf("github api client: %w", err)
+	}
+	endpoint := fmt.Sprintf("repos/%s/%s", owner, repo)
+	var meta remoteRepoMetadata
+	if err := rest.Get(endpoint, &meta); err != nil {
+		if isUnauthorized(err) || isNotFound(err) {
+			return "", nil
+		}
+		return "", err
+	}
+	return meta.DefaultBranch, nil
 }
 
 func listBranches(rest *api.RESTClient, owner, repo string) ([]remoteBranchEntry, error) {

@@ -38,6 +38,17 @@ func enrichGitHubBranches(l *logrus.Entry, pipeline *ir.NormalizedPipeline, host
 		return
 	}
 	pipeline.Branches = branches
+
+	// Resolve the repo's actual default branch so the rego rule's
+	// `defaultMustBeProtected` clause matches against a real branch
+	// name, not the (possibly empty) --branch CLI flag. Best-effort:
+	// if the repo metadata fetch fails, keep whatever the caller
+	// pre-populated (could be the --branch value or "").
+	if pipeline.DefaultBranch == "" {
+		if def, derr := collector.FetchGitHubDefaultBranch(host, parts[0], parts[1]); derr == nil && def != "" {
+			pipeline.DefaultBranch = def
+		}
+	}
 }
 
 // RunGitHubAnalysis is the GitHub counterpart of RunAnalysis. It scans
