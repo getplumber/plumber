@@ -163,7 +163,6 @@ var benchedControls = map[string]map[string]struct{}{
 		// Cross-provider controls whose GitHub side needs collector
 		// or test work before it ships. They continue to fire
 		// findings on GitLab — they're only benched on GitHub.
-		"branchMustBeProtected":                       {}, // collector not built yet
 		"includesMustBeUpToDate":                      {},
 		"includesMustNotUseForbiddenVersions":         {},
 		"pipelineMustIncludeComponent":                {},

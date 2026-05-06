@@ -626,3 +626,24 @@ github:
     workflowsMustDeclarePermissions:
       enabled: true
 
+    # ===========================================
+    # Branch must be protected (project governance)
+    # ===========================================
+    # The first project-governance control on the GitHub path. Every
+    # other shipping rule is pipeline-governance (workflow content);
+    # this one inspects repository settings via the GitHub branch-
+    # protection API. Requires a token with `repo` scope (classic
+    # PAT) or "Administration: read" (fine-grained PAT) — content-
+    # only read access is NOT enough. Without scope the collector
+    # returns an empty branch list and the rule emits no findings,
+    # same degraded contract as missing API auth elsewhere.
+    branchMustBeProtected:
+      enabled: true
+      defaultMustBeProtected: true
+      namePatterns:
+        - main
+        - master
+        - release/*
+      allowForcePush: false
+      codeOwnerApprovalRequired: false
+

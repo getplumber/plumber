@@ -270,6 +270,17 @@ func buildGitHubControlStats(controlName string, stats *control.GitHubAnalysisSt
 			{"With permissions block", fmt.Sprintf("%d", withPerms)},
 			{"Missing permissions block", fmt.Sprintf("%d", stats.WorkflowsMissingPermissions)},
 		}
+	case "branchMustBeProtected":
+		unprotectedMatched := stats.BranchesMatched - stats.BranchesProtected
+		if unprotectedMatched < 0 {
+			unprotectedMatched = 0
+		}
+		return []statLine{
+			{"Total Branches", fmt.Sprintf("%d", stats.BranchesTotal)},
+			{"Branches to Protect", fmt.Sprintf("%d", stats.BranchesMatched)},
+			{"Protected", fmt.Sprintf("%d", stats.BranchesProtected)},
+			{"Unprotected (matched)", fmt.Sprintf("%d", unprotectedMatched)},
+		}
 	}
 	return nil
 }
@@ -317,6 +328,19 @@ func gitHubControlCompliance(controlName string, stats *control.GitHubAnalysisSt
 		return pct(stats.WorkflowsWithDangerousTrigger, stats.WorkflowsTotal)
 	case "workflowsMustDeclarePermissions":
 		return pct(stats.WorkflowsMissingPermissions, stats.WorkflowsTotal)
+	case "branchMustBeProtected":
+		// Denominator: branches matching a configured namePattern.
+		// Numerator: those that are protected. When zero branches
+		// match (e.g. degraded mode with no API access), report
+		// 100% — the rule has nothing to fail against.
+		if stats.BranchesMatched <= 0 {
+			return 100
+		}
+		ok := stats.BranchesProtected
+		if ok > stats.BranchesMatched {
+			ok = stats.BranchesMatched
+		}
+		return float64(ok) * 100.0 / float64(stats.BranchesMatched)
 	}
 	if findings > 0 {
 		return 0

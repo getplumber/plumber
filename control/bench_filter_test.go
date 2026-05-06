@@ -46,15 +46,15 @@ deny contains finding if { finding := {"code": "ISSUE-99999"} }`)
 }
 
 func TestIsRegoFileBenchedForProvider_perProvider(t *testing.T) {
-	// branchMustBeProtected (ISSUE-501) is shipping on GitLab and
+	// includesMustBeUpToDate (ISSUE-403) is shipping on GitLab and
 	// benched on GitHub. The same rule file should load on GitLab
 	// and be skipped on GitHub.
-	content := []byte(`package branch_unprotected
-deny contains finding if { finding := {"code": "ISSUE-501"} }`)
+	content := []byte(`package includes_outdated
+deny contains finding if { finding := {"code": "ISSUE-403"} }`)
 	if IsRegoFileBenchedForProvider(content, "gitlab") {
-		t.Error("ISSUE-501 ships on GitLab — must load")
+		t.Error("ISSUE-403 ships on GitLab — must load")
 	}
 	if !IsRegoFileBenchedForProvider(content, "github") {
-		t.Error("ISSUE-501 is benched on GitHub — must skip")
+		t.Error("ISSUE-403 is benched on GitHub — must skip")
 	}
 }

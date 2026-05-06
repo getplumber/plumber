@@ -168,6 +168,13 @@ func GitHubControls(pc *configuration.PlumberConfig) []ControlEntry {
 			Skipped:     !cfg.IsEnabled(),
 		})
 	}
+	if cfg := c.BranchMustBeProtected; cfg != nil {
+		entries = append(entries, ControlEntry{
+			DisplayName: "Branch must be protected",
+			ControlName: "branchMustBeProtected",
+			Skipped:     !cfg.IsEnabled(),
+		})
+	}
 	if cfg := c.SecurityJobsMustNotBeWeakened; cfg != nil {
 		entries = append(entries, ControlEntry{
 			DisplayName: "Security jobs must not be weakened",

@@ -134,7 +134,7 @@ Each Phase header has a `**Status:**` line. Acceptable values:
 | 2 | Add coverage to bring it to ≥3 tests | not started (blocked on Phase 1) |
 | 3 | Sprint 1: lightly-tested → fully tested | not started (blocked on Phase 1) |
 | 4 | Sprint 2: 4 untested → tested | not started (blocked on Phase 1) |
-| 5A | Branch protection collector | not started (blocked on Phase 1) |
+| 5A | Branch protection collector | implemented — uncommitted local changes (commit pending) |
 | 5B | Auth UX banner + requireAuth | not started (blocked on Phase 0) |
 | 5C | Upstream fetch for GitHub (`--project` polymorphism) | implemented — uncommitted local changes (commit pending) |
 | 6 | Cross-cutting docs | not started (blocked on 1–5) |

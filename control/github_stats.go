@@ -132,7 +132,43 @@ func AggregateGitHubStats(pipeline *ir.NormalizedPipeline, pc *configuration.Plu
 	if stats.WorkflowsMissingPermissions < 0 {
 		stats.WorkflowsMissingPermissions = 0
 	}
+
+	// Branch protection — populated when the GitHub branch-protection
+	// collector ran (it only does so when the control is enabled +
+	// the user's token has scope). Empty when in degraded mode.
+	stats.BranchesTotal = len(pipeline.Branches)
+	for i := range pipeline.Branches {
+		if pipeline.Branches[i].Protected {
+			stats.BranchesProtected++
+		}
+	}
+	if gh.BranchMustBeProtected != nil {
+		patterns := gh.BranchMustBeProtected.NamePatterns
+		for i := range pipeline.Branches {
+			if branchMatchesPattern(pipeline.Branches[i].Name, patterns) {
+				stats.BranchesMatched++
+			}
+		}
+	}
 	return stats
+}
+
+// branchMatchesPattern is a tiny matcher that mirrors the rego
+// glob.match used in branch_unprotected.rego. Only handles the
+// common cases the stats block needs (exact name, "release/*"-style
+// suffix wildcards). Anything more elaborate falls through to false
+// — the rego rule remains the source of truth for actual findings;
+// this counter is informational only.
+func branchMatchesPattern(name string, patterns []string) bool {
+	for _, p := range patterns {
+		if p == name {
+			return true
+		}
+		if strings.HasSuffix(p, "/*") && strings.HasPrefix(name, strings.TrimSuffix(p, "/*")+"/") {
+			return true
+		}
+	}
+	return false
 }
 
 // defaultTrustedActionOwners mirrors the .plumber.yaml default for

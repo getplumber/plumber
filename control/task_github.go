@@ -1,10 +1,44 @@
 package control
 
 import (
+	"strings"
+
 	"github.com/getplumber/plumber/collector"
 	"github.com/getplumber/plumber/configuration"
+	"github.com/getplumber/plumber/internal/ir"
 	"github.com/sirupsen/logrus"
 )
+
+// enrichGitHubBranches populates pipeline.Branches via the GitHub
+// REST API when the user has enabled the branchMustBeProtected
+// control AND that control is currently shipping (not benched) on
+// GitHub. Silently skipped when the control is disabled in
+// .plumber.yaml, when it is benched in code, or when projectPath
+// isn't owner/repo shaped. Lacking auth or scope, the collector
+// returns an empty slice and the rego rule emits no findings — the
+// same degraded-mode contract as the action-metadata enrichment.
+func enrichGitHubBranches(l *logrus.Entry, pipeline *ir.NormalizedPipeline, host string, pc *configuration.PlumberConfig, projectPath string) {
+	if pipeline == nil || pc == nil {
+		return
+	}
+	if configuration.IsBenched("github", "branchMustBeProtected") {
+		return
+	}
+	cfg := pc.ControlsFor("github").BranchMustBeProtected
+	if cfg == nil || !cfg.IsEnabled() {
+		return
+	}
+	parts := strings.SplitN(projectPath, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return
+	}
+	branches, err := collector.FetchGitHubBranchProtection(host, parts[0], parts[1])
+	if err != nil {
+		l.WithError(err).Warn("GitHub branch-protection fetch failed; branchMustBeProtected will see zero branches")
+		return
+	}
+	pipeline.Branches = branches
+}
 
 // RunGitHubAnalysis is the GitHub counterpart of RunAnalysis. It scans
 // .github/workflows/*.{yml,yaml} under conf.GitRepoRoot, evaluates the
@@ -44,6 +78,8 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 	for _, perr := range partial {
 		l.WithError(perr).Warn("GitHub workflow parse: partial failure (file skipped)")
 	}
+
+	enrichGitHubBranches(l, pipeline, conf.GithubAPIHost, conf.PlumberConfig, conf.ProjectPath)
 
 	if conf.ProgressFunc != nil {
 		total := collector.TotalProgressStepsForPipeline(pipeline)
@@ -110,6 +146,8 @@ func RunGitHubAnalysisRemote(conf *configuration.Configuration, owner, repo, ref
 	for _, perr := range partial {
 		l.WithError(perr).Warn("GitHub workflow parse: partial failure (file skipped)")
 	}
+
+	enrichGitHubBranches(l, pipeline, conf.GithubAPIHost, conf.PlumberConfig, owner+"/"+repo)
 
 	if conf.ProgressFunc != nil {
 		total := collector.TotalProgressStepsForPipeline(pipeline)

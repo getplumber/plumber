@@ -85,6 +85,11 @@ type GitHubAnalysisStats struct {
 	WorkflowsTotal               int
 	WorkflowsWithDangerousTrigger int
 	WorkflowsMissingPermissions  int
+
+	// Branch protection (ISSUE-501 / ISSUE-505).
+	BranchesTotal     int
+	BranchesProtected int
+	BranchesMatched   int // matched a configured namePattern
 }
 
 // PipelineOriginMetricsSummary is a simplified version of origin metrics for output
