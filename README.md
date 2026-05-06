@@ -326,20 +326,50 @@ Flags:
 
 This creates `.plumber.yaml` with sensible [defaults](./.plumber.yaml). Customize it to fit your needs.
 
-### Multi-provider configuration (roadmap)
+### Multi-provider configuration
 
-Plumber already uses a **single** root file (`.plumber.yaml`) with a shared `controls:` map and an optional `engine:` section (see the repo [`.plumber.yaml`](./.plumber.yaml)). **GitLab** and **GitHub** policies today draw from that surface where codes overlap; GitHub-only checks use issue codes that map through the same registry.
+Plumber uses a **single** root file (`.plumber.yaml`) with per-provider sections. Same control name, different values per platform — the trusted-registry list on GitLab is `registry.gitlab.com/...`, on GitHub it's `ghcr.io/<org>/...`, and so on.
 
-**Near term (minimal churn):** keep one file. Prefer documenting provider-specific knobs inline next to each control (as today) until GitHub reaches feature parity with GitLab for reporting (threshold, PBOM, MR/badge).
+```yaml
+version: "2.0"
 
-**When GitLab and GitHub diverge more clearly**, choose one of:
+gitlab:
+  controls:
+    containerImageMustComeFromAuthorizedSources:
+      enabled: true
+      trustedUrls:
+        - registry.gitlab.com/security-products/*
 
-| Approach | Pros | Cons |
-|----------|------|------|
-| **Single file, nested keys** (e.g. `controls.foo.gitlab` / `controls.foo.github` or `providers.gitlab` / `providers.github`) | One place to review policy | Larger schema; loader must merge defaults carefully |
-| **Split files** (e.g. `.plumber.yaml` + `.plumber.github.yaml`, or `include:` from the main file) | Clear ownership per platform | Extra paths to document and validate in CI |
+github:
+  controls:
+    actionsMustBePinnedByCommitSha:
+      enabled: true
+      trustedOwners: [actions, github]
+```
 
-**Recommendation for later:** add optional includes first (`extends` / `include` list in YAML), then introduce nested overrides only where one control truly differs by platform. That avoids breaking existing repos that rely on the flat `controls` keys.
+**Sharing values across providers** uses standard YAML anchors — no Plumber-specific syntax:
+
+```yaml
+gitlab:
+  controls:
+    pipelineMustNotEnableDebugTrace: &debug_trace
+      enabled: true
+      forbiddenVariables: [CI_DEBUG_TRACE, CI_DEBUG_SERVICES]
+github:
+  controls:
+    pipelineMustNotEnableDebugTrace: *debug_trace
+```
+
+#### Upgrading from the legacy flat schema (v1 → v2)
+
+Pre-2026 versions of Plumber used a flat `controls:` block at the root. That schema (now `version: "1.0"`) is auto-converted in memory at load time with a deprecation warning, but you should upgrade your file:
+
+```bash
+plumber config migrate            # writes .plumber.yaml.v2 alongside the original
+plumber config migrate --in-place # overwrites .plumber.yaml; backs up to .plumber.yaml.bak
+```
+
+The migration preserves comments, wraps `controls:` under `gitlab.controls:`, and bumps `version: "2.0"`. See [`docs/plumber-yaml-v2-migration.md`](docs/plumber-yaml-v2-migration.md) for the full guide.
 
 ### Available Controls
 

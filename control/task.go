@@ -94,25 +94,28 @@ func runRegoEngine(
 		imageData,
 		protectionData,
 	)
-	return evaluatePolicies(l, conf.PlumberConfig, pipeline)
+	return evaluatePolicies(l, conf.PlumberConfig, "gitlab", pipeline)
 }
 
 // evaluatePolicies loads the embedded Rego policies and evaluates them
-// against pipeline. Provider-agnostic: the caller is responsible for
-// building the IR from whatever data source it has.
-func evaluatePolicies(l *logrus.Entry, pc *configuration.PlumberConfig, pipeline *ir.NormalizedPipeline) []opaengine.Finding {
-	l.Info("Running Rego/OPA rule engine")
+// against pipeline. The provider argument selects which per-provider
+// ControlsConfig under pc is fed to the policies (and used to filter
+// findings via the provider's enabledControls allowlist). Callers pass
+// "gitlab" or "github". Anything else returns no findings.
+func evaluatePolicies(l *logrus.Entry, pc *configuration.PlumberConfig, provider string, pipeline *ir.NormalizedPipeline) []opaengine.Finding {
+	l.WithField("provider", provider).Info("Running Rego/OPA rule engine")
 	engine := opaengine.New()
 	if err := engine.LoadFromFS(policies.FS); err != nil {
 		l.WithError(err).Warn("Failed to load embedded Rego policies")
 		return nil
 	}
-	findings, err := engine.Evaluate(context.Background(), pipeline, buildEngineConfig(pc))
+	controls := pc.ControlsFor(provider)
+	findings, err := engine.Evaluate(context.Background(), pipeline, buildEngineConfig(controls))
 	if err != nil {
 		l.WithError(err).Warn("Rego/OPA engine evaluation failed")
 		return nil
 	}
-	findings = FilterFindingsByEnabledControls(findings, pc)
+	findings = FilterFindingsByEnabledControls(findings, controls)
 	l.WithField("findingCount", len(findings)).Info("Rego/OPA engine evaluation completed")
 	return findings
 }
@@ -121,13 +124,13 @@ func evaluatePolicies(l *logrus.Entry, pc *configuration.PlumberConfig, pipeline
 // onto a Rego-friendly map. Policies read it as `input.config.<rule>.<key>`.
 // Only the sections consumed by already-ported policies are included;
 // additional entries land with each new policy.
-func buildEngineConfig(pc *configuration.PlumberConfig) map[string]any {
-	if pc == nil {
+func buildEngineConfig(controls *configuration.ControlsConfig) map[string]any {
+	if controls == nil {
 		return nil
 	}
 	cfg := map[string]any{}
 
-	if c := pc.Controls.ContainerImageMustNotUseForbiddenTags; c != nil {
+	if c := controls.ContainerImageMustNotUseForbiddenTags; c != nil {
 		if len(c.Tags) > 0 {
 			cfg["imageMutableTag"] = map[string]any{
 				"forbiddenTags": c.Tags,
@@ -140,19 +143,19 @@ func buildEngineConfig(pc *configuration.PlumberConfig) map[string]any {
 		}
 	}
 
-	if c := pc.Controls.PipelineMustNotEnableDebugTrace; c != nil && len(c.ForbiddenVariables) > 0 {
+	if c := controls.PipelineMustNotEnableDebugTrace; c != nil && len(c.ForbiddenVariables) > 0 {
 		cfg["debugTrace"] = map[string]any{
 			"forbiddenVariables": c.ForbiddenVariables,
 		}
 	}
 
-	if c := pc.Controls.PipelineMustNotOverrideJobVariables; c != nil && len(c.Variables) > 0 {
+	if c := controls.PipelineMustNotOverrideJobVariables; c != nil && len(c.Variables) > 0 {
 		cfg["jobVariablesOverride"] = map[string]any{
 			"protectedVariables": c.Variables,
 		}
 	}
 
-	if c := pc.Controls.SecurityJobsMustNotBeWeakened; c != nil && len(c.SecurityJobPatterns) > 0 {
+	if c := controls.SecurityJobsMustNotBeWeakened; c != nil && len(c.SecurityJobPatterns) > 0 {
 		cfg["securityJobsWeakened"] = map[string]any{
 			"securityJobPatterns":     c.SecurityJobPatterns,
 			"allowFailureMustBeFalse": c.AllowFailureMustBeFalse.IsEnabled(true),
@@ -161,14 +164,14 @@ func buildEngineConfig(pc *configuration.PlumberConfig) map[string]any {
 		}
 	}
 
-	if c := pc.Controls.PipelineMustNotUseUnsafeVariableExpansion; c != nil && len(c.DangerousVariables) > 0 {
+	if c := controls.PipelineMustNotUseUnsafeVariableExpansion; c != nil && len(c.DangerousVariables) > 0 {
 		cfg["unsafeVariableExpansion"] = map[string]any{
 			"dangerousVariables": c.DangerousVariables,
 			"allowedPatterns":    c.AllowedPatterns,
 		}
 	}
 
-	if c := pc.Controls.BranchMustBeProtected; c != nil {
+	if c := controls.BranchMustBeProtected; c != nil {
 		entry := map[string]any{
 			"namePatterns": c.NamePatterns,
 		}
@@ -190,7 +193,7 @@ func buildEngineConfig(pc *configuration.PlumberConfig) map[string]any {
 		cfg["branchMustBeProtected"] = entry
 	}
 
-	if c := pc.Controls.IncludesMustNotUseForbiddenVersions; c != nil {
+	if c := controls.IncludesMustNotUseForbiddenVersions; c != nil {
 		defaultForbidden := false
 		if c.DefaultBranchIsForbiddenVersion != nil {
 			defaultForbidden = *c.DefaultBranchIsForbiddenVersion
@@ -201,7 +204,7 @@ func buildEngineConfig(pc *configuration.PlumberConfig) map[string]any {
 		}
 	}
 
-	if c := pc.Controls.ContainerImageMustComeFromAuthorizedSources; c != nil {
+	if c := controls.ContainerImageMustComeFromAuthorizedSources; c != nil {
 		trustOfficial := false
 		if c.TrustDockerHubOfficialImages != nil {
 			trustOfficial = *c.TrustDockerHubOfficialImages
@@ -212,13 +215,13 @@ func buildEngineConfig(pc *configuration.PlumberConfig) map[string]any {
 		}
 	}
 
-	if c := pc.Controls.PipelineMustNotExecuteUnverifiedScripts; c != nil && len(c.TrustedUrls) > 0 {
+	if c := controls.PipelineMustNotExecuteUnverifiedScripts; c != nil && len(c.TrustedUrls) > 0 {
 		cfg["unverifiedScripts"] = map[string]any{
 			"trustedUrls": c.TrustedUrls,
 		}
 	}
 
-	if c := pc.Controls.PipelineMustIncludeComponent; c != nil && c.IsEnabled() {
+	if c := controls.PipelineMustIncludeComponent; c != nil && c.IsEnabled() {
 		if groups, err := c.GetResolvedRequiredGroups(); err == nil && len(groups) > 0 {
 			cfg["pipelineMustIncludeComponent"] = map[string]any{
 				"requiredGroups": toAnyGroups(groups),
@@ -226,7 +229,7 @@ func buildEngineConfig(pc *configuration.PlumberConfig) map[string]any {
 		}
 	}
 
-	if c := pc.Controls.PipelineMustIncludeTemplate; c != nil && c.IsEnabled() {
+	if c := controls.PipelineMustIncludeTemplate; c != nil && c.IsEnabled() {
 		if groups, err := c.GetResolvedRequiredGroups(); err == nil && len(groups) > 0 {
 			cfg["pipelineMustIncludeTemplate"] = map[string]any{
 				"requiredGroups": toAnyGroups(groups),
@@ -234,7 +237,7 @@ func buildEngineConfig(pc *configuration.PlumberConfig) map[string]any {
 		}
 	}
 
-	if c := pc.Controls.ActionsMustBePinnedByCommitSha; c != nil && c.IsEnabled() {
+	if c := controls.ActionsMustBePinnedByCommitSha; c != nil && c.IsEnabled() {
 		entry := map[string]any{}
 		if len(c.TrustedOwners) > 0 {
 			entry["trustedOwners"] = c.TrustedOwners
@@ -455,12 +458,10 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 		}
 	}
 
-	// Rego/OPA rule engine evaluation. With all 19 historical Go
-	// controls retired (see docs/REFACTOR_MULTI_PROVIDER.md §8 Phase A),
-	// the engine is the single authoritative compliance path.
-	if conf.PlumberConfig.IsEngineEnabled() {
-		result.Findings = runRegoEngine(l, conf, project, pipelineOriginData, pipelineImageData, protectionData)
-	}
+	// Rego/OPA rule engine evaluation — the single authoritative
+	// compliance path (the legacy Go controls were retired in
+	// docs/REFACTOR_MULTI_PROVIDER.md §8 Phase A).
+	result.Findings = runRegoEngine(l, conf, project, pipelineOriginData, pipelineImageData, protectionData)
 	result.ProtectionData = protectionData
 
 	reportProgress(conf, analysisStepCount, analysisStepCount, "Analysis complete")

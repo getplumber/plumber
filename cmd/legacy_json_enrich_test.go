@@ -14,12 +14,15 @@ func TestEnrichBranchProtection505IssueMaps_LegacyDisplays(t *testing.T) {
 	f := false
 	min40 := 40
 	pc := &configuration.PlumberConfig{
-		Controls: configuration.ControlsConfig{
-			BranchMustBeProtected: &configuration.BranchProtectionControlConfig{
-				AllowForcePush:            &f,
-				CodeOwnerApprovalRequired: boolPtr(true),
-				MinMergeAccessLevel:       &min40,
-				MinPushAccessLevel:        &min40,
+		Version: "1.0",
+		GitLab: &configuration.ProviderConfig{
+			Controls: configuration.ControlsConfig{
+				BranchMustBeProtected: &configuration.BranchProtectionControlConfig{
+					AllowForcePush:            &f,
+					CodeOwnerApprovalRequired: boolPtr(true),
+					MinMergeAccessLevel:       &min40,
+					MinPushAccessLevel:        &min40,
+				},
 			},
 		},
 	}

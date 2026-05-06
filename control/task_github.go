@@ -53,7 +53,7 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 		CIConfigSource: "local",
 		CiValid:        len(pipeline.Jobs) > 0,
 		CiMissing:      len(pipeline.Jobs) == 0,
-		Findings:       evaluatePolicies(l, conf.PlumberConfig, pipeline),
+		Findings:       evaluatePolicies(l, conf.PlumberConfig, "github", pipeline),
 	}
 	if conf.ProgressFunc != nil {
 		total := collector.TotalProgressStepsForPipeline(pipeline)

@@ -1204,6 +1204,64 @@ func TestIssue410_SecurityJobsWeakened(t *testing.T) {
 	}, cfg)
 }
 
+// TestIssue410_MultipleWeakeningsOnOneJob is the regression guard
+// for the eval_conflict_error we hit on real-world GitLab pipelines:
+// a single security job that is BOTH when:manual at job level AND
+// rules-overrode by the project blew up the engine because
+// _weakening_reason(job) was a function that demanded a single
+// output per input. The fix split each weakening signal into its
+// own deny rule. We construct the pipeline IR directly because the
+// rules-block branch requires OriginKind = "hardcoded" / "local" /
+// "project", which the YAML-only test parser does not populate.
+func TestIssue410_MultipleWeakeningsOnOneJob(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFS(policies.FS); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	cfg := map[string]any{
+		"securityJobsWeakened": map[string]any{
+			"securityJobPatterns":     []string{"sast"},
+			"allowFailureMustBeFalse": true,
+			"whenMustNotBeManual":     true,
+			"rulesMustNotBeRedefined": true,
+		},
+	}
+	pipeline := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitLab,
+		Jobs: []ir.Job{
+			{
+				Name:         "sast",
+				OriginKind:   "hardcoded",
+				When:         "manual",
+				AllowFailure: true,
+				Rules: []map[string]any{
+					{"when": "manual"},
+					{"when": "never"},
+				},
+			},
+		},
+	}
+	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+	if err != nil {
+		t.Fatalf("evaluate: %v (was the function-conflict regression — pre-fix this errored with eval_conflict_error)", err)
+	}
+	hits := []string{}
+	for _, f := range findings {
+		if f.Code == "ISSUE-410" {
+			detail, _ := f.Data["detail"].(string)
+			hits = append(hits, detail)
+		}
+	}
+	// Expect 4 findings on this one job:
+	//   - allow_failure: true masks scan failures
+	//   - when: manual prevents the scan from running automatically
+	//   - rules overridden with 'when: manual', job will not run
+	//   - rules overridden with 'when: never', job will not run
+	if len(hits) != 4 {
+		t.Fatalf("expected 4 distinct ISSUE-410 reasons on the multi-weakened job, got %d: %v", len(hits), hits)
+	}
+}
+
 // TestIssue205_JobVariableOverride flags pipeline jobs that set a
 // variable protected by .plumber.yaml.
 func TestIssue205_JobVariableOverride(t *testing.T) {

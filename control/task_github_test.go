@@ -35,13 +35,15 @@ jobs:
 		Branch:      "main",
 		GitRepoRoot: tmp,
 		PlumberConfig: &configuration.PlumberConfig{
-			Controls: configuration.ControlsConfig{
-				ContainerImageMustNotUseForbiddenTags: &configuration.ImageForbiddenTagsControlConfig{
-					Enabled: &enabled,
-					Tags:    []string{"latest"},
+			Version: "1.0",
+			GitHub: &configuration.ProviderConfig{
+				Controls: configuration.ControlsConfig{
+					ContainerImageMustNotUseForbiddenTags: &configuration.ImageForbiddenTagsControlConfig{
+						Enabled: &enabled,
+						Tags:    []string{"latest"},
+					},
 				},
 			},
-			Engine: &configuration.EngineConfig{Enabled: &enabled},
 		},
 	}
 

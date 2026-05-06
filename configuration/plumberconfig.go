@@ -78,9 +78,6 @@ func ValidControlNames() []string {
 	return names
 }
 
-// validEngineKeys lists the sub-keys recognized under the top-level "engine" section.
-var validEngineKeys = []string{"enabled"}
-
 // ValidFlatKeys returns every valid flattened key path recognized by the
 // schema, e.g. "controls.branchMustBeProtected.enabled". This includes
 // keys that may be commented out in the default config file.
@@ -91,41 +88,79 @@ func ValidFlatKeys() map[string]struct{} {
 			keys["controls."+control+"."+sub] = struct{}{}
 		}
 	}
-	for _, sub := range validEngineKeys {
-		keys["engine."+sub] = struct{}{}
-	}
 	return keys
 }
 
-// PlumberConfig represents the .plumber.yaml configuration file structure
+// PlumberConfig represents the .plumber.yaml configuration file structure.
+//
+// Schema versions:
+//   - "2.0" — current per-provider schema (gitlab.controls, github.controls).
+//   - "1.0" — legacy flat schema (top-level controls). Auto-converted in
+//     memory at load time with a deprecation warning. Run
+//     `plumber config migrate` to upgrade the file on disk.
+//
+// The legacy v1 fields (Controls) remain on the struct so the loader can
+// detect a v1 file, parse it, and convert it via convertV1ToV2. After a
+// v2 load — or after conversion — Controls is the zero value and
+// downstream code reads from GitLab.Controls / GitHub.Controls.
 type PlumberConfig struct {
-	// Version of the config file format
-	Version string `yaml:"version"`
+	// Version of the config file format.
+	// "2.0" = current per-provider schema. "1.0" = legacy flat schema.
+	// Missing version is tolerated and treated as legacy.
+	Version string `yaml:"version,omitempty"`
 
-	// Controls configuration
-	Controls ControlsConfig `yaml:"controls"`
+	// GitLab provider section (v2 schema). Holds GitLab-specific auth,
+	// the enabledControls allowlist, and the per-control configuration map.
+	GitLab *ProviderConfig `yaml:"gitlab,omitempty"`
 
-	// Engine configuration for the Rego/OPA rule engine (multi-provider refactor).
-	// When nil or Enabled is false, the legacy Go controls run as today.
-	Engine *EngineConfig `yaml:"engine,omitempty"`
+	// GitHub provider section (v2 schema). Same shape as GitLab.
+	GitHub *ProviderConfig `yaml:"github,omitempty"`
+
+	// Controls configuration (legacy v1 schema, top-level).
+	// After a v2 load this is the zero value; after a v1 load convertV1ToV2
+	// moves these into GitLab.Controls and clears this field.
+	Controls ControlsConfig `yaml:"controls,omitempty"`
 }
 
-// EngineConfig configures the Rego/OPA rule engine introduced by the
-// multi-provider refactor.
-type EngineConfig struct {
-	// Enabled turns on the Rego/OPA rule engine. Default: true.
-	// The engine runs in shadow mode alongside the legacy Go controls
-	// until they are removed — see docs/REFACTOR_MULTI_PROVIDER.md §8.
-	Enabled *bool `yaml:"enabled,omitempty"`
+// ProviderConfig is the per-provider configuration block introduced in
+// schema v2. One instance per provider section in .plumber.yaml.
+type ProviderConfig struct {
+	// Auth holds provider-specific authentication knobs. Optional.
+	// Today only GitHub uses this (RequireAuth). Reserved for future
+	// per-provider auth options on GitLab if needed.
+	Auth *AuthConfig `yaml:"auth,omitempty"`
+
+	// EnabledControls is the allowlist of control names that should fire
+	// for this provider's analyze path. Empty/missing → provider-specific
+	// default set is used. ["*"] → bypass filter (every loaded rego policy
+	// fires).
+	EnabledControls []string `yaml:"enabledControls,omitempty"`
+
+	// Controls holds per-control configuration. Same struct types as
+	// the legacy top-level ControlsConfig — only the YAML location and
+	// the values differ between providers.
+	Controls ControlsConfig `yaml:"controls,omitempty"`
 }
 
-// IsEngineEnabled returns true when the Rego/OPA engine must run.
-// Defaults to true when the section, the field, or the config itself is nil.
-func (c *PlumberConfig) IsEngineEnabled() bool {
-	if c == nil || c.Engine == nil || c.Engine.Enabled == nil {
-		return true
+// AuthConfig holds per-provider authentication knobs. Currently only
+// GitHub uses this; the type is provider-agnostic so GitLab can adopt
+// it later without a schema change.
+type AuthConfig struct {
+	// RequireAuth, when true, makes the analyze command exit non-zero
+	// if no provider credentials are available. Default false on GitHub
+	// (soft-degrade with visible banner, matching `gh` CLI ergonomics).
+	// Has no effect on GitLab today (GitLab already hard-fails without
+	// a token via CLI flag / env).
+	RequireAuth *bool `yaml:"requireAuth,omitempty"`
+}
+
+// IsRequireAuth returns whether requireAuth is set to true.
+// Defaults to false when the section, the field, or the auth block is nil.
+func (a *AuthConfig) IsRequireAuth() bool {
+	if a == nil || a.RequireAuth == nil {
+		return false
 	}
-	return *c.Engine.Enabled
+	return *a.RequireAuth
 }
 
 // ControlsConfig holds configuration for all controls
@@ -460,9 +495,13 @@ func (c *RequiredTemplatesControlConfig) GetResolvedRequiredGroups() ([][]string
 
 // LoadPlumberConfig loads configuration from a file path.
 // It reads the file once, validates for unknown keys, parses
-// the YAML into the config struct, and runs structural validation.
-// Returns the parsed config, the resolved path, any unknown-key
-// warnings, and an error if loading or validation failed.
+// the YAML into the config struct, detects whether the file uses
+// the legacy v1 schema (top-level `controls:`/`engine:`) or the
+// current v2 schema (per-provider `gitlab.controls:` /
+// `github.controls:`), and converts v1 in-memory to v2.
+// Returns the parsed config, the resolved path, any warnings
+// (unknown-key + deprecation), and an error if loading or
+// validation failed.
 func LoadPlumberConfig(configPath string) (*PlumberConfig, string, []string, error) {
 	l := logrus.WithField("action", "LoadPlumberConfig")
 
@@ -490,6 +529,41 @@ func LoadPlumberConfig(configPath string) (*PlumberConfig, string, []string, err
 		return nil, configPath, warnings, err
 	}
 
+	// Reject explicitly-set unsupported versions early. Empty version is
+	// allowed (legacy default behaviour) and gets a deprecation warning
+	// from convertV1ToV2. "1.0" is the legacy schema; "2.0" is current.
+	if config.Version != "" && config.Version != "1.0" && config.Version != "2.0" {
+		return nil, configPath, warnings, fmt.Errorf(
+			"unsupported config version %q; supported: [\"1.0\" (legacy), \"2.0\" (current)]", config.Version)
+	}
+
+	// Detect a top-level `engine:` block in the raw YAML and emit a
+	// deprecation warning. The block is no longer parsed into a Go
+	// field — yaml.v2 silently ignores it — so this is the only place
+	// the user gets feedback that their config has dead bytes.
+	if rawHasTopLevelKey(data, "engine") {
+		warnings = append(warnings,
+			"engine.enabled has been removed in schema v1.0 and is now ignored. "+
+				"Delete the 'engine' block from your .plumber.yaml.")
+	}
+
+	// Schema detection: presence of any provider section means the file is
+	// v2-shaped. Otherwise it's legacy v1 — run the converter to promote
+	// top-level controls under gitlab.controls. Mixed files (top-level
+	// controls AND a provider section) also go through the converter,
+	// where v2 wins for keys present on both sides.
+	if config.GitLab == nil && config.GitHub == nil {
+		warnings = append(warnings, convertV1ToV2(config)...)
+	} else if !controlsConfigIsZero(config.Controls) {
+		warnings = append(warnings, convertV1ToV2(config)...)
+	}
+	// At this point the in-memory config is v2-shaped. If the file did
+	// not declare a version, or declared the legacy "1.0", normalise to
+	// "2.0" so downstream consumers and re-emitters see the current value.
+	if config.Version == "" || config.Version == "1.0" {
+		config.Version = "2.0"
+	}
+
 	if err := config.validate(); err != nil {
 		return nil, configPath, warnings, fmt.Errorf("configuration validation error: %w", err)
 	}
@@ -500,25 +574,48 @@ func LoadPlumberConfig(configPath string) (*PlumberConfig, string, []string, err
 
 // validate checks for configuration errors, including expression syntax
 // and mutual exclusivity of 'required' vs 'requiredGroups'.
+// In v2 (post-LoadPlumberConfig) the legacy top-level Controls is empty
+// and provider sections carry the data; we still walk the legacy field
+// defensively to cover code paths that build a PlumberConfig in-process
+// without going through the loader.
 func (c *PlumberConfig) validate() error {
 	if c == nil {
 		return nil
 	}
 
-	// Validate pipelineMustIncludeComponent
-	if comp := c.Controls.PipelineMustIncludeComponent; comp != nil {
+	if err := validateControlsConfig(&c.Controls); err != nil {
+		return err
+	}
+	if c.GitLab != nil {
+		if err := validateControlsConfig(&c.GitLab.Controls); err != nil {
+			return err
+		}
+	}
+	if c.GitHub != nil {
+		if err := validateControlsConfig(&c.GitHub.Controls); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// validateControlsConfig runs structural checks for any control whose
+// configuration has cross-field constraints (e.g. mutual exclusivity).
+// Provider-agnostic: same rules apply wherever the controls live.
+func validateControlsConfig(c *ControlsConfig) error {
+	if c == nil {
+		return nil
+	}
+	if comp := c.PipelineMustIncludeComponent; comp != nil {
 		if _, err := comp.GetResolvedRequiredGroups(); err != nil {
 			return err
 		}
 	}
-
-	// Validate pipelineMustIncludeTemplate
-	if tmpl := c.Controls.PipelineMustIncludeTemplate; tmpl != nil {
+	if tmpl := c.PipelineMustIncludeTemplate; tmpl != nil {
 		if _, err := tmpl.GetResolvedRequiredGroups(); err != nil {
 			return err
 		}
 	}
-
 	return nil
 }
 
@@ -533,7 +630,7 @@ func (c *PlumberConfig) GetContainerImageMustNotUseForbiddenTagsConfig() *ImageF
 	if c == nil {
 		return nil
 	}
-	return c.Controls.ContainerImageMustNotUseForbiddenTags
+	return c.ControlsFor("gitlab").ContainerImageMustNotUseForbiddenTags
 }
 
 // GetContainerImageMustComeFromAuthorizedSourcesConfig returns the control configuration
@@ -542,7 +639,7 @@ func (c *PlumberConfig) GetContainerImageMustComeFromAuthorizedSourcesConfig() *
 	if c == nil {
 		return nil
 	}
-	return c.Controls.ContainerImageMustComeFromAuthorizedSources
+	return c.ControlsFor("gitlab").ContainerImageMustComeFromAuthorizedSources
 }
 
 // IsEnabled returns whether the control is enabled
@@ -569,7 +666,7 @@ func (c *PlumberConfig) GetBranchMustBeProtectedConfig() *BranchProtectionContro
 	if c == nil {
 		return nil
 	}
-	return c.Controls.BranchMustBeProtected
+	return c.ControlsFor("gitlab").BranchMustBeProtected
 }
 
 // IsEnabled returns whether the control is enabled
@@ -587,7 +684,7 @@ func (c *PlumberConfig) GetPipelineMustNotIncludeHardcodedJobsConfig() *Hardcode
 	if c == nil {
 		return nil
 	}
-	return c.Controls.PipelineMustNotIncludeHardcodedJobs
+	return c.ControlsFor("gitlab").PipelineMustNotIncludeHardcodedJobs
 }
 
 // IsEnabled returns whether the control is enabled
@@ -605,7 +702,7 @@ func (c *PlumberConfig) GetIncludesMustBeUpToDateConfig() *IncludesUpToDateContr
 	if c == nil {
 		return nil
 	}
-	return c.Controls.IncludesMustBeUpToDate
+	return c.ControlsFor("gitlab").IncludesMustBeUpToDate
 }
 
 // IsEnabled returns whether the control is enabled
@@ -623,7 +720,7 @@ func (c *PlumberConfig) GetIncludesMustNotUseForbiddenVersionsConfig() *Includes
 	if c == nil {
 		return nil
 	}
-	return c.Controls.IncludesMustNotUseForbiddenVersions
+	return c.ControlsFor("gitlab").IncludesMustNotUseForbiddenVersions
 }
 
 // IsEnabled returns whether the control is enabled
@@ -641,7 +738,7 @@ func (c *PlumberConfig) GetPipelineMustIncludeComponentConfig() *RequiredCompone
 	if c == nil {
 		return nil
 	}
-	return c.Controls.PipelineMustIncludeComponent
+	return c.ControlsFor("gitlab").PipelineMustIncludeComponent
 }
 
 // IsEnabled returns whether the control is enabled
@@ -659,7 +756,7 @@ func (c *PlumberConfig) GetPipelineMustIncludeTemplateConfig() *RequiredTemplate
 	if c == nil {
 		return nil
 	}
-	return c.Controls.PipelineMustIncludeTemplate
+	return c.ControlsFor("gitlab").PipelineMustIncludeTemplate
 }
 
 // GetPipelineMustNotEnableDebugTraceConfig returns the control configuration
@@ -668,7 +765,7 @@ func (c *PlumberConfig) GetPipelineMustNotEnableDebugTraceConfig() *DebugTraceCo
 	if c == nil {
 		return nil
 	}
-	return c.Controls.PipelineMustNotEnableDebugTrace
+	return c.ControlsFor("gitlab").PipelineMustNotEnableDebugTrace
 }
 
 // IsEnabled returns whether the control is enabled
@@ -686,7 +783,7 @@ func (c *PlumberConfig) GetPipelineMustNotUseUnsafeVariableExpansionConfig() *Va
 	if c == nil {
 		return nil
 	}
-	return c.Controls.PipelineMustNotUseUnsafeVariableExpansion
+	return c.ControlsFor("gitlab").PipelineMustNotUseUnsafeVariableExpansion
 }
 
 // IsEnabled returns whether the control is enabled
@@ -704,7 +801,7 @@ func (c *PlumberConfig) GetSecurityJobsMustNotBeWeakenedConfig() *SecurityJobsWe
 	if c == nil {
 		return nil
 	}
-	return c.Controls.SecurityJobsMustNotBeWeakened
+	return c.ControlsFor("gitlab").SecurityJobsMustNotBeWeakened
 }
 
 // IsEnabled returns whether the control is enabled
@@ -722,7 +819,7 @@ func (c *PlumberConfig) GetPipelineMustNotExecuteUnverifiedScriptsConfig() *Unve
 	if c == nil {
 		return nil
 	}
-	return c.Controls.PipelineMustNotExecuteUnverifiedScripts
+	return c.ControlsFor("gitlab").PipelineMustNotExecuteUnverifiedScripts
 }
 
 // IsEnabled returns whether the control is enabled
@@ -740,7 +837,7 @@ func (c *PlumberConfig) GetPipelineMustNotOverrideJobVariablesConfig() *JobVaria
 	if c == nil {
 		return nil
 	}
-	return c.Controls.PipelineMustNotOverrideJobVariables
+	return c.ControlsFor("gitlab").PipelineMustNotOverrideJobVariables
 }
 
 // IsEnabled returns whether the control is enabled
@@ -758,7 +855,7 @@ func (c *PlumberConfig) GetPipelineMustNotUseDockerInDockerConfig() *DockerInDoc
 	if c == nil {
 		return nil
 	}
-	return c.Controls.PipelineMustNotUseDockerInDocker
+	return c.ControlsFor("gitlab").PipelineMustNotUseDockerInDocker
 }
 
 // IsEnabled returns whether the control is enabled
@@ -882,9 +979,25 @@ func contains(slice []string, item string) bool {
 	return false
 }
 
+// rawHasTopLevelKey reports whether the raw YAML data has the named
+// key at top level. Used to detect deprecated keys (e.g. "engine") that
+// no longer have a Go-side struct field, so they would otherwise be
+// silently dropped by yaml.Unmarshal.
+func rawHasTopLevelKey(data []byte, name string) bool {
+	var raw map[interface{}]interface{}
+	if err := yaml.Unmarshal(data, &raw); err != nil {
+		return false
+	}
+	_, ok := raw[name]
+	return ok
+}
+
 // ValidateKnownKeys checks for unknown configuration keys in .plumber.yaml
-// at both the control level and the sub-key level.
-// Returns a list of warning messages for unknown keys.
+// at both the control level and the sub-key level. It accepts both the
+// legacy v1 schema (top-level `controls:`) and the v2 schema (provider-
+// nested `gitlab.controls:` / `github.controls:`). Returns a list of
+// warning messages for unknown keys, with suggestions where a close
+// known key exists.
 func ValidateKnownKeys(data []byte) []string {
 	var raw map[interface{}]interface{}
 	if err := yaml.Unmarshal(data, &raw); err != nil {
@@ -893,16 +1006,41 @@ func ValidateKnownKeys(data []byte) []string {
 
 	var warnings []string
 
-	controlsRaw, exists := raw["controls"]
-	if !exists {
-		return warnings
+	// v1: top-level `controls:`.
+	if controlsRaw, ok := raw["controls"]; ok {
+		warnings = append(warnings, validateControlsBlock(controlsRaw, "controls")...)
 	}
 
+	// v2: per-provider nested `controls:`.
+	for _, provider := range []string{"gitlab", "github"} {
+		provRaw, ok := raw[provider]
+		if !ok {
+			continue
+		}
+		provMap, ok := provRaw.(map[interface{}]interface{})
+		if !ok {
+			continue
+		}
+		if controlsRaw, ok := provMap["controls"]; ok {
+			prefix := provider + ".controls"
+			warnings = append(warnings, validateControlsBlock(controlsRaw, prefix)...)
+		}
+	}
+
+	return warnings
+}
+
+// validateControlsBlock validates an unmarshalled `controls:` block
+// (whether at v1 root or under a v2 provider section). The pathPrefix
+// is used in warning messages to point the user at the right YAML
+// location, e.g. "controls" or "gitlab.controls".
+func validateControlsBlock(controlsRaw interface{}, pathPrefix string) []string {
 	controls, ok := controlsRaw.(map[interface{}]interface{})
 	if !ok {
-		return warnings
+		return nil
 	}
 
+	var warnings []string
 	knownNames := validControlNames()
 
 	for keyRaw, valueRaw := range controls {
@@ -911,20 +1049,18 @@ func ValidateKnownKeys(data []byte) []string {
 			continue
 		}
 
-		// Check control name
 		if !contains(knownNames, controlName) {
 			suggestion := FindClosestMatch(controlName, knownNames)
 			if suggestion != "" {
 				warnings = append(warnings,
-					fmt.Sprintf("Unknown control in .plumber.yaml: %q. Did you mean %q?", controlName, suggestion))
+					fmt.Sprintf("Unknown control in %s: %q. Did you mean %q?", pathPrefix, controlName, suggestion))
 			} else {
 				warnings = append(warnings,
-					fmt.Sprintf("Unknown control in .plumber.yaml: %q", controlName))
+					fmt.Sprintf("Unknown control in %s: %q", pathPrefix, controlName))
 			}
 			continue
 		}
 
-		// Check sub-keys within this control
 		subMap, ok := valueRaw.(map[interface{}]interface{})
 		if !ok {
 			continue
@@ -940,10 +1076,10 @@ func ValidateKnownKeys(data []byte) []string {
 				suggestion := FindClosestMatch(subKey, validSubKeys)
 				if suggestion != "" {
 					warnings = append(warnings,
-						fmt.Sprintf("Unknown key %q in control %q. Did you mean %q?", subKey, controlName, suggestion))
+						fmt.Sprintf("Unknown key %q in control %q (%s). Did you mean %q?", subKey, controlName, pathPrefix, suggestion))
 				} else {
 					warnings = append(warnings,
-						fmt.Sprintf("Unknown key %q in control %q", subKey, controlName))
+						fmt.Sprintf("Unknown key %q in control %q (%s)", subKey, controlName, pathPrefix))
 				}
 			}
 		}

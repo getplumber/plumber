@@ -241,7 +241,7 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 		lines := []statLine{
 			{"Total Images", fmt.Sprintf("%d", total)},
 		}
-		if pc != nil && pc.Controls.ContainerImageMustNotUseForbiddenTags.IsPinnedByDigestRequired() {
+		if pc != nil && pc.ControlsFor("gitlab").ContainerImageMustNotUseForbiddenTags.IsPinnedByDigestRequired() {
 			lines = append(lines,
 				statLine{"Pinned By Digest", fmt.Sprintf("%d", pinned)},
 				statLine{"Not Pinned By Digest", fmt.Sprintf("%d", notPinned)},
@@ -342,8 +342,8 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 		}
 	case "pipelineMustIncludeComponent":
 		var resolved [][]string
-		if pc != nil && pc.Controls.PipelineMustIncludeComponent != nil {
-			if g, err := pc.Controls.PipelineMustIncludeComponent.GetResolvedRequiredGroups(); err == nil {
+		if pc != nil && pc.ControlsFor("gitlab").PipelineMustIncludeComponent != nil {
+			if g, err := pc.ControlsFor("gitlab").PipelineMustIncludeComponent.GetResolvedRequiredGroups(); err == nil {
 				resolved = g
 			}
 		}
@@ -354,8 +354,8 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 		}
 	case "pipelineMustIncludeTemplate":
 		var resolved [][]string
-		if pc != nil && pc.Controls.PipelineMustIncludeTemplate != nil {
-			if g, err := pc.Controls.PipelineMustIncludeTemplate.GetResolvedRequiredGroups(); err == nil {
+		if pc != nil && pc.ControlsFor("gitlab").PipelineMustIncludeTemplate != nil {
+			if g, err := pc.ControlsFor("gitlab").PipelineMustIncludeTemplate.GetResolvedRequiredGroups(); err == nil {
 				resolved = g
 			}
 		}
@@ -514,8 +514,8 @@ func _countSecurityJobs(result *control.AnalysisResult, pc *configuration.Plumbe
 		return 0
 	}
 	patterns := []string{}
-	if pc != nil && pc.Controls.SecurityJobsMustNotBeWeakened != nil {
-		patterns = pc.Controls.SecurityJobsMustNotBeWeakened.SecurityJobPatterns
+	if pc != nil && pc.ControlsFor("gitlab").SecurityJobsMustNotBeWeakened != nil {
+		patterns = pc.ControlsFor("gitlab").SecurityJobsMustNotBeWeakened.SecurityJobPatterns
 	}
 	if len(patterns) == 0 {
 		patterns = []string{
@@ -584,10 +584,10 @@ func _branchProtectionCounts(result *control.AnalysisResult, pc *configuration.P
 	}
 	branches := result.ProtectionData.Branches
 	total = len(branches)
-	if pc == nil || pc.Controls.BranchMustBeProtected == nil {
+	if pc == nil || pc.ControlsFor("gitlab").BranchMustBeProtected == nil {
 		return total, 0, 0, 0
 	}
-	cfg := pc.Controls.BranchMustBeProtected
+	cfg := pc.ControlsFor("gitlab").BranchMustBeProtected
 	defaultBranch := result.DefaultBranch
 	patterns := cfg.NamePatterns
 	defaultProtected := cfg.DefaultMustBeProtected != nil && *cfg.DefaultMustBeProtected

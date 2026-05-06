@@ -28,7 +28,7 @@ func TestFilterFindingsByEnabledControls_dropsDisabledControlFindings(t *testing
 		{Code: "ISSUE-9999", Severity: "low"}, // unknown, must be kept
 	}
 
-	out := FilterFindingsByEnabledControls(findings, pc)
+	out := FilterFindingsByEnabledControls(findings, &pc.Controls)
 	if len(out) != 2 {
 		t.Fatalf("expected 2 findings, got %d: %+v", len(out), out)
 	}

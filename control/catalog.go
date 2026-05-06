@@ -27,7 +27,7 @@ func GitLabControls(pc *configuration.PlumberConfig) []ControlEntry {
 	if pc == nil {
 		return nil
 	}
-	c := &pc.Controls
+	c := pc.ControlsFor("gitlab")
 	entries := make([]ControlEntry, 0, 14)
 
 	// Container images must not use forbidden tags
@@ -137,16 +137,16 @@ func GitLabControls(pc *configuration.PlumberConfig) []ControlEntry {
 }
 
 // DisabledControlNames returns the set of control names the user has
-// explicitly disabled in .plumber.yaml (controls present in the config
-// with `enabled: false`). Controls absent from the config are NOT
-// included — they fall back to the embedded default which has them
-// enabled.
-func DisabledControlNames(pc *configuration.PlumberConfig) map[string]bool {
+// explicitly disabled (controls present in the provider's controls
+// config with `enabled: false`). Controls absent from the config are
+// NOT included — they fall back to the embedded default which has
+// them enabled. Pass the right provider's ControlsConfig (use
+// pc.ControlsFor("gitlab") or pc.ControlsFor("github")).
+func DisabledControlNames(c *configuration.ControlsConfig) map[string]bool {
 	out := map[string]bool{}
-	if pc == nil {
+	if c == nil {
 		return out
 	}
-	c := &pc.Controls
 	if cfg := c.ContainerImageMustNotUseForbiddenTags; cfg != nil && !cfg.IsEnabled() {
 		out["containerImageMustNotUseForbiddenTags"] = true
 	}
@@ -196,10 +196,12 @@ func DisabledControlNames(pc *configuration.PlumberConfig) map[string]bool {
 }
 
 // FilterFindingsByEnabledControls drops findings whose ControlName is
-// disabled in pc. Findings whose code is unknown or has no ControlName
-// are kept (defensive: better surfaced than silently swallowed).
-func FilterFindingsByEnabledControls(findings []opaengine.Finding, pc *configuration.PlumberConfig) []opaengine.Finding {
-	disabled := DisabledControlNames(pc)
+// disabled in the supplied ControlsConfig. Findings whose code is
+// unknown or has no ControlName are kept (defensive: better surfaced
+// than silently swallowed). Pass the right provider's ControlsConfig
+// (use pc.ControlsFor("gitlab") or pc.ControlsFor("github")).
+func FilterFindingsByEnabledControls(findings []opaengine.Finding, c *configuration.ControlsConfig) []opaengine.Finding {
+	disabled := DisabledControlNames(c)
 	if len(disabled) == 0 {
 		return findings
 	}

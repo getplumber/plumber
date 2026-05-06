@@ -14,7 +14,7 @@ func TestStarterPlumberConfigValidate(t *testing.T) {
 func TestInitWizardStateEmptyCategories(t *testing.T) {
 	st := &initWizardState{}
 	cfg := st.toPlumberConfig()
-	if cfg.Version != "1.0" {
+	if cfg.Version != "2.0" {
 		t.Fatalf("version: got %q", cfg.Version)
 	}
 	if err := cfg.Validate(); err != nil {
@@ -32,11 +32,11 @@ func TestToPlumberConfigRequiredInclusions(t *testing.T) {
 		RequiredTemplatesExpr:  "templates/security/sast",
 	}
 	cfg := st.toPlumberConfig()
-	if cfg.Controls.PipelineMustIncludeComponent == nil || cfg.Controls.PipelineMustIncludeComponent.Required != st.RequiredComponentsExpr {
-		t.Fatalf("component: %#v", cfg.Controls.PipelineMustIncludeComponent)
+	if cfg.GitLab.Controls.PipelineMustIncludeComponent == nil || cfg.GitLab.Controls.PipelineMustIncludeComponent.Required != st.RequiredComponentsExpr {
+		t.Fatalf("component: %#v", cfg.GitLab.Controls.PipelineMustIncludeComponent)
 	}
-	if cfg.Controls.PipelineMustIncludeTemplate == nil || cfg.Controls.PipelineMustIncludeTemplate.Required != st.RequiredTemplatesExpr {
-		t.Fatalf("template: %#v", cfg.Controls.PipelineMustIncludeTemplate)
+	if cfg.GitLab.Controls.PipelineMustIncludeTemplate == nil || cfg.GitLab.Controls.PipelineMustIncludeTemplate.Required != st.RequiredTemplatesExpr {
+		t.Fatalf("template: %#v", cfg.GitLab.Controls.PipelineMustIncludeTemplate)
 	}
 	if err := cfg.Validate(); err != nil {
 		t.Fatal(err)
@@ -51,7 +51,7 @@ func TestToPlumberConfigRequiredSkippedWhenEmpty(t *testing.T) {
 		// No expression — should be skipped.
 	}
 	cfg := st.toPlumberConfig()
-	if cfg.Controls.PipelineMustIncludeComponent != nil {
-		t.Fatalf("expected nil, got %#v", cfg.Controls.PipelineMustIncludeComponent)
+	if cfg.GitLab.Controls.PipelineMustIncludeComponent != nil {
+		t.Fatalf("expected nil, got %#v", cfg.GitLab.Controls.PipelineMustIncludeComponent)
 	}
 }

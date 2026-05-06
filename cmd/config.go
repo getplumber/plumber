@@ -145,6 +145,11 @@ func init() {
 	configCmd.AddCommand(configInitCmd)
 	configCmd.AddCommand(configValidateCmd)
 	configCmd.AddCommand(configDiffCmd)
+	configCmd.AddCommand(configMigrateCmd)
+
+	configMigrateCmd.Flags().BoolVar(&configMigrateInPlace, "in-place", false, "Overwrite the input file in place (the original is backed up to <input>.bak)")
+	configMigrateCmd.Flags().StringVar(&configMigrateInput, "input", "", "Input config path (default: .plumber.yaml)")
+	configMigrateCmd.Flags().StringVar(&configMigrateOutput, "output", "", "Output path (default: <input>.v2 unless --in-place is set)")
 
 	// config validate flags
 	configValidateCmd.Flags().StringVarP(&configValidateFile, "config", "c", ".plumber.yaml", "Path to configuration file")

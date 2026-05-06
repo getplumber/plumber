@@ -12,11 +12,66 @@ package security_jobs_weakened
 
 import rego.v1
 
+# A single security job can be weakened in more than one way at once
+# (e.g. job-level `when: manual` AND a `rules:` override that pins
+# `when: manual`). Each weakening signal is its own deny rule so the
+# Rego set semantics produces one finding per (job, reason) pair
+# without tripping the function-determinism check we hit when these
+# branches were collapsed into a single `_weakening_reason(job)`
+# function.
+
 deny contains finding if {
 	some i
 	job := input.pipeline.jobs[i]
 	_is_security_job(job.name)
-	reason := _weakening_reason(job)
+	input.config.securityJobsWeakened.allowFailureMustBeFalse == true
+	job.allowFailure == true
+	reason := "allow_failure: true masks scan failures"
+	finding := {
+		"code":     "ISSUE-410",
+		"severity": "high",
+		"message":  sprintf("security job %q is weakened: %s", [job.name, reason]),
+		"job":      job.name,
+		"detail":   reason,
+	}
+}
+
+deny contains finding if {
+	some i
+	job := input.pipeline.jobs[i]
+	_is_security_job(job.name)
+	input.config.securityJobsWeakened.whenMustNotBeManual == true
+	job.when == "manual"
+	reason := "when: manual prevents the scan from running automatically"
+	finding := {
+		"code":     "ISSUE-410",
+		"severity": "high",
+		"message":  sprintf("security job %q is weakened: %s", [job.name, reason]),
+		"job":      job.name,
+		"detail":   reason,
+	}
+}
+
+# Rules-block weakening: an unconditional `- when: never` (or
+# `manual`) inside the job's rules block neutralises the scan. Two
+# project-side signals qualify a job as "redefined":
+#   - originKind in {"hardcoded", "local", "project"}: the job was
+#     declared by the project's own files.
+#   - overridden == true: the job comes from an upstream
+#     component/template but the project locally redefined keys.
+# Vanilla upstream-only definitions (e.g. SAST template's deprecated
+# bandit-sast) carry `when: never` legitimately and are skipped.
+deny contains finding if {
+	some i
+	job := input.pipeline.jobs[i]
+	_is_security_job(job.name)
+	input.config.securityJobsWeakened.rulesMustNotBeRedefined == true
+	_rules_redefined_by_project(job)
+	some j
+	rule := job.rules[j]
+	w := rule.when
+	_blocking_when(w)
+	reason := sprintf("rules overridden with 'when: %s', job will not run", [w])
 	finding := {
 		"code":     "ISSUE-410",
 		"severity": "high",
@@ -29,34 +84,6 @@ deny contains finding if {
 _is_security_job(name) if {
 	pattern := input.config.securityJobsWeakened.securityJobPatterns[_]
 	glob.match(pattern, null, name)
-}
-
-_weakening_reason(job) := "allow_failure: true masks scan failures" if {
-	input.config.securityJobsWeakened.allowFailureMustBeFalse == true
-	job.allowFailure == true
-}
-
-_weakening_reason(job) := "when: manual prevents the scan from running automatically" if {
-	input.config.securityJobsWeakened.whenMustNotBeManual == true
-	job.when == "manual"
-}
-
-# Rules-block weakening: an unconditional `- when: never` (or
-# `manual`) inside the job's rules block neutralises the scan. Two
-# project-side signals qualify a job as "redefined":
-#   - originKind in {"hardcoded", "local", "project"}: the job was
-#     declared by the project's own files.
-#   - overridden == true: the job comes from an upstream
-#     component/template but the project locally redefined keys.
-# Vanilla upstream-only definitions (e.g. SAST template's deprecated
-# bandit-sast) carry `when: never` legitimately and are skipped.
-_weakening_reason(job) := sprintf("rules overridden with 'when: %s', job will not run", [w]) if {
-	input.config.securityJobsWeakened.rulesMustNotBeRedefined == true
-	_rules_redefined_by_project(job)
-	some i
-	rule := job.rules[i]
-	w := rule.when
-	_blocking_when(w)
 }
 
 # A job's rules are "redefined by the project" when either

@@ -87,9 +87,9 @@ func buildLegacyResult(e control.ControlEntry, result *control.AnalysisResult, p
 	case "includesMustNotUseForbiddenVersions":
 		return "forbiddenVersionsIncludesResult", buildForbiddenVersionsBlock(common, result, findings)
 	case "pipelineMustIncludeComponent":
-		return "requiredComponentsResult", buildRequirementGroupsBlock(common, pc.Controls.PipelineMustIncludeComponent, result, findings)
+		return "requiredComponentsResult", buildRequirementGroupsBlock(common, pc.ControlsFor("gitlab").PipelineMustIncludeComponent, result, findings)
 	case "pipelineMustIncludeTemplate":
-		return "requiredTemplatesResult", buildRequirementGroupsTemplateBlock(common, pc.Controls.PipelineMustIncludeTemplate, result, findings)
+		return "requiredTemplatesResult", buildRequirementGroupsTemplateBlock(common, pc.ControlsFor("gitlab").PipelineMustIncludeTemplate, result, findings)
 	case "pipelineMustNotEnableDebugTrace":
 		return "debugTraceResult", buildDebugTraceBlock(common, result, findings)
 	case "pipelineMustNotUseUnsafeVariableExpansion":
@@ -191,7 +191,7 @@ func _branchProtectionEntryForName(data *collector.GitlabProtectionAnalysisData,
 func enrichBranchProtection505IssueMaps(issues []map[string]any, result *control.AnalysisResult, pc *configuration.PlumberConfig) {
 	var cfg *configuration.BranchProtectionControlConfig
 	if pc != nil {
-		cfg = pc.Controls.BranchMustBeProtected
+		cfg = pc.ControlsFor("gitlab").BranchMustBeProtected
 	}
 	allowForcePushPolicy := false
 	if cfg != nil && cfg.AllowForcePush != nil {
@@ -365,8 +365,8 @@ func buildImageForbiddenTagsBlock(c legacyCommon, result *control.AnalysisResult
 		}
 	}
 	mustBePinned := false
-	if pc.Controls.ContainerImageMustNotUseForbiddenTags != nil {
-		mustBePinned = pc.Controls.ContainerImageMustNotUseForbiddenTags.IsPinnedByDigestRequired()
+	if pc.ControlsFor("gitlab").ContainerImageMustNotUseForbiddenTags != nil {
+		mustBePinned = pc.ControlsFor("gitlab").ContainerImageMustNotUseForbiddenTags.IsPinnedByDigestRequired()
 	}
 	// Sort findings deterministically by job so consumer snapshots
 	// stay stable across runs. Stable's order came out of Go map
@@ -427,8 +427,8 @@ func buildBranchProtectionBlock(c legacyCommon, result *control.AnalysisResult, 
 		}
 	}
 	data := []map[string]any{}
-	if result.ProtectionData != nil && pc.Controls.BranchMustBeProtected != nil {
-		cfg := pc.Controls.BranchMustBeProtected
+	if result.ProtectionData != nil && pc.ControlsFor("gitlab").BranchMustBeProtected != nil {
+		cfg := pc.ControlsFor("gitlab").BranchMustBeProtected
 		policyPatterns := cfg.NamePatterns
 		defaultProtected := cfg.DefaultMustBeProtected != nil && *cfg.DefaultMustBeProtected
 		// Mirror v0.2.x: only branches that fall under the project's

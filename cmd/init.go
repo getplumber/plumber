@@ -514,7 +514,10 @@ func compSelected(st *initWizardState, label string) bool {
 }
 
 func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
-	cfg := &configuration.PlumberConfig{Version: "1.0", Controls: configuration.ControlsConfig{}}
+	cfg := &configuration.PlumberConfig{
+		Version: "2.0",
+		GitLab:  &configuration.ProviderConfig{},
+	}
 
 	has := func(s string) bool {
 		for _, c := range st.Categories {
@@ -531,7 +534,7 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 			if len(tags) == 0 {
 				tags = parseCSVInit("latest, dev, development, staging, main, master")
 			}
-			cfg.Controls.ContainerImageMustNotUseForbiddenTags = &configuration.ImageForbiddenTagsControlConfig{
+			cfg.GitLab.Controls.ContainerImageMustNotUseForbiddenTags = &configuration.ImageForbiddenTagsControlConfig{
 				Enabled:                             boolPtrInit(true),
 				Tags:                                tags,
 				ContainerImagesMustBePinnedByDigest: boolPtrInit(st.PinByDigest),
@@ -542,7 +545,7 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 			if len(urls) == 0 {
 				urls = defaultTrustedURLs()
 			}
-			cfg.Controls.ContainerImageMustComeFromAuthorizedSources = &configuration.ImageAuthorizedSourcesControlConfig{
+			cfg.GitLab.Controls.ContainerImageMustComeFromAuthorizedSources = &configuration.ImageAuthorizedSourcesControlConfig{
 				Enabled:                      boolPtrInit(true),
 				TrustedUrls:                  urls,
 				TrustDockerHubOfficialImages: boolPtrInit(st.TrustDockerHubOfficial),
@@ -552,12 +555,12 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 
 	if has(catComposition) {
 		if compSelected(st, compHardcoded) {
-			cfg.Controls.PipelineMustNotIncludeHardcodedJobs = &configuration.HardcodedJobsControlConfig{
+			cfg.GitLab.Controls.PipelineMustNotIncludeHardcodedJobs = &configuration.HardcodedJobsControlConfig{
 				Enabled: boolPtrInit(true),
 			}
 		}
 		if compSelected(st, compUpToDate) {
-			cfg.Controls.IncludesMustBeUpToDate = &configuration.IncludesUpToDateControlConfig{
+			cfg.GitLab.Controls.IncludesMustBeUpToDate = &configuration.IncludesUpToDateControlConfig{
 				Enabled: boolPtrInit(true),
 			}
 		}
@@ -566,7 +569,7 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 			if len(vers) == 0 {
 				vers = defaultForbiddenVersions()
 			}
-			cfg.Controls.IncludesMustNotUseForbiddenVersions = &configuration.IncludesForbiddenVersionsControlConfig{
+			cfg.GitLab.Controls.IncludesMustNotUseForbiddenVersions = &configuration.IncludesForbiddenVersionsControlConfig{
 				Enabled:                         boolPtrInit(true),
 				ForbiddenVersions:               vers,
 				DefaultBranchIsForbiddenVersion: boolPtrInit(st.DefaultBranchIsForbiddenVersion),
@@ -577,7 +580,7 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 			if len(patterns) == 0 {
 				patterns = defaultSecurityJobPatterns()
 			}
-			cfg.Controls.SecurityJobsMustNotBeWeakened = &configuration.SecurityJobsWeakenedControlConfig{
+			cfg.GitLab.Controls.SecurityJobsMustNotBeWeakened = &configuration.SecurityJobsWeakenedControlConfig{
 				Enabled:                 boolPtrInit(true),
 				SecurityJobPatterns:     patterns,
 				AllowFailureMustBeFalse: &configuration.SecurityJobsSubControlToggle{Enabled: boolPtrInit(st.SecuritySubAllowFailure)},
@@ -586,7 +589,7 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 			}
 		}
 		if compSelected(st, compScripts) {
-			cfg.Controls.PipelineMustNotExecuteUnverifiedScripts = &configuration.UnverifiedScriptsControlConfig{
+			cfg.GitLab.Controls.PipelineMustNotExecuteUnverifiedScripts = &configuration.UnverifiedScriptsControlConfig{
 				Enabled:     boolPtrInit(true),
 				TrustedUrls: parseLinesInit(st.ScriptTrustedURLsMultiline),
 			}
@@ -596,20 +599,20 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 			if len(vars) == 0 {
 				vars = defaultJobOverrideVariables()
 			}
-			cfg.Controls.PipelineMustNotOverrideJobVariables = &configuration.JobVariablesOverrideControlConfig{
+			cfg.GitLab.Controls.PipelineMustNotOverrideJobVariables = &configuration.JobVariablesOverrideControlConfig{
 				Enabled:   boolPtrInit(true),
 				Variables: vars,
 			}
 		}
 		if compSelected(st, compDinD) {
-			cfg.Controls.PipelineMustNotUseDockerInDocker = &configuration.DockerInDockerControlConfig{
+			cfg.GitLab.Controls.PipelineMustNotUseDockerInDocker = &configuration.DockerInDockerControlConfig{
 				Enabled:              boolPtrInit(true),
 				DetectInsecureDaemon: boolPtrInit(st.DinDDetectInsecureDaemon),
 			}
 		}
 
 		if e := strings.TrimSpace(st.RequiredComponentsExpr); e != "" {
-			cfg.Controls.PipelineMustIncludeComponent = &configuration.RequiredComponentsControlConfig{
+			cfg.GitLab.Controls.PipelineMustIncludeComponent = &configuration.RequiredComponentsControlConfig{
 				Enabled:  boolPtrInit(true),
 				Required: e,
 			}
@@ -618,7 +621,7 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 		}
 
 		if e := strings.TrimSpace(st.RequiredTemplatesExpr); e != "" {
-			cfg.Controls.PipelineMustIncludeTemplate = &configuration.RequiredTemplatesControlConfig{
+			cfg.GitLab.Controls.PipelineMustIncludeTemplate = &configuration.RequiredTemplatesControlConfig{
 				Enabled:  boolPtrInit(true),
 				Required: e,
 			}
@@ -632,7 +635,7 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 		if len(patterns) == 0 {
 			patterns = parseCSVInit("main, master, release/*, production, dev")
 		}
-		cfg.Controls.BranchMustBeProtected = &configuration.BranchProtectionControlConfig{
+		cfg.GitLab.Controls.BranchMustBeProtected = &configuration.BranchProtectionControlConfig{
 			Enabled:                   boolPtrInit(true),
 			DefaultMustBeProtected:    boolPtrInit(st.BranchDefaultMustBeProtected),
 			NamePatterns:              patterns,
@@ -649,7 +652,7 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 			if len(fb) == 0 {
 				fb = []string{"CI_DEBUG_TRACE", "CI_DEBUG_SERVICES"}
 			}
-			cfg.Controls.PipelineMustNotEnableDebugTrace = &configuration.DebugTraceControlConfig{
+			cfg.GitLab.Controls.PipelineMustNotEnableDebugTrace = &configuration.DebugTraceControlConfig{
 				Enabled:            boolPtrInit(true),
 				ForbiddenVariables: fb,
 			}
@@ -659,7 +662,7 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 			if len(danger) == 0 {
 				danger = defaultDangerousVariables()
 			}
-			cfg.Controls.PipelineMustNotUseUnsafeVariableExpansion = &configuration.VariableInjectionControlConfig{
+			cfg.GitLab.Controls.PipelineMustNotUseUnsafeVariableExpansion = &configuration.VariableInjectionControlConfig{
 				Enabled:            boolPtrInit(true),
 				DangerousVariables: danger,
 				AllowedPatterns:    parseLinesInit(st.AllowedPatternsMultiline),
