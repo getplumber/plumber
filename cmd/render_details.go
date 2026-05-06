@@ -4,7 +4,6 @@ import (
 	"cmp"
 	"fmt"
 	"slices"
-	"sort"
 	"strings"
 
 	"github.com/getplumber/plumber/collector"
@@ -203,6 +202,128 @@ func sortBranchProtectionFindingsForDisplay(findings []opaengine.Finding) {
 // findings list (for denominators and code-specific counts such as
 // ISSUE-102 / ISSUE-505). Each control name matches the entry
 // registered by control.GitLabControls().
+// buildGitHubControlStats produces the per-control stats block for
+// the GitHub renderer using the pre-aggregated GitHubAnalysisStats
+// computed by control.AggregateGitHubStats. Mirrors the GitLab
+// equivalent — same Label/Value shape rendered identically by
+// renderFindingGroups.
+func buildGitHubControlStats(controlName string, stats *control.GitHubAnalysisStats) []statLine {
+	if stats == nil {
+		return nil
+	}
+	switch controlName {
+	case "containerImageMustNotUseForbiddenTags":
+		notPinned := stats.ImagesTotal - stats.ImagesPinnedByDigest
+		if notPinned < 0 {
+			notPinned = 0
+		}
+		return []statLine{
+			{"Total Images", fmt.Sprintf("%d", stats.ImagesTotal)},
+			{"Pinned By Digest", fmt.Sprintf("%d", stats.ImagesPinnedByDigest)},
+			{"Not Pinned By Digest", fmt.Sprintf("%d", notPinned)},
+			{"Using Forbidden Tags", fmt.Sprintf("%d", stats.ImagesUsingForbidden)},
+		}
+	case "actionsMustBePinnedByCommitSha":
+		pinned := stats.ActionRefsTotal - stats.ActionRefsUnpinned
+		if pinned < 0 {
+			pinned = 0
+		}
+		return []statLine{
+			{"Total Action Refs", fmt.Sprintf("%d", stats.ActionRefsTotal+stats.ActionRefsExempt)},
+			{"Pinned By SHA", fmt.Sprintf("%d", pinned)},
+			{"Not Pinned By SHA", fmt.Sprintf("%d", stats.ActionRefsUnpinned)},
+			{"Trusted-Owner Exempt", fmt.Sprintf("%d", stats.ActionRefsExempt)},
+		}
+	case "securityJobsMustNotBeWeakened":
+		return []statLine{
+			{"Security Jobs Found", fmt.Sprintf("%d", stats.SecurityJobsTotal)},
+			{"Weakened Jobs", fmt.Sprintf("%d", stats.SecurityJobsWeakened)},
+		}
+	case "pipelineMustNotUseDockerInDocker":
+		return []statLine{
+			{"Jobs Checked", fmt.Sprintf("%d", stats.JobsTotal)},
+			{"DinD Services Found", fmt.Sprintf("%d", stats.JobsWithDinD)},
+			{"Insecure Daemon Config", fmt.Sprintf("%d", stats.JobsWithInsecureDaemon)},
+		}
+	case "reusableWorkflowsMustNotInheritSecrets":
+		return []statLine{
+			{"Reusable Workflow Calls", fmt.Sprintf("%d", stats.ReusableCalls)},
+			{"With secrets: inherit", fmt.Sprintf("%d", stats.ReusableCallsSecretsInherit)},
+		}
+	case "workflowMustNotInjectUserInputInScripts":
+		return []statLine{
+			{"Workflows Scanned", fmt.Sprintf("%d", stats.WorkflowsTotal)},
+			{"Script Lines Checked", fmt.Sprintf("%d", stats.ScriptLinesTotal)},
+		}
+	case "workflowMustNotUseDangerousTriggers":
+		return []statLine{
+			{"Workflows Scanned", fmt.Sprintf("%d", stats.WorkflowsTotal)},
+			{"Using Dangerous Triggers", fmt.Sprintf("%d", stats.WorkflowsWithDangerousTrigger)},
+		}
+	case "workflowsMustDeclarePermissions":
+		withPerms := stats.WorkflowsTotal - stats.WorkflowsMissingPermissions
+		if withPerms < 0 {
+			withPerms = 0
+		}
+		return []statLine{
+			{"Total Workflows", fmt.Sprintf("%d", stats.WorkflowsTotal)},
+			{"With permissions block", fmt.Sprintf("%d", withPerms)},
+			{"Missing permissions block", fmt.Sprintf("%d", stats.WorkflowsMissingPermissions)},
+		}
+	}
+	return nil
+}
+
+// gitHubControlCompliance turns the per-control aggregations into a
+// percentage in [0, 100]. Returns 100 when a control's denominator is
+// zero (nothing to evaluate against). Uses the actual ratio of
+// "items considered" to "items violating" — matching the GitLab
+// per-control compliance UX.
+func gitHubControlCompliance(controlName string, stats *control.GitHubAnalysisStats, findings int) float64 {
+	if stats == nil {
+		if findings > 0 {
+			return 0
+		}
+		return 100
+	}
+	pct := func(violations, denom int) float64 {
+		if denom <= 0 {
+			return 100
+		}
+		ok := denom - violations
+		if ok < 0 {
+			ok = 0
+		}
+		return float64(ok) * 100.0 / float64(denom)
+	}
+	switch controlName {
+	case "actionsMustBePinnedByCommitSha":
+		return pct(stats.ActionRefsUnpinned, stats.ActionRefsTotal)
+	case "containerImageMustNotUseForbiddenTags":
+		notPinned := stats.ImagesTotal - stats.ImagesPinnedByDigest
+		if notPinned < 0 {
+			notPinned = 0
+		}
+		return pct(stats.ImagesUsingForbidden+notPinned, stats.ImagesTotal*2)
+	case "pipelineMustNotUseDockerInDocker":
+		return pct(stats.JobsWithDinD+stats.JobsWithInsecureDaemon, stats.JobsTotal*2)
+	case "reusableWorkflowsMustNotInheritSecrets":
+		return pct(stats.ReusableCallsSecretsInherit, stats.ReusableCalls)
+	case "securityJobsMustNotBeWeakened":
+		return pct(stats.SecurityJobsWeakened, stats.SecurityJobsTotal)
+	case "workflowMustNotInjectUserInputInScripts":
+		return pct(findings, stats.ScriptLinesTotal)
+	case "workflowMustNotUseDangerousTriggers":
+		return pct(stats.WorkflowsWithDangerousTrigger, stats.WorkflowsTotal)
+	case "workflowsMustDeclarePermissions":
+		return pct(stats.WorkflowsMissingPermissions, stats.WorkflowsTotal)
+	}
+	if findings > 0 {
+		return 0
+	}
+	return 100
+}
+
 func buildGitLabControlStats(controlName string, result *control.AnalysisResult, pc *configuration.PlumberConfig, findings []opaengine.Finding) []statLine {
 	if result == nil {
 		return nil
@@ -737,58 +858,3 @@ func originKindMatches(originType, kindFilter string) bool {
 	}
 }
 
-// findingGroupsFromRegoFindings converts the Rego engine's flat
-// findings list into groups keyed by ControlName (from the issue-code
-// registry). Used by the GitHub analyze path; will also be used by
-// the GitLab path once all legacy Go controls have been ported.
-func findingGroupsFromRegoFindings(findings []opaengine.Finding) []findingGroup {
-	type bucket struct {
-		title string
-		items []detailedFinding
-	}
-	byControl := map[string]*bucket{}
-	order := []string{}
-
-	for _, f := range findings {
-		info := control.LookupCode(control.ErrorCode(f.Code))
-		key := f.Code
-		title := f.Code
-		docURL := ""
-		if info != nil {
-			if info.ControlName != "" {
-				key = info.ControlName
-			}
-			if info.Title != "" {
-				title = info.Title
-			}
-			docURL = info.DocURL
-		}
-		b, ok := byControl[key]
-		if !ok {
-			b = &bucket{title: title}
-			byControl[key] = b
-			order = append(order, key)
-		}
-		b.items = append(b.items, detailedFinding{
-			Code:        control.ErrorCode(f.Code),
-			Message:     f.Message,
-			DocURL:      docURL,
-			Location:    formatFindingLocation(f),
-			DetailLines: detailLinesFromFinding(f),
-		})
-	}
-	sort.Strings(order)
-
-	out := make([]findingGroup, 0, len(order))
-	for _, key := range order {
-		b := byControl[key]
-		out = append(out, findingGroup{
-			Title:      b.title,
-			Compliance: 0,
-			Skipped:    false,
-			Stats:      []statLine{{Label: "Total Findings", Value: fmt.Sprintf("%d", len(b.items))}},
-			Findings:   b.items,
-		})
-	}
-	return out
-}

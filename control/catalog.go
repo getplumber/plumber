@@ -136,6 +136,83 @@ func GitLabControls(pc *configuration.PlumberConfig) []ControlEntry {
 	return entries
 }
 
+// GitHubControls returns the catalog of GitHub Actions controls in
+// their canonical display order — the same shape GitLabControls uses
+// so the renderer can emit per-control sections, an Issues table,
+// and a Compliance table just like the GitLab path. Currently lists
+// the eight default-shipping controls (every non-benched GitHub
+// control with a known display name); benched controls remain
+// invisible because their findings never reach the catalog.
+func GitHubControls(pc *configuration.PlumberConfig) []ControlEntry {
+	if pc == nil {
+		return nil
+	}
+	c := pc.ControlsFor("github")
+	entries := make([]ControlEntry, 0, 8)
+
+	if cfg := c.ContainerImageMustNotUseForbiddenTags; cfg != nil {
+		name := "Container images must not use forbidden tags"
+		if cfg.IsPinnedByDigestRequired() {
+			name = "Container images must not use forbidden tags (pinned by digest)"
+		}
+		entries = append(entries, ControlEntry{
+			DisplayName: name,
+			ControlName: "containerImageMustNotUseForbiddenTags",
+			Skipped:     !cfg.IsEnabled(),
+		})
+	}
+	if cfg := c.ActionsMustBePinnedByCommitSha; cfg != nil {
+		entries = append(entries, ControlEntry{
+			DisplayName: "Third-party actions must be pinned by commit SHA",
+			ControlName: "actionsMustBePinnedByCommitSha",
+			Skipped:     !cfg.IsEnabled(),
+		})
+	}
+	if cfg := c.SecurityJobsMustNotBeWeakened; cfg != nil {
+		entries = append(entries, ControlEntry{
+			DisplayName: "Security jobs must not be weakened",
+			ControlName: "securityJobsMustNotBeWeakened",
+			Skipped:     !cfg.IsEnabled(),
+		})
+	}
+	if cfg := c.PipelineMustNotUseDockerInDocker; cfg != nil {
+		entries = append(entries, ControlEntry{
+			DisplayName: "Workflows must not use Docker-in-Docker",
+			ControlName: "pipelineMustNotUseDockerInDocker",
+			Skipped:     !cfg.IsEnabled(),
+		})
+	}
+	if cfg := c.ReusableWorkflowsMustNotInheritSecrets; cfg != nil {
+		entries = append(entries, ControlEntry{
+			DisplayName: "Reusable workflows must not inherit secrets",
+			ControlName: "reusableWorkflowsMustNotInheritSecrets",
+			Skipped:     !cfg.IsEnabled(),
+		})
+	}
+	if cfg := c.WorkflowMustNotInjectUserInputInScripts; cfg != nil {
+		entries = append(entries, ControlEntry{
+			DisplayName: "Workflows must not inject user input in scripts",
+			ControlName: "workflowMustNotInjectUserInputInScripts",
+			Skipped:     !cfg.IsEnabled(),
+		})
+	}
+	if cfg := c.WorkflowMustNotUseDangerousTriggers; cfg != nil {
+		entries = append(entries, ControlEntry{
+			DisplayName: "Workflows must not use dangerous triggers",
+			ControlName: "workflowMustNotUseDangerousTriggers",
+			Skipped:     !cfg.IsEnabled(),
+		})
+	}
+	if cfg := c.WorkflowsMustDeclarePermissions; cfg != nil {
+		entries = append(entries, ControlEntry{
+			DisplayName: "Workflows must declare permissions",
+			ControlName: "workflowsMustDeclarePermissions",
+			Skipped:     !cfg.IsEnabled(),
+		})
+	}
+	return entries
+}
+
 // DisabledControlNames returns the set of control names the user has
 // explicitly disabled (controls present in the provider's controls
 // config with `enabled: false`). Controls absent from the config are

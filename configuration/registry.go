@@ -113,7 +113,7 @@ var controlsMeta = map[string]ControlMeta{
 //
 // As of 2026-05-06 (commit 7f05d81 + Phase 1 follow-up):
 //   - GitLab: zero benched controls. All 14 GitLab controls ship.
-//   - GitHub: forty-three benched. Eight (the SOLID 8) ship.
+//   - GitHub: a lot of benched WIP
 var benchedControls = map[string]map[string]struct{}{
 	ProviderGitLab: {},
 	ProviderGitHub: {
@@ -175,6 +175,39 @@ var benchedControls = map[string]map[string]struct{}{
 		"pipelineMustNotUseUnsafeVariableExpansion":   {},
 		"containerImageMustComeFromAuthorizedSources": {},
 	},
+}
+
+// actionMetadataConsumers lists control names whose Rego rules
+// depend on the per-`uses:` metadata populated by the GitHub API
+// enrichment phase (archived state, latest tag, ref existence,
+// advisory database). When EVERY entry in this list is benched for
+// a given provider, the collector skips the API round-trips
+// entirely — turning a 30-60s scan into a sub-second one on a
+// large workflow set.
+//
+// Add to this list when introducing a new rule that reads from
+// `input.pipeline.jobs[*].uses[*].metadata`.
+var actionMetadataConsumers = []string{
+	"actionPinCommentsMustMatchSha",
+	"actionPinsMustNotBeStale",
+	"actionRefsMustExistUpstream",
+	"actionRefsMustNotCollide",
+	"actionsMustNotBeArchived",
+	"actionsMustNotCarryKnownCVEs",
+	"actionsMustNotDuplicateRunnerBuiltins",
+}
+
+// ProviderNeedsActionMetadata reports whether at least one control
+// that depends on action-ref API metadata is currently shipping for
+// the given provider. Returns false when every consumer is benched,
+// letting the collector skip the GitHub API enrichment loop.
+func ProviderNeedsActionMetadata(provider string) bool {
+	for _, name := range actionMetadataConsumers {
+		if !IsBenched(provider, name) {
+			return true
+		}
+	}
+	return false
 }
 
 // IsBenched reports whether the given (provider, control) pair is

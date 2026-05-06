@@ -148,7 +148,11 @@ In non-interactive environments (for example CI), use `plumber config generate` 
 
 This creates `.plumber.yaml` with [default](./.plumber.yaml) compliance rules. You can customize it later.
 
-### Step 3: Create & Set Your Token
+### Step 3: Authenticate
+
+Plumber needs API access to whichever provider hosts your project. Pick the section matching your remote.
+
+#### GitLab
 
 1. In GitLab, go to **User Settings → Access Tokens** ([direct link](https://gitlab.com/-/user_settings/personal_access_tokens))
 2. Create a Personal Access Token with `read_api` + `read_repository` scopes
@@ -161,18 +165,129 @@ This creates `.plumber.yaml` with [default](./.plumber.yaml) compliance rules. Y
 export GITLAB_TOKEN=glpat-xxxx
 ```
 
+GitLab analysis **hard-fails** if `GITLAB_TOKEN` is missing or the token's scope is insufficient — the GitLab API is the only source of project settings, branch protection, etc.
+
+#### GitHub
+
+GitHub auth is **soft-degrade**: the current default controls scan workflow YAML locally and need no API access, so they always run. Action-supply-chain controls (archived repos, advisory database, ref-version mismatch, …) need the API and silently no-op without it. Plumber resolves credentials in this order, automatically:
+
+| Order | Source | Set with |
+|---|---|---|
+| 1 | `GH_TOKEN` env var | `export GH_TOKEN=ghp_…` |
+| 2 | `GITHUB_TOKEN` env var | usually pre-set in GitHub Actions runners |
+| 3 | `gh` CLI stored token | `gh auth login` (recommended for local dev) |
+| 4 | none | runs in degraded mode — local-only checks fire |
+
+Token scope: a fine-grained PAT with read access to your target repo (Contents: read, Metadata: read) is enough for the shipping controls. The bench controls that hit the GitHub Advisory Database also need no extra scope. **GitHub Enterprise Server (GHES)**: pair `GH_ENTERPRISE_TOKEN` with `--github-url ghes.example.com` (see Step 4).
+
+To check the resolved auth before running:
+
+```bash
+gh auth status              # shows the configured host and token's scope
+```
+
 ### Step 4: Run Analysis
 
-Plumber auto-detects the GitLab URL and project from your git remote but requires the remote to be set to 'origin'.
+Plumber auto-detects the provider, URL, and project path from your git remote (when set to `origin`).
+
+#### GitLab
+
 ```bash
-# if in git remote with remote = origin, run:
+# Auto-detect from origin:
 plumber analyze
 
-# Or specify the project explicitly:
+# Or specify explicitly:
 plumber analyze --gitlab-url https://gitlab.com --project mygroup/myproject
 ```
 
-It reads your `.plumber.yaml` config and outputs a compliance report. You can also tell it to store the output in JSON format with the `--output` flag.
+#### GitHub (github.com)
+
+```bash
+# Auto-detect from origin:
+plumber analyze
+
+# The GitHub path is selected when origin points at github.com.
+# No --gitlab-url / --project required.
+```
+
+#### GitHub Enterprise Server
+
+```bash
+export GH_ENTERPRISE_TOKEN=ghp_…
+plumber analyze --github-url ghes.example.com
+```
+
+`--github-url` accepts a bare host (`ghes.example.com`) or a full API path (`ghes.example.com/api/v3`). It's only consulted when scanning a GitHub repo — GitLab analysis ignores it.
+
+#### Verifying the run
+
+The output reports a **Plumber score** (letter A–E + points), per-control compliance, and a list of findings. See [Artifacts & Outputs](#-artifacts--outputs) for the schemas.
+
+To see only specific controls during testing:
+
+```bash
+plumber analyze --controls actionsMustBePinnedByCommitSha,workflowsMustDeclarePermissions
+```
+
+Or to skip noisy ones:
+
+```bash
+plumber analyze --skip-controls workflowsMustDeclarePermissions
+```
+
+#### Flags that don't apply on GitHub yet
+
+A handful of flags are GitLab-only today. On the GitHub path they are silently ignored — no error, just no effect. They need feature work on the GitHub side before they wire up:
+
+| Flag | Status on GitHub |
+|---|---|
+| `--mr-comment` | not implemented (no GitHub PR comment integration yet) |
+| `--badge` | not implemented (no GitHub repo badge integration yet) |
+| `--pbom` | not generated on the GitHub path yet |
+| `--pbom-cyclonedx` | not generated on the GitHub path yet |
+| `--ci-config-path` | N/A — GitHub workflows always live under `.github/workflows/` |
+| `--gitlab-url`, `--project` | N/A — GitHub uses git-remote auto-detection or `--github-url` |
+
+Flags that work identically on both providers: `--config`, `--output` (JSON findings), `--threshold`, `--print`, `--score`, `--score-point`, `--controls`, `--skip-controls`, `--fail-warnings`, `--branch`.
+
+#### Bench: which GitHub controls don't run yet
+
+The Rego engine ships ~50 GitHub Actions policies. Eight have ≥3 test fixtures and ship default-on; the rest are on the dev-side bench (`control/registry.go`). Benched policies are excluded at engine load time — they don't execute, don't produce findings, and don't appear in the output. To see what's currently shipping vs benched:
+
+```bash
+plumber analyze --controls "*"   # lists every control, with status
+```
+
+Today's shipping GitHub set:
+
+- `actionsMustBePinnedByCommitSha` — third-party actions must use a 40-char SHA, not a tag/branch.
+- `containerImageMustNotUseForbiddenTags` — pin container images by digest or version, not `latest`.
+- `pipelineMustNotUseDockerInDocker` — flag DinD services and insecure daemon configs.
+- `reusableWorkflowsMustNotInheritSecrets` — explicit secret mapping instead of `secrets: inherit`.
+- `securityJobsMustNotBeWeakened` — no `allow_failure: true` / `when: manual` / rules-block neutering.
+- `workflowMustNotInjectUserInputInScripts` — block `${{ github.event.* }}` inlining into shell.
+- `workflowMustNotUseDangerousTriggers` — flag `pull_request_target` / `workflow_run` patterns.
+- `workflowsMustDeclarePermissions` — workflows must set an explicit `permissions:` block.
+
+To unbench more controls as we add tests/docs, edit `benchedControls` in `configuration/registry.go`.
+
+### Trying it on this repo
+
+If you've cloned this repository and just want to confirm Plumber works against a real GitHub project:
+
+```bash
+gh auth login                         # one-time
+make build                            # produces ./plumber
+./plumber analyze                     # scans .github/workflows here
+```
+
+You can disable the API enrichment to speed up local iteration:
+
+```bash
+PLUMBER_DISABLE_GITHUB_API=1 ./plumber analyze
+```
+
+Both runs read `.plumber.yaml` from the repo root and write findings to stdout. Add `--output analysis.json` to inspect the JSON artifact (PBOM/CycloneDX aren't wired on the GitHub path yet — see the asymmetry table above).
 
 #### Local CI Configuration
 

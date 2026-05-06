@@ -38,6 +38,53 @@ type AnalysisResult struct {
 	PipelineImageData  *collector.GitlabPipelineImageData    `json:"-"`
 	PipelineOriginData *collector.GitlabPipelineOriginData   `json:"-"`
 	ProtectionData     *collector.GitlabProtectionAnalysisData `json:"-"`
+
+	// GitHubStats holds per-control denominators computed from the
+	// GitHub IR after a GitHub analysis. Used by the GitHub renderer
+	// to produce per-control stats blocks ("Total Images: 19,
+	// Pinned By Digest: 1, …") and per-control compliance
+	// percentages, matching the GitLab output structure. Nil on the
+	// GitLab path.
+	GitHubStats *GitHubAnalysisStats `json:"-"`
+}
+
+// GitHubAnalysisStats holds per-control aggregations computed by
+// AggregateGitHubStats from the normalized pipeline IR. Each field
+// corresponds to a denominator/numerator pair used by the renderer
+// to display "(X.X% compliant)" headers and stats blocks like the
+// GitLab side. All fields are pre-aggregated counts — the renderer
+// does not walk the IR again.
+type GitHubAnalysisStats struct {
+	// Actions pinning (ISSUE-104).
+	ActionRefsTotal     int
+	ActionRefsUnpinned  int
+	ActionRefsExempt    int
+
+	// Container images (ISSUE-102 / ISSUE-103).
+	ImagesTotal           int
+	ImagesPinnedByDigest  int
+	ImagesUsingForbidden  int
+
+	// Docker-in-Docker (ISSUE-412 / ISSUE-413).
+	JobsTotal              int
+	JobsWithDinD           int
+	JobsWithInsecureDaemon int
+
+	// Reusable workflow secrets (ISSUE-302).
+	ReusableCalls               int
+	ReusableCallsSecretsInherit int
+
+	// Security jobs (ISSUE-410).
+	SecurityJobsTotal    int
+	SecurityJobsWeakened int
+
+	// Workflow content scanned for template injection (ISSUE-206).
+	ScriptLinesTotal int
+
+	// Workflows + properties (ISSUE-414, ISSUE-304).
+	WorkflowsTotal               int
+	WorkflowsWithDangerousTrigger int
+	WorkflowsMissingPermissions  int
 }
 
 // PipelineOriginMetricsSummary is a simplified version of origin metrics for output

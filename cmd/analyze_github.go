@@ -3,12 +3,10 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"sort"
 	"strings"
 
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
-	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	"github.com/getplumber/plumber/utils"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -89,13 +87,24 @@ func runGitHubAnalyze(cmd *cobra.Command, info *utils.GitRemoteInfo) error {
 		scoreResult = &s
 	}
 
-	// Binary compliance on the GitHub path for now: pass when there is no
-	// finding, fail otherwise. A per-rule compliance model matching the
-	// GitLab controls (each control averages its own compliance) will come
-	// alongside the CLI threshold flag work.
+	// Per-control compliance averaging — same model as GitLab. The
+	// overall percentage is the mean of every shipping control's own
+	// compliance (skipped controls don't count toward the denominator).
+	findingsByControl := control.FindingsByControl(result.Findings)
+	entries := control.GitHubControls(plumberConfig)
+	totalPct := 0.0
+	considered := 0
+	for _, e := range entries {
+		if e.Skipped {
+			continue
+		}
+		comp := gitHubControlCompliance(e.ControlName, result.GitHubStats, len(findingsByControl[e.ControlName]))
+		totalPct += comp
+		considered++
+	}
 	compliance := 100.0
-	if len(result.Findings) > 0 {
-		compliance = 0.0
+	if considered > 0 {
+		compliance = totalPct / float64(considered)
 	}
 
 	if outputFile != "" {
@@ -106,7 +115,7 @@ func runGitHubAnalyze(cmd *cobra.Command, info *utils.GitRemoteInfo) error {
 	}
 
 	if printOutput {
-		printGitHubFindings(result, compliance)
+		printGitHubFindings(result, plumberConfig, compliance)
 		printSummaryScoreBanner(scoreResult, scoreMode)
 		if showScorePoint {
 			printScoreBreakdown(scoreResult)
@@ -125,7 +134,7 @@ func runGitHubAnalyze(cmd *cobra.Command, info *utils.GitRemoteInfo) error {
 // table, a compliance table with a total line. Detail rendering is
 // delegated to the shared renderFindingGroups so the visual contract
 // is identical across providers.
-func printGitHubFindings(result *control.AnalysisResult, overallCompliance float64) {
+func printGitHubFindings(result *control.AnalysisResult, pc *configuration.PlumberConfig, overallCompliance float64) {
 	fmt.Printf("\n%s %s\n\n", styleTitle.Render("Project:"), result.ProjectPath)
 
 	if !result.CiValid {
@@ -133,12 +142,53 @@ func printGitHubFindings(result *control.AnalysisResult, overallCompliance float
 		return
 	}
 
-	renderFindingGroups(findingGroupsFromRegoFindings(result.Findings))
+	// Same shape as GitLab: build an ordered list of (catalog entry,
+	// findings, stats) tuples so renderFindingGroups + the Issues +
+	// Compliance tables all see the full set of shipping controls,
+	// not just the ones with findings.
+	findingsByControl := control.FindingsByControl(result.Findings)
+	entries := control.GitHubControls(pc)
+	groups := make([]findingGroup, 0, len(entries))
+	summaries := make([]controlSummary, 0, len(entries))
+	for _, e := range entries {
+		findings := findingsByControl[e.ControlName]
+		codes := make([]control.ErrorCode, 0, len(findings))
+		items := make([]detailedFinding, 0, len(findings))
+		for _, f := range findings {
+			code := control.ErrorCode(f.Code)
+			codes = append(codes, code)
+			items = append(items, detailedFinding{
+				Code:        code,
+				Message:     f.Message,
+				DocURL:      code.DocURL(),
+				Location:    formatFindingLocation(f),
+				DetailLines: detailLinesFromFinding(f),
+			})
+		}
+		comp := gitHubControlCompliance(e.ControlName, result.GitHubStats, len(items))
+		if e.Skipped {
+			comp = 100
+		}
+		summaries = append(summaries, controlSummary{
+			name:       e.DisplayName,
+			compliance: comp,
+			issues:     len(items),
+			skipped:    e.Skipped,
+			codes:      uniqueSortedIssueCodeStrings(codes),
+			bySeverity: control.SeverityCountsFromIssueCodes(codes),
+		})
+		groups = append(groups, findingGroup{
+			Title:      e.DisplayName,
+			Compliance: comp,
+			Skipped:    e.Skipped,
+			Stats:      buildGitHubControlStats(e.ControlName, result.GitHubStats),
+			Findings:   items,
+		})
+	}
+	renderFindingGroups(groups)
 
-	summaries := summariesFromFindings(result.Findings)
-	if len(summaries) == 0 {
+	if len(result.Findings) == 0 {
 		fmt.Printf("  %s\n\n", styleSuccess.Render("✓ No findings. All policies pass."))
-		return
 	}
 
 	printIssuesTable(summaries)
@@ -146,56 +196,4 @@ func printGitHubFindings(result *control.AnalysisResult, overallCompliance float
 	printComplianceTable(summaries, overallCompliance, 100)
 }
 
-// summariesFromFindings projects the Rego engine's flat list of
-// findings onto the same []controlSummary shape the GitLab path builds
-// from its legacy Go controls. Findings are grouped by the ControlName
-// advertised in the issue-code registry; each summary reports one
-// entry per policy that produced at least one finding, with a
-// per-policy compliance of 0 (binary model on the GitHub side).
-func summariesFromFindings(findings []opaengine.Finding) []controlSummary {
-	byControl := map[string]*controlSummary{}
-	for _, f := range findings {
-		info := control.LookupCode(control.ErrorCode(f.Code))
-		name := f.Code
-		if info != nil && info.ControlName != "" {
-			name = info.ControlName
-		}
-		sum, ok := byControl[name]
-		if !ok {
-			sum = &controlSummary{name: name, compliance: 0}
-			byControl[name] = sum
-		}
-		sum.issues++
-		if !containsString(sum.codes, f.Code) {
-			sum.codes = append(sum.codes, f.Code)
-		}
-		switch control.SeverityForCode(control.ErrorCode(f.Code)) {
-		case control.SeverityCritical:
-			sum.bySeverity.Critical++
-		case control.SeverityHigh:
-			sum.bySeverity.High++
-		case control.SeverityMedium:
-			sum.bySeverity.Medium++
-		case control.SeverityLow:
-			sum.bySeverity.Low++
-		}
-	}
-
-	out := make([]controlSummary, 0, len(byControl))
-	for _, s := range byControl {
-		sort.Strings(s.codes)
-		out = append(out, *s)
-	}
-	sort.Slice(out, func(i, j int) bool { return out[i].name < out[j].name })
-	return out
-}
-
-func containsString(s []string, v string) bool {
-	for _, e := range s {
-		if e == v {
-			return true
-		}
-	}
-	return false
-}
 

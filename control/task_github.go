@@ -34,6 +34,7 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 		conf.Branch,
 		conf.GitRepoRoot,
 		conf.GithubAPIHost,
+		configuration.ProviderNeedsActionMetadata("github"),
 		progressFn,
 	)
 	if err != nil {
@@ -55,6 +56,7 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 		CiValid:        len(pipeline.Jobs) > 0,
 		CiMissing:      len(pipeline.Jobs) == 0,
 		Findings:       evaluatePolicies(l, conf.PlumberConfig, "github", pipeline),
+		GitHubStats:    AggregateGitHubStats(pipeline, conf.PlumberConfig),
 	}
 	if conf.ProgressFunc != nil {
 		total := collector.TotalProgressStepsForPipeline(pipeline)

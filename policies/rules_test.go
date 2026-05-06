@@ -374,7 +374,7 @@ func TestIssue509_ExcessivePermissions(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			pipeline, _, err := collector.ScanGitHubWorkflows("owner/repo", "main", tmp, "")
+			pipeline, _, err := collector.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
@@ -446,7 +446,7 @@ func TestIssue414_DangerousTriggers(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			pipeline, _, err := collector.ScanGitHubWorkflows("owner/repo", "main", tmp, "")
+			pipeline, _, err := collector.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
@@ -516,7 +516,7 @@ func TestIssue206_TemplateInjection(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			pipeline, _, err := collector.ScanGitHubWorkflows("owner/repo", "main", tmp, "")
+			pipeline, _, err := collector.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
@@ -582,7 +582,7 @@ func TestIssue208_InsecureCommands(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			pipeline, _, err := collector.ScanGitHubWorkflows("owner/repo", "main", tmp, "")
+			pipeline, _, err := collector.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
@@ -648,7 +648,7 @@ func TestIssue307_Artipacked(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			pipeline, _, err := collector.ScanGitHubWorkflows("owner/repo", "main", tmp, "")
+			pipeline, _, err := collector.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
@@ -1859,7 +1859,7 @@ func TestIssue302_SecretsInherit(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(wfDir, tc.fixture), data, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			pipeline, _, err := collector.ScanGitHubWorkflows("owner/repo", "main", tmp, "")
+			pipeline, _, err := collector.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
@@ -1918,7 +1918,7 @@ func TestIssue301_OverprovisionedSecrets(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(wfDir, tc.fixture), data, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			pipeline, _, err := collector.ScanGitHubWorkflows("owner/repo", "main", tmp, "")
+			pipeline, _, err := collector.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
@@ -1978,7 +1978,7 @@ func TestIssue209_GitHubEnvInjection(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(wfDir, tc.fixture), data, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			pipeline, _, err := collector.ScanGitHubWorkflows("owner/repo", "main", tmp, "")
+			pipeline, _, err := collector.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
@@ -2037,7 +2037,7 @@ func TestIssue105_ContainerHardcodedCredentials(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(wfDir, tc.fixture), data, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			pipeline, _, err := collector.ScanGitHubWorkflows("owner/repo", "main", tmp, "")
+			pipeline, _, err := collector.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
@@ -2138,7 +2138,7 @@ func TestIssue210_BotConditions(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(wfDir, tc.fixture), data, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			pipeline, _, err := collector.ScanGitHubWorkflows("owner/repo", "main", tmp, "")
+			pipeline, _, err := collector.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
@@ -2195,7 +2195,7 @@ func TestIssue303_UnredactedSecrets(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(wfDir, tc.fixture), data, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			pipeline, _, err := collector.ScanGitHubWorkflows("owner/repo", "main", tmp, "")
+			pipeline, _, err := collector.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
@@ -2254,7 +2254,7 @@ func TestIssue106_CachePoisoning(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(wfDir, tc.fixture), data, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			pipeline, _, err := collector.ScanGitHubWorkflows("owner/repo", "main", tmp, "")
+			pipeline, _, err := collector.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
@@ -2309,7 +2309,7 @@ func TestIssue601_AnonymousDefinition(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(wfDir, tc.fixture), data, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			pipeline, _, err := collector.ScanGitHubWorkflows("owner/repo", "main", tmp, "")
+			pipeline, _, err := collector.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
@@ -2361,7 +2361,7 @@ func TestIssue602_MissingConcurrency(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(wfDir, tc.fixture), data, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			pipeline, _, err := collector.ScanGitHubWorkflows("owner/repo", "main", tmp, "")
+			pipeline, _, err := collector.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
@@ -2437,7 +2437,7 @@ func runGitHubFixtureCases(t *testing.T, code string, cases []struct {
 			if err := os.WriteFile(filepath.Join(wfDir, tc.fixture), data, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			pipeline, _, err := collector.ScanGitHubWorkflows("owner/repo", "main", tmp, "")
+			pipeline, _, err := collector.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
@@ -2537,7 +2537,7 @@ func TestIssue606_DependabotInsecureExec(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(tmp, ".github", "workflows", "w.yml"), minimal, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			pipeline, _, err := collector.ScanGitHubWorkflows("owner/repo", "main", tmp, "")
+			pipeline, _, err := collector.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
@@ -2620,7 +2620,7 @@ func TestIssue607_DependabotMissingCooldown(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(tmp, ".github", "workflows", "w.yml"), minimal, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			pipeline, _, err := collector.ScanGitHubWorkflows("owner/repo", "main", tmp, "")
+			pipeline, _, err := collector.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
