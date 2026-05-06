@@ -60,6 +60,18 @@ var validControlSchema = map[string][]string{
 	"actionsMustBePinnedByCommitSha": {
 		"enabled", "trustedOwners",
 	},
+	"workflowMustNotInjectUserInputInScripts": {
+		"enabled",
+	},
+	"workflowMustNotUseDangerousTriggers": {
+		"enabled",
+	},
+	"workflowsMustDeclarePermissions": {
+		"enabled",
+	},
+	"reusableWorkflowsMustNotInheritSecrets": {
+		"enabled",
+	},
 }
 
 // validControlKeys returns the list of known control names.
@@ -124,17 +136,18 @@ type PlumberConfig struct {
 
 // ProviderConfig is the per-provider configuration block introduced in
 // schema v2. One instance per provider section in .plumber.yaml.
+//
+// Toggle semantics mirror the GitLab side: a control absent from
+// `controls:` is treated as enabled at the filter level; a control
+// present with `enabled: false` is dropped. The dev-side `bench` set
+// in control/registry.go suppresses non-production controls
+// regardless of YAML state — see that file for how to promote a
+// benched control out of bench.
 type ProviderConfig struct {
 	// Auth holds provider-specific authentication knobs. Optional.
 	// Today only GitHub uses this (RequireAuth). Reserved for future
 	// per-provider auth options on GitLab if needed.
 	Auth *AuthConfig `yaml:"auth,omitempty"`
-
-	// EnabledControls is the allowlist of control names that should fire
-	// for this provider's analyze path. Empty/missing → provider-specific
-	// default set is used. ["*"] → bypass filter (every loaded rego policy
-	// fires).
-	EnabledControls []string `yaml:"enabledControls,omitempty"`
 
 	// Controls holds per-control configuration. Same struct types as
 	// the legacy top-level ControlsConfig — only the YAML location and
@@ -209,6 +222,40 @@ type ControlsConfig struct {
 
 	// ActionsMustBePinnedByCommitSha control configuration (GitHub Actions only)
 	ActionsMustBePinnedByCommitSha *ActionsPinnedByShaControlConfig `yaml:"actionsMustBePinnedByCommitSha,omitempty"`
+
+	// WorkflowMustNotInjectUserInputInScripts control configuration (GitHub Actions only).
+	// Config-free; toggle via `enabled`.
+	WorkflowMustNotInjectUserInputInScripts *EnabledOnlyControlConfig `yaml:"workflowMustNotInjectUserInputInScripts,omitempty"`
+
+	// WorkflowMustNotUseDangerousTriggers control configuration (GitHub Actions only).
+	// Config-free; toggle via `enabled`.
+	WorkflowMustNotUseDangerousTriggers *EnabledOnlyControlConfig `yaml:"workflowMustNotUseDangerousTriggers,omitempty"`
+
+	// WorkflowsMustDeclarePermissions control configuration (GitHub Actions only).
+	// Config-free; toggle via `enabled`.
+	WorkflowsMustDeclarePermissions *EnabledOnlyControlConfig `yaml:"workflowsMustDeclarePermissions,omitempty"`
+
+	// ReusableWorkflowsMustNotInheritSecrets control configuration (GitHub Actions only).
+	// Config-free; toggle via `enabled`.
+	ReusableWorkflowsMustNotInheritSecrets *EnabledOnlyControlConfig `yaml:"reusableWorkflowsMustNotInheritSecrets,omitempty"`
+}
+
+// EnabledOnlyControlConfig is the shape used for controls that have no
+// configurable behaviour beyond on/off. The Rego rule for these controls
+// reads no `input.config.<name>` keys; toggling enabled to false simply
+// drops their findings via FilterFindingsByEnabledControls.
+type EnabledOnlyControlConfig struct {
+	Enabled *bool `yaml:"enabled,omitempty"`
+}
+
+// IsEnabled reports whether the control is enabled. Returns false when
+// the wrapper or the field is nil — same convention as every other
+// IsEnabled() in this package.
+func (c *EnabledOnlyControlConfig) IsEnabled() bool {
+	if c == nil || c.Enabled == nil {
+		return false
+	}
+	return *c.Enabled
 }
 
 // ActionsPinnedByShaControlConfig configures the GitHub Actions supply-
@@ -1024,9 +1071,46 @@ func ValidateKnownKeys(data []byte) []string {
 		if controlsRaw, ok := provMap["controls"]; ok {
 			prefix := provider + ".controls"
 			warnings = append(warnings, validateControlsBlock(controlsRaw, prefix)...)
+			warnings = append(warnings, validateControlsBlockProvider(controlsRaw, provider)...)
 		}
 	}
 
+	return warnings
+}
+
+// validateControlsBlockProvider warns when a control listed under
+// `gitlab.controls:` or `github.controls:` is not registered for that
+// provider in controlsMeta. Catches typos like putting a GitHub-only
+// control under gitlab.controls.
+func validateControlsBlockProvider(controlsRaw interface{}, provider string) []string {
+	controls, ok := controlsRaw.(map[interface{}]interface{})
+	if !ok {
+		return nil
+	}
+	var warnings []string
+	for keyRaw := range controls {
+		controlName, ok := keyRaw.(string)
+		if !ok {
+			continue
+		}
+		meta, known := controlsMeta[controlName]
+		if !known {
+			// validateControlsBlock already covers unknown names.
+			continue
+		}
+		applies := false
+		for _, p := range meta.Providers {
+			if p == provider {
+				applies = true
+				break
+			}
+		}
+		if !applies {
+			warnings = append(warnings, fmt.Sprintf(
+				"Control %q is not applicable to %s; valid providers: %v",
+				controlName, provider, meta.Providers))
+		}
+	}
 	return warnings
 }
 

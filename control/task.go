@@ -105,7 +105,10 @@ func runRegoEngine(
 func evaluatePolicies(l *logrus.Entry, pc *configuration.PlumberConfig, provider string, pipeline *ir.NormalizedPipeline) []opaengine.Finding {
 	l.WithField("provider", provider).Info("Running Rego/OPA rule engine")
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	skip := func(filename string, content []byte) bool {
+		return IsRegoFileBenchedForProvider(content, provider)
+	}
+	if err := engine.LoadFromFSFiltered(policies.FS, skip); err != nil {
 		l.WithError(err).Warn("Failed to load embedded Rego policies")
 		return nil
 	}
@@ -115,7 +118,7 @@ func evaluatePolicies(l *logrus.Entry, pc *configuration.PlumberConfig, provider
 		l.WithError(err).Warn("Rego/OPA engine evaluation failed")
 		return nil
 	}
-	findings = FilterFindingsByEnabledControls(findings, controls)
+	findings = FilterFindingsByEnabledControls(findings, provider, controls)
 	l.WithField("findingCount", len(findings)).Info("Rego/OPA engine evaluation completed")
 	return findings
 }

@@ -24,6 +24,7 @@ import (
 var (
 	// Flags for analyze command
 	gitlabURL         string
+	githubURL         string
 	projectPath       string
 	defaultBranch     string
 	outputFile        string
@@ -110,6 +111,12 @@ func init() {
 	// GitLab connection flags (auto-detected from git remote if not specified)
 	analyzeCmd.Flags().StringVar(&gitlabURL, "gitlab-url", "", "GitLab instance URL (auto-detected from git remote, required otherwise)")
 	analyzeCmd.Flags().StringVar(&projectPath, "project", "", "Project path (auto-detected from git remote, required otherwise)")
+
+	// GitHub Enterprise Server: override the GitHub API host. Default
+	// (empty) targets api.github.com. Set to your GHES API host (e.g.
+	// "ghes.example.com" or "ghes.example.com/api/v3") to scan a
+	// self-hosted instance. Auth via GH_TOKEN / GH_ENTERPRISE_TOKEN.
+	analyzeCmd.Flags().StringVar(&githubURL, "github-url", "", "GitHub Enterprise Server API host (empty = api.github.com)")
 
 	// Optional flags with defaults
 	analyzeCmd.Flags().StringVar(&configFile, "config", ".plumber.yaml", "Path to .plumber.yaml config file")

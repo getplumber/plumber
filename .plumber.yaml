@@ -415,14 +415,14 @@ gitlab:
       #     rules:
       #       - when: manual
       rulesMustNotBeRedefined:
-        enabled: true
+        enabled: false
       # Detects security jobs with when: manual set at job level.
       # Same effect as a rules override, but written differently.
       # Example:
       #   semgrep-sast:
       #     when: manual
       whenMustNotBeManual:
-        enabled: true
+        enabled: false
     # ===========================================
     # Pipeline must not override job variables
     # ===========================================
@@ -498,4 +498,131 @@ gitlab:
       # (DOCKER_TLS_CERTDIR="" or DOCKER_HOST tcp://...:2375)
       # in jobs that use a DinD service.
       detectInsecureDaemon: true
+
+# ============================================================================
+# GitHub Actions controls
+# ============================================================================
+github:
+  controls:
+    # ===========================================
+    # Actions must be pinned by commit SHA
+    # ===========================================
+    # Flags workflow steps whose `uses:` reference is not a 40-character
+    # commit SHA. Tag/branch refs (v4, main) are mutable: if the action's
+    # maintainer is compromised or retags a release, the caller workflow
+    # silently runs new code with its secrets. This is the vector behind
+    # the March 2025 tj-actions/changed-files compromise (CVE-2025-30066).
+    #
+    # The default trustedOwners list exempts first-party (`actions/*`,
+    # `github/*`) actions so the initial signal on a fresh repo stays
+    # focused on the third-party surface. Pair with Dependabot
+    # (`version-update-strategy: sha-and-version`) to keep pins fresh.
+    actionsMustBePinnedByCommitSha:
+      enabled: true
+      # Action-owner prefixes exempt from the pin-by-SHA requirement.
+      # Only list owners already inside the workflow's trust boundary.
+      trustedOwners:
+        - actions
+        - github
+
+    # ===========================================
+    # Container images must not use forbidden tags
+    # ===========================================
+    # Same control as GitLab; values are GitHub-side. Pinning by digest
+    # protects against tag-retag supply-chain attacks. The forbidden tag
+    # list catches the common cases of mutable references.
+    containerImageMustNotUseForbiddenTags:
+      enabled: true
+      tags:
+        - latest
+        - dev
+        - development
+        - staging
+        - main
+        - master
+      # When true, ALL images must be pinned by digest (e.g.,
+      # alpine@sha256:...). Takes precedence over the forbidden tags
+      # list — any image not using an immutable digest reference is
+      # flagged.
+      containerImagesMustBePinnedByDigest: true
+
+    # ===========================================
+    # Pipeline must not use Docker-in-Docker
+    # ===========================================
+    # Workflows on GitHub-hosted runners that spin up `docker:dind`
+    # services have the same privilege-escalation risk as on GitLab.
+    # detectInsecureDaemon also flags plaintext DOCKER_HOST and empty
+    # DOCKER_TLS_CERTDIR values.
+    pipelineMustNotUseDockerInDocker:
+      enabled: true
+      detectInsecureDaemon: true
+
+    # ===========================================
+    # Reusable workflows must not inherit secrets
+    # ===========================================
+    # Detects `jobs.<name>.secrets: inherit` calls. Inherit forwards
+    # every secret visible to the caller — repo, organisation,
+    # environment — to the reusable workflow regardless of what it
+    # actually needs. Use an explicit secrets map instead.
+    reusableWorkflowsMustNotInheritSecrets:
+      enabled: true
+
+    # ===========================================
+    # Security jobs must not be weakened
+    # ===========================================
+    # Mirrors the GitLab control: jobs matching the security-scanner
+    # naming patterns must not be neutralised via continue-on-error,
+    # `if: false` overrides, or manual-dispatch-only triggers.
+    securityJobsMustNotBeWeakened:
+      enabled: true
+      securityJobPatterns:
+        - "*-sast"
+        - "secret_detection"
+        - "container_scanning"
+        - "*_dependency_scanning"
+        - "gemnasium-*"
+        - "dast"
+        - "dast_*"
+        - "license_scanning"
+      allowFailureMustBeFalse:
+        enabled: false
+      rulesMustNotBeRedefined:
+        enabled: true
+      whenMustNotBeManual:
+        enabled: true
+
+    # ===========================================
+    # Workflow must not inject user input in scripts
+    # ===========================================
+    # Catches the canonical script-injection class: `${{ github.event.* }}`
+    # / `${{ github.head_ref }}` / `${{ github.actor }}` interpolated
+    # directly into a `run:` shell. Attacker-controlled values like PR
+    # title or branch name can break out of the intended string and
+    # execute arbitrary commands with the job's secrets. Bind through
+    # `env:` first, then reference the env var from the shell.
+    workflowMustNotInjectUserInputInScripts:
+      enabled: true
+
+    # ===========================================
+    # Workflow must not use dangerous triggers
+    # ===========================================
+    # Flags `pull_request_target` and `workflow_run` triggers, which
+    # run with the base repository's secrets while being influenceable
+    # by an unprivileged caller. Combined with any user-content
+    # checkout this becomes a direct exfiltration path (CVE-2025-30066).
+    # Use the standard `pull_request` trigger unless secrets are
+    # required.
+    workflowMustNotUseDangerousTriggers:
+      enabled: true
+
+    # ===========================================
+    # Workflows must declare permissions
+    # ===========================================
+    # Workflows without an explicit `permissions:` block fall back to
+    # the repo-wide GITHUB_TOKEN default — often `contents: write` or
+    # `read-all`. Declaring `permissions: { contents: read }` at the
+    # workflow level enforces least-privilege regardless of the repo
+    # default.
+    workflowsMustDeclarePermissions:
+      enabled: true
 

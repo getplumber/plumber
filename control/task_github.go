@@ -33,6 +33,7 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 		conf.ProjectPath,
 		conf.Branch,
 		conf.GitRepoRoot,
+		conf.GithubAPIHost,
 		progressFn,
 	)
 	if err != nil {

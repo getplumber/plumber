@@ -51,6 +51,8 @@ func runGitHubAnalyze(cmd *cobra.Command, info *utils.GitRemoteInfo) error {
 	conf.GitRepoRoot = info.RepoRoot
 	conf.Branch = defaultBranch
 	conf.PlumberConfig = plumberConfig
+	// Optional GHES override. Empty = default api.github.com.
+	conf.GithubAPIHost = strings.TrimPrefix(strings.TrimPrefix(githubURL, "https://"), "http://")
 	if verbose {
 		conf.LogLevel = logrus.DebugLevel
 	}
@@ -196,3 +198,4 @@ func containsString(s []string, v string) bool {
 	}
 	return false
 }
+

@@ -192,23 +192,41 @@ func DisabledControlNames(c *configuration.ControlsConfig) map[string]bool {
 	if cfg := c.ActionsMustBePinnedByCommitSha; cfg != nil && !cfg.IsEnabled() {
 		out["actionsMustBePinnedByCommitSha"] = true
 	}
+	if cfg := c.WorkflowMustNotInjectUserInputInScripts; cfg != nil && !cfg.IsEnabled() {
+		out["workflowMustNotInjectUserInputInScripts"] = true
+	}
+	if cfg := c.WorkflowMustNotUseDangerousTriggers; cfg != nil && !cfg.IsEnabled() {
+		out["workflowMustNotUseDangerousTriggers"] = true
+	}
+	if cfg := c.WorkflowsMustDeclarePermissions; cfg != nil && !cfg.IsEnabled() {
+		out["workflowsMustDeclarePermissions"] = true
+	}
+	if cfg := c.ReusableWorkflowsMustNotInheritSecrets; cfg != nil && !cfg.IsEnabled() {
+		out["reusableWorkflowsMustNotInheritSecrets"] = true
+	}
 	return out
 }
 
-// FilterFindingsByEnabledControls drops findings whose ControlName is
-// disabled in the supplied ControlsConfig. Findings whose code is
-// unknown or has no ControlName are kept (defensive: better surfaced
-// than silently swallowed). Pass the right provider's ControlsConfig
-// (use pc.ControlsFor("gitlab") or pc.ControlsFor("github")).
-func FilterFindingsByEnabledControls(findings []opaengine.Finding, c *configuration.ControlsConfig) []opaengine.Finding {
+// FilterFindingsByEnabledControls drops findings whose ControlName
+// is either (a) currently benched for the given provider — see
+// IsBenched in registry.go — or (b) explicitly disabled in the
+// supplied ControlsConfig. Findings whose code is unknown or has no
+// ControlName are kept (defensive: better surfaced than silently
+// swallowed). Pass the provider name ("gitlab" or "github") and the
+// matching ControlsConfig (use pc.ControlsFor(provider)).
+func FilterFindingsByEnabledControls(findings []opaengine.Finding, provider string, c *configuration.ControlsConfig) []opaengine.Finding {
 	disabled := DisabledControlNames(c)
-	if len(disabled) == 0 {
-		return findings
-	}
 	out := make([]opaengine.Finding, 0, len(findings))
 	for _, f := range findings {
 		info := LookupCode(ErrorCode(f.Code))
-		if info != nil && info.ControlName != "" && disabled[info.ControlName] {
+		if info == nil || info.ControlName == "" {
+			out = append(out, f)
+			continue
+		}
+		if configuration.IsBenched(provider, info.ControlName) {
+			continue
+		}
+		if disabled[info.ControlName] {
 			continue
 		}
 		out = append(out, f)

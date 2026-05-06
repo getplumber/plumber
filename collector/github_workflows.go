@@ -25,7 +25,7 @@ const githubWorkflowsSubdir = ".github/workflows"
 // simply carries no jobs. Individual unreadable or unparseable files are
 // returned in partialErrors so the caller can surface them without
 // aborting the whole scan.
-func ScanGitHubWorkflows(projectPath, defaultBranch, rootDir string) (pipeline *ir.NormalizedPipeline, partialErrors []error, err error) {
+func ScanGitHubWorkflows(projectPath, defaultBranch, rootDir, apiHost string) (pipeline *ir.NormalizedPipeline, partialErrors []error, err error) {
 	pipeline = &ir.NormalizedPipeline{
 		Provider:      ir.ProviderGitHub,
 		ProjectPath:   projectPath,
@@ -77,7 +77,7 @@ func ScanGitHubWorkflows(projectPath, defaultBranch, rootDir string) (pipeline *
 	// Enrich actions with GitHub API metadata (archived repo, ref
 	// kind, tag SHA). Best-effort: if gh is not authenticated, the
 	// client operates in degraded mode and leaves metadata empty.
-	enrichActionsWithAPIMetadata(pipeline, nil)
+	enrichActionsWithAPIMetadata(pipeline, apiHost, nil)
 	return pipeline, partialErrors, nil
 }
 
@@ -93,7 +93,7 @@ func ScanGitHubWorkflows(projectPath, defaultBranch, rootDir string) (pipeline *
 // (RunGitHubAnalysis) using the same total so the bar keeps
 // climbing. progressFn may be nil; callers that don't care about
 // progress should call the plain ScanGitHubWorkflows variant.
-func ScanGitHubWorkflowsWithProgress(projectPath, defaultBranch, rootDir string, progressFn ProgressFunc) (pipeline *ir.NormalizedPipeline, partialErrors []error, err error) {
+func ScanGitHubWorkflowsWithProgress(projectPath, defaultBranch, rootDir, apiHost string, progressFn ProgressFunc) (pipeline *ir.NormalizedPipeline, partialErrors []error, err error) {
 	pipeline = &ir.NormalizedPipeline{
 		Provider:      ir.ProviderGitHub,
 		ProjectPath:   projectPath,
@@ -146,7 +146,7 @@ func ScanGitHubWorkflowsWithProgress(projectPath, defaultBranch, rootDir string,
 	n := countUniqueActionRefs(pipeline)
 	total := n + 3
 	report(progressFn, 1, total, "Scanning workflow files")
-	enrichActionsWithAPIMetadata(pipeline, wrapProgress(progressFn, total))
+	enrichActionsWithAPIMetadata(pipeline, apiHost, wrapProgress(progressFn, total))
 	return pipeline, partialErrors, nil
 }
 
@@ -211,8 +211,8 @@ func report(fn ProgressFunc, step, total int, message string) {
 // every unique reference so the caller's spinner can track the
 // long phase. Duplicate refs only emit once because the client
 // caches and the enrichment loop iterates actions left to right.
-func enrichActionsWithAPIMetadata(pipeline *ir.NormalizedPipeline, progressFn ProgressFunc) {
-	client := NewGitHubMetadataClient()
+func enrichActionsWithAPIMetadata(pipeline *ir.NormalizedPipeline, apiHost string, progressFn ProgressFunc) {
+	client := NewGitHubMetadataClientForHost(apiHost)
 	if !client.Available() {
 		return
 	}

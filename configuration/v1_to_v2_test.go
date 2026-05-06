@@ -157,6 +157,43 @@ gitlab:
 	}
 }
 
+func TestValidateKnownKeys_warnsOnMisplacedControl(t *testing.T) {
+	// actionsMustBePinnedByCommitSha is GitHub-only. Putting it under
+	// gitlab.controls should trigger the misplacement warning.
+	body := []byte(`version: "2.0"
+gitlab:
+  controls:
+    actionsMustBePinnedByCommitSha:
+      enabled: true
+`)
+	warnings := ValidateKnownKeys(body)
+	found := false
+	for _, w := range warnings {
+		if strings.Contains(w, "actionsMustBePinnedByCommitSha") && strings.Contains(w, "not applicable to gitlab") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected misplacement warning, got %v", warnings)
+	}
+}
+
+func TestValidateKnownKeys_quietWhenCorrectlyPlaced(t *testing.T) {
+	// actionsMustBePinnedByCommitSha under github.controls is correct.
+	body := []byte(`version: "2.0"
+github:
+  controls:
+    actionsMustBePinnedByCommitSha:
+      enabled: true
+`)
+	warnings := ValidateKnownKeys(body)
+	for _, w := range warnings {
+		if strings.Contains(w, "not applicable") {
+			t.Errorf("did not expect misplacement warning, got %v", warnings)
+		}
+	}
+}
+
 func TestLoadPlumberConfig_v1WithStaleVersionOnNestedFile(t *testing.T) {
 	// User manually nested controls but didn't update version: "1.0".
 	// The file is structurally v2, so the converter should bump the

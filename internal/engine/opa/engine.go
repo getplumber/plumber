@@ -133,6 +133,16 @@ func (e *Engine) LoadModule(name, source string) {
 // subdirectories are ignored for now; the concern-based layout lands
 // with the first real policies in Phase 2.
 func (e *Engine) LoadFromFS(fsys fs.FS) error {
+	return e.LoadFromFSFiltered(fsys, nil)
+}
+
+// LoadFromFSFiltered is LoadFromFS with an optional skip predicate.
+// When skip is non-nil and returns true for a (filename, content)
+// pair, that file is excluded from the engine — it never executes,
+// never produces findings, never costs evaluation time. Used to
+// gate dev-side benched policies out of production runs without
+// touching the policy files themselves.
+func (e *Engine) LoadFromFSFiltered(fsys fs.FS, skip func(filename string, content []byte) bool) error {
 	entries, err := fs.ReadDir(fsys, ".")
 	if err != nil {
 		return fmt.Errorf("read policies dir: %w", err)
@@ -148,6 +158,9 @@ func (e *Engine) LoadFromFS(fsys fs.FS) error {
 		content, err := fs.ReadFile(fsys, fileName)
 		if err != nil {
 			return fmt.Errorf("read policy %q: %w", fileName, err)
+		}
+		if skip != nil && skip(fileName, content) {
+			continue
 		}
 		e.LoadModule(strings.TrimSuffix(fileName, ".rego"), string(content))
 	}

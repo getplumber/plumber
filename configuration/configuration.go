@@ -12,6 +12,15 @@ type Configuration struct {
 	GitlabURL   string // URL of the GitLab instance (e.g., https://gitlab.com)
 	GitlabToken string // GitLab API token
 
+	// GitHub connection settings
+	// GithubAPIHost is the GitHub API host. Empty means default
+	// (api.github.com). Set to a GitHub Enterprise Server host
+	// (e.g. "ghes.example.com" or "ghes.example.com/api/v3") to
+	// target a self-hosted instance. Auth is provided via the same
+	// resolution chain as default github.com (GH_TOKEN /
+	// GH_ENTERPRISE_TOKEN / GITHUB_TOKEN / gh auth).
+	GithubAPIHost string
+
 	// Project settings
 	ProjectPath string // Full path of the project (e.g., group/project)
 	ProjectID   int    // Project ID on GitLab

@@ -100,7 +100,21 @@ type repoCacheEntry struct {
 // missing — see Available() to check. Honors the
 // PLUMBER_DISABLE_GITHUB_API env var which short-circuits the
 // client into degraded mode regardless of auth state.
+//
+// Targets api.github.com by default. For GitHub Enterprise Server
+// instances, use NewGitHubMetadataClientForHost with the GHES API
+// host (e.g. "ghes.example.com" or "ghes.example.com/api/v3").
 func NewGitHubMetadataClient() *GitHubMetadataClient {
+	return NewGitHubMetadataClientForHost("")
+}
+
+// NewGitHubMetadataClientForHost is the GHES-aware constructor. When
+// host is empty the client targets api.github.com via the default
+// go-gh resolution chain (gh auth, GH_TOKEN, GITHUB_TOKEN). When
+// host is non-empty the client is bound to that host — pair with a
+// GH_TOKEN (or GH_ENTERPRISE_TOKEN) that has access to the GHES
+// instance.
+func NewGitHubMetadataClientForHost(host string) *GitHubMetadataClient {
 	c := &GitHubMetadataClient{
 		repoCache:     map[string]repoCacheEntry{},
 		refCache:      map[string]GitHubMetadata{},
@@ -112,7 +126,13 @@ func NewGitHubMetadataClient() *GitHubMetadataClient {
 		c.disabled = true
 		return c
 	}
-	rest, err := api.DefaultRESTClient()
+	var rest *api.RESTClient
+	var err error
+	if host == "" {
+		rest, err = api.DefaultRESTClient()
+	} else {
+		rest, err = api.NewRESTClient(api.ClientOptions{Host: host})
+	}
 	if err != nil {
 		c.disabled = true
 		c.disableCause = err

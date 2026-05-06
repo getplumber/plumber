@@ -28,7 +28,7 @@ func TestFilterFindingsByEnabledControls_dropsDisabledControlFindings(t *testing
 		{Code: "ISSUE-9999", Severity: "low"}, // unknown, must be kept
 	}
 
-	out := FilterFindingsByEnabledControls(findings, &pc.Controls)
+	out := FilterFindingsByEnabledControls(findings, "gitlab", &pc.Controls)
 	if len(out) != 2 {
 		t.Fatalf("expected 2 findings, got %d: %+v", len(out), out)
 	}
@@ -44,7 +44,7 @@ func TestFilterFindingsByEnabledControls_noConfigKeepsAll(t *testing.T) {
 		{Code: string(CodeImageNotPinnedByDigest), Severity: "high"},
 		{Code: string(CodeBranchUnprotected), Severity: "critical"},
 	}
-	out := FilterFindingsByEnabledControls(findings, nil)
+	out := FilterFindingsByEnabledControls(findings, "gitlab", nil)
 	if len(out) != len(findings) {
 		t.Fatalf("expected all findings preserved when pc is nil, got %d", len(out))
 	}

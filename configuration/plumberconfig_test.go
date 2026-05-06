@@ -332,7 +332,11 @@ func TestValidControlNames(t *testing.T) {
 		"pipelineMustNotOverrideJobVariables",
 		"pipelineMustNotUseDockerInDocker",
 		"pipelineMustNotUseUnsafeVariableExpansion",
+		"reusableWorkflowsMustNotInheritSecrets",
 		"securityJobsMustNotBeWeakened",
+		"workflowMustNotInjectUserInputInScripts",
+		"workflowMustNotUseDangerousTriggers",
+		"workflowsMustDeclarePermissions",
 	}
 
 	if len(names) != len(expected) {

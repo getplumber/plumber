@@ -11,7 +11,7 @@ import (
 func TestScanGitHubWorkflows_Missing(t *testing.T) {
 	tmp := t.TempDir()
 
-	pipeline, partial, err := ScanGitHubWorkflows("owner/repo", "main", tmp)
+	pipeline, partial, err := ScanGitHubWorkflows("owner/repo", "main", tmp, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -66,7 +66,7 @@ jobs:
 		}
 	}
 
-	pipeline, partial, err := ScanGitHubWorkflows("owner/repo", "main", tmp)
+	pipeline, partial, err := ScanGitHubWorkflows("owner/repo", "main", tmp, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -134,7 +134,7 @@ jobs:
 		}
 	}
 
-	pipeline, partial, err := ScanGitHubWorkflows("owner/repo", "main", tmp)
+	pipeline, partial, err := ScanGitHubWorkflows("owner/repo", "main", tmp, "")
 	if err != nil || len(partial) != 0 {
 		t.Fatalf("unexpected: err=%v partial=%v", err, partial)
 	}
@@ -193,7 +193,7 @@ jobs:
 		t.Fatal(err)
 	}
 
-	pipeline, partial, err := ScanGitHubWorkflows("owner/repo", "main", tmp)
+	pipeline, partial, err := ScanGitHubWorkflows("owner/repo", "main", tmp, "")
 	if err != nil || len(partial) != 0 {
 		t.Fatalf("unexpected: err=%v partial=%v", err, partial)
 	}
@@ -250,7 +250,7 @@ jobs:
 		t.Fatal(err)
 	}
 
-	pipeline, partial, err := ScanGitHubWorkflows("owner/repo", "main", tmp)
+	pipeline, partial, err := ScanGitHubWorkflows("owner/repo", "main", tmp, "")
 	if err != nil || len(partial) != 0 {
 		t.Fatalf("unexpected: err=%v partial=%v", err, partial)
 	}
@@ -282,7 +282,7 @@ func TestScanGitHubWorkflows_ParseErrorReportedAsPartial(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, partial, err := ScanGitHubWorkflows("owner/repo", "main", tmp)
+	_, partial, err := ScanGitHubWorkflows("owner/repo", "main", tmp, "")
 	if err != nil {
 		t.Fatalf("expected no fatal error, got %v", err)
 	}
