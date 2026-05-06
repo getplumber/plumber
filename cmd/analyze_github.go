@@ -75,10 +75,82 @@ func runGitHubAnalyze(cmd *cobra.Command, info *utils.GitRemoteInfo) error {
 		return fmt.Errorf("analysis failed: %w", err)
 	}
 
-	// Compute the Plumber letter score on demand. The pipeline
-	// (AggregateSeverityCounts → ComputePlumberScore) is the same one
-	// used on GitLab, so the letter is definition-compatible across
-	// providers.
+	return presentGitHubResult(result, conf.PlumberConfig)
+}
+
+// runGitHubAnalyzeRemote is the upstream-fetch counterpart of
+// runGitHubAnalyze. Triggered by `plumber analyze --github-url X
+// --project owner/repo [--branch Y]` when the user has not checked
+// out the target repo locally. Symmetric to the GitLab path that
+// fetches the merged CI YAML via API.
+func runGitHubAnalyzeRemote(cmd *cobra.Command, host, project, ref string) error {
+	parts := strings.SplitN(project, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return fmt.Errorf("--project must be of the form owner/repo (got %q)", project)
+	}
+	owner, repo := parts[0], parts[1]
+
+	plumberConfig, configPath, configWarnings, err := configuration.LoadPlumberConfig(configFile)
+	if err != nil {
+		if strings.Contains(err.Error(), "config file not found") {
+			return fmt.Errorf("configuration file not found: %w. Create one with `plumber config generate` or `plumber config init`", err)
+		}
+		return fmt.Errorf("configuration error: %w", err)
+	}
+	if len(configWarnings) > 0 {
+		fmt.Fprintf(os.Stderr, "Configuration validation warnings:\n")
+		for _, w := range configWarnings {
+			fmt.Fprintf(os.Stderr, "  - %s\n", w)
+		}
+		if failWarnings {
+			return fmt.Errorf("configuration has %d warning(s) and --fail-warnings is set", len(configWarnings))
+		}
+	}
+	fmt.Fprintf(os.Stderr, "Using configuration: %s\n", configPath)
+
+	if printOutput {
+		printBanner()
+	}
+
+	apiHost := strings.TrimPrefix(strings.TrimPrefix(host, "https://"), "http://")
+	if apiHost == "github.com" || apiHost == "" {
+		fmt.Fprintf(os.Stderr, "Analyzing GitHub project: %s/%s (remote fetch)\n", owner, repo)
+	} else {
+		fmt.Fprintf(os.Stderr, "Analyzing GitHub project: %s/%s on %s (remote fetch)\n", owner, repo, apiHost)
+	}
+
+	conf := configuration.NewDefaultConfiguration()
+	conf.ProjectPath = owner + "/" + repo
+	conf.Branch = ref
+	conf.PlumberConfig = plumberConfig
+	conf.GithubAPIHost = apiHost
+	if verbose {
+		conf.LogLevel = logrus.DebugLevel
+	}
+
+	sp := newSpinner()
+	if printOutput && !verbose {
+		conf.ProgressFunc = func(step, total int, message string) {
+			sp.Update(step, total, message)
+		}
+		sp.InstallLogHook()
+		sp.Start()
+	}
+
+	result, err := control.RunGitHubAnalysisRemote(conf, owner, repo, ref)
+	sp.Stop()
+	if err != nil {
+		return fmt.Errorf("analysis failed: %w", err)
+	}
+
+	return presentGitHubResult(result, plumberConfig)
+}
+
+// presentGitHubResult is the shared post-analysis flow used by both
+// the local-clone and remote-fetch GitHub paths: per-control
+// compliance averaging, JSON output, terminal rendering, and the
+// non-zero exit when findings are present.
+func presentGitHubResult(result *control.AnalysisResult, plumberConfig *configuration.PlumberConfig) error {
 	scoreMode := showScore || showScorePoint
 	var scoreResult *control.PlumberScoreResult
 	if scoreMode {
@@ -87,9 +159,6 @@ func runGitHubAnalyze(cmd *cobra.Command, info *utils.GitRemoteInfo) error {
 		scoreResult = &s
 	}
 
-	// Per-control compliance averaging — same model as GitLab. The
-	// overall percentage is the mean of every shipping control's own
-	// compliance (skipped controls don't count toward the denominator).
 	findingsByControl := control.FindingsByControl(result.Findings)
 	entries := control.GitHubControls(plumberConfig)
 	totalPct := 0.0
@@ -108,7 +177,7 @@ func runGitHubAnalyze(cmd *cobra.Command, info *utils.GitRemoteInfo) error {
 	}
 
 	if outputFile != "" {
-		if err := writeJSONToFile(result, conf.PlumberConfig, threshold, compliance, outputFile, scoreResult, scoreMode); err != nil {
+		if err := writeJSONToFile(result, plumberConfig, threshold, compliance, outputFile, scoreResult, scoreMode); err != nil {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "Results written to: %s\n", outputFile)

@@ -148,7 +148,27 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 
 	// Detect git remote info (used for auto-detection AND local CI file matching)
 	gitlabURLFromFlag := cmd.Flags().Changed("gitlab-url")
+	githubURLFromFlag := cmd.Flags().Changed("github-url")
 	projectFromFlag := cmd.Flags().Changed("project")
+	branchFromFlag := cmd.Flags().Changed("branch")
+
+	if gitlabURLFromFlag && githubURLFromFlag {
+		return fmt.Errorf("--gitlab-url and --github-url are mutually exclusive; pass one to select the provider explicitly")
+	}
+
+	// Explicit GitHub remote-fetch: when both --github-url and
+	// --project are set, the user wants to scan an upstream GitHub
+	// project they have not checked out locally. Symmetric to
+	// --gitlab-url + --project on the GitLab side. --github-url
+	// alone (no project) keeps its existing meaning: GHES API host
+	// for the local-clone scan.
+	if githubURLFromFlag && projectFromFlag {
+		ref := ""
+		if branchFromFlag {
+			ref = defaultBranch
+		}
+		return runGitHubAnalyzeRemote(cmd, githubURL, projectPath, ref)
+	}
 
 	var gitRepoRoot string
 	var gitRemoteURL string
@@ -182,9 +202,14 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		}
 	}
 
-	// Validate required values (either from flags or auto-detected)
+	// Validate required values (either from flags or auto-detected).
+	// At this point either --gitlab-url has been set / auto-detected,
+	// or the GitHub-remote-fetch path above has already returned. So
+	// reaching here without a gitlab URL means neither auto-detection
+	// nor an explicit flag landed — surface both providers in the
+	// error so the user knows the symmetric option exists.
 	if gitlabURL == "" {
-		return fmt.Errorf("--gitlab-url is required (could not auto-detect from git remote)")
+		return fmt.Errorf("could not auto-detect provider from git remote — pass --gitlab-url + --project (GitLab) or --github-url + --project (GitHub)")
 	}
 	if projectPath == "" {
 		return fmt.Errorf("--project is required (could not auto-detect from git remote)")
