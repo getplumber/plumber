@@ -42,6 +42,30 @@ deny contains finding if {
 	}
 }
 
+# Job-level reusable-workflow calls (`jobs.<id>.uses:
+# owner/repo/.github/workflows/x.yml@ref`) are subject to the same
+# pin-by-SHA rule: a mutable ref on a reusable workflow has the same
+# supply-chain blast radius as a step-level action ref. The IR field
+# reusableWorkflowUses (omitempty) carries the raw string when the
+# job is a reusable-workflow call.
+deny contains finding if {
+	input.config.actionsMustBePinnedByCommitSha
+	some i
+	job := input.pipeline.jobs[i]
+	use := object.get(job, "reusableWorkflowUses", "")
+	use != ""
+	ref := _ref_of(use)
+	not _is_sha(ref)
+	not _is_local(use)
+	not _is_trusted_owner(use)
+	finding := {
+		"code":     "ISSUE-104",
+		"severity": "high",
+		"message":  sprintf("job %q calls reusable workflow %q with a mutable ref — pin by commit SHA instead", [job.name, use]),
+		"job":      job.name,
+	}
+}
+
 # _ref_of returns the substring after "@" in "owner/repo@ref".
 # Returns "" when the string has no "@" — which we treat as
 # unpinned (a bare "owner/repo" defaults to the repo's default

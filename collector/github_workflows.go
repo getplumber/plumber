@@ -394,6 +394,17 @@ func parseGitHubWorkflowJobs(data []byte, namespace, originFile string) ([]ir.Jo
 		if _, hasJobConcurrency := section["concurrency"]; hasJobConcurrency {
 			job.JobHasConcurrency = true
 		}
+		// `continue-on-error: true` at the job level is GitHub's
+		// equivalent of GitLab's `allow_failure: true`: the workflow
+		// reports green even if the job's exit code is non-zero. The
+		// security_jobs_weakened rego rule reads job.allowFailure
+		// without a provider distinction, so map directly. Only the
+		// literal boolean is honoured — a `${{ matrix.experimental
+		// }}` expression evaluates at runtime and we cannot say
+		// statically whether it weakens the job, so we stay quiet.
+		if v, ok := section["continue-on-error"].(bool); ok && v {
+			job.AllowFailure = true
+		}
 		if img, ok := parseGitHubContainer(section["container"]); ok {
 			job.Image = &img
 		}

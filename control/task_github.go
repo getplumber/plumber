@@ -1,6 +1,7 @@
 package control
 
 import (
+	"errors"
 	"strings"
 
 	"github.com/getplumber/plumber/collector"
@@ -32,23 +33,54 @@ func enrichGitHubBranches(l *logrus.Entry, pipeline *ir.NormalizedPipeline, host
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 		return
 	}
-	branches, err := collector.FetchGitHubBranchProtection(host, parts[0], parts[1])
-	if err != nil {
-		l.WithError(err).Warn("GitHub branch-protection fetch failed; branchMustBeProtected will see zero branches")
-		return
-	}
-	pipeline.Branches = branches
 
-	// Resolve the repo's actual default branch so the rego rule's
-	// `defaultMustBeProtected` clause matches against a real branch
-	// name, not the (possibly empty) --branch CLI flag. Best-effort:
-	// if the repo metadata fetch fails, keep whatever the caller
-	// pre-populated (could be the --branch value or "").
+	// Resolve the repo's actual default branch FIRST: the targeted
+	// fetch list below needs the real default-branch name to know
+	// what to ask for. Best-effort: if the repo metadata fetch fails
+	// we keep whatever the caller pre-populated (the --branch flag
+	// or empty), and the targeted-fetch loop simply skips an empty
+	// name.
 	if pipeline.DefaultBranch == "" {
 		if def, derr := collector.FetchGitHubDefaultBranch(host, parts[0], parts[1]); derr == nil && def != "" {
 			pipeline.DefaultBranch = def
 		}
 	}
+
+	// Build the targeted-fetch set from non-glob patterns plus the
+	// default branch (when defaultMustBeProtected is on). Wildcard
+	// patterns trip the listing fallthrough; on a typical config —
+	// `main`, `master`, `default` — we never list at all.
+	exact := make([]string, 0, len(cfg.NamePatterns)+1)
+	listing := false
+	for _, p := range cfg.NamePatterns {
+		if isBranchGlob(p) {
+			listing = true
+			continue
+		}
+		if p != "" {
+			exact = append(exact, p)
+		}
+	}
+	if cfg.DefaultMustBeProtected != nil && *cfg.DefaultMustBeProtected && pipeline.DefaultBranch != "" {
+		exact = append(exact, pipeline.DefaultBranch)
+	}
+
+	branches, err := collector.FetchGitHubBranchProtection(host, parts[0], parts[1], collector.BranchFetchOptions{
+		ExactNames: exact,
+		Listing:    listing,
+	})
+	if err != nil {
+		l.WithError(err).Warn("GitHub branch-protection fetch failed; branchMustBeProtected will see zero branches")
+		return
+	}
+	pipeline.Branches = branches
+}
+
+// isBranchGlob reports whether a branch-name pattern contains the
+// wildcard characters glob.match treats as special. Keeps the call
+// site free of a regexp dependency for a 3-character check.
+func isBranchGlob(p string) bool {
+	return strings.ContainsAny(p, "*?[")
 }
 
 // RunGitHubAnalysis is the GitHub counterpart of RunAnalysis. It scans
@@ -96,9 +128,13 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 		total := collector.TotalProgressStepsForPipeline(pipeline)
 		conf.ProgressFunc(total-1, total, "Evaluating policies")
 	}
+	defaultBranch := conf.Branch
+	if defaultBranch == "" {
+		defaultBranch = pipeline.DefaultBranch
+	}
 	result := &AnalysisResult{
 		ProjectPath:    conf.ProjectPath,
-		DefaultBranch:  conf.Branch,
+		DefaultBranch:  defaultBranch,
 		CIConfigSource: "local",
 		CiValid:        len(pipeline.Jobs) > 0,
 		CiMissing:      len(pipeline.Jobs) == 0,
@@ -151,7 +187,13 @@ func RunGitHubAnalysisRemote(conf *configuration.Configuration, owner, repo, ref
 		progressFn,
 	)
 	if err != nil {
-		l.WithError(err).Error("Failed to fetch GitHub workflows")
+		// ErrAuthRequired carries the actionable user-facing message;
+		// a logrus.Error here would print it once through the structured
+		// log formatter (newlines escaped, key=value frame around it),
+		// then cobra prints it again cleanly. One copy is enough.
+		if !errors.Is(err, collector.ErrAuthRequired) {
+			l.WithError(err).Error("Failed to fetch GitHub workflows")
+		}
 		return nil, err
 	}
 	for _, perr := range partial {
@@ -164,9 +206,13 @@ func RunGitHubAnalysisRemote(conf *configuration.Configuration, owner, repo, ref
 		total := collector.TotalProgressStepsForPipeline(pipeline)
 		conf.ProgressFunc(total-1, total, "Evaluating policies")
 	}
+	defaultBranch := ref
+	if defaultBranch == "" {
+		defaultBranch = pipeline.DefaultBranch
+	}
 	result := &AnalysisResult{
 		ProjectPath:    owner + "/" + repo,
-		DefaultBranch:  ref,
+		DefaultBranch:  defaultBranch,
 		CIConfigSource: "remote",
 		CiValid:        len(pipeline.Jobs) > 0,
 		CiMissing:      len(pipeline.Jobs) == 0,

@@ -296,6 +296,15 @@ type OverriddenJob struct {
 // protection API (GitLab /api/v4/projects/:id/protected_branches, the
 // GitHub equivalent, …). They stay zero-valued when the collector did
 // not fetch protection settings.
+//
+// ProtectionDetailsKnown distinguishes "we have authoritative data and
+// the rule values just happen to be zero" from "we don't have the data
+// at all" (e.g. GitHub's /branches/{name}/protection endpoint is admin-
+// only and returned 403 on a content-only token). Without this flag,
+// the rego rule that checks codeOwnerApprovalRequired would false-
+// positive every branch on a read-only GitHub token, because the field
+// would default to false even though we never observed the truth.
+// Rules that depend on the detail fields must guard on this.
 type Branch struct {
 	Name                      string `json:"name"`
 	Protected                 bool   `json:"protected"`
@@ -304,4 +313,5 @@ type Branch struct {
 	CodeOwnerApprovalRequired bool   `json:"codeOwnerApprovalRequired,omitempty"`
 	MinPushAccessLevel        int    `json:"minPushAccessLevel,omitempty"`
 	MinMergeAccessLevel       int    `json:"minMergeAccessLevel,omitempty"`
+	ProtectionDetailsKnown    bool   `json:"protectionDetailsKnown,omitempty"`
 }

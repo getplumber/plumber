@@ -69,7 +69,12 @@ func buildBranches(protection *GitlabProtectionAnalysisData) []ir.Branch {
 	}
 	out := make([]ir.Branch, 0, len(protection.Branches))
 	for _, name := range protection.Branches {
-		branch := ir.Branch{Name: name}
+		// GitLab's protected_branches API returns force-push +
+		// code-owner-approval + access levels in the same payload as
+		// the listing, so any branch we surface here has authoritative
+		// detail data. ProtectionDetailsKnown=true unconditionally on
+		// this provider; the field exists for the GitHub asymmetry.
+		branch := ir.Branch{Name: name, ProtectionDetailsKnown: true}
 		for i := range protection.BranchProtections {
 			p := &protection.BranchProtections[i]
 			if !gitlab.BranchMatchesPattern(p.ProtectionPattern, name) {

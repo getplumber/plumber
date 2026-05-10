@@ -539,13 +539,31 @@ func writeJSONToFile(result *control.AnalysisResult, pc *configuration.PlumberCo
 	if scoreMode && score != nil {
 		output["plumberScore"] = score
 	}
+	// `partialControls` surfaces the postflight-skipped story so CI
+	// consumers can detect "we couldn't fully evaluate X" without
+	// scraping the rendered terminal output. Today the only entry
+	// is `branchMustBeProtected` when GitHub /branches/{name}/
+	// protection 403'd; future controls with similar partial-data
+	// modes can append here.
+	if partial := partialControlEntries(result); len(partial) > 0 {
+		output["partialControls"] = partial
+	}
 	for k, v := range legacyResultsByName(result, pc) {
 		output[k] = v
 	}
-	// Drop the flat Rego findings list from the file: consumers should use
-	// the per-control *Result blocks (issues/metrics/compliance), matching
-	// the pre–flat-findings JSON shape.
-	delete(output, "findings")
+	// Drop the flat Rego findings list from the file ON THE GITLAB
+	// PATH: legacy GitLab consumers parse the per-control *Result
+	// blocks (issues/metrics/compliance) and don't need the
+	// duplicated flat list. ON THE GITHUB PATH we KEEP `findings`
+	// because five GitHub-only controls (action pinning, dangerous
+	// triggers, declare permissions, template injection, reusable
+	// secrets) have no *Result block — without the flat array their
+	// findings are silently lost from the structured artefact.
+	// Detection: GitHubStats is non-nil iff a GitHub run produced
+	// the result (set in RunGitHubAnalysis / RunGitHubAnalysisRemote).
+	if result.GitHubStats == nil {
+		delete(output, "findings")
+	}
 
 	// Encode with intentional key order so readers see project/context first,
 	// scoring next, then per-control *Result blocks (not Go map lexical order).
@@ -557,6 +575,26 @@ func writeJSONToFile(result *control.AnalysisResult, pc *configuration.PlumberCo
 		return fmt.Errorf("failed to create output file: %w", err)
 	}
 	return nil
+}
+
+// partialControlEntries lists controls whose evaluation was partial —
+// some inputs reachable, others not. CI gates parse this to decide
+// whether to fail loud ("we never actually checked your protection
+// rules") even when compliance is 100%.
+func partialControlEntries(result *control.AnalysisResult) []map[string]any {
+	if result == nil || result.GitHubStats == nil {
+		return nil
+	}
+	var out []map[string]any
+	if n := result.GitHubStats.BranchesProtectionDetailsUnknown; n > 0 {
+		out = append(out, map[string]any{
+			"control":          "branchMustBeProtected",
+			"reason":           "Token lacks Administration:Read scope; force-push and code-owner-approval rules (ISSUE-505) not evaluated.",
+			"affectedBranches": n,
+			"remediation":      "Re-run with a token carrying Administration:Read (fine-grained PAT) or `repo` scope (classic PAT).",
+		})
+	}
+	return out
 }
 
 // analysisJSONLegacyKeyHead is the canonical top-level key order before any

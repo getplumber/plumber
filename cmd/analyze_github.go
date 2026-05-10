@@ -1,10 +1,14 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
 
+	ghauth "github.com/cli/go-gh/v2/pkg/auth"
+
+	"github.com/getplumber/plumber/collector"
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
 	"github.com/getplumber/plumber/utils"
@@ -56,6 +60,7 @@ func runGitHubAnalyze(cmd *cobra.Command, info *utils.GitRemoteInfo) error {
 	}
 
 	fmt.Fprintf(os.Stderr, "Scanning workflows under: %s\n", info.RepoRoot)
+	printGitHubAuthBanner(false)
 
 	// Progress spinner — mirrors the GitLab path. Only installed
 	// when we are printing to stdout and not running verbose (the
@@ -118,6 +123,7 @@ func runGitHubAnalyzeRemote(cmd *cobra.Command, host, project, ref string) error
 	} else {
 		fmt.Fprintf(os.Stderr, "Analyzing GitHub project: %s/%s on %s (remote fetch)\n", owner, repo, apiHost)
 	}
+	printGitHubAuthBanner(true)
 
 	conf := configuration.NewDefaultConfiguration()
 	conf.ProjectPath = owner + "/" + repo
@@ -140,10 +146,68 @@ func runGitHubAnalyzeRemote(cmd *cobra.Command, host, project, ref string) error
 	result, err := control.RunGitHubAnalysisRemote(conf, owner, repo, ref)
 	sp.Stop()
 	if err != nil {
+		// Pass the auth-required sentinel through verbatim — wrapping
+		// it with "analysis failed:" prefixes a frame onto the
+		// actionable message and gives the user three layers of context
+		// they don't need. Cobra's "Error:" prefix is sufficient.
+		if errors.Is(err, collector.ErrAuthRequired) {
+			return err
+		}
 		return fmt.Errorf("analysis failed: %w", err)
 	}
 
 	return presentGitHubResult(result, plumberConfig)
+}
+
+// printGitHubAuthBanner emits a one-line stderr banner naming which
+// auth source go-gh will use for this run. Cheap (no network) — pure
+// env-var inspection — and complementary to the postflight skipped-
+// control markers: tells the user up front "this is the credential
+// I'm running with", so a later "ISSUE-505 was skipped because the
+// token lacks Administration:Read" message lands with context.
+//
+// upstreamFetch=true means the run will fail outright if no auth is
+// resolvable (ErrAuthRequired path). For local-clone runs, "no auth"
+// is a degraded mode rather than a hard error, and the banner says so.
+func printGitHubAuthBanner(upstreamFetch bool) {
+	source := detectGitHubAuthSource()
+	switch source {
+	case "":
+		if upstreamFetch {
+			// runGitHubAnalyzeRemote will surface ErrAuthRequired
+			// almost immediately; banner here would just be noise
+			// before the actionable error.
+			return
+		}
+		fmt.Fprintf(os.Stderr, "GitHub auth: none — running in degraded mode (workflow-content controls only).\n")
+	case "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN":
+		fmt.Fprintf(os.Stderr, "GitHub auth: %s env var\n", source)
+	case "gh":
+		fmt.Fprintf(os.Stderr, "GitHub auth: gh CLI (~/.config/gh)\n")
+	}
+}
+
+// detectGitHubAuthSource returns the highest-priority source go-gh
+// would use, mirroring its resolution chain. Returns "" when no
+// source is configured. Uses go-gh's auth package so the answer
+// matches what the REST client actually picks up at request time.
+func detectGitHubAuthSource() string {
+	if v := os.Getenv("GH_TOKEN"); v != "" {
+		return "GH_TOKEN"
+	}
+	if v := os.Getenv("GITHUB_TOKEN"); v != "" {
+		return "GITHUB_TOKEN"
+	}
+	if v := os.Getenv("GH_ENTERPRISE_TOKEN"); v != "" {
+		return "GH_ENTERPRISE_TOKEN"
+	}
+	// Fall back to gh CLI's stored credential. auth.TokenForHost
+	// returns ("", "") when none is configured, so we get an
+	// honest "" instead of pretending gh exists when it doesn't.
+	if token, _ := ghauth.TokenForHost("github.com"); token != "" {
+		return "gh"
+	}
+	return ""
 }
 
 // presentGitHubResult is the shared post-analysis flow used by both
@@ -206,9 +270,16 @@ func presentGitHubResult(result *control.AnalysisResult, plumberConfig *configur
 func printGitHubFindings(result *control.AnalysisResult, pc *configuration.PlumberConfig, overallCompliance float64) {
 	fmt.Printf("\n%s %s\n\n", styleTitle.Render("Project:"), result.ProjectPath)
 
+	// "No workflows" is informational, not a hard short-circuit:
+	// API-driven controls (branchMustBeProtected today, more later)
+	// can still fire findings on a repo with zero workflow files.
+	// Render the per-control sections + tables when any finding
+	// exists; only bail entirely when we have nothing at all to say.
 	if !result.CiValid {
 		fmt.Printf("  %s\n", styleDim.Render("No GitHub Actions workflows discovered."))
-		return
+		if len(result.Findings) == 0 {
+			return
+		}
 	}
 
 	// Same shape as GitLab: build an ordered list of (catalog entry,

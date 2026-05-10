@@ -24,6 +24,14 @@ deny contains finding if {
 	some i
 	branch := input.pipeline.branches[i]
 	branch.protected == true
+	# Skip branches whose protection-detail fetch failed (typically a
+	# GitHub repo where the token lacks Administration:read). Without
+	# this guard the rule would false-positive on every read-only
+	# token because zero-valued AllowForcePush/CodeOwnerApprovalRequired
+	# look identical to "force push allowed AND no code-owner
+	# approval required". GitLab always sets this true; GitHub sets
+	# it true only when /branches/{name}/protection succeeds.
+	object.get(branch, "protectionDetailsKnown", false) == true
 	_branch_in_protection_scope(branch.name)
 	reasons := [r | r := _non_compliant_reasons[branch.name][_]]
 	count(reasons) > 0

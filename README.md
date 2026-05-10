@@ -169,16 +169,35 @@ GitLab analysis **hard-fails** if `GITLAB_TOKEN` is missing or the token's scope
 
 #### GitHub
 
-GitHub auth is **soft-degrade**: the current default controls scan workflow YAML locally and need no API access, so they always run. Action-supply-chain controls (archived repos, advisory database, ref-version mismatch, …) need the API and silently no-op without it. Plumber resolves credentials in this order, automatically:
+Auth requirements depend on which mode you run plumber in:
+
+| Mode | Command shape | Auth |
+|---|---|---|
+| **Local-clone scan** | `plumber analyze` (inside a checked-out repo) | Soft-degrade. Workflow-content controls scan local YAML and need no API access. Action-supply-chain controls (archived repos, advisory database, ref-version mismatch, …) need the API and silently no-op without it. |
+| **Upstream-fetch** | `plumber analyze --github-url … --project owner/repo` | **Required.** GitHub's anonymous tier is rate-limited to 60 req/hr, which produces partial runs without warning — so plumber refuses to start in this mode without a token. Parity with the GitLab path. |
+
+Plumber resolves credentials in this order, automatically:
 
 | Order | Source | Set with |
 |---|---|---|
 | 1 | `GH_TOKEN` env var | `export GH_TOKEN=ghp_…` |
 | 2 | `GITHUB_TOKEN` env var | usually pre-set in GitHub Actions runners |
 | 3 | `gh` CLI stored token | `gh auth login` (recommended for local dev) |
-| 4 | none | runs in degraded mode — local-only checks fire |
+| 4 | none | local-clone mode: degraded run, local-only checks fire. Upstream-fetch mode: error with setup instructions. |
 
-Token scope: a fine-grained PAT with read access to your target repo (Contents: read, Metadata: read) is enough for the shipping controls. The bench controls that hit the GitHub Advisory Database also need no extra scope. **GitHub Enterprise Server (GHES)**: pair `GH_ENTERPRISE_TOKEN` with `--github-url ghes.example.com` (see Step 4).
+Token scope (fine-grained PAT against your target repo):
+
+| Scope | What it unlocks | Without it |
+|---|---|---|
+| `Contents: Read` | Workflow YAML reads via `/contents` (used in upstream-fetch mode). All workflow-content controls (102/103/104/206/302/304/410/414). | Upstream-fetch fails on the first content request. Local-clone scans are unaffected (they read from disk). |
+| `Metadata: Read` | Auto-required by GitHub for any fine-grained PAT. | Token won't function. |
+| `Administration: Read` | `/branches/{name}/protection` — force-push and code-owner-approval state on protected branches. ISSUE-505 evaluates authoritatively. | ISSUE-501 still fires (uses the listing's `protected` flag, no admin scope needed). ISSUE-505 silently abstains rather than guessing. |
+
+Equivalent on a classic PAT: the single `repo` scope covers all three.
+
+> **Org-owned repos:** if your target repo lives under an organisation, the org's PAT policy may require an org admin to approve new fine-grained-PAT scopes (especially `Administration: Read`). If you can't get that approval, `gh auth login` with your own user account is a working alternative — your user's actual repo permissions apply to the resulting token without going through the PAT-approval gate.
+
+**GitHub Enterprise Server (GHES)**: pair `GH_ENTERPRISE_TOKEN` with `--github-url ghes.example.com` (see Step 4).
 
 To check the resolved auth before running:
 
@@ -200,7 +219,7 @@ plumber analyze
 plumber analyze --gitlab-url https://gitlab.com --project mygroup/myproject
 ```
 
-#### GitHub (github.com)
+#### GitHub (github.com) — local clone
 
 ```bash
 # Auto-detect from origin:
@@ -210,14 +229,27 @@ plumber analyze
 # No --gitlab-url / --project required.
 ```
 
+#### GitHub (github.com) — upstream fetch (no local clone)
+
+Symmetric to GitLab's `--gitlab-url + --project`. Useful for security teams auditing many repos without cloning each. **Auth is required in this mode** — see Step 3 above for token sources and scopes.
+
+```bash
+export GH_TOKEN=ghp_…   # or `gh auth login`, or GITHUB_TOKEN — see Step 3
+plumber analyze --github-url github.com --project owner/repo
+plumber analyze --github-url github.com --project owner/repo --branch main
+```
+
+In this mode Plumber lists `.github/workflows/` via the GitHub Contents API and runs the same per-control parity output. Repo-side files that need a local checkout (Dockerfile, `dependabot.yml`, `SECURITY.md`) are skipped — the dependent controls produce no findings.
+
 #### GitHub Enterprise Server
 
 ```bash
 export GH_ENTERPRISE_TOKEN=ghp_…
-plumber analyze --github-url ghes.example.com
+plumber analyze --github-url ghes.example.com --project owner/repo  # remote fetch on GHES
+plumber analyze --github-url ghes.example.com                       # GHES API host for a local-clone scan
 ```
 
-`--github-url` accepts a bare host (`ghes.example.com`) or a full API path (`ghes.example.com/api/v3`). It's only consulted when scanning a GitHub repo — GitLab analysis ignores it.
+`--github-url` accepts a bare host (`ghes.example.com`) or a full API path (`ghes.example.com/api/v3`). `--gitlab-url` and `--github-url` are mutually exclusive — pass exactly one to select the provider explicitly.
 
 #### Verifying the run
 
@@ -246,21 +278,18 @@ A handful of flags are GitLab-only today. On the GitHub path they are silently i
 | `--pbom` | not generated on the GitHub path yet |
 | `--pbom-cyclonedx` | not generated on the GitHub path yet |
 | `--ci-config-path` | N/A — GitHub workflows always live under `.github/workflows/` |
-| `--gitlab-url`, `--project` | N/A — GitHub uses git-remote auto-detection or `--github-url` |
+| `--gitlab-url` | N/A — pass `--github-url` instead, or rely on git-remote auto-detection |
 
-Flags that work identically on both providers: `--config`, `--output` (JSON findings), `--threshold`, `--print`, `--score`, `--score-point`, `--controls`, `--skip-controls`, `--fail-warnings`, `--branch`.
+Flags that work identically on both providers: `--config`, `--output` (JSON findings), `--threshold`, `--print`, `--score`, `--score-point`, `--controls`, `--skip-controls`, `--fail-warnings`, `--branch`, `--project` (provider chosen by which URL flag is set).
 
 #### Bench: which GitHub controls don't run yet
 
-The Rego engine ships ~50 GitHub Actions policies. Eight have ≥3 test fixtures and ship default-on; the rest are on the dev-side bench (`control/registry.go`). Benched policies are excluded at engine load time — they don't execute, don't produce findings, and don't appear in the output. To see what's currently shipping vs benched:
-
-```bash
-plumber analyze --controls "*"   # lists every control, with status
-```
+The Rego engine ships ~50 GitHub Actions policies. Nine have substantive test fixtures and ship default-on; the rest are on the dev-side bench (`configuration/registry.go::benchedControls`). Benched policies are excluded at engine load time — they don't execute, don't produce findings, and don't appear in the output.
 
 Today's shipping GitHub set:
 
 - `actionsMustBePinnedByCommitSha` — third-party actions must use a 40-char SHA, not a tag/branch.
+- `branchMustBeProtected` — repository default branch (and any matching pattern) must have a protection rule. Inspects repo settings via the GitHub branch-protection API; needs `repo` (classic PAT) or "Administration: read" (fine-grained PAT). The first project-governance control on the GitHub path; everything else here is pipeline-governance.
 - `containerImageMustNotUseForbiddenTags` — pin container images by digest or version, not `latest`.
 - `pipelineMustNotUseDockerInDocker` — flag DinD services and insecure daemon configs.
 - `reusableWorkflowsMustNotInheritSecrets` — explicit secret mapping instead of `secrets: inherit`.

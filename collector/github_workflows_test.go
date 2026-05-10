@@ -271,6 +271,70 @@ jobs:
 	}
 }
 
+// TestScanGitHubWorkflows_ContinueOnErrorMapsToAllowFailure is the
+// regression for the security_jobs_weakened blind spot: GitHub's
+// `continue-on-error: true` at the job level is the equivalent of
+// GitLab's `allow_failure: true`. The IR field is shared, so the
+// rego rule fires uniformly across providers when the parser maps
+// the field correctly.
+//
+// `${{ … }}` template values must NOT trip the mapping: we cannot
+// statically decide whether a runtime expression evaluates to true,
+// so staying quiet is the right call (mirrors plumber's high-
+// precision philosophy elsewhere).
+func TestScanGitHubWorkflows_ContinueOnErrorMapsToAllowFailure(t *testing.T) {
+	tmp := t.TempDir()
+	wfDir := filepath.Join(tmp, ".github", "workflows")
+	if err := os.MkdirAll(wfDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	wf := `name: CI
+on: push
+jobs:
+  flaky:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - run: ./flaky-test.sh
+  strict:
+    runs-on: ubuntu-latest
+    steps:
+      - run: ./real-test.sh
+  experimental:
+    runs-on: ubuntu-latest
+    continue-on-error: ${{ matrix.experimental }}
+    steps:
+      - run: ./matrix-test.sh
+`
+	if err := os.WriteFile(filepath.Join(wfDir, "ci.yml"), []byte(wf), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	pipeline, partial, err := ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(partial) != 0 {
+		t.Fatalf("unexpected partial errors: %v", partial)
+	}
+
+	byName := map[string]bool{}
+	for _, j := range pipeline.Jobs {
+		byName[j.Name] = j.AllowFailure
+	}
+
+	if !byName["ci/flaky"] {
+		t.Error("ci/flaky: expected AllowFailure=true (continue-on-error: true)")
+	}
+	if byName["ci/strict"] {
+		t.Error("ci/strict: expected AllowFailure=false (no continue-on-error)")
+	}
+	if byName["ci/experimental"] {
+		t.Error("ci/experimental: expected AllowFailure=false (template expression — cannot statically resolve)")
+	}
+}
+
 func TestScanGitHubWorkflows_ParseErrorReportedAsPartial(t *testing.T) {
 	tmp := t.TempDir()
 	wfDir := filepath.Join(tmp, ".github", "workflows")

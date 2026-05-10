@@ -90,6 +90,14 @@ type GitHubAnalysisStats struct {
 	BranchesTotal     int
 	BranchesProtected int
 	BranchesMatched   int // matched a configured namePattern
+	// BranchesProtectionDetailsUnknown counts in-scope branches whose
+	// protection-detail fetch did not yield authoritative data
+	// (typically: GitHub /branches/{name}/protection 403/404 because
+	// the token lacks Administration:Read). The branch_non_compliant
+	// rule (ISSUE-505) abstains on such branches; this counter exists
+	// so the renderer can surface a "we couldn't fully evaluate this"
+	// caveat instead of a misleading 100% compliant.
+	BranchesProtectionDetailsUnknown int
 }
 
 // PipelineOriginMetricsSummary is a simplified version of origin metrics for output

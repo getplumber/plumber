@@ -104,21 +104,28 @@ func runRegoEngine(
 // "gitlab" or "github". Anything else returns no findings.
 func evaluatePolicies(l *logrus.Entry, pc *configuration.PlumberConfig, provider string, pipeline *ir.NormalizedPipeline) []opaengine.Finding {
 	l.WithField("provider", provider).Info("Running Rego/OPA rule engine")
+	// Empty (non-nil) so the eventual JSON output marshals an empty
+	// findings array as `[]`, not `null` — `null` makes downstream
+	// jq pipelines like `.findings[]` blow up on a clean run.
+	empty := []opaengine.Finding{}
 	engine := opaengine.New()
 	skip := func(filename string, content []byte) bool {
 		return IsRegoFileBenchedForProvider(content, provider)
 	}
 	if err := engine.LoadFromFSFiltered(policies.FS, skip); err != nil {
 		l.WithError(err).Warn("Failed to load embedded Rego policies")
-		return nil
+		return empty
 	}
 	controls := pc.ControlsFor(provider)
 	findings, err := engine.Evaluate(context.Background(), pipeline, buildEngineConfig(controls))
 	if err != nil {
 		l.WithError(err).Warn("Rego/OPA engine evaluation failed")
-		return nil
+		return empty
 	}
 	findings = FilterFindingsByEnabledControls(findings, provider, controls)
+	if findings == nil {
+		findings = empty
+	}
 	l.WithField("findingCount", len(findings)).Info("Rego/OPA engine evaluation completed")
 	return findings
 }

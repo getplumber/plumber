@@ -136,17 +136,34 @@ func AggregateGitHubStats(pipeline *ir.NormalizedPipeline, pc *configuration.Plu
 	// Branch protection — populated when the GitHub branch-protection
 	// collector ran (it only does so when the control is enabled +
 	// the user's token has scope). Empty when in degraded mode.
+	//
+	// "In scope" mirrors the rego rule: a branch is in scope when
+	// it matches a configured namePattern OR is the repo's default
+	// branch and defaultMustBeProtected is true. BranchesMatched and
+	// BranchesProtected are both bounded to the in-scope set so the
+	// stats block reads "Branches to Protect: 2 / Protected: 1 /
+	// Unprotected: 1" instead of conflating "protected anywhere in
+	// the repo" with "protected among the ones we required".
 	stats.BranchesTotal = len(pipeline.Branches)
-	for i := range pipeline.Branches {
-		if pipeline.Branches[i].Protected {
-			stats.BranchesProtected++
-		}
-	}
 	if gh.BranchMustBeProtected != nil {
 		patterns := gh.BranchMustBeProtected.NamePatterns
+		defaultRequired := gh.BranchMustBeProtected.DefaultMustBeProtected != nil &&
+			*gh.BranchMustBeProtected.DefaultMustBeProtected
 		for i := range pipeline.Branches {
-			if branchMatchesPattern(pipeline.Branches[i].Name, patterns) {
-				stats.BranchesMatched++
+			b := &pipeline.Branches[i]
+			inScope := branchMatchesPattern(b.Name, patterns)
+			if !inScope && defaultRequired && b.Name == pipeline.DefaultBranch {
+				inScope = true
+			}
+			if !inScope {
+				continue
+			}
+			stats.BranchesMatched++
+			if b.Protected {
+				stats.BranchesProtected++
+			}
+			if !b.ProtectionDetailsKnown {
+				stats.BranchesProtectionDetailsUnknown++
 			}
 		}
 	}

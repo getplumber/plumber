@@ -173,6 +173,9 @@ func parseGitHubActions(t *testing.T, data []byte) *ir.NormalizedPipeline {
 		if uses := parseGitHubStepsUses(section["steps"]); len(uses) > 0 {
 			job.Uses = uses
 		}
+		if jobUses, ok := section["uses"].(string); ok && jobUses != "" {
+			job.ReusableWorkflowUses = jobUses
+		}
 		jobs = append(jobs, job)
 	}
 
@@ -422,6 +425,23 @@ func TestIssue414_DangerousTriggers(t *testing.T) {
 		{
 			fixture:      "clean_pull_request.yml",
 			expectedHits: nil,
+		},
+		// Regression: the extended dangerous-events set must fire
+		// once per (job, trigger) pair. The fixture has one job and
+		// seven dangerous triggers (issue_comment + 2 PR review
+		// variants + 2 discussion variants + gollum + fork), so
+		// expect the same job name to appear seven times.
+		{
+			fixture: "violation_extended_triggers.yml",
+			expectedHits: []string{
+				"violation_extended_triggers/comment-handler",
+				"violation_extended_triggers/comment-handler",
+				"violation_extended_triggers/comment-handler",
+				"violation_extended_triggers/comment-handler",
+				"violation_extended_triggers/comment-handler",
+				"violation_extended_triggers/comment-handler",
+				"violation_extended_triggers/comment-handler",
+			},
 		},
 	}
 
@@ -886,10 +906,10 @@ func TestIssue505_BranchNonCompliant(t *testing.T) {
 		Provider: ir.ProviderGitLab,
 		Branches: []ir.Branch{
 			// main: force push + code owner failures only — push/merge match policy.
-			{Name: "main", Protected: true, AllowForcePush: true, MinPushAccessLevel: 40, MinMergeAccessLevel: 40},
-			{Name: "compliant", Protected: true, CodeOwnerApprovalRequired: true, MinPushAccessLevel: 40, MinMergeAccessLevel: 40},
+			{Name: "main", Protected: true, AllowForcePush: true, MinPushAccessLevel: 40, MinMergeAccessLevel: 40, ProtectionDetailsKnown: true},
+			{Name: "compliant", Protected: true, CodeOwnerApprovalRequired: true, MinPushAccessLevel: 40, MinMergeAccessLevel: 40, ProtectionDetailsKnown: true},
 			// low-push: push level 30 < 40 (more permissive than required).
-			{Name: "low-push", Protected: true, CodeOwnerApprovalRequired: true, MinPushAccessLevel: 30, MinMergeAccessLevel: 40},
+			{Name: "low-push", Protected: true, CodeOwnerApprovalRequired: true, MinPushAccessLevel: 30, MinMergeAccessLevel: 40, ProtectionDetailsKnown: true},
 			{Name: "unprotected", Protected: false},
 		},
 	}
@@ -942,7 +962,7 @@ func TestIssue505_AccessLevelStrictestPolicy(t *testing.T) {
 	pipeline := &ir.NormalizedPipeline{
 		Provider: ir.ProviderGitLab,
 		Branches: []ir.Branch{
-			{Name: "main", Protected: true, MinPushAccessLevel: 40, MinMergeAccessLevel: 40},
+			{Name: "main", Protected: true, MinPushAccessLevel: 40, MinMergeAccessLevel: 40, ProtectionDetailsKnown: true},
 		},
 	}
 	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
@@ -987,7 +1007,7 @@ func TestIssue505_AccessLevelSkipsWhenIRZero(t *testing.T) {
 	pipeline := &ir.NormalizedPipeline{
 		Provider: ir.ProviderGitLab,
 		Branches: []ir.Branch{
-			{Name: "main", Protected: true},
+			{Name: "main", Protected: true, ProtectionDetailsKnown: true},
 		},
 	}
 	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
@@ -1022,6 +1042,66 @@ func toStringSlice(raw any) []string {
 	return nil
 }
 
+// TestIssue505_DetailUnknownAbstainsButIssue501StillFires is the
+// regression for the GitHub asymmetry: a branch listed as
+// `protected: true` whose protection-detail fetch returned 403
+// (token lacks Administration:read) MUST NOT trigger ISSUE-505.
+// AllowForcePush / CodeOwnerApprovalRequired stay at the Go zero
+// values which look identical to "force push allowed AND no
+// code-owner approval required" — without the
+// ProtectionDetailsKnown gate the rule would fire two false-
+// positive reasons on every read-only-token branch. ISSUE-501
+// (branch_unprotected) is unaffected because it only consults
+// the authoritative `Protected` field from the listing.
+func TestIssue505_DetailUnknownAbstainsButIssue501StillFires(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFS(policies.FS); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	cfg := map[string]any{
+		"branchMustBeProtected": map[string]any{
+			"namePatterns":              []string{"main", "feature"},
+			"defaultMustBeProtected":    true,
+			"allowForcePush":            false,
+			"codeOwnerApprovalRequired": true,
+		},
+	}
+	pipeline := &ir.NormalizedPipeline{
+		Provider:      ir.ProviderGitHub,
+		DefaultBranch: "main",
+		Branches: []ir.Branch{
+			// main: protected, but no admin scope so detail is unknown.
+			// MUST NOT fire ISSUE-505 (zero defaults are not authoritative).
+			{Name: "main", Protected: true, ProtectionDetailsKnown: false},
+			// feature: unprotected. MUST fire ISSUE-501 even though
+			// detail is unknown for the protected siblings.
+			{Name: "feature", Protected: false},
+		},
+	}
+	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	saw501, saw505 := 0, 0
+	for _, f := range findings {
+		switch f.Code {
+		case "ISSUE-501":
+			if f.Job != "feature" {
+				t.Fatalf("ISSUE-501 should target the unprotected branch, got %q", f.Job)
+			}
+			saw501++
+		case "ISSUE-505":
+			saw505++
+		}
+	}
+	if saw501 != 1 {
+		t.Errorf("expected 1 ISSUE-501 (feature), got %d", saw501)
+	}
+	if saw505 != 0 {
+		t.Errorf("expected 0 ISSUE-505 when ProtectionDetailsKnown=false, got %d", saw505)
+	}
+}
+
 // TestIssue505_NotInPolicyScope ensures ISSUE-501 scope matches ISSUE-505:
 // a protected but misconfigured branch that does not match namePatterns and
 // is not the default branch when defaultMustBeProtected is false produces no ISSUE-505.
@@ -1041,7 +1121,7 @@ func TestIssue505_NotInPolicyScope(t *testing.T) {
 		Provider:      ir.ProviderGitLab,
 		DefaultBranch: "main",
 		Branches: []ir.Branch{
-			{Name: "main", Protected: true, AllowForcePush: true},
+			{Name: "main", Protected: true, AllowForcePush: true, ProtectionDetailsKnown: true},
 		},
 	}
 	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
@@ -1259,6 +1339,93 @@ func TestIssue410_MultipleWeakeningsOnOneJob(t *testing.T) {
 	//   - rules overridden with 'when: never', job will not run
 	if len(hits) != 4 {
 		t.Fatalf("expected 4 distinct ISSUE-410 reasons on the multi-weakened job, got %d: %v", len(hits), hits)
+	}
+}
+
+// TestIssue410_GitHubContinueOnError is the regression for the
+// silent-on-GitHub bug: previously the GitLab-only `allow_failure`
+// field was the sole input to security_jobs_weakened, and GitHub's
+// `continue-on-error: true` never reached the rule. The fix has
+// two parts and both must hold for the rule to fire: (a) the parser
+// maps continue-on-error → AllowFailure, (b) the .plumber.yaml
+// shipping defaults include GitHub-realistic security job names
+// (codeql, trufflehog, …). This test exercises both ends through
+// the production collector.
+func TestIssue410_GitHubContinueOnError(t *testing.T) {
+	cases := []struct {
+		fixture      string
+		expectedHits []string
+	}{
+		{
+			fixture: "violation_continue_on_error.yml",
+			// Only the codeql job: trufflehog has no weakening,
+			// lint does have continue-on-error but doesn't match
+			// any security pattern.
+			expectedHits: []string{"violation_continue_on_error/codeql"},
+		},
+		{
+			fixture:      "violation_when_manual_via_if.yml",
+			expectedHits: nil,
+		},
+	}
+
+	// GitHub job names are namespaced as `{workflow}/{job}`, so the
+	// patterns must match through the prefix. `*codeql*` (also in
+	// .plumber.yaml's GitHub defaults) covers `mywf/codeql`; bare
+	// `codeql` would silently miss every namespaced match.
+	cfg := map[string]any{
+		"securityJobsWeakened": map[string]any{
+			"securityJobPatterns":     []string{"*codeql*", "*trufflehog*", "*-sast"},
+			"allowFailureMustBeFalse": true,
+			"whenMustNotBeManual":     true,
+		},
+	}
+
+	engine := opaengine.New()
+	if err := engine.LoadFromFS(policies.FS); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.fixture, func(t *testing.T) {
+			tmp := t.TempDir()
+			wfDir := filepath.Join(tmp, ".github", "workflows")
+			if err := os.MkdirAll(wfDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			src := filepath.Join("testdata", "ISSUE-410", "github", tc.fixture)
+			data, err := os.ReadFile(src)
+			if err != nil {
+				t.Fatalf("read fixture: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(wfDir, tc.fixture), data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+
+			pipeline, _, err := collector.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
+			if err != nil {
+				t.Fatalf("scan: %v", err)
+			}
+
+			findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+			if err != nil {
+				t.Fatalf("evaluate: %v", err)
+			}
+
+			hits := make([]string, 0, len(findings))
+			for _, f := range findings {
+				if f.Code != "ISSUE-410" {
+					continue
+				}
+				hits = append(hits, f.Job)
+			}
+			sort.Strings(hits)
+			expected := append([]string(nil), tc.expectedHits...)
+			sort.Strings(expected)
+			if !stringSlicesEqual(hits, expected) {
+				t.Fatalf("%s: expected %v, got %v", tc.fixture, expected, hits)
+			}
+		})
 	}
 }
 
@@ -2081,6 +2248,11 @@ func TestIssue104_ActionUnpinned(t *testing.T) {
 		{"clean_sha_pinned.yml", map[string]any{"actionsMustBePinnedByCommitSha": map[string]any{}}, 0},
 		{"trusted_owner_tag.yml", map[string]any{"actionsMustBePinnedByCommitSha": map[string]any{"trustedOwners": []any{"actions", "github"}}}, 1},
 		{"violation_tag_ref.yml", nil, 0},
+		// Regression: reusable workflows called via job-level `uses:`
+		// were ignored before. The fixture has three jobs; only the
+		// third-party @main job should fire, trusted-owner @main and
+		// SHA-pinned must stay silent.
+		{"violation_reusable_workflow_mutable.yml", map[string]any{"actionsMustBePinnedByCommitSha": map[string]any{"trustedOwners": []any{"actions", "github"}}}, 1},
 	}
 	for _, tc := range cases {
 		t.Run(tc.fixture, func(t *testing.T) {

@@ -275,73 +275,45 @@ func buildGitHubControlStats(controlName string, stats *control.GitHubAnalysisSt
 		if unprotectedMatched < 0 {
 			unprotectedMatched = 0
 		}
-		return []statLine{
+		lines := []statLine{
 			{"Total Branches", fmt.Sprintf("%d", stats.BranchesTotal)},
 			{"Branches to Protect", fmt.Sprintf("%d", stats.BranchesMatched)},
 			{"Protected", fmt.Sprintf("%d", stats.BranchesProtected)},
 			{"Unprotected (matched)", fmt.Sprintf("%d", unprotectedMatched)},
 		}
+		// Surface partial-evaluation when /branches/{name}/protection
+		// 403'd (token lacked Administration:Read). Without this line
+		// the section header shows "100.0% compliant" while ISSUE-505
+		// silently abstained — exactly the silent-success-on-
+		// incomplete-data footgun we want to avoid.
+		if stats.BranchesProtectionDetailsUnknown > 0 {
+			lines = append(lines, statLine{
+				"⚠ Force-push & code-owner rules",
+				fmt.Sprintf("skipped on %d branch(es) — token lacks Administration:Read", stats.BranchesProtectionDetailsUnknown),
+			})
+		}
+		return lines
 	}
 	return nil
 }
 
-// gitHubControlCompliance turns the per-control aggregations into a
-// percentage in [0, 100]. Returns 100 when a control's denominator is
-// zero (nothing to evaluate against). Uses the actual ratio of
-// "items considered" to "items violating" — matching the GitLab
-// per-control compliance UX.
+// gitHubControlCompliance returns binary per-control compliance,
+// matching the GitLab semantics: any finding on the control → 0%,
+// otherwise 100%. The stats parameter is retained on the signature
+// because the per-control stats blocks (rendered separately by
+// buildGitHubControlStats) still consume it; only the percentage
+// itself is binary.
+//
+// Why binary: GitLab's outputText computes compliance the same way
+// (`if !skipped && len(items) > 0 { compliance = 0.0 }`). Mixing a
+// gradient on the GitHub side led to "100.0% compliant" headers
+// rendering above HIGH-severity findings for the same control —
+// confusing and contradictory. A control either passed or it
+// didn't; the stats block already shows the underlying numerators
+// for users who want the gradient view.
 func gitHubControlCompliance(controlName string, stats *control.GitHubAnalysisStats, findings int) float64 {
-	if stats == nil {
-		if findings > 0 {
-			return 0
-		}
-		return 100
-	}
-	pct := func(violations, denom int) float64 {
-		if denom <= 0 {
-			return 100
-		}
-		ok := denom - violations
-		if ok < 0 {
-			ok = 0
-		}
-		return float64(ok) * 100.0 / float64(denom)
-	}
-	switch controlName {
-	case "actionsMustBePinnedByCommitSha":
-		return pct(stats.ActionRefsUnpinned, stats.ActionRefsTotal)
-	case "containerImageMustNotUseForbiddenTags":
-		notPinned := stats.ImagesTotal - stats.ImagesPinnedByDigest
-		if notPinned < 0 {
-			notPinned = 0
-		}
-		return pct(stats.ImagesUsingForbidden+notPinned, stats.ImagesTotal*2)
-	case "pipelineMustNotUseDockerInDocker":
-		return pct(stats.JobsWithDinD+stats.JobsWithInsecureDaemon, stats.JobsTotal*2)
-	case "reusableWorkflowsMustNotInheritSecrets":
-		return pct(stats.ReusableCallsSecretsInherit, stats.ReusableCalls)
-	case "securityJobsMustNotBeWeakened":
-		return pct(stats.SecurityJobsWeakened, stats.SecurityJobsTotal)
-	case "workflowMustNotInjectUserInputInScripts":
-		return pct(findings, stats.ScriptLinesTotal)
-	case "workflowMustNotUseDangerousTriggers":
-		return pct(stats.WorkflowsWithDangerousTrigger, stats.WorkflowsTotal)
-	case "workflowsMustDeclarePermissions":
-		return pct(stats.WorkflowsMissingPermissions, stats.WorkflowsTotal)
-	case "branchMustBeProtected":
-		// Denominator: branches matching a configured namePattern.
-		// Numerator: those that are protected. When zero branches
-		// match (e.g. degraded mode with no API access), report
-		// 100% — the rule has nothing to fail against.
-		if stats.BranchesMatched <= 0 {
-			return 100
-		}
-		ok := stats.BranchesProtected
-		if ok > stats.BranchesMatched {
-			ok = stats.BranchesMatched
-		}
-		return float64(ok) * 100.0 / float64(stats.BranchesMatched)
-	}
+	_ = controlName
+	_ = stats
 	if findings > 0 {
 		return 0
 	}

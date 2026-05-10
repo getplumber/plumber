@@ -2,8 +2,8 @@ package collector
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
-	"path"
 	"sort"
 	"strings"
 
@@ -40,6 +40,12 @@ func ScanGitHubWorkflowsRemote(host, owner, repo, ref string, enrichActionMetada
 
 	rest, err := newGitHubRESTClient(host)
 	if err != nil {
+		// ErrAuthRequired carries an actionable multi-line message;
+		// wrapping it with "github api client:" turns it into a stack
+		// frame in the user-facing output. Pass it through verbatim.
+		if errors.Is(err, ErrAuthRequired) {
+			return nil, nil, err
+		}
 		return nil, nil, fmt.Errorf("github api client: %w", err)
 	}
 
@@ -86,13 +92,62 @@ func ScanGitHubWorkflowsRemote(host, owner, repo, ref string, enrichActionMetada
 }
 
 // newGitHubRESTClient returns a go-gh REST client bound to host (or
-// api.github.com when host is empty). Mirrors the constructor in
-// github_metadata.go so both consumers share the same auth chain.
-func newGitHubRESTClient(host string) (*api.RESTClient, error) {
+// api.github.com when host is empty).
+//
+// Auth resolution order (delegated to go-gh): GH_TOKEN → GITHUB_TOKEN
+// → `gh auth login` stored credential. When all three are absent we
+// surface an actionable error instead of silently degrading to
+// anonymous reads — GitHub's anonymous tier is rate-limited to
+// 60 req/hour, which on any non-trivial repo produces a partial run
+// with rate-limit 403s mid-scan and no clear signal to the user that
+// the output is incomplete. The require-auth contract matches the
+// GitLab path (which always demands a token) and gives a single
+// mental model across providers.
+//
+// Exposed as a package-level variable so tests can replace it with
+// an httptest-backed client (with t.Cleanup() to restore). Production
+// code never reassigns it.
+var newGitHubRESTClient = func(host string) (*api.RESTClient, error) {
+	rest, err := newGoghRESTClient(host)
+	if err == nil {
+		return rest, nil
+	}
+	if isAuthTokenMissing(err) {
+		return nil, ErrAuthRequired
+	}
+	return nil, err
+}
+
+func newGoghRESTClient(host string) (*api.RESTClient, error) {
 	if host == "" {
 		return api.DefaultRESTClient()
 	}
 	return api.NewRESTClient(api.ClientOptions{Host: host})
+}
+
+// ErrAuthRequired is the actionable error surfaced when go-gh cannot
+// resolve any auth credential. The message points the user at the
+// three supported sources and the README section that documents
+// scopes. Exported so cmd/ and control/ layers can detect the
+// sentinel via errors.Is and short-circuit their normal wrap/log
+// behaviour — a redundant logrus error log on top of cobra's "Error:"
+// prefix on top of "analysis failed:" on top of "github api client:"
+// produces a frame stack instead of the actionable message we want.
+var ErrAuthRequired = fmt.Errorf(
+	"GitHub authentication required for upstream-fetch mode (--github-url). " +
+		"Set up one of:\n" +
+		"  export GH_TOKEN=<token>          # personal token (see README §Step 3 for scope guidance)\n" +
+		"  export GITHUB_TOKEN=<token>      # auto-set in GitHub Actions runners\n" +
+		"  gh auth login                    # recommended for local dev")
+
+// isAuthTokenMissing matches the error go-gh returns when none of
+// GH_TOKEN, GITHUB_TOKEN, or `gh auth login` provides a credential.
+// Best-effort string match because go-gh does not export a sentinel.
+func isAuthTokenMissing(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "authentication token not found")
 }
 
 // remoteContentEntry is a slim subset of the GitHub Contents API
@@ -182,10 +237,3 @@ func isNotFound(err error) bool {
 	return strings.Contains(err.Error(), "HTTP 404")
 }
 
-// workflowOriginPath builds an "owner/repo/.github/workflows/x.yml"
-// origin string for findings emitted from a remote scan, so issue
-// reports can still point at where the source lives even when there
-// is no local file path.
-func workflowOriginPath(owner, repo, p string) string {
-	return path.Join(owner+"/"+repo, p)
-}

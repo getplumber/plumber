@@ -228,8 +228,10 @@ gitlab:
     #
     # Override detection: components that are imported but have their jobs
     # overridden with forbidden CI/CD keywords (script, image, rules, etc.)
-    # are flagged as overridden. They still count as imported but produce
-    # separate issues and reduce compliance to 50% for that component.
+    # are flagged as overridden. They still count as imported but produce a
+    # separate ISSUE-409 finding. Per-control compliance is binary today
+    # (any finding → 0%); inspect "Satisfied Groups" in the stats block
+    # for the granular view.
     #
     # Two ways to define requirements (use one, not both):
     #
@@ -263,8 +265,10 @@ gitlab:
     #
     # Override detection: templates that are imported but have their jobs
     # overridden with forbidden CI/CD keywords (script, image, rules, etc.)
-    # are flagged as overridden. They still count as imported but produce
-    # separate issues and reduce compliance to 50% for that template.
+    # are flagged as overridden. They still count as imported but produce a
+    # separate ISSUE-406 finding. Per-control compliance is binary today
+    # (any finding → 0%); inspect "Satisfied Groups" in the stats block
+    # for the granular view.
     #
     # Two ways to define requirements (use one, not both):
     #
@@ -570,22 +574,39 @@ github:
     # ===========================================
     # Security jobs must not be weakened
     # ===========================================
-    # Mirrors the GitLab control: jobs matching the security-scanner
-    # naming patterns must not be neutralised via continue-on-error,
-    # `if: false` overrides, or manual-dispatch-only triggers.
+    # Jobs matching the security-scanner naming patterns must not be
+    # neutralised via `continue-on-error: true` (mapped to the same
+    # IR field as GitLab's allow_failure: true) or manual-dispatch-only
+    # triggers. The pattern set covers the GitHub-native scanners
+    # users actually run — `codeql`, `dependency-review`, `trufflehog`,
+    # `gitleaks`, `osv-scanner`, plus generic fallbacks like
+    # `*scan*`, `*audit*`, `*security*` so SAST jobs named with
+    # project-specific prefixes still match.
     securityJobsMustNotBeWeakened:
       enabled: true
+      # GitHub Actions job names are namespaced as `{workflow}/{job}`,
+      # so every pattern below uses leading + trailing wildcards: a
+      # bare `codeql` would never match `myworkflow/codeql`. The
+      # canonical scanner names (codeql, trufflehog, gitleaks,
+      # osv-scanner, dependency-review) appear as `*name*` substrings;
+      # the trailing entries cover ad-hoc names like
+      # `myorg-sast-bandit` that match the wildcard suffix patterns.
       securityJobPatterns:
+        - "*codeql*"
+        - "*dependency-review*"
+        - "*trufflehog*"
+        - "*gitleaks*"
+        - "*osv-scanner*"
         - "*-sast"
-        - "secret_detection"
-        - "container_scanning"
-        - "*_dependency_scanning"
-        - "gemnasium-*"
-        - "dast"
-        - "dast_*"
-        - "license_scanning"
+        - "*-sast-*"
+        - "*-scan"
+        - "*scan*"
+        - "*-security"
+        - "*-security-*"
+        - "*-audit"
+        - "*-audit-*"
       allowFailureMustBeFalse:
-        enabled: false
+        enabled: true
       rulesMustNotBeRedefined:
         enabled: true
       whenMustNotBeManual:
@@ -644,6 +665,8 @@ github:
         - main
         - master
         - release/*
+        - production
+        - dev
       allowForcePush: false
-      codeOwnerApprovalRequired: false
+      codeOwnerApprovalRequired: true
 
