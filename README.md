@@ -36,6 +36,18 @@
 
 ---
 
+> [!IMPORTANT]
+> **🚧 v0.3.0 is in beta — first-class GitHub Actions support is being stress-tested**
+>
+> The `main` branch is preparing **v0.3.0**, which adds GitHub Actions analysis alongside GitLab and migrates `.plumber.yaml` to a per-provider schema (`gitlab.controls:` / `github.controls:`). It's currently being polished with the ambassador group and **is not yet recommended for production**.
+>
+> - **Stable, production-ready (GitLab only):** browse the project at [**v0.2.22**](https://github.com/getplumber/plumber/tree/v0.2.22) — README, install instructions, and source as shipped at that tag. 
+> - **Beta (early testers, GitLab + GitHub Actions):** [v0.3.0-beta](https://github.com/getplumber/plumber/releases). See the [test plan](docs/release-announcement-0.3.0-beta.md) and report findings on [issues](https://github.com/getplumber/plumber/issues).
+>
+> Everything below describes the **v0.3.0** surface. If you're on v0.2.x today, your setup keeps working unchanged when you upgrade — your existing `.plumber.yaml` auto-converts in memory and `plumber config migrate` upgrades it on disk when you're ready.
+
+---
+
 ## 🤔 What is Plumber?
 
 Plumber is a compliance scanner for CI/CD. It supports two providers:
