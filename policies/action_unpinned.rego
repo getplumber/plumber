@@ -12,10 +12,10 @@
 #     owners inside the repository's own trust boundary should be
 #     listed — "actions" and "github" cover the first-party GitHub-
 #     owned actions that any workflow already executes implicitly.
-#   input.config.actionsMustBePinnedByCommitSha.allowLocal = true
-#     When true, local actions (`uses: ./.github/actions/foo`) are
-#     exempt. They live in the same repository, so there is no
-#     additional trust boundary to worry about.
+# Local actions (`uses: ./.github/actions/foo`) are always exempt
+# regardless of config — they live in the same repository as the
+# caller, so there is no additional external trust boundary to
+# worry about.
 package action_unpinned
 
 import rego.v1

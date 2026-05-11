@@ -19,10 +19,15 @@ type ControlEntry struct {
 }
 
 // GitLabControls returns the catalog of GitLab compliance controls
-// in their canonical display order. Each entry is emitted regardless
-// of whether the user defined the section in .plumber.yaml — absent
-// config is treated as "disabled". The caller typically fills in the
-// findings-derived compliance by looking up FindingsByControl.
+// in their canonical display order. Only controls whose section is
+// present under `gitlab.controls.*` in the loaded .plumber.yaml end
+// up in the returned slice — a control the user explicitly removed
+// from their config is dropped from the catalog (and therefore from
+// the compliance table and per-control output). A present-but-
+// disabled control (`enabled: false`) is kept with `Skipped: true`
+// so the renderer can show it as a skipped row. The caller
+// typically fills in the findings-derived compliance by looking up
+// FindingsByControl.
 func GitLabControls(pc *configuration.PlumberConfig) []ControlEntry {
 	if pc == nil {
 		return nil
