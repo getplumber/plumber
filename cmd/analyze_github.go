@@ -226,8 +226,8 @@ func presentGitHubResult(result *control.AnalysisResult, conf *configuration.Con
 	scoreMode := showScore || showScorePoint
 	var scoreResult *control.PlumberScoreResult
 	if scoreMode {
-		counts := control.AggregateSeverityCounts(result)
-		s := control.ComputePlumberScore(counts)
+		codeCounts := control.AggregateIssueCodeCounts(result)
+		s := control.ComputePlumberScore(codeCounts)
 		scoreResult = &s
 	}
 
@@ -249,6 +249,20 @@ func presentGitHubResult(result *control.AnalysisResult, conf *configuration.Con
 		compliance = totalPct / float64(considered)
 	}
 
+	// Terminal rendering FIRST, then file-writes — mirrors the
+	// GitLab path (cmd/analyze.go) so the trailing "Results / PBOM
+	// / PBOM (CycloneDX) written to:" lines sit right before the
+	// compliance error in the terminal, where the user actually
+	// looks. Writing first would push those confirmations above the
+	// per-control output and out of the visible scrollback.
+	if printOutput {
+		printGitHubFindings(result, conf, compliance)
+		printSummaryScoreBanner(scoreResult, scoreMode)
+		if showScorePoint {
+			printScoreBreakdown(scoreResult)
+		}
+	}
+
 	if outputFile != "" {
 		if err := writeJSONToFile(result, plumberConfig, threshold, compliance, outputFile, scoreResult, scoreMode, "github"); err != nil {
 			return err
@@ -268,14 +282,6 @@ func presentGitHubResult(result *control.AnalysisResult, conf *configuration.Con
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "PBOM (CycloneDX) written to: %s\n", pbomCycloneDXFile)
-	}
-
-	if printOutput {
-		printGitHubFindings(result, conf, compliance)
-		printSummaryScoreBanner(scoreResult, scoreMode)
-		if showScorePoint {
-			printScoreBreakdown(scoreResult)
-		}
 	}
 
 	if len(result.Findings) > 0 {

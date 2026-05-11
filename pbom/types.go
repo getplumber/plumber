@@ -132,7 +132,9 @@ type Summary struct {
 	RemoteIncludes  int `json:"remoteIncludes"`
 	Templates       int `json:"templates"`
 
-	// GitHub-specific include counts. Zero on the GitLab path.
-	Actions           int `json:"actions,omitempty"`
-	ReusableWorkflows int `json:"reusableWorkflows,omitempty"`
+	// GitHub-specific include counts. Always emitted (matches the
+	// pattern the GitLab-side counters above use — zero is meaningful
+	// and gets serialised as `0`, not dropped).
+	Actions           int `json:"actions"`
+	ReusableWorkflows int `json:"reusableWorkflows"`
 }
