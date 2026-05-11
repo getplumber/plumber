@@ -31,6 +31,7 @@ type Generator struct {
 	branch           string
 	complianceData   *ImageComplianceData
 	includeOverrides *IncludeOverrideData
+	githubData       *GitHubComplianceData
 }
 
 // NewGenerator creates a new PBOM generator
@@ -66,6 +67,8 @@ func (g *Generator) Generate(
 		Project: ProjectInfo{
 			Path:      g.projectPath,
 			ID:        g.projectID,
+			Provider:  "gitlab",
+			URL:       g.gitlabURL,
 			GitLabURL: g.gitlabURL,
 			Branch:    g.branch,
 		},
@@ -223,6 +226,10 @@ func (g *Generator) calculateSummary(pbom *PBOM) Summary {
 			summary.RemoteIncludes++
 		case "template":
 			summary.Templates++
+		case "action":
+			summary.Actions++
+		case "reusableWorkflow":
+			summary.ReusableWorkflows++
 		}
 	}
 

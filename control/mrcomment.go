@@ -37,7 +37,7 @@ func ManageMergeRequestComment(
 	})
 
 	// Generate comment body
-	commentBody := generateMRComment(result, pc, compliance, threshold, score, scoreMode, scorePointMode)
+	commentBody := generateMRComment(result, pc, compliance, threshold, score, scoreMode, scorePointMode, conf.ControlsFilter, conf.SkipControlsFilter)
 
 	// List existing notes to find our comment
 	notes, err := gitlab.ListMergeRequestNotes(
@@ -130,7 +130,7 @@ func ScoreBadgeURL(letter string) string {
 
 // generateMRComment builds the Markdown body for the merge request comment
 // based on the analysis result.
-func generateMRComment(result *AnalysisResult, pc *configuration.PlumberConfig, compliance, threshold float64, score *PlumberScoreResult, scoreMode, scorePointMode bool) string {
+func generateMRComment(result *AnalysisResult, pc *configuration.PlumberConfig, compliance, threshold float64, score *PlumberScoreResult, scoreMode, scorePointMode bool, controlsFilterList, skipControlsList []string) string {
 	var b strings.Builder
 
 	// Hidden identifier so we can find this comment later
@@ -180,7 +180,9 @@ func generateMRComment(result *AnalysisResult, pc *configuration.PlumberConfig, 
 	var controls []controlEntry
 	var totalIssues int
 
-	for _, e := range GitLabControls(pc) {
+	mrEntries := GitLabControls(pc)
+	MarkSkippedByFilter(mrEntries, controlsFilterList, skipControlsList)
+	for _, e := range mrEntries {
 		count := len(findingsByControl[e.ControlName])
 		ctrlCompliance := 100.0
 		if !e.Skipped && count > 0 {

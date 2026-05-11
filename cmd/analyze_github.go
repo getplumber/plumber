@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -11,6 +12,8 @@ import (
 	"github.com/getplumber/plumber/collector"
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
+	"github.com/getplumber/plumber/internal/ir"
+	"github.com/getplumber/plumber/pbom"
 	"github.com/getplumber/plumber/utils"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -23,7 +26,7 @@ import (
 //
 // Returns an error (exit code 1) when at least one finding is reported,
 // so the command can gate CI pipelines without any threshold flag.
-func runGitHubAnalyze(cmd *cobra.Command, info *utils.GitRemoteInfo) error {
+func runGitHubAnalyze(cmd *cobra.Command, info *utils.GitRemoteInfo, controlsFilterList, skipControlsList []string) error {
 	fmt.Fprintf(os.Stderr, "Auto-detected GitHub project: %s\n", info.ProjectPath)
 
 	plumberConfig, configPath, configWarnings, err := configuration.LoadPlumberConfig(configFile)
@@ -53,6 +56,8 @@ func runGitHubAnalyze(cmd *cobra.Command, info *utils.GitRemoteInfo) error {
 	conf.GitRepoRoot = info.RepoRoot
 	conf.Branch = defaultBranch
 	conf.PlumberConfig = plumberConfig
+	conf.ControlsFilter = controlsFilterList
+	conf.SkipControlsFilter = skipControlsList
 	// Optional GHES override. Empty = default api.github.com.
 	conf.GithubAPIHost = strings.TrimPrefix(strings.TrimPrefix(githubURL, "https://"), "http://")
 	if verbose {
@@ -80,7 +85,7 @@ func runGitHubAnalyze(cmd *cobra.Command, info *utils.GitRemoteInfo) error {
 		return fmt.Errorf("analysis failed: %w", err)
 	}
 
-	return presentGitHubResult(result, conf.PlumberConfig)
+	return presentGitHubResult(result, conf)
 }
 
 // runGitHubAnalyzeRemote is the upstream-fetch counterpart of
@@ -88,7 +93,7 @@ func runGitHubAnalyze(cmd *cobra.Command, info *utils.GitRemoteInfo) error {
 // --project owner/repo [--branch Y]` when the user has not checked
 // out the target repo locally. Symmetric to the GitLab path that
 // fetches the merged CI YAML via API.
-func runGitHubAnalyzeRemote(cmd *cobra.Command, host, project, ref string) error {
+func runGitHubAnalyzeRemote(cmd *cobra.Command, host, project, ref string, controlsFilterList, skipControlsList []string) error {
 	parts := strings.SplitN(project, "/", 2)
 	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
 		return fmt.Errorf("--project must be of the form owner/repo (got %q)", project)
@@ -130,6 +135,8 @@ func runGitHubAnalyzeRemote(cmd *cobra.Command, host, project, ref string) error
 	conf.Branch = ref
 	conf.PlumberConfig = plumberConfig
 	conf.GithubAPIHost = apiHost
+	conf.ControlsFilter = controlsFilterList
+	conf.SkipControlsFilter = skipControlsList
 	if verbose {
 		conf.LogLevel = logrus.DebugLevel
 	}
@@ -156,7 +163,7 @@ func runGitHubAnalyzeRemote(cmd *cobra.Command, host, project, ref string) error
 		return fmt.Errorf("analysis failed: %w", err)
 	}
 
-	return presentGitHubResult(result, plumberConfig)
+	return presentGitHubResult(result, conf)
 }
 
 // printGitHubAuthBanner emits a one-line stderr banner naming which
@@ -214,7 +221,8 @@ func detectGitHubAuthSource() string {
 // the local-clone and remote-fetch GitHub paths: per-control
 // compliance averaging, JSON output, terminal rendering, and the
 // non-zero exit when findings are present.
-func presentGitHubResult(result *control.AnalysisResult, plumberConfig *configuration.PlumberConfig) error {
+func presentGitHubResult(result *control.AnalysisResult, conf *configuration.Configuration) error {
+	plumberConfig := conf.PlumberConfig
 	scoreMode := showScore || showScorePoint
 	var scoreResult *control.PlumberScoreResult
 	if scoreMode {
@@ -225,6 +233,7 @@ func presentGitHubResult(result *control.AnalysisResult, plumberConfig *configur
 
 	findingsByControl := control.FindingsByControl(result.Findings)
 	entries := control.GitHubControls(plumberConfig)
+	control.MarkSkippedByFilter(entries, conf.ControlsFilter, conf.SkipControlsFilter)
 	totalPct := 0.0
 	considered := 0
 	for _, e := range entries {
@@ -241,14 +250,28 @@ func presentGitHubResult(result *control.AnalysisResult, plumberConfig *configur
 	}
 
 	if outputFile != "" {
-		if err := writeJSONToFile(result, plumberConfig, threshold, compliance, outputFile, scoreResult, scoreMode); err != nil {
+		if err := writeJSONToFile(result, plumberConfig, threshold, compliance, outputFile, scoreResult, scoreMode, "github"); err != nil {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "Results written to: %s\n", outputFile)
 	}
 
+	if pbomFile != "" {
+		if err := writeGitHubPBOMToFile(result, conf.GithubAPIHost, conf.Branch, pbomFile, scoreResult, scoreMode); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "PBOM written to: %s\n", pbomFile)
+	}
+
+	if pbomCycloneDXFile != "" {
+		if err := writeGitHubPBOMCycloneDXToFile(result, conf.GithubAPIHost, conf.Branch, pbomCycloneDXFile, scoreResult, scoreMode); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "PBOM (CycloneDX) written to: %s\n", pbomCycloneDXFile)
+	}
+
 	if printOutput {
-		printGitHubFindings(result, plumberConfig, compliance)
+		printGitHubFindings(result, conf, compliance)
 		printSummaryScoreBanner(scoreResult, scoreMode)
 		if showScorePoint {
 			printScoreBreakdown(scoreResult)
@@ -261,13 +284,122 @@ func presentGitHubResult(result *control.AnalysisResult, plumberConfig *configur
 	return nil
 }
 
+// writeGitHubPBOMToFile writes a Pipeline Bill of Materials for the
+// GitHub run to filePath. Mirrors writePBOMToFile on the GitLab side
+// but builds from the normalized IR (third-party actions, reusable
+// workflows, container images) instead of GitLab collector outputs.
+func writeGitHubPBOMToFile(result *control.AnalysisResult, host, branch, filePath string, score *control.PlumberScoreResult, scoreMode bool) error {
+	if host == "" {
+		host = "github.com"
+	}
+	gen := pbom.NewGitHubGenerator(result.ProjectPath, host, branch).
+		WithGitHubComplianceData(buildGitHubPBOMCompliance(result))
+	bom := gen.GenerateFromGitHubIR(result.GitHubPipeline)
+	bom.PlumberScore = pbomPlumberScoreSummary(score, scoreMode)
+
+	file, err := os.Create(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to create PBOM file: %w", err)
+	}
+	defer func() { _ = file.Close() }()
+
+	encoder := json.NewEncoder(file)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(bom)
+}
+
+// writeGitHubPBOMCycloneDXToFile writes the same PBOM in CycloneDX
+// format. Reuses the PBOM builder so both files describe the same
+// inventory at the same instant.
+func writeGitHubPBOMCycloneDXToFile(result *control.AnalysisResult, host, branch, filePath string, score *control.PlumberScoreResult, scoreMode bool) error {
+	if host == "" {
+		host = "github.com"
+	}
+	gen := pbom.NewGitHubGenerator(result.ProjectPath, host, branch).
+		WithGitHubComplianceData(buildGitHubPBOMCompliance(result))
+	bom := gen.GenerateFromGitHubIR(result.GitHubPipeline)
+	bom.PlumberScore = pbomPlumberScoreSummary(score, scoreMode)
+
+	cdx := bom.ToCycloneDX(Version)
+
+	file, err := os.Create(filePath)
+	if err != nil {
+		return fmt.Errorf("failed to create CycloneDX PBOM file: %w", err)
+	}
+	defer func() { _ = file.Close() }()
+
+	encoder := json.NewEncoder(file)
+	encoder.SetIndent("", "  ")
+	return encoder.Encode(cdx)
+}
+
+// buildGitHubPBOMCompliance walks Findings and the IR to assemble
+// the per-image / per-action compliance lookup the PBOM generator
+// uses to enrich entries. Returns nil when there is nothing to enrich.
+func buildGitHubPBOMCompliance(result *control.AnalysisResult) *pbom.GitHubComplianceData {
+	if result == nil {
+		return nil
+	}
+	out := &pbom.GitHubComplianceData{
+		ForbiddenTagImages:   map[string]bool{},
+		ImagesPinnedByDigest: map[string]bool{},
+		UnpinnedActions:      map[string]bool{},
+	}
+	for _, f := range result.Findings {
+		switch f.Code {
+		case string(control.CodeImageForbiddenTag):
+			if v, ok := f.Data["link"].(string); ok && v != "" {
+				out.ForbiddenTagImages[v] = true
+			}
+		case string(control.CodeActionUnpinned):
+			if v, ok := f.Data["uses"].(string); ok && v != "" {
+				out.UnpinnedActions[v] = true
+			}
+		}
+	}
+	if result.GitHubPipeline != nil {
+		for _, j := range result.GitHubPipeline.Jobs {
+			if j.Image != nil && j.Image.Digest != "" {
+				out.ImagesPinnedByDigest[normalizeIRImageRef(*j.Image)] = true
+			}
+			for _, s := range j.Services {
+				if s.Digest != "" {
+					out.ImagesPinnedByDigest[normalizeIRImageRef(s)] = true
+				}
+			}
+		}
+	}
+	return out
+}
+
+// normalizeIRImageRef mirrors pbom.normalizeImageRef so the keys we
+// stamp into the compliance lookup match the ones the PBOM emits.
+// Kept private to cmd/ to avoid leaking pbom internals.
+func normalizeIRImageRef(img ir.Image) string {
+	if img.Name == "" {
+		return ""
+	}
+	ref := img.Name
+	if img.Registry != "" && !strings.HasPrefix(ref, img.Registry+"/") {
+		ref = img.Registry + "/" + ref
+	}
+	if img.Digest != "" {
+		return ref + "@" + img.Digest
+	}
+	if img.Tag != "" {
+		return ref + ":" + img.Tag
+	}
+	return ref
+}
+
 // printGitHubFindings writes the GitHub analyze output in the same
 // visual style as the GitLab path: project header, a per-rule detail
 // block for each rule that produced findings, a controls summary
 // table, a compliance table with a total line. Detail rendering is
 // delegated to the shared renderFindingGroups so the visual contract
 // is identical across providers.
-func printGitHubFindings(result *control.AnalysisResult, pc *configuration.PlumberConfig, overallCompliance float64) {
+func printGitHubFindings(result *control.AnalysisResult, conf *configuration.Configuration, overallCompliance float64) {
+	pc := conf.PlumberConfig
 	fmt.Printf("\n%s %s\n\n", styleTitle.Render("Project:"), result.ProjectPath)
 
 	// "No workflows" is informational, not a hard short-circuit:
@@ -288,6 +420,7 @@ func printGitHubFindings(result *control.AnalysisResult, pc *configuration.Plumb
 	// not just the ones with findings.
 	findingsByControl := control.FindingsByControl(result.Findings)
 	entries := control.GitHubControls(pc)
+	control.MarkSkippedByFilter(entries, conf.ControlsFilter, conf.SkipControlsFilter)
 	groups := make([]findingGroup, 0, len(entries))
 	summaries := make([]controlSummary, 0, len(entries))
 	for _, e := range entries {

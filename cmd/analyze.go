@@ -156,6 +156,23 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("--gitlab-url and --github-url are mutually exclusive; pass one to select the provider explicitly")
 	}
 
+	// Validate + parse --controls / --skip-controls before any provider
+	// dispatch — both providers honour the filter, so the lists must
+	// be available no matter which path runs. (Previously these were
+	// computed only on the GitLab branch, leaving the GitHub paths
+	// blind to the flags.)
+	if controlsFilter != "" && skipControls != "" {
+		return fmt.Errorf("--controls and --skip-controls cannot be used together")
+	}
+	controlsFilterList, err := parseControlsFilter(controlsFilter)
+	if err != nil {
+		return err
+	}
+	skipControlsList, err := parseControlsFilter(skipControls)
+	if err != nil {
+		return err
+	}
+
 	// Explicit GitHub remote-fetch: when both --github-url and
 	// --project are set, the user wants to scan an upstream GitHub
 	// project they have not checked out locally. Symmetric to
@@ -167,7 +184,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		if branchFromFlag {
 			ref = defaultBranch
 		}
-		return runGitHubAnalyzeRemote(cmd, githubURL, projectPath, ref)
+		return runGitHubAnalyzeRemote(cmd, githubURL, projectPath, ref, controlsFilterList, skipControlsList)
 	}
 
 	var gitRepoRoot string
@@ -189,7 +206,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		// (cross-checks, demos, scripted regression runs). Only
 		// dispatch to the GitHub path when the caller did not override.
 		if remoteInfo.Provider == "github" && !gitlabURLFromFlag && !projectFromFlag {
-			return runGitHubAnalyze(cmd, remoteInfo)
+			return runGitHubAnalyze(cmd, remoteInfo, controlsFilterList, skipControlsList)
 		}
 
 		if !gitlabURLFromFlag {
@@ -219,23 +236,14 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	if threshold < 0 || threshold > 100 {
 		return fmt.Errorf("threshold must be between 0 and 100")
 	}
-	if controlsFilter != "" && skipControls != "" {
-		return fmt.Errorf("--controls and --skip-controls cannot be used together")
-	}
 
 	// --score-point implies score output; if both --score and --score-point are set, points mode wins for breakdown/MR text.
 	scoreMode := showScore || showScorePoint
 	scorePointMode := showScorePoint
 
-	controlsFilterList, err := parseControlsFilter(controlsFilter)
-	if err != nil {
-		return err
-	}
-
-	skipControlsList, err := parseControlsFilter(skipControls)
-	if err != nil {
-		return err
-	}
+	// controlsFilterList / skipControlsList were parsed earlier so the
+	// GitHub dispatch sees them too — see the "Validate + parse" block
+	// above the dispatch.
 
 	// Get token from environment variable (required)
 	gitlabToken := os.Getenv("GITLAB_TOKEN")
@@ -340,7 +348,9 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 			}
 		}
 		passed := 0
-		for _, e := range control.GitLabControls(conf.PlumberConfig) {
+		entries := control.GitLabControls(conf.PlumberConfig)
+		control.MarkSkippedByFilter(entries, conf.ControlsFilter, conf.SkipControlsFilter)
+		for _, e := range entries {
 			if e.Skipped {
 				continue
 			}
@@ -363,14 +373,14 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 
 	// Print text output to stdout if enabled
 	if printOutput {
-		if err := outputText(result, conf.PlumberConfig, threshold, compliance, controlCount, scoreResult, scoreMode, scorePointMode); err != nil {
+		if err := outputText(result, conf.PlumberConfig, threshold, compliance, controlCount, scoreResult, scoreMode, scorePointMode, conf.ControlsFilter, conf.SkipControlsFilter); err != nil {
 			return err
 		}
 	}
 
 	// Write JSON to file if specified
 	if outputFile != "" {
-		if err := writeJSONToFile(result, conf.PlumberConfig, threshold, compliance, outputFile, scoreResult, scoreMode); err != nil {
+		if err := writeJSONToFile(result, conf.PlumberConfig, threshold, compliance, outputFile, scoreResult, scoreMode, "gitlab"); err != nil {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "Results written to: %s\n", outputFile)
@@ -518,7 +528,7 @@ func parseControlsFilter(raw string) ([]string, error) {
 	return controls, nil
 }
 
-func writeJSONToFile(result *control.AnalysisResult, pc *configuration.PlumberConfig, threshold, compliance float64, filePath string, score *control.PlumberScoreResult, scoreMode bool) error {
+func writeJSONToFile(result *control.AnalysisResult, pc *configuration.PlumberConfig, threshold, compliance float64, filePath string, score *control.PlumberScoreResult, scoreMode bool, provider string) error {
 	// Marshal AnalysisResult into a generic map so the per-control
 	// `*Result` legacy blocks can sit alongside its existing fields
 	// without forcing every consumer to follow the dev's flat-findings
@@ -548,22 +558,46 @@ func writeJSONToFile(result *control.AnalysisResult, pc *configuration.PlumberCo
 	if partial := partialControlEntries(result); len(partial) > 0 {
 		output["partialControls"] = partial
 	}
-	for k, v := range legacyResultsByName(result, pc) {
+	for k, v := range legacyResultsByName(result, pc, provider) {
 		output[k] = v
 	}
-	// Drop the flat Rego findings list from the file ON THE GITLAB
-	// PATH: legacy GitLab consumers parse the per-control *Result
-	// blocks (issues/metrics/compliance) and don't need the
-	// duplicated flat list. ON THE GITHUB PATH we KEEP `findings`
-	// because five GitHub-only controls (action pinning, dangerous
-	// triggers, declare permissions, template injection, reusable
-	// secrets) have no *Result block — without the flat array their
-	// findings are silently lost from the structured artefact.
-	// Detection: GitHubStats is non-nil iff a GitHub run produced
-	// the result (set in RunGitHubAnalysis / RunGitHubAnalysisRemote).
-	if result.GitHubStats == nil {
-		delete(output, "findings")
+
+	// Top-level aggregate blocks (pipelineOriginMetrics +
+	// pipelineImageMetrics) are populated by the GitLab task path
+	// and serialised straight from AnalysisResult. The GitHub path
+	// doesn't fill those fields, so inject GitHub-shaped equivalents
+	// here from result.GitHubStats — same top-level key slots, GitHub-
+	// native counters ("originAction" / "originReusableWorkflow"
+	// instead of "originComponent" / "originTemplate"). Keeps the
+	// "scroll to the top of analysis.json" experience symmetric
+	// across providers.
+	if provider == "github" && result.GitHubStats != nil {
+		s := result.GitHubStats
+		output["pipelineOriginMetrics"] = map[string]any{
+			"jobTotal":                             s.JobsTotal,
+			"workflowsTotal":                       s.WorkflowsTotal,
+			"originAction":                         s.ActionRefsTotal,
+			"originActionUnpinned":                 s.ActionRefsUnpinned,
+			"originActionTrustedExempt":            s.ActionRefsExempt,
+			"originReusableWorkflow":               s.ReusableCalls,
+			"originReusableWorkflowSecretsInherit": s.ReusableCallsSecretsInherit,
+			"originTotal":                          s.ActionRefsTotal + s.ReusableCalls,
+		}
+		output["pipelineImageMetrics"] = map[string]any{
+			"total": s.ImagesTotal,
+		}
 	}
+
+	// Drop the flat Rego findings list from the file on both
+	// providers. Legacy GitLab consumers parse the per-control
+	// *Result blocks (issues/metrics/compliance) and never read
+	// `findings`. The GitHub side now ships per-control *Result
+	// blocks for every shipping control (the 4 cross-provider ones
+	// + 5 GitHub-only added in this session), so the flat array is
+	// no longer needed as an escape hatch — keeping it would just
+	// duplicate every issue between the top level and the *Result
+	// blocks. Cross-provider structural parity > flat-jq convenience.
+	delete(output, "findings")
 
 	// Encode with intentional key order so readers see project/context first,
 	// scoring next, then per-control *Result blocks (not Go map lexical order).
@@ -1033,7 +1067,7 @@ func printBanner() {
 	)
 }
 
-func outputText(result *control.AnalysisResult, pc *configuration.PlumberConfig, threshold, compliance float64, controlCount int, score *control.PlumberScoreResult, scoreMode, scorePointMode bool) error {
+func outputText(result *control.AnalysisResult, pc *configuration.PlumberConfig, threshold, compliance float64, controlCount int, score *control.PlumberScoreResult, scoreMode, scorePointMode bool, controlsFilterList, skipControlsList []string) error {
 	// Collect control summaries for tables
 	var controls []controlSummary
 
@@ -1072,6 +1106,7 @@ func outputText(result *control.AnalysisResult, pc *configuration.PlumberConfig,
 	// (shared with the GitHub analyze path).
 	findingsByControl := control.FindingsByControl(result.Findings)
 	entries := control.GitLabControls(pc)
+	control.MarkSkippedByFilter(entries, controlsFilterList, skipControlsList)
 	groups := make([]findingGroup, 0, len(entries))
 	for _, e := range entries {
 		findings := findingsByControl[e.ControlName]

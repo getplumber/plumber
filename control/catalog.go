@@ -298,7 +298,7 @@ func DisabledControlNames(c *configuration.ControlsConfig) map[string]bool {
 // ControlName are kept (defensive: better surfaced than silently
 // swallowed). Pass the provider name ("gitlab" or "github") and the
 // matching ControlsConfig (use pc.ControlsFor(provider)).
-func FilterFindingsByEnabledControls(findings []opaengine.Finding, provider string, c *configuration.ControlsConfig) []opaengine.Finding {
+func FilterFindingsByEnabledControls(findings []opaengine.Finding, provider string, c *configuration.ControlsConfig, includeOnly, skip []string) []opaengine.Finding {
 	disabled := DisabledControlNames(c)
 	out := make([]opaengine.Finding, 0, len(findings))
 	for _, f := range findings {
@@ -313,9 +313,58 @@ func FilterFindingsByEnabledControls(findings []opaengine.Finding, provider stri
 		if disabled[info.ControlName] {
 			continue
 		}
+		if !ControlPassesFilter(info.ControlName, includeOnly, skip) {
+			continue
+		}
 		out = append(out, f)
 	}
 	return out
+}
+
+// ControlPassesFilter applies the --controls / --skip-controls semantics
+// for one control name. When includeOnly is non-empty, only listed
+// controls pass; skip removes controls from the survivor set. The two
+// flags are mutually exclusive at the CLI level (cmd/analyze.go), but
+// this helper handles either or both for callers that don't enforce
+// that.
+func ControlPassesFilter(name string, includeOnly, skip []string) bool {
+	if len(includeOnly) > 0 {
+		found := false
+		for _, n := range includeOnly {
+			if n == name {
+				found = true
+				break
+			}
+		}
+		if !found {
+			return false
+		}
+	}
+	for _, n := range skip {
+		if n == name {
+			return false
+		}
+	}
+	return true
+}
+
+// MarkSkippedByFilter mutates entries in place, setting Skipped=true
+// for any control filtered out by --controls / --skip-controls. Called
+// from the renderer so the compliance table shows filtered controls as
+// "skipped" instead of pretending they ran with 100 % compliance.
+// Already-skipped entries (disabled in .plumber.yaml) stay skipped.
+func MarkSkippedByFilter(entries []ControlEntry, includeOnly, skip []string) {
+	if len(includeOnly) == 0 && len(skip) == 0 {
+		return
+	}
+	for i := range entries {
+		if entries[i].Skipped {
+			continue
+		}
+		if !ControlPassesFilter(entries[i].ControlName, includeOnly, skip) {
+			entries[i].Skipped = true
+		}
+	}
 }
 
 // ApplyFindings fills in Compliance for each catalog entry based on

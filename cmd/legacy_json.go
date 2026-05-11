@@ -39,20 +39,32 @@ func _minAccessLevelGitlab(levels []gitlab.BranchProtectionAccessLevel) int {
 // Returned map keys match the legacy JSON field names
 // (imageForbiddenTagsResult, imageAuthorizedSourcesResult, …) so the
 // caller can splice them straight into the output struct.
-func legacyResultsByName(result *control.AnalysisResult, pc *configuration.PlumberConfig) map[string]any {
+func legacyResultsByName(result *control.AnalysisResult, pc *configuration.PlumberConfig, provider string) map[string]any {
 	if result == nil || pc == nil {
 		return nil
 	}
 	out := map[string]any{}
 	findingsByControl := control.FindingsByControl(result.Findings)
 
-	for _, e := range control.GitLabControls(pc) {
-		fs := findingsByControl[e.ControlName]
-		key, block := buildLegacyResult(e, result, pc, fs)
-		if key == "" {
-			continue
+	switch provider {
+	case "github":
+		for _, e := range control.GitHubControls(pc) {
+			fs := findingsByControl[e.ControlName]
+			key, block := buildLegacyResultGitHub(e, result, pc, fs)
+			if key == "" {
+				continue
+			}
+			out[key] = block
 		}
-		out[key] = block
+	default:
+		for _, e := range control.GitLabControls(pc) {
+			fs := findingsByControl[e.ControlName]
+			key, block := buildLegacyResult(e, result, pc, fs)
+			if key == "" {
+				continue
+			}
+			out[key] = block
+		}
 	}
 	return out
 }

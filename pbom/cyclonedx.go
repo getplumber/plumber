@@ -74,14 +74,11 @@ func (p *PBOM) ToCycloneDX(plumberVersion string) *CycloneDX {
 			},
 			// Add the project as the main component
 			Component: &CycloneDXComponent{
-				Type:    "application",
-				BOMRef:  fmt.Sprintf("project:%s", p.Project.Path),
-				Name:    p.Project.Path,
-				Version: p.Project.Branch,
-				Properties: []CycloneDXProperty{
-					{Name: "plumber:gitlab-url", Value: p.Project.GitLabURL},
-					{Name: "plumber:project-id", Value: fmt.Sprintf("%d", p.Project.ID)},
-				},
+				Type:       "application",
+				BOMRef:     fmt.Sprintf("project:%s", p.Project.Path),
+				Name:       p.Project.Path,
+				Version:    p.Project.Branch,
+				Properties: projectComponentProperties(p.Project),
 			},
 		},
 		Components: make([]CycloneDXComponent, 0, len(p.ContainerImages)+len(p.Includes)),
@@ -227,8 +224,9 @@ func buildDockerPurl(img ContainerImage) string {
 	return purl
 }
 
-// buildIncludePurl creates a Package URL for a GitLab include
-// Using pkg:generic since GitLab includes aren't a standard purl type
+// buildIncludePurl creates a Package URL for a GitLab include or
+// GitHub action. Using pkg:generic for types without a standard
+// purl mapping.
 func buildIncludePurl(inc Include) string {
 	// Components use a specific format
 	if inc.Type == "component" {
@@ -242,6 +240,27 @@ func buildIncludePurl(inc Include) string {
 	// For project includes
 	if inc.Type == "project" && inc.Project != "" {
 		purl := fmt.Sprintf("pkg:gitlab/%s/%s", inc.Project, inc.Location)
+		if inc.Version != "" {
+			purl += "@" + inc.Version
+		}
+		return purl
+	}
+
+	// GitHub actions: pkg:github/owner/repo@ref. Per the purl spec,
+	// the GitHub type points at git refs hosted on github.com.
+	if inc.Type == "action" {
+		purl := fmt.Sprintf("pkg:github/%s", inc.Location)
+		if inc.Version != "" {
+			purl += "@" + inc.Version
+		}
+		return purl
+	}
+
+	// Reusable workflows live inside another GitHub repo too —
+	// `owner/repo/.github/workflows/x.yml`. Same purl shape, the path
+	// after `owner/repo/` is preserved in Location.
+	if inc.Type == "reusableWorkflow" {
+		purl := fmt.Sprintf("pkg:github/%s", sanitizeForPurl(inc.Location))
 		if inc.Version != "" {
 			purl += "@" + inc.Version
 		}
@@ -269,9 +288,35 @@ func mapIncludeTypeToCycloneDX(includeType string) string {
 		return "file"
 	case "project":
 		return "file"
+	case "action":
+		return "library" // GitHub Actions are reusable third-party libraries
+	case "reusableWorkflow":
+		return "library" // Reusable workflow files are reusable pipeline libraries
 	default:
 		return "data"
 	}
+}
+
+// projectComponentProperties builds the project-level CycloneDX
+// properties. On GitLab keep the historical "plumber:gitlab-url" key
+// so existing consumers (snapshots, dashboards) don't break; on
+// GitHub use a neutral "plumber:url" + "plumber:provider".
+func projectComponentProperties(p ProjectInfo) []CycloneDXProperty {
+	props := []CycloneDXProperty{}
+	switch p.Provider {
+	case "github":
+		props = append(props,
+			CycloneDXProperty{Name: "plumber:provider", Value: "github"},
+			CycloneDXProperty{Name: "plumber:url", Value: p.URL},
+		)
+	default:
+		// "gitlab" or empty (older callers): match v0.2.x byte-for-byte.
+		props = append(props,
+			CycloneDXProperty{Name: "plumber:gitlab-url", Value: p.GitLabURL},
+			CycloneDXProperty{Name: "plumber:project-id", Value: fmt.Sprintf("%d", p.ID)},
+		)
+	}
+	return props
 }
 
 // sanitizeForPurl cleans a string for use in a Package URL

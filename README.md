@@ -5,8 +5,8 @@
 
 
 <p align="center">
-  <b>CI/CD compliance scanner for GitLab pipelines</b><br/>
-  <sub>Also scans GitHub Actions workflows locally when <code>origin</code> is GitHub (no API token).</sub>
+  <b>CI/CD compliance scanner for GitLab and GitHub Actions pipelines</b><br/>
+  <sub>One CLI, one <code>.plumber.yaml</code>, one Rego engine — scoped per provider. Reads <code>.gitlab-ci.yml</code> via the GitLab API, and <code>.github/workflows/*.{yml,yaml}</code> locally or via the GitHub API.</sub>
 </p>
 <p align="center">
   <a href="https://securityscorecards.dev/viewer/?uri=github.com/getplumber/plumber"><img src="https://img.shields.io/ossf-scorecard/github.com/getplumber/plumber?label=OpenSSF%20Scorecard&style=for-the-badge&labelColor=2b2d42&color=4a90d9" alt="OpenSSF Scorecard"></a>
@@ -38,21 +38,43 @@
 
 ## 🤔 What is Plumber?
 
-Plumber is a compliance scanner for CI/CD. On **GitLab**, it reads your `.gitlab-ci.yml` (and related includes) and repository settings via the API. On **GitHub**, when you run it from a clone whose `origin` points at GitHub and you do not pass `--gitlab-url` / `--project`, it scans **local** `.github/workflows/*.{yml,yaml}` with the same Rego policy engine (no GitHub API call, no token). It checks for issues like:
+Plumber is a compliance scanner for CI/CD. It supports two providers:
 
-- Container images using mutable tags (`latest`, `dev`)
-- Container images from untrusted registries
-- Unprotected branches
-- Hardcoded jobs not from external includes/components
-- Outdated includes/templates
-- Forbidden version patterns (e.g., `main`, `HEAD`)
-- Missing required components or templates
+- **GitLab CI** — reads `.gitlab-ci.yml` (and resolved includes) plus repository settings via the GitLab API.
+- **GitHub Actions** — reads `.github/workflows/*.{yml,yaml}` either from a local clone (offline-first) or via the GitHub API in `--github-url` mode (no clone required).
+
+Both providers share **one** Rego policy engine and a **single** `.plumber.yaml` config (per-provider sections). Provider is auto-detected from your git `origin`; pass `--gitlab-url` / `--github-url` to override.
+
+**Examples of what Plumber catches**
+
+GitLab pipelines (14 controls - see the [Gitlab CI controls](#gitlab-ci-controls) section):
+- Container images using mutable tags (`latest`, `dev`) or from untrusted registries
+- Unprotected branches; missing force-push / code-owner-approval rules
+- Hardcoded jobs (not from reusable components / templates), outdated or forbidden include refs (`main`, `HEAD`)
+- Missing required components / templates
 - Debug trace variables (`CI_DEBUG_TRACE`) leaking secrets in job logs
-- Unsafe variable injection via `eval`/`sh -c`/`bash -c` (OWASP CICD-SEC-1)
-- Weakened security jobs (`allow_failure: true`, `when: manual`, `rules: [{when: never}]`) on SAST, Secret Detection, and other scanners (OWASP CICD-SEC-4)
-- Docker-in-Docker (dind) services enabling container escape on shared runners
+- Unsafe variable injection via `eval` / `sh -c` (OWASP CICD-SEC-1)
+- Weakened security jobs — `allow_failure: true`, `when: manual`, `rules: [{when: never}]` on SAST, Secret Detection, etc. (OWASP CICD-SEC-4)
+- Docker-in-Docker services enabling container escape on shared runners
 
-**How does it work?** On GitLab, Plumber connects via API, analyzes your pipeline configuration, and reports issues. You define what's allowed in `.plumber.yaml`. When your local clone is the analyzed project, Plumber can use your **local** `.gitlab-ci.yml` (or a [custom path](#custom-ci-configuration-file-path)) so you can validate before push. On the **GitHub local** path, analysis is offline from workflow files only; compliance is **binary** (any finding fails the run) until per-control percentage parity lands; `--threshold` does not gate pass/fail yet. **`GITLAB_TOKEN` is only required for the GitLab API path.** To analyze GitLab while standing in a GitHub clone, pass `--gitlab-url` and `--project` explicitly (that forces the GitLab analyzer).
+GitHub Actions workflows (9 controls — see the [GitHub Actions controls](#github-actions-controls) section):
+- Third-party actions referenced by tag/branch instead of a 40-char SHA (CVE-2025-30066-class supply-chain risk)
+- Container images using mutable tags (`latest`, …)
+- Default / matched branches lacking a protection rule (and, with admin scope, missing force-push / code-owner-approval rules)
+- Workflows missing an explicit `permissions:` block (defaults to repo-wide `GITHUB_TOKEN`)
+- Dangerous triggers (`pull_request_target`, `workflow_run`, …) running with base-repo secrets
+- Reusable workflow calls using `secrets: inherit` instead of an explicit map
+- Template-injection sinks like `${{ github.event.* }}` interpolated into `run:` shells
+- Weakened security scanners (`continue-on-error: true` on CodeQL, TruffleHog, Gitleaks, OSV-Scanner, etc.)
+- Docker-in-Docker services on GitHub-hosted runners
+
+**How does it work?** Plumber connects to your provider (or reads workflow files from disk), normalizes the pipeline into a provider-agnostic IR, evaluates Rego policies against it, and reports findings. You define what's allowed in `.plumber.yaml`. When your local clone matches the analyzed project, GitLab analysis can use your local `.gitlab-ci.yml` (or a [custom path](#custom-ci-configuration-file-path)) so you can validate before push; GitHub analysis reads `.github/workflows/` from your local repo by default and only hits the GitHub API for repo-level data (branch protection, etc.) when scope allows. Both paths report per-control compliance percentages and honor `--threshold` for exit-code gating.
+
+**Token requirements summary:**
+- `GITLAB_TOKEN` is required for any GitLab analysis.
+- GitHub analysis is **soft-degrade in local-clone mode** (workflow-content controls run without a token; repo-level controls silently abstain) and **token-required in upstream-fetch mode** (`--github-url`). See [Step 3: Authenticate](#step-3-authenticate) for scope guidance.
+
+To analyze GitLab from a GitHub clone (or vice versa), pass the explicit URL flag (`--gitlab-url …` or `--github-url …`) — that forces the analyzer regardless of `origin`.
 
 <p align="center">
   <img src="assets/component.gif" alt="Plumber Demo" width="700">
@@ -62,10 +84,12 @@ Plumber is a compliance scanner for CI/CD. On **GitLab**, it reads your `.gitlab
 
 Choose **one** of these methods. You don't need both:
 
-| Method | Best for | How it works |
-|--------|----------|--------------|
-| **[CLI](#option-1-cli)** | Quick evaluation, local testing, one-off scans | Install binary and run from terminal |
-| **[GitLab CI Component](#option-2-gitlab-ci-component)** | Automated checks on every pipeline run | Add 2 lines to your `.gitlab-ci.yml` |
+| Method | Providers | Best for | How it works |
+|--------|-----------|----------|--------------|
+| **[CLI](#option-1-cli)** | GitLab + GitHub | Quick evaluation, local testing, one-off scans, security-team audits across many repos | Install the binary and run from terminal (or a GitHub Actions / GitLab CI step) |
+| **[GitLab CI Component](#option-2-gitlab-ci-component)** | GitLab only | Automated checks on every GitLab pipeline run | Add 2 lines to your `.gitlab-ci.yml` |
+
+> **GitHub Actions integration:** a turnkey reusable workflow / composite action mirroring the GitLab CI Component is on the roadmap. Today, run `./plumber analyze` from a `uses: actions/checkout@<sha>` + `run: ./plumber analyze` step (see [the example below](#trying-it-on-this-repo)). PR comments and repo badges on GitHub are not implemented yet — see the [parity matrix](#flags-that-dont-apply-on-github-yet).
 
 ---
 
@@ -75,8 +99,10 @@ Choose **one** of these methods. You don't need both:
 - [CLI](#option-1-cli)
 - [GitLab CI Component](#option-2-gitlab-ci-component)
 - [Configuration](#%EF%B8%8F-configuration)
-  - [Multi-provider configuration (roadmap)](#multi-provider-configuration-roadmap)
+  - [Multi-provider configuration](#multi-provider-configuration)
   - [Available Controls](#available-controls)
+    - [GitLab CI controls](#gitlab-ci-controls)
+    - [GitHub Actions controls](#github-actions-controls)
 - [Artifacts & Outputs](#-artifacts--outputs)
   - [JSON Report](#json-report)
   - [Pipeline Bill of Materials (PBOM)](#pipeline-bill-of-materials-pbom)
@@ -275,12 +301,10 @@ A handful of flags are GitLab-only today. On the GitHub path they are silently i
 |---|---|
 | `--mr-comment` | not implemented (no GitHub PR comment integration yet) |
 | `--badge` | not implemented (no GitHub repo badge integration yet) |
-| `--pbom` | not generated on the GitHub path yet |
-| `--pbom-cyclonedx` | not generated on the GitHub path yet |
 | `--ci-config-path` | N/A — GitHub workflows always live under `.github/workflows/` |
 | `--gitlab-url` | N/A — pass `--github-url` instead, or rely on git-remote auto-detection |
 
-Flags that work identically on both providers: `--config`, `--output` (JSON findings), `--threshold`, `--print`, `--score`, `--score-point`, `--controls`, `--skip-controls`, `--fail-warnings`, `--branch`, `--project` (provider chosen by which URL flag is set).
+Flags that work identically on both providers: `--config`, `--output` (JSON findings), `--pbom` (PBOM JSON; GitHub inventory: container images, third-party actions, reusable workflows), `--pbom-cyclonedx` (CycloneDX 1.5), `--threshold`, `--print`, `--score`, `--score-point`, `--controls`, `--skip-controls`, `--fail-warnings`, `--branch`, `--project` (provider chosen by which URL flag is set).
 
 #### Bench: which GitHub controls don't run yet
 
@@ -316,7 +340,7 @@ You can disable the API enrichment to speed up local iteration:
 PLUMBER_DISABLE_GITHUB_API=1 ./plumber analyze
 ```
 
-Both runs read `.plumber.yaml` from the repo root and write findings to stdout. Add `--output analysis.json` to inspect the JSON artifact (PBOM/CycloneDX aren't wired on the GitHub path yet — see the asymmetry table above).
+Both runs read `.plumber.yaml` from the repo root and write findings to stdout. Add `--output analysis.json --pbom pbom.json --pbom-cyclonedx pbom-cyclone.json` to inspect every artifact at once — all three are produced on the GitHub path with the same shape as on GitLab (see the asymmetry table for what remains GitLab-only).
 
 #### Local CI Configuration
 
@@ -472,37 +496,78 @@ This creates `.plumber.yaml` with sensible [defaults](./.plumber.yaml). Customiz
 
 ### Multi-provider configuration
 
-Plumber uses a **single** root file (`.plumber.yaml`) with per-provider sections. Same control name, different values per platform — the trusted-registry list on GitLab is `registry.gitlab.com/...`, on GitHub it's `ghcr.io/<org>/...`, and so on.
+Plumber uses a **single** root file (`.plumber.yaml`) with per-provider sections. Same control name, different values per platform — the trusted-registry list on GitLab is `registry.gitlab.com/...`, on GitHub it's `ghcr.io/<org>/...`, action-pinning rules apply on GitHub but have no GitLab counterpart, etc.
+
+A realistic monorepo config that scans both providers:
 
 ```yaml
 version: "2.0"
 
 gitlab:
   controls:
+    containerImageMustNotUseForbiddenTags:
+      enabled: true
+      tags: [latest, dev, main, master]
     containerImageMustComeFromAuthorizedSources:
       enabled: true
       trustedUrls:
         - registry.gitlab.com/security-products/*
+        - $CI_REGISTRY_IMAGE:*
+    branchMustBeProtected:
+      enabled: true
+      defaultMustBeProtected: true
+      namePatterns: [main, release/*]
+      allowForcePush: false
+      codeOwnerApprovalRequired: true
+      minMergeAccessLevel: 30   # Developer
+      minPushAccessLevel: 40    # Maintainer
+    securityJobsMustNotBeWeakened:
+      enabled: true
 
 github:
   controls:
     actionsMustBePinnedByCommitSha:
       enabled: true
       trustedOwners: [actions, github]
+    containerImageMustNotUseForbiddenTags:
+      enabled: true
+      tags: [latest, dev, main, master]
+      containerImagesMustBePinnedByDigest: true
+    branchMustBeProtected:
+      enabled: true
+      defaultMustBeProtected: true
+      namePatterns: [main, release/*]
+      allowForcePush: false
+      codeOwnerApprovalRequired: true
+      # GitLab access-level integers don't apply on GitHub (different model);
+      # protection presence + force-push + code-owner rules are evaluated.
+    workflowsMustDeclarePermissions:
+      enabled: true
+    workflowMustNotUseDangerousTriggers:
+      enabled: true
+    workflowMustNotInjectUserInputInScripts:
+      enabled: true
+    reusableWorkflowsMustNotInheritSecrets:
+      enabled: true
+    securityJobsMustNotBeWeakened:
+      enabled: true
+      securityJobPatterns: ["*codeql*", "*trufflehog*", "*gitleaks*", "*-sast", "*scan*"]
 ```
 
-**Sharing values across providers** uses standard YAML anchors — no Plumber-specific syntax:
+**Sharing values across providers** uses standard YAML anchors — no Plumber-specific syntax. Useful when a control's knobs are genuinely identical across both:
 
 ```yaml
 gitlab:
   controls:
-    pipelineMustNotEnableDebugTrace: &debug_trace
+    pipelineMustNotUseDockerInDocker: &dind
       enabled: true
-      forbiddenVariables: [CI_DEBUG_TRACE, CI_DEBUG_SERVICES]
+      detectInsecureDaemon: true
 github:
   controls:
-    pipelineMustNotEnableDebugTrace: *debug_trace
+    pipelineMustNotUseDockerInDocker: *dind
 ```
+
+> **Provider scoping:** a control listed under `gitlab.controls.*` runs only on GitLab analyses; under `github.controls.*` only on GitHub analyses. Cross-provider control names (e.g. `branchMustBeProtected`) are listed under both sections when you want them on both. The validator (`plumber config validate`) flags controls placed under the wrong provider section with a typo suggestion.
 
 #### Upgrading from the legacy flat schema (v1 → v2)
 
@@ -517,7 +582,11 @@ The migration preserves comments, wraps `controls:` under `gitlab.controls:`, an
 
 ### Available Controls
 
-Plumber documents **14** primary GitLab-oriented controls in this section (the defaults in [`.plumber.yaml`](./.plumber.yaml)); Rego also enforces **additional GitHub-specific issue codes** when you run the local GitHub Actions path. See the codebase issue registry and [docs](docs/) for the full code list. Each can be enabled/disabled and customized in [.plumber.yaml](.plumber.yaml):
+Plumber ships **14 GitLab CI controls** and **9 GitHub Actions controls** today. They are configured per-provider in [`.plumber.yaml`](./.plumber.yaml) and can be enabled / disabled / tuned independently. The Rego engine also includes ~50 additional GitHub policies on the dev-side bench (see [`configuration/registry.go`](configuration/registry.go) → `benchedControls`); benched policies are excluded at engine load time and don't affect output until promoted.
+
+#### GitLab CI controls
+
+Each can be enabled/disabled and customized in [.plumber.yaml](.plumber.yaml):
 
 <details>
 <summary><b>1. Container images must not use forbidden tags</b></summary>
@@ -896,6 +965,205 @@ Consider using [Kaniko](https://github.com/GoogleContainerTools/kaniko) or [Buil
 
 </details>
 
+#### GitHub Actions controls
+
+Nine controls ship default-on for GitHub. Four are cross-provider (`branchMustBeProtected`, `containerImageMustNotUseForbiddenTags`, `pipelineMustNotUseDockerInDocker`, `securityJobsMustNotBeWeakened`) — same control name as GitLab, GitHub-specific values; configure them under `github.controls.*`.
+
+<details>
+<summary><b>1. Actions must be pinned by commit SHA</b></summary>
+
+Flags workflow steps whose `uses:` references a third-party action by tag or branch (`actions/checkout@v4`) instead of by 40-character commit SHA. Mutable refs can be reassigned by the action's maintainer — or by an attacker who compromises the action's repository — to point at arbitrary code that then runs inside your workflow with its secrets. This is the vector behind the March 2025 [tj-actions/changed-files compromise (CVE-2025-30066)](https://github.com/tj-actions/changed-files/issues/2464). Pair with Dependabot (`version-update-strategy: sha-and-version`) to keep pins fresh.
+
+The `trustedOwners` list exempts owners already inside your trust boundary. The defaults exempt first-party (`actions/*`, `github/*`) so the initial signal stays focused on third-party surface.
+
+```yaml
+github:
+  controls:
+    actionsMustBePinnedByCommitSha:
+      enabled: true
+      trustedOwners:
+        - actions
+        - github
+```
+
+Issue code: ISSUE-104.
+
+</details>
+
+<details>
+<summary><b>2. Container images must not use forbidden tags</b> (cross-provider)</summary>
+
+Same control as GitLab; values live under `github.controls.*`. Pinning by digest protects against tag-retag supply-chain attacks; the forbidden-tag list catches mutable-reference patterns.
+
+```yaml
+github:
+  controls:
+    containerImageMustNotUseForbiddenTags:
+      enabled: true
+      tags: [latest, dev, development, staging, main, master]
+      containerImagesMustBePinnedByDigest: true
+```
+
+Issue codes: ISSUE-102, ISSUE-103.
+
+</details>
+
+<details>
+<summary><b>3. Branch must be protected</b> (cross-provider, project-governance)</summary>
+
+The first project-governance control on the GitHub path; every other shipping rule here is pipeline-governance (workflow content). Inspects repository settings via the GitHub branch-protection API.
+
+- **ISSUE-501** (presence): the default branch (when `defaultMustBeProtected: true`) and any branch matching `namePatterns` must have a protection rule. Reads the listing's `protected` flag — works on **any** authenticated token.
+- **ISSUE-505** (rule details): `allowForcePush` and `codeOwnerApprovalRequired` evaluation needs `/branches/{name}/protection`, which requires `repo` (classic PAT) or **Administration: Read** (fine-grained PAT). Without that scope, ISSUE-505 silently abstains rather than emitting false positives — and the postflight stats block surfaces a `⚠ Force-push & code-owner rules: skipped on N branch(es) — token lacks Administration:Read` caveat plus a `partialControls` JSON entry so CI consumers can detect the partial evaluation.
+
+```yaml
+github:
+  controls:
+    branchMustBeProtected:
+      enabled: true
+      defaultMustBeProtected: true
+      namePatterns: [main, master, release/*, production, dev]
+      allowForcePush: false
+      codeOwnerApprovalRequired: true
+```
+
+> **GitLab vs GitHub semantics:** GitLab's numeric `minMergeAccessLevel` / `minPushAccessLevel` knobs do not apply on GitHub (different permission model). Plumber evaluates protection-rule presence + force-push + code-owner-approval on GitHub.
+
+Issue codes: ISSUE-501, ISSUE-505.
+
+</details>
+
+<details>
+<summary><b>4. Pipeline must not use Docker-in-Docker</b> (cross-provider)</summary>
+
+Workflows on GitHub-hosted runners that spin up `docker:dind` services have the same privilege-escalation risk as on GitLab. With `detectInsecureDaemon: true` (default), also flags plaintext `DOCKER_HOST` and empty `DOCKER_TLS_CERTDIR`.
+
+```yaml
+github:
+  controls:
+    pipelineMustNotUseDockerInDocker:
+      enabled: true
+      detectInsecureDaemon: true
+```
+
+Issue codes: ISSUE-412, ISSUE-413.
+
+</details>
+
+<details>
+<summary><b>5. Reusable workflows must not inherit secrets</b></summary>
+
+Detects `jobs.<name>.secrets: inherit` calls. `inherit` forwards every secret visible to the caller — repo, organisation, environment — to the reusable workflow regardless of what it actually needs. Use an explicit `secrets:` map naming only what's required.
+
+```yaml
+github:
+  controls:
+    reusableWorkflowsMustNotInheritSecrets:
+      enabled: true
+```
+
+Issue code: ISSUE-302.
+
+</details>
+
+<details>
+<summary><b>6. Security jobs must not be weakened</b> (cross-provider)</summary>
+
+Same intent as the GitLab control: GitHub Actions lets you neutralize a security scan by setting `continue-on-error: true` (mapped to the same IR field as GitLab's `allow_failure: true`), or by gating it behind `if: false` / manual-only triggers. The pipeline still looks compliant, but no scan is enforced. Maps to [OWASP CICD-SEC-4](https://owasp.org/www-project-top-10-ci-cd-security-risks/) (Poisoned Pipeline Execution).
+
+GitHub job names are namespaced as `{workflow}/{job}`, so the patterns use leading + trailing wildcards: a bare `codeql` would never match `myworkflow/codeql`. The defaults cover GitHub-native scanners (CodeQL, TruffleHog, Gitleaks, OSV-Scanner, Dependency-Review) plus generic fallbacks.
+
+```yaml
+github:
+  controls:
+    securityJobsMustNotBeWeakened:
+      enabled: true
+      securityJobPatterns:
+        - "*codeql*"
+        - "*dependency-review*"
+        - "*trufflehog*"
+        - "*gitleaks*"
+        - "*osv-scanner*"
+        - "*-sast"
+        - "*-sast-*"
+        - "*-scan"
+        - "*scan*"
+        - "*-security"
+        - "*-audit"
+      allowFailureMustBeFalse:
+        enabled: true
+      rulesMustNotBeRedefined:
+        enabled: true
+      whenMustNotBeManual:
+        enabled: true
+```
+
+Issue code: ISSUE-410.
+
+</details>
+
+<details>
+<summary><b>7. Workflow must not inject user input in scripts</b></summary>
+
+Catches the canonical script-injection class: `${{ github.event.* }}`, `${{ github.head_ref }}`, `${{ github.actor }}` interpolated directly into a `run:` shell. Attacker-controlled values (PR title, branch name, …) can break out of the intended string and execute arbitrary commands with the job's secrets. The fix is to bind through `env:` first, then reference the env var from the shell:
+
+```yaml
+# Flagged
+- run: echo "Title: ${{ github.event.pull_request.title }}"
+
+# Safe
+- env:
+    PR_TITLE: ${{ github.event.pull_request.title }}
+  run: echo "Title: $PR_TITLE"
+```
+
+```yaml
+github:
+  controls:
+    workflowMustNotInjectUserInputInScripts:
+      enabled: true
+```
+
+Issue code: ISSUE-206.
+
+</details>
+
+<details>
+<summary><b>8. Workflow must not use dangerous triggers</b></summary>
+
+Flags GitHub Actions trigger events that grant access to the **base** repository's secrets while being influenceable by an unprivileged caller. Combined with any user-content checkout, this becomes a direct exfiltration path (`pull_request_target` + `actions/checkout@... { ref: github.event.pull_request.head.sha }` is the textbook pattern). Use the standard `pull_request` trigger unless secrets are genuinely required.
+
+Detected events: `pull_request_target`, `workflow_run`, `issue_comment`, `pull_request_review`, `pull_request_review_comment`, `discussion_comment`, `discussion`, `gollum`, `fork`.
+
+```yaml
+github:
+  controls:
+    workflowMustNotUseDangerousTriggers:
+      enabled: true
+```
+
+Issue code: ISSUE-414.
+
+</details>
+
+<details>
+<summary><b>9. Workflows must declare permissions</b></summary>
+
+Workflows without an explicit top-level (or job-level) `permissions:` block fall back to the repo-wide `GITHUB_TOKEN` default — often `contents: write` or `read-all`. Declaring `permissions: { contents: read }` at the workflow level enforces least-privilege regardless of the repo default.
+
+```yaml
+github:
+  controls:
+    workflowsMustDeclarePermissions:
+      enabled: true
+```
+
+Issue code: ISSUE-304.
+
+</details>
+
+> **What's not yet shipping on GitHub:** ~40 additional GitHub policies live in `policies/*.rego` (action-supply-chain enrichment, dependabot cooldown, OIDC trusted publishing, release-artefact signing, security policy, etc.) but are gated behind the dev bench until each clears the ship-ready bar (substantive rule + ≥3 fixtures + docs). Track promotion in [`configuration/registry.go`](configuration/registry.go) → `benchedControls`.
+
 ### Selective Control Execution
 
 You can run or skip specific controls using their YAML key names from `.plumber.yaml`. This is useful for iterative debugging or targeted CI checks.
@@ -926,7 +1194,7 @@ include:
 Controls not selected are reported as **skipped** in the output. The `--controls` and `--skip-controls` flags are mutually exclusive.
 
 <details>
-<summary><b>Valid control names</b></summary>
+<summary><b>Valid control names — GitLab (14)</b></summary>
 
 | Control Name |
 |-------------|
@@ -944,6 +1212,25 @@ Controls not selected are reported as **skipped** in the output. The `--controls
 | `pipelineMustNotUseDockerInDocker` |
 | `pipelineMustNotUseUnsafeVariableExpansion` |
 | `securityJobsMustNotBeWeakened` |
+
+</details>
+
+<details>
+<summary><b>Valid control names — GitHub (9)</b></summary>
+
+| Control Name | Cross-provider? |
+|-------------|---|
+| `actionsMustBePinnedByCommitSha` | GitHub-only |
+| `branchMustBeProtected` | ✓ shared with GitLab |
+| `containerImageMustNotUseForbiddenTags` | ✓ shared with GitLab |
+| `pipelineMustNotUseDockerInDocker` | ✓ shared with GitLab |
+| `reusableWorkflowsMustNotInheritSecrets` | GitHub-only |
+| `securityJobsMustNotBeWeakened` | ✓ shared with GitLab |
+| `workflowMustNotInjectUserInputInScripts` | GitHub-only |
+| `workflowMustNotUseDangerousTriggers` | GitHub-only |
+| `workflowsMustDeclarePermissions` | GitHub-only |
+
+`--controls` / `--skip-controls` accept the same name regardless of provider — the analyzer applies it to whichever provider is active for the run.
 
 </details>
 
@@ -981,18 +1268,24 @@ Plumber separates **letter score** (A–E) from numeric **points** (0–100). Po
 
 ### Pipeline Bill of Materials (PBOM)
 
-Generate a complete inventory of all dependencies in your CI/CD pipeline:
+Generate a complete inventory of all dependencies in your CI/CD pipeline. Both providers are supported; the inventory shape adapts to each:
 
 ```bash
 plumber analyze --pbom pbom.json
 ```
 
-The PBOM includes:
+**GitLab inventory:**
 - **Container images** with registry, tag, and digest information
-- **CI/CD components** with version and source
-- **Templates** and includes with version tracking
+- **CI/CD components**, **templates**, project / local / remote includes with version tracking
 - **Compliance status** for each dependency
-- **Override detection** - includes whose jobs are overridden with forbidden CI/CD keywords
+- **Override detection** — includes whose jobs are overridden with forbidden CI/CD keywords
+
+**GitHub inventory:**
+- **Container images** from each job's `container:` and `services:` blocks
+- **Third-party action references** (`uses: owner/repo@ref`) with the pinned ref (typically a SHA) and the workflow file's `# vX.Y.Z` comment as the human-readable version
+- **Reusable workflow calls** (`jobs.<name>.uses: …/.github/workflows/x.yml@ref`)
+
+The top-level shape (`pbomVersion`, `project`, `summary`, `containerImages`, `includes`) is identical across providers — `project.provider` reports which analyzer produced the file.
 
 With `--score` / `--score-point`, the PBOM JSON includes a top-level `plumberScore` object. CycloneDX output adds `plumber:score-*`, `plumber:points-*`, and letter `plumber:score` metadata (see [docs/PBOM.md](docs/PBOM.md); calculation in [docs/scoring.md](docs/scoring.md)).
 
@@ -1008,6 +1301,8 @@ The CycloneDX output follows the [CycloneDX 1.5 specification](https://cyclonedx
 - **Grype** and **Trivy** for vulnerability scanning
 - **Dependency-Track** for continuous monitoring
 - **GitLab Dependency Scanning** (auto-uploaded when using the component)
+
+GitHub-side specifics: each third-party action becomes a `type: library` component with a `pkg:github/owner/repo@<sha>` purl; reusable workflows use the same scheme with the workflow file path preserved. The project-component metadata uses `plumber:provider=github` and `plumber:url=<host>` (the legacy `plumber:gitlab-url` / `plumber:project-id` properties remain on the GitLab path for backward compat).
 
 > **Note:** CI/CD components and templates do not have CVEs in public vulnerability databases. The PBOM is primarily an **inventory and compliance tool**. For image vulnerability scanning, use dedicated tools like `trivy image` or `grype`.
 
@@ -1032,6 +1327,8 @@ Plumber provides colorized terminal output for easy scanning:
 ## 🔗 GitLab Integration
 
 Plumber integrates directly with GitLab to provide visual compliance feedback where your team works.
+
+> **GitHub equivalents are on the roadmap.** PR comments and repo badges on GitHub are not implemented yet — when running plumber in a GitHub Actions step today, surface the JSON output (`--output plumber-report.json`) via your usual workflow tooling (artifacts, `step-summary`, third-party PR-comment actions). [Open an issue](https://github.com/getplumber/plumber/issues) if you'd like to help land first-class GitHub PR comments / status checks.
 
 ### Merge Request Comments
 
@@ -1197,11 +1494,25 @@ This confirms the artifact was built from the expected source commit, on GitHub 
 ```bash
 docker pull getplumber/plumber:latest
 
+# GitLab
 docker run --rm \
   -e GITLAB_TOKEN=glpat-xxxx \
   getplumber/plumber:latest analyze \
   --gitlab-url https://your-gitlab-instance.com \
   --project mygroup/myproject
+
+# GitHub (upstream-fetch — no clone needed)
+docker run --rm \
+  -e GH_TOKEN=ghp_xxxx \
+  getplumber/plumber:latest analyze \
+  --github-url github.com \
+  --project owner/repo
+
+# GitHub (local-clone — mount your checkout)
+docker run --rm \
+  -v "$PWD:/repo" -w /repo \
+  -e GH_TOKEN=ghp_xxxx \
+  getplumber/plumber:latest analyze
 ```
 
 ### Build from Source
@@ -1224,10 +1535,11 @@ Runs the compliance analyzer. **Behavior depends on the git remote (and flags):*
 
 | Mode | When | What runs |
 |------|------|-----------|
-| **GitLab** | `origin` is a GitLab host, or you pass `--gitlab-url` and `--project` | Fetches CI config and project data via the GitLab API (requires `GITLAB_TOKEN`). Uses per-control compliance and `--threshold`. |
-| **GitHub (local)** | `origin` is GitHub **and** you do **not** set `--gitlab-url` or `--project` | Reads `.github/workflows/*.{yml,yaml}` from the repo root only; **no** API token. Pass/fail is **any finding** (binary) for now; **`--threshold` does not** change exit code. **`--pbom` / `--pbom-cyclonedx`**, **`--mr-comment`**, and **`--badge`** are GitLab-only today. |
+| **GitLab** | `origin` is a GitLab host, or you pass `--gitlab-url` and `--project` | Fetches CI config and project data via the GitLab API (requires `GITLAB_TOKEN`). Per-control compliance + `--threshold` exit-code gating. |
+| **GitHub — local clone** | `origin` is GitHub and you do **not** pass `--github-url`. Soft-degrade: workflow-content controls run from disk with no token; repo-level controls (branch protection) run when `GH_TOKEN`/`GITHUB_TOKEN`/`gh` auth is available, and silently abstain otherwise. | Reads `.github/workflows/*.{yml,yaml}` from disk; calls the GitHub API only when needed for repo-level controls. Per-control compliance + `--threshold` exit-code gating. PBOM and CycloneDX SBOM both supported. **`--mr-comment`** and **`--badge`** remain GitLab-only today. |
+| **GitHub — upstream fetch** | You pass `--github-url <host> --project owner/repo`. **Auth required** (token or `gh auth login`); plumber refuses to start without it (avoids GitHub's silent 60 req/hr anonymous degradation). | Lists `.github/workflows/` via the GitHub Contents API; otherwise identical to local-clone mode. Repo-side files needing a checkout (Dockerfile, `dependabot.yml`, `SECURITY.md`) are skipped. |
 
-To **force GitLab** analysis from a machine that has a GitHub `origin` (e.g. a fork), set `--gitlab-url` and `--project` explicitly.
+To **force GitLab** analysis from a machine that has a GitHub `origin` (e.g. a fork), pass `--gitlab-url` and `--project` explicitly. To **force GitHub upstream-fetch** from a GitLab clone, pass `--github-url`.
 
 ```bash
 plumber analyze [flags]
@@ -1240,11 +1552,11 @@ plumber analyze [flags]
 | `--gitlab-url` | No* | auto-detect | GitLab instance URL |
 | `--project` | No* | auto-detect | Project path (e.g., `group/project`) |
 | `--config` | No | `.plumber.yaml` | Path to config file |
-| `--threshold` | No | `100` | Minimum compliance % to pass (0-100). **Gates exit code on the GitLab path only** (not the GitHub local path yet). |
-| `--branch` | No | default | Branch to analyze (GitLab API path; informational on GitHub local scan) |
-| `--output` | No | — | Write JSON results to file |
-| `--pbom` | No | — | Write PBOM (Pipeline Bill of Materials) to file (**GitLab path**; ignored on GitHub local scan) |
-| `--pbom-cyclonedx` | No | — | Write PBOM in CycloneDX SBOM format (**GitLab path**; ignored on GitHub local scan) |
+| `--threshold` | No | `100` | Minimum compliance % to pass (0-100). **Gates exit code on both providers.** |
+| `--branch` | No | default | Branch to analyze (GitLab + GitHub upstream-fetch; informational on GitHub local scan) |
+| `--output` | No | — | Write JSON results to file (both providers; GitHub output also includes `partialControls` when a control couldn't fully evaluate). |
+| `--pbom` | No | — | Write PBOM (Pipeline Bill of Materials) to file. **GitLab inventory:** container images + includes (components, templates, project includes, …). **GitHub inventory:** container images (`container:` blocks, `services:`) + third-party actions (`uses: owner/repo@ref`) + reusable-workflow calls. |
+| `--pbom-cyclonedx` | No | — | Same inventory as `--pbom`, serialized as CycloneDX 1.5 SBOM. GitHub action references emit `pkg:github/owner/repo@<sha>` purls. |
 | `--print` | No | `true` | Print text output to stdout |
 | `--mr-comment` | No | `false` | Post/update a compliance comment on the merge request (MR pipelines only: requires `api` scope) |
 | `--badge` | No | `false` | Create/update a Plumber compliance badge on the project (requires `api` scope; only runs on default branch) |
@@ -1264,7 +1576,11 @@ plumber analyze [flags]
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `GITLAB_TOKEN` | **Yes** for the **GitLab API** path | GitLab API token with `read_api` + `read_repository` scopes (Maintainer or higher). Use `api` scope instead if `--mr-comment` or `--badge` is enabled. **Not used** on the GitHub local workflow scan. |
+| `GITLAB_TOKEN` | **Yes** for any GitLab analysis | GitLab API token with `read_api` + `read_repository` scopes (Maintainer or higher). Use `api` scope instead if `--mr-comment` or `--badge` is enabled. Unused on the GitHub path. |
+| `GH_TOKEN` | Optional (preferred) | GitHub PAT (fine-grained or classic). Required in GitHub upstream-fetch mode (`--github-url`). Optional in local-clone mode (enables repo-level controls). Takes precedence over `GITHUB_TOKEN` and `gh` CLI. |
+| `GITHUB_TOKEN` | Optional | Same role as `GH_TOKEN`. Auto-set by GitHub Actions runners — pick this up natively when running plumber as a workflow step. |
+| `GH_ENTERPRISE_TOKEN` | Optional | Authentication for GitHub Enterprise Server (`--github-url ghes.example.com`). |
+| `PLUMBER_DISABLE_GITHUB_API` | No | Set to any value to skip the GitHub action-metadata enrichment loop in local-clone mode. Useful for fast iteration when you don't need archived-repo / advisory-database / ref-version checks. Has no effect today since those controls are still on the bench, but kept as a documented escape hatch. |
 | `PLUMBER_NO_UPDATE_CHECK` | No | Set to any value (e.g., `1`) to disable the automatic version check. |
 
 ### Automatic Version Check
@@ -1285,15 +1601,17 @@ export PLUMBER_NO_UPDATE_CHECK=1
 
 | Exit Code | Meaning |
 |-----------|----------|
-| `0` | Analysis passed: GitLab path — compliance ≥ threshold; GitHub local path — **no** findings |
-| `1` | Compliance failure: GitLab — compliance below `--threshold`; GitHub local — one or more findings |
-| `2` | Runtime error (config error, network failure, missing token on GitLab path, etc.) |
+| `0` | Analysis passed: compliance ≥ `--threshold` (both providers). |
+| `1` | Compliance failure: compliance below `--threshold` (both providers). |
+| `2` | Runtime error (config error, network failure, missing token on the GitLab path, missing token on GitHub upstream-fetch, etc.). |
 
 ### `plumber config init`
 
 Interactive wizard to create a **minimal** `.plumber.yaml` by choosing policy areas (images, pipeline composition, branch protection, variables). Omits controls you do not select. For every control in a selected area, the wizard asks for the fields defined in the schema (for example forbidden include refs, security job patterns and sub-checks, trusted script URLs, job variable lists, DinD options, branch protection levels, debug and unsafe-expansion variable lists, regex allowlists, and required components or templates via the `required` expression).
 
 Requires an interactive terminal. For the full default template with inline comments (including in CI), use [`plumber config generate`](#plumber-config-generate).
+
+> **GitHub coverage:** the wizard currently writes only the `gitlab.controls.*` section. For GitHub, run `plumber config generate` to get the full template and trim, or hand-author the `github.controls.*` section using the [GitHub Actions controls](#github-actions-controls) reference above. A GitHub-aware wizard track is on the roadmap.
 
 ```bash
 plumber config init [flags]
@@ -1663,6 +1981,8 @@ include:
 
 ## 🔧 Troubleshooting
 
+**GitLab**
+
 | Issue | Solution |
 |-------|----------|
 | `GITLAB_TOKEN environment variable is required` | Set `GITLAB_TOKEN` in CI/CD Variables or export it locally |
@@ -1677,6 +1997,19 @@ include:
 | Plumber job not running | The default stage is `.pre`, which requires at least one other job in a regular stage. Override with `inputs: { stage: test }` |
 | Two pipelines on the same push | Add [`workflow:rules`](https://docs.gitlab.com/ee/ci/yaml/workflow.html#switch-between-branch-pipelines-and-merge-request-pipelines) to your `.gitlab-ci.yml` to prevent duplicate branch + MR pipelines (see [Quick Start](#-quick-start)) |
 | Plumber job skipped on branch | The component only runs on merge request events, the default branch, and tags. Open an MR or push to the default branch to trigger it |
+
+**GitHub**
+
+| Issue | Solution |
+|-------|----------|
+| `GitHub authentication required for upstream-fetch mode` | You ran `--github-url …` without auth. Export `GH_TOKEN`, set `GITHUB_TOKEN`, or `gh auth login`. See [Step 3](#step-3-authenticate). |
+| `Resource not accessible by personal access token` (HTTP 403) on `/branches/{name}/protection` | Your fine-grained PAT lacks **Administration: Read**. ISSUE-505 (force-push / code-owner-approval) is silently abstained — the postflight stats line and JSON `partialControls` block surface this. To evaluate, use a classic PAT with `repo` scope, a fine-grained PAT with Administration:Read approved by an org admin, or `gh auth login` with a user account that has admin on the repo. |
+| `branchMustBeProtected` shows 100 % but you know branches aren't fully protected | Look for `⚠ Force-push & code-owner rules: skipped on N branch(es)` in the stats block, and `partialControls` in the JSON output. ISSUE-501 (presence) ran; ISSUE-505 (rules) needs admin scope. |
+| `403 rate limit exceeded` from GitHub | You're hitting the unauthenticated 60 req/hr ceiling. Authenticate per [Step 3](#step-3-authenticate) — authenticated calls get 5,000 req/hr. Upstream-fetch mode pre-flights this and refuses to start without auth. |
+| `404 Not Found` on `--github-url … --project owner/repo` | Verify the project slug, and that your token has access (org-private repos require the token to be tied to a user with repo access; for fine-grained PATs, the repo must be in the token's selected list). |
+| Plumber doesn't auto-detect GitHub from `origin` | Confirm `git remote get-url origin` resolves to a `github.com` host (or the GHES host you expect). For non-default remotes, pass `--github-url github.com --project owner/repo` explicitly. |
+| Want to scan a private GHES repo | Set `GH_ENTERPRISE_TOKEN` and pass `--github-url ghes.example.com` (or the `/api/v3` path). |
+| `gh auth status` shows the wrong account | `gh auth login` with the right account; or `export GH_TOKEN=…` to override (env vars take precedence over the gh CLI store — see the [auth resolution table in Step 3](#step-3-authenticate)). |
 
 > 💡 **Need help?** [Open an issue](https://github.com/getplumber/plumber/issues) or [join our Discord](https://discord.gg/932xkSU24f)
 

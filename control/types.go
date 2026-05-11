@@ -3,6 +3,7 @@ package control
 import (
 	"github.com/getplumber/plumber/collector"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
+	"github.com/getplumber/plumber/internal/ir"
 	"github.com/sirupsen/logrus"
 )
 
@@ -46,6 +47,13 @@ type AnalysisResult struct {
 	// percentages, matching the GitLab output structure. Nil on the
 	// GitLab path.
 	GitHubStats *GitHubAnalysisStats `json:"-"`
+
+	// GitHubPipeline is the normalized IR produced by the GitHub
+	// collector, retained on the result so legacy JSON / PBOM /
+	// CycloneDX builders can read images, action references, and
+	// per-branch protection details without re-running the collector.
+	// Nil on the GitLab path.
+	GitHubPipeline *ir.NormalizedPipeline `json:"-"`
 }
 
 // GitHubAnalysisStats holds per-control aggregations computed by

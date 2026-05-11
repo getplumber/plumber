@@ -10,19 +10,26 @@
 
 ## Overview
 
-A **PBOM (Pipeline Bill of Materials)** is an inventory of all dependencies used in a CI/CD pipeline: container images, GitLab CI components, templates, and includes. Think of it as an SBOM, but for your pipeline infrastructure instead of your application code.
+A **PBOM (Pipeline Bill of Materials)** is an inventory of all dependencies used in a CI/CD pipeline. Think of it as an SBOM, but for your pipeline infrastructure instead of your application code. The inventory contents differ per provider:
 
-Plumber generates PBOMs in two formats:
+| Provider | Container images | "Includes" equivalent |
+|---|---|---|
+| **GitLab** | `image:` + `services:` blocks across all jobs | GitLab CI components, templates, project includes, local includes, remote URL includes |
+| **GitHub** | `container:` + `services:` blocks across all jobs | Third-party action references (`uses: owner/repo@ref`) and reusable-workflow calls (`jobs.<name>.uses: …/.github/workflows/x.yml@ref`) |
+
+The same two output formats are produced on both providers:
 
 | Format | Flag | Best for |
 |--------|------|----------|
 | **Plumber PBOM** | `--pbom <file>` | Detailed pipeline-specific inventory with compliance metadata |
-| **CycloneDX SBOM** | `--pbom-cyclonedx <file>` | Integration with Gitlab reporting, security tools (Grype, Trivy, Dependency-Track) |
+| **CycloneDX SBOM** | `--pbom-cyclonedx <file>` | Integration with GitLab reporting, security tools (Grype, Trivy, Dependency-Track) |
 
 ```bash
 # Generate both
 plumber analyze --pbom pbom.json --pbom-cyclonedx pipeline-sbom.json
 ```
+
+The provider stamped into the PBOM is auto-detected from the active analyzer (`gitlab` or `github`); see the [`project`](#project-object) section for the per-provider field shape.
 
 ---
 
@@ -50,6 +57,8 @@ CycloneDX was chosen because Plumber's primary use case is pipeline security, an
 | GitLab CI components | `gitlab.com/components/sast` | **No** |
 | GitLab templates | `Security/SAST.gitlab-ci.yml` | **No** |
 | Remote/local includes | Custom YAML files | **No** |
+| GitHub Actions | `actions/checkout@<sha>` | **Limited.** GitHub's own [security advisories database](https://github.com/advisories) tracks Action-specific CVEs — Plumber's `actionsMustNotCarryKnownCVEs` control (currently benched, ships next) checks every `uses:` against that DB at analysis time. Generic CVE scanners do not. |
+| GitHub reusable workflows | `myorg/shared/.github/workflows/x.yml` | **No** |
 
 **Why?** GitLab CI templates and components are configuration files, not software packages. No vulnerability database (NVD, OSV, etc.) tracks CVEs for them. Docker image PURLs provide metadata-level lookups only, not the full vulnerability surface of the image contents.
 
@@ -104,10 +113,34 @@ Top-level keys are emitted in this order (human-readable flow: context → aggre
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `path` | string | Full project path (e.g., `mygroup/myproject`) |
-| `id` | number | GitLab project ID. Omitted if unavailable. |
-| `gitlabUrl` | string | GitLab instance URL |
+| `path` | string | Full project path (e.g., `mygroup/myproject` on GitLab, `owner/repo` on GitHub) |
+| `provider` | string | `"gitlab"` or `"github"` — the analyzer that produced this PBOM |
+| `url` | string | Provider host. Full URL on GitLab (`https://gitlab.com`); host or `host/api/v3` on GitHub |
+| `id` | number | GitLab project ID. **GitLab-only** — omitted on the GitHub path |
+| `gitlabUrl` | string | GitLab instance URL. **GitLab-only**, kept for backward compat with v0.2.x consumers; new readers should prefer `provider` + `url` |
 | `branch` | string | Branch that was analyzed. Only present when `--branch` is specified. |
+
+**GitLab example:**
+
+```json
+{
+  "path": "mygroup/myproject",
+  "id": 77812080,
+  "provider": "gitlab",
+  "url": "https://gitlab.com",
+  "gitlabUrl": "https://gitlab.com"
+}
+```
+
+**GitHub example:**
+
+```json
+{
+  "path": "getplumber/plumber",
+  "provider": "github",
+  "url": "github.com"
+}
+```
 
 ### `containerImages[]` Array
 
@@ -139,21 +172,24 @@ Each entry represents a Docker/OCI image used in a pipeline job.
 
 ### `includes[]` Array
 
-Each entry represents a CI/CD include dependency. Fields vary by include type: only relevant fields appear in the output.
+Each entry represents a CI/CD include dependency. Fields vary by include type: only relevant fields appear in the output. The `type` vocabulary is provider-scoped:
+
+- **GitLab:** `"component"`, `"template"`, `"local"`, `"remote"`, `"project"`
+- **GitHub:** `"action"` (third-party `uses: owner/repo@ref` step), `"reusableWorkflow"` (`jobs.<name>.uses: …/.github/workflows/x.yml@ref`)
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `type` | string | Include type: `"component"`, `"template"`, `"local"`, `"remote"`, `"project"` |
-| `location` | string | Path or URL of the include |
-| `project` | string | Source project path. Only for `project` type includes. |
-| `version` | string | Pinned version. Only for versioned includes. |
-| `latestVersion` | string | Latest available version, when known. |
-| `upToDate` | bool | Whether the include is on the latest version, when known. |
-| `componentName` | string | Component name. Only for `component` type. |
-| `fromCatalog` | bool | Whether it comes from the GitLab CI/CD Catalog. Only for `component` type. |
-| `nested` | bool | Whether this is a nested include (included by another include). Only present when `true`. |
-| `overridden` | bool | Whether this include's jobs are overridden with forbidden CI/CD keywords. Only present when `true`. |
-| `overriddenJobs` | array | Details of which jobs are overridden and with which keywords. Only present when `overridden` is `true`. JSON uses camelCase (`overriddenJobs`, `overriddenKeys`), not snake_case. |
+| `type` | string | See vocabulary above |
+| `location` | string | Path or URL of the include. For GitHub `action` entries: `owner/repo`. For `reusableWorkflow`: `owner/repo/.github/workflows/x.yml` |
+| `project` | string | GitLab: source project path for `project` includes. GitHub: action owner (e.g., `actions`) for `action` entries. |
+| `version` | string | Pinned version. For GitHub `action` entries: the ref the workflow pinned (typically a 40-char SHA). For GitHub `reusableWorkflow`: the ref after `@`. |
+| `latestVersion` | string | GitLab: latest available release of the include. GitHub: the human-readable `# vX.Y.Z` comment annotation that lives next to the SHA in the workflow file (when present). |
+| `upToDate` | bool | GitLab: whether the include is on its latest release. GitHub `action` entries: tri-state pinning indicator — `false` means the ref is **not** a 40-char SHA (i.e. unpinned, ISSUE-104 candidate). |
+| `componentName` | string | GitLab `component` only |
+| `fromCatalog` | bool | GitLab `component` only |
+| `nested` | bool | GitLab only: `true` when this include was pulled in by another include. |
+| `overridden` | bool | GitLab only: `true` when one or more of the include's jobs were overridden locally with forbidden CI/CD keywords. |
+| `overriddenJobs` | array | GitLab only: details of which jobs are overridden and with which keywords. Only present when `overridden` is `true`. JSON uses camelCase (`overriddenJobs`, `overriddenKeys`), not snake_case. |
 
 Each entry in `overriddenJobs[]`:
 
@@ -206,20 +242,44 @@ Each entry in `overriddenJobs[]`:
 }
 ```
 
+**Example (GitHub action — pinned by SHA, with version comment):**
+
+```json
+{
+  "type": "action",
+  "location": "actions/checkout",
+  "project": "actions",
+  "version": "de0fac2e4500dabe0009e67214ff5f5447ce83dd",
+  "latestVersion": "v6.0.2"
+}
+```
+
+**Example (GitHub reusable workflow):**
+
+```json
+{
+  "type": "reusableWorkflow",
+  "location": "myorg/shared/.github/workflows/release.yml",
+  "version": "v1.2.0"
+}
+```
+
 ### `summary` Object
 
-All fields are always present (default to `0`).
+All fields are always present (default to `0`). The provider-specific include counters are emitted as `0` on the other provider's path; CycloneDX consumers can ignore them.
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `totalImages` | number | Total container images found |
-| `uniqueRegistries` | number | Number of distinct container registries |
-| `totalIncludes` | number | Total includes of all types |
+| `totalImages` | number | Total container images found (both providers) |
+| `uniqueRegistries` | number | Number of distinct container registries (both providers) |
+| `totalIncludes` | number | Total includes of all types (both providers) |
 | `components` | number | GitLab CI/CD component includes |
-| `projectIncludes` | number | Cross-project file includes |
-| `localIncludes` | number | Local file includes |
-| `remoteIncludes` | number | Remote URL includes |
+| `projectIncludes` | number | Cross-project file includes (GitLab) |
+| `localIncludes` | number | Local file includes (GitLab) |
+| `remoteIncludes` | number | Remote URL includes (GitLab) |
 | `templates` | number | GitLab template includes |
+| `actions` | number | GitHub third-party action references |
+| `reusableWorkflows` | number | GitHub reusable-workflow calls |
 
 ### `plumberScore` Object (optional)
 
@@ -322,14 +382,20 @@ Examples:
 | `local` | `file` | Local file includes |
 | `remote` | `file` | Remote URL includes |
 | `project` | `file` | Cross-project file includes |
+| `action` | `library` | GitHub third-party actions (reusable libraries) |
+| `reusableWorkflow` | `library` | GitHub reusable-workflow files (reusable pipeline libraries) |
 
 **PURL format for includes:**
 
 ```
-pkg:gitlab/org/component@version          (components)
-pkg:gitlab/project/path/file@version      (project includes)
+pkg:gitlab/org/component@version          (GitLab components)
+pkg:gitlab/project/path/file@version      (GitLab project includes)
+pkg:github/owner/repo@<sha-or-ref>        (GitHub actions)
+pkg:github/owner/repo/.github/workflows/x.yml@ref   (GitHub reusable workflows)
 pkg:generic/sanitized-location@version    (other types)
 ```
+
+For GitHub actions the `version` field on the component is the actual ref the workflow pinned (typically a 40-char SHA when the project follows ISSUE-104 pinning); the `plumber:latest-version` property carries the human-readable `# vX.Y.Z` annotation when present.
 
 ### Custom Properties (`plumber:*`)
 
@@ -348,11 +414,13 @@ CycloneDX components carry Plumber-specific metadata as properties:
 | `plumber:up-to-date` | includes | `"true"` / `"false"` |
 | `plumber:component-name` | includes | Component name |
 | `plumber:from-catalog` | includes | `"true"` if from GitLab CI/CD Catalog |
-| `plumber:nested` | includes | `"true"` if nested include |
-| `plumber:overridden` | includes | `"true"` if the include's jobs are overridden with forbidden keywords |
-| `plumber:overridden-job` | includes | `"jobName:key1,key2"` — one property per overridden job with its forbidden keys |
-| `plumber:gitlab-url` | metadata | GitLab instance URL |
-| `plumber:project-id` | metadata | GitLab project ID |
+| `plumber:nested` | includes | GitLab only. `"true"` if nested include |
+| `plumber:overridden` | includes | GitLab only. `"true"` if the include's jobs are overridden with forbidden keywords |
+| `plumber:overridden-job` | includes | GitLab only. `"jobName:key1,key2"` — one property per overridden job with its forbidden keys |
+| `plumber:gitlab-url` | metadata.component | **GitLab only.** GitLab instance URL |
+| `plumber:project-id` | metadata.component | **GitLab only.** GitLab project ID |
+| `plumber:provider` | metadata.component | **GitHub only.** Always `"github"` — distinguishes the GitHub PBOM lineage from the historical GitLab one |
+| `plumber:url` | metadata.component | **GitHub only.** GitHub host (`github.com` or a GHES host) |
 
 ---
 
@@ -366,6 +434,40 @@ include:
 ```
 
 Both `plumber-pbom.json` (native PBOM) and `plumber-cyclonedx-sbom.json` (CycloneDX) are generated and stored as pipeline artifacts by default.
+
+## GitHub Actions Integration
+
+There is no first-class GitHub Actions reusable workflow yet (on the roadmap — see the README). For now, run the binary directly from a workflow step and surface the artifacts via standard `actions/upload-artifact`:
+
+```yaml
+jobs:
+  plumber:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read         # read workflow files + repo metadata
+      # administration: read # uncomment if you also want ISSUE-505 (force-push, code-owner) evaluated
+    steps:
+      - uses: actions/checkout@<sha>   # pin via SHA per ISSUE-104
+      - run: |
+          curl -LO https://github.com/getplumber/plumber/releases/latest/download/plumber-linux-amd64
+          chmod +x plumber-linux-amd64
+          ./plumber-linux-amd64 analyze \
+            --output plumber-report.json \
+            --pbom plumber-pbom.json \
+            --pbom-cyclonedx plumber-cyclonedx-sbom.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      - uses: actions/upload-artifact@<sha>
+        if: always()
+        with:
+          name: plumber-artifacts
+          path: |
+            plumber-report.json
+            plumber-pbom.json
+            plumber-cyclonedx-sbom.json
+```
+
+The CycloneDX file is the same shape as on GitLab — Dependency-Track, Grype, Trivy can ingest it directly.
 
 ---
 

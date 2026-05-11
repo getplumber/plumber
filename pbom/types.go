@@ -52,11 +52,18 @@ type PlumberScoreCounts struct {
 	Low      int `json:"low"`
 }
 
-// ProjectInfo contains information about the analyzed project
+// ProjectInfo contains information about the analyzed project.
+// Provider names which CI platform produced this PBOM ("gitlab" or
+// "github"). URL is the platform host used by the analysis (full
+// URL on GitLab, host or host/api/v3 on GitHub). GitLabURL is kept
+// for backward compatibility with v0.2.x consumers that key on it;
+// new readers should prefer Provider + URL.
 type ProjectInfo struct {
 	Path      string `json:"path"`
 	ID        int    `json:"id,omitempty"`
-	GitLabURL string `json:"gitlabUrl"`
+	Provider  string `json:"provider,omitempty"`
+	URL       string `json:"url,omitempty"`
+	GitLabURL string `json:"gitlabUrl,omitempty"`
 	Branch    string `json:"branch,omitempty"`
 }
 
@@ -78,9 +85,14 @@ type ContainerImage struct {
 	ForbiddenTag *bool `json:"forbiddenTag,omitempty"`
 }
 
-// Include represents an include/component/template used in the pipeline
+// Include represents an include/component/template used in the
+// pipeline. On GitHub, the analogue of GitLab's "include" types are:
+//   - "action"           — third-party `uses: owner/repo@ref` step
+//   - "reusableWorkflow" — `uses:` at the job level pointing at a
+//                           reusable-workflow file
 type Include struct {
-	// Type of include: "component", "project", "local", "remote", "template"
+	// Type of include: "component", "project", "local", "remote",
+	// "template" (GitLab) or "action", "reusableWorkflow" (GitHub).
 	Type string `json:"type"`
 
 	// Location/path of the include
@@ -119,4 +131,8 @@ type Summary struct {
 	LocalIncludes   int `json:"localIncludes"`
 	RemoteIncludes  int `json:"remoteIncludes"`
 	Templates       int `json:"templates"`
+
+	// GitHub-specific include counts. Zero on the GitLab path.
+	Actions           int `json:"actions,omitempty"`
+	ReusableWorkflows int `json:"reusableWorkflows,omitempty"`
 }

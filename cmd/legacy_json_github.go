@@ -1,0 +1,371 @@
+package cmd
+
+import (
+	"sort"
+
+	"github.com/getplumber/plumber/configuration"
+	"github.com/getplumber/plumber/control"
+	opaengine "github.com/getplumber/plumber/internal/engine/opa"
+	"github.com/getplumber/plumber/internal/ir"
+)
+
+// buildLegacyResultGitHub is the GitHub-flavoured router that mirrors
+// buildLegacyResult on the GitLab side. For each control entry the
+// GitHub catalog emits, route to the per-control builder that knows
+// how to extract the right denominators from result.GitHubStats and
+// findings. Returns ("", nil) when the control is not yet wired —
+// caller skips it so we don't pollute the JSON with empty placeholder
+// blocks (the bug the GitLab-only legacyResultsByName had).
+func buildLegacyResultGitHub(e control.ControlEntry, result *control.AnalysisResult, pc *configuration.PlumberConfig, findings []opaengine.Finding) (string, any) {
+	compliance := 100.0
+	if !e.Skipped && len(findings) > 0 {
+		compliance = 0
+	}
+	common := legacyCommon{
+		Compliance: compliance,
+		CiValid:    result.CiValid,
+		CiMissing:  result.CiMissing,
+		Skipped:    e.Skipped,
+	}
+
+	switch e.ControlName {
+	case "actionsMustBePinnedByCommitSha":
+		return "actionPinningResult", buildActionPinningBlock(common, result, findings)
+	case "containerImageMustNotUseForbiddenTags":
+		return "imageForbiddenTagsResult", buildImageForbiddenTagsBlockGitHub(common, result, pc, findings)
+	case "branchMustBeProtected":
+		return "branchProtectionResult", buildBranchProtectionBlockGitHub(common, result, pc, findings)
+	case "pipelineMustNotUseDockerInDocker":
+		return "dockerInDockerResult", buildDockerInDockerBlockGitHub(common, result, findings)
+	case "reusableWorkflowsMustNotInheritSecrets":
+		return "reusableSecretsResult", buildReusableSecretsBlock(common, result, findings)
+	case "securityJobsMustNotBeWeakened":
+		return "securityJobsWeakenedResult", buildSecurityJobsBlockGitHub(common, result, findings)
+	case "workflowMustNotInjectUserInputInScripts":
+		return "templateInjectionResult", buildTemplateInjectionBlock(common, result, findings)
+	case "workflowMustNotUseDangerousTriggers":
+		return "dangerousTriggersResult", buildDangerousTriggersBlock(common, result, findings)
+	case "workflowsMustDeclarePermissions":
+		return "permissionsResult", buildPermissionsBlock(common, result, findings)
+	}
+	return "", nil
+}
+
+// statsOf safely dereferences result.GitHubStats. The GitHub task
+// funcs always set the field, but stats-of-zero-value is the right
+// fallback for unit tests that build AnalysisResult by hand.
+func statsOf(result *control.AnalysisResult) control.GitHubAnalysisStats {
+	if result == nil || result.GitHubStats == nil {
+		return control.GitHubAnalysisStats{}
+	}
+	return *result.GitHubStats
+}
+
+// buildActionPinningBlock — ISSUE-104. Total = third-party action
+// references in scope (i.e. excluding trustedOwners). Findings are
+// the unpinned subset.
+func buildActionPinningBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	s := statsOf(result)
+	return map[string]any{
+		"issues": projectFindings(_sortedFindings(findings), "jobName"),
+		"metrics": map[string]any{
+			"actionRefsTotal":    s.ActionRefsTotal,
+			"actionRefsUnpinned": s.ActionRefsUnpinned,
+			"actionRefsExempt":   s.ActionRefsExempt,
+		},
+		"compliance": c.Compliance,
+		"version":    "0.1.0",
+		"ciValid":    c.CiValid,
+		"ciMissing":  c.CiMissing,
+		"skipped":    c.Skipped,
+	}
+}
+
+// buildImageForbiddenTagsBlockGitHub mirrors the GitLab block but
+// reads the GitHub stats (pre-aggregated denominators) instead of
+// PipelineImageData (a GitLab-collector type that is nil on GitHub).
+func buildImageForbiddenTagsBlockGitHub(c legacyCommon, result *control.AnalysisResult, pc *configuration.PlumberConfig, findings []opaengine.Finding) map[string]any {
+	s := statsOf(result)
+	usingForbidden := 0
+	for _, f := range findings {
+		if f.Code == string(control.CodeImageForbiddenTag) {
+			usingForbidden++
+		}
+	}
+	mustBePinned := false
+	if cfg := pc.ControlsFor("github").ContainerImageMustNotUseForbiddenTags; cfg != nil {
+		mustBePinned = cfg.IsPinnedByDigestRequired()
+	}
+	notPinned := s.ImagesTotal - s.ImagesPinnedByDigest
+	if notPinned < 0 {
+		notPinned = 0
+	}
+	return map[string]any{
+		"issues": projectFindings(_sortedFindings(findings), "job"),
+		"metrics": map[string]any{
+			"total":              s.ImagesTotal,
+			"usingForbiddenTags": usingForbidden,
+			"notPinnedByDigest":  notPinned,
+			"pinnedByDigest":     s.ImagesPinnedByDigest,
+			"ciInvalid":          0,
+			"ciMissing":          0,
+		},
+		"compliance":           c.Compliance,
+		"version":              "0.4.0",
+		"ciValid":              c.CiValid,
+		"ciMissing":            c.CiMissing,
+		"skipped":              c.Skipped,
+		"mustBePinnedByDigest": mustBePinned,
+	}
+}
+
+// buildBranchProtectionBlockGitHub reads result.GitHubPipeline.Branches
+// for the per-branch `data:` array (the GitLab equivalent reads
+// result.ProtectionData, which is GitLab-only). Filters branches to
+// the in-scope set (matching namePatterns or default-branch when
+// defaultMustBeProtected is true), populates protection details for
+// branches we have authoritative data on (ProtectionDetailsKnown=true),
+// and clamps `projectsCorrectlyProtected` to ≥ 0 — fixes the prior
+// `-1` math bug.
+func buildBranchProtectionBlockGitHub(c legacyCommon, result *control.AnalysisResult, pc *configuration.PlumberConfig, findings []opaengine.Finding) map[string]any {
+	cfg := pc.ControlsFor("github").BranchMustBeProtected
+
+	var branches []ir.Branch
+	if result.GitHubPipeline != nil {
+		branches = result.GitHubPipeline.Branches
+	}
+
+	// in-scope = matches namePatterns OR (default branch when defaultMustBeProtected).
+	inScope := func(b ir.Branch) bool {
+		if cfg == nil {
+			return false
+		}
+		if matchesAnyPatternSimple(b.Name, cfg.NamePatterns) {
+			return true
+		}
+		if cfg.DefaultMustBeProtected != nil && *cfg.DefaultMustBeProtected &&
+			result.DefaultBranch != "" && b.Name == result.DefaultBranch {
+			return true
+		}
+		return false
+	}
+
+	// Order: default branch first (when in scope), then alphabetical.
+	ordered := make([]ir.Branch, 0, len(branches))
+	if result.DefaultBranch != "" {
+		for i := range branches {
+			if branches[i].Name == result.DefaultBranch {
+				ordered = append(ordered, branches[i])
+				break
+			}
+		}
+	}
+	others := make([]ir.Branch, 0, len(branches))
+	for i := range branches {
+		if branches[i].Name != result.DefaultBranch {
+			others = append(others, branches[i])
+		}
+	}
+	sort.SliceStable(others, func(i, j int) bool { return others[i].Name < others[j].Name })
+	ordered = append(ordered, others...)
+
+	data := []map[string]any{}
+	totalProtected := 0
+	totalToProtect := 0
+	totalUnprotected := 0
+	for _, b := range ordered {
+		if !inScope(b) {
+			continue
+		}
+		totalToProtect++
+		entry := map[string]any{
+			"branchName": b.Name,
+			"default":    b.Name == result.DefaultBranch,
+			"protected":  b.Protected,
+		}
+		if b.Protected {
+			totalProtected++
+			if b.ProtectionDetailsKnown {
+				entry["allowForcePush"] = b.AllowForcePush
+				entry["codeOwnerApprovalRequired"] = b.CodeOwnerApprovalRequired
+				entry["protectionDetailsKnown"] = true
+			} else {
+				// Surface the partial-eval state so JSON consumers don't
+				// confuse "no rule details" with "rule says zero".
+				entry["protectionDetailsKnown"] = false
+			}
+		} else {
+			totalUnprotected++
+		}
+		data = append(data, entry)
+	}
+
+	nonCompliant := 0
+	for _, f := range findings {
+		if f.Code == string(control.CodeBranchNonCompliant) {
+			nonCompliant++
+		}
+	}
+	correctlyProtected := totalProtected - nonCompliant
+	if correctlyProtected < 0 {
+		correctlyProtected = 0
+	}
+
+	block := map[string]any{
+		"enabled":    !c.Skipped,
+		"compliance": c.Compliance,
+		"version":    "0.2.0",
+		"data":       data,
+		"metrics": map[string]any{
+			"branches":                   len(branches),
+			"branchesToProtect":          totalToProtect,
+			"unprotectedBranches":        totalUnprotected,
+			"nonCompliantBranches":       nonCompliant,
+			"totalProtectedBranches":     totalProtected,
+			"projectsCorrectlyProtected": correctlyProtected,
+		},
+	}
+	if len(findings) > 0 {
+		issues := projectFindings(findings, "")
+		block["issues"] = issues
+	}
+	return block
+}
+
+// matchesAnyPatternSimple is a small glob matcher mirroring the
+// branch_unprotected.rego selection: exact name OR `prefix/*` style
+// suffix wildcards. Kept independent of go-wildcard to avoid a new
+// dep for one call site.
+func matchesAnyPatternSimple(name string, patterns []string) bool {
+	for _, p := range patterns {
+		if p == name {
+			return true
+		}
+		if len(p) > 2 && p[len(p)-2:] == "/*" {
+			prefix := p[:len(p)-2]
+			if len(name) > len(prefix) && name[:len(prefix)+1] == prefix+"/" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// buildDockerInDockerBlockGitHub uses GitHub stats (jobs walked) for
+// the totals; otherwise mirrors the GitLab block.
+func buildDockerInDockerBlockGitHub(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	s := statsOf(result)
+	insecure := 0
+	for _, f := range findings {
+		if f.Code == string(control.CodeDockerInDockerInsecure) {
+			insecure++
+		}
+	}
+	return map[string]any{
+		"issues": projectFindings(findings, "jobName"),
+		"metrics": map[string]any{
+			"totalJobsChecked":    s.JobsTotal,
+			"dindServicesFound":   s.JobsWithDinD,
+			"insecureDaemonFound": insecure,
+		},
+		"compliance": c.Compliance,
+		"version":    "0.1.0",
+		"ciValid":    c.CiValid,
+		"ciMissing":  c.CiMissing,
+		"skipped":    c.Skipped,
+	}
+}
+
+// buildSecurityJobsBlockGitHub uses pre-aggregated stats — the
+// GitLab variant indexes findings to count weakening, which works
+// here too, but the denominator must come from the GitHub stats
+// (different security-job pattern set).
+func buildSecurityJobsBlockGitHub(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	s := statsOf(result)
+	return map[string]any{
+		"issues": projectFindings(findings, "jobName"),
+		"metrics": map[string]any{
+			"securityJobsFound": s.SecurityJobsTotal,
+			"weakenedJobs":      len(findings),
+		},
+		"compliance": c.Compliance,
+		"version":    "0.1.0",
+		"ciValid":    c.CiValid,
+		"ciMissing":  c.CiMissing,
+		"skipped":    c.Skipped,
+	}
+}
+
+// buildReusableSecretsBlock — ISSUE-302. Counts reusable-workflow
+// calls (denominator) and the secrets-inherit subset (numerator).
+func buildReusableSecretsBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	s := statsOf(result)
+	return map[string]any{
+		"issues": projectFindings(findings, "jobName"),
+		"metrics": map[string]any{
+			"reusableCalls":               s.ReusableCalls,
+			"reusableCallsSecretsInherit": s.ReusableCallsSecretsInherit,
+		},
+		"compliance": c.Compliance,
+		"version":    "0.1.0",
+		"ciValid":    c.CiValid,
+		"ciMissing":  c.CiMissing,
+		"skipped":    c.Skipped,
+	}
+}
+
+// buildTemplateInjectionBlock — ISSUE-206. Denominator is the total
+// scanned script lines.
+func buildTemplateInjectionBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	s := statsOf(result)
+	return map[string]any{
+		"issues": projectFindings(findings, "jobName"),
+		"metrics": map[string]any{
+			"workflowsScanned":     s.WorkflowsTotal,
+			"scriptLinesChecked":   s.ScriptLinesTotal,
+			"templateInjectionsFound": len(findings),
+		},
+		"compliance": c.Compliance,
+		"version":    "0.1.0",
+		"ciValid":    c.CiValid,
+		"ciMissing":  c.CiMissing,
+		"skipped":    c.Skipped,
+	}
+}
+
+// buildDangerousTriggersBlock — ISSUE-414. Denominator is workflows
+// total; numerator is workflows whose trigger set intersects the
+// dangerous-triggers list.
+func buildDangerousTriggersBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	s := statsOf(result)
+	return map[string]any{
+		"issues": projectFindings(findings, "jobName"),
+		"metrics": map[string]any{
+			"workflowsScanned":              s.WorkflowsTotal,
+			"workflowsWithDangerousTrigger": s.WorkflowsWithDangerousTrigger,
+		},
+		"compliance": c.Compliance,
+		"version":    "0.1.0",
+		"ciValid":    c.CiValid,
+		"ciMissing":  c.CiMissing,
+		"skipped":    c.Skipped,
+	}
+}
+
+// buildPermissionsBlock — ISSUE-304. Denominator is total workflows;
+// numerator is workflows missing an explicit `permissions:` block.
+func buildPermissionsBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	s := statsOf(result)
+	return map[string]any{
+		"issues": projectFindings(findings, "jobName"),
+		"metrics": map[string]any{
+			"workflowsTotal":              s.WorkflowsTotal,
+			"workflowsMissingPermissions": s.WorkflowsMissingPermissions,
+		},
+		"compliance": c.Compliance,
+		"version":    "0.1.0",
+		"ciValid":    c.CiValid,
+		"ciMissing":  c.CiMissing,
+		"skipped":    c.Skipped,
+	}
+}

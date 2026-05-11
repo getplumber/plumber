@@ -94,15 +94,17 @@ func runRegoEngine(
 		imageData,
 		protectionData,
 	)
-	return evaluatePolicies(l, conf.PlumberConfig, "gitlab", pipeline)
+	return evaluatePolicies(l, conf, "gitlab", pipeline)
 }
 
 // evaluatePolicies loads the embedded Rego policies and evaluates them
 // against pipeline. The provider argument selects which per-provider
-// ControlsConfig under pc is fed to the policies (and used to filter
-// findings via the provider's enabledControls allowlist). Callers pass
+// ControlsConfig under conf.PlumberConfig is fed to the policies (and
+// used to filter findings via the provider's enabledControls
+// allowlist). conf.ControlsFilter / conf.SkipControlsFilter further
+// restrict which controls' findings reach the caller. Callers pass
 // "gitlab" or "github". Anything else returns no findings.
-func evaluatePolicies(l *logrus.Entry, pc *configuration.PlumberConfig, provider string, pipeline *ir.NormalizedPipeline) []opaengine.Finding {
+func evaluatePolicies(l *logrus.Entry, conf *configuration.Configuration, provider string, pipeline *ir.NormalizedPipeline) []opaengine.Finding {
 	l.WithField("provider", provider).Info("Running Rego/OPA rule engine")
 	// Empty (non-nil) so the eventual JSON output marshals an empty
 	// findings array as `[]`, not `null` — `null` makes downstream
@@ -116,13 +118,13 @@ func evaluatePolicies(l *logrus.Entry, pc *configuration.PlumberConfig, provider
 		l.WithError(err).Warn("Failed to load embedded Rego policies")
 		return empty
 	}
-	controls := pc.ControlsFor(provider)
+	controls := conf.PlumberConfig.ControlsFor(provider)
 	findings, err := engine.Evaluate(context.Background(), pipeline, buildEngineConfig(controls))
 	if err != nil {
 		l.WithError(err).Warn("Rego/OPA engine evaluation failed")
 		return empty
 	}
-	findings = FilterFindingsByEnabledControls(findings, provider, controls)
+	findings = FilterFindingsByEnabledControls(findings, provider, controls, conf.ControlsFilter, conf.SkipControlsFilter)
 	if findings == nil {
 		findings = empty
 	}

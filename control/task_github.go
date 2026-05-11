@@ -122,7 +122,9 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 		l.WithError(perr).Warn("GitHub workflow parse: partial failure (file skipped)")
 	}
 
-	enrichGitHubBranches(l, pipeline, conf.GithubAPIHost, conf.PlumberConfig, conf.ProjectPath)
+	if shouldRunControl(controlBranchMustBeProtected, conf) {
+		enrichGitHubBranches(l, pipeline, conf.GithubAPIHost, conf.PlumberConfig, conf.ProjectPath)
+	}
 
 	if conf.ProgressFunc != nil {
 		total := collector.TotalProgressStepsForPipeline(pipeline)
@@ -138,8 +140,9 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 		CIConfigSource: "local",
 		CiValid:        len(pipeline.Jobs) > 0,
 		CiMissing:      len(pipeline.Jobs) == 0,
-		Findings:       evaluatePolicies(l, conf.PlumberConfig, "github", pipeline),
+		Findings:       evaluatePolicies(l, conf, "github", pipeline),
 		GitHubStats:    AggregateGitHubStats(pipeline, conf.PlumberConfig),
+		GitHubPipeline: pipeline,
 	}
 	if conf.ProgressFunc != nil {
 		total := collector.TotalProgressStepsForPipeline(pipeline)
@@ -200,7 +203,9 @@ func RunGitHubAnalysisRemote(conf *configuration.Configuration, owner, repo, ref
 		l.WithError(perr).Warn("GitHub workflow parse: partial failure (file skipped)")
 	}
 
-	enrichGitHubBranches(l, pipeline, conf.GithubAPIHost, conf.PlumberConfig, owner+"/"+repo)
+	if shouldRunControl(controlBranchMustBeProtected, conf) {
+		enrichGitHubBranches(l, pipeline, conf.GithubAPIHost, conf.PlumberConfig, owner+"/"+repo)
+	}
 
 	if conf.ProgressFunc != nil {
 		total := collector.TotalProgressStepsForPipeline(pipeline)
@@ -216,8 +221,9 @@ func RunGitHubAnalysisRemote(conf *configuration.Configuration, owner, repo, ref
 		CIConfigSource: "remote",
 		CiValid:        len(pipeline.Jobs) > 0,
 		CiMissing:      len(pipeline.Jobs) == 0,
-		Findings:       evaluatePolicies(l, conf.PlumberConfig, "github", pipeline),
+		Findings:       evaluatePolicies(l, conf, "github", pipeline),
 		GitHubStats:    AggregateGitHubStats(pipeline, conf.PlumberConfig),
+		GitHubPipeline: pipeline,
 	}
 	if conf.ProgressFunc != nil {
 		total := collector.TotalProgressStepsForPipeline(pipeline)
