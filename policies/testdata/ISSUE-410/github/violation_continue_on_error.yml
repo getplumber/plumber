@@ -1,0 +1,31 @@
+# Regression fixture for the GitHub end-to-end chain landed
+# 2026-05-07: continue-on-error: true at the job level must be
+# mapped to job.AllowFailure by the parser AND then flagged by the
+# security_jobs_weakened rule when the job name matches one of the
+# GitHub-aware patterns shipped in .plumber.yaml.
+#
+# Two security jobs:
+#   - codeql       → continue-on-error: true → MUST fire ISSUE-410
+#   - trufflehog   → no weakening → must NOT fire
+# One non-security job:
+#   - lint         → continue-on-error: true but doesn't match any
+#                    security pattern → must NOT fire
+name: weakened-codeql
+
+on: [push]
+
+jobs:
+  codeql:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - run: codeql analyze
+  trufflehog:
+    runs-on: ubuntu-latest
+    steps:
+      - run: trufflehog filesystem .
+  lint:
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - run: ./lint.sh

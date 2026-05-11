@@ -1,0 +1,27 @@
+# Regression fixture for the LLM-audit gap discovered 2026-05-07 against
+# the grafana/grafana repo: job-level `uses:` (reusable workflow calls)
+# were not subject to ISSUE-104, letting `@main` slip through.
+#
+# Three jobs:
+#   - call-third-party  → mutable @main on a third-party reusable workflow,
+#                          MUST fire ISSUE-104.
+#   - call-first-party  → mutable @main on actions/* — exempt via
+#                          trustedOwners, must NOT fire.
+#   - call-pinned       → 40-char SHA on a third-party reusable workflow,
+#                          must NOT fire.
+name: regression-reusable-workflow
+
+on: [push]
+
+jobs:
+  call-third-party:
+    uses: grafana/security-patch-actions/.github/workflows/create-patch.yml@main
+    secrets: inherit
+
+  call-first-party:
+    uses: actions/example-reusable/.github/workflows/build.yml@main
+    secrets: inherit
+
+  call-pinned:
+    uses: grafana/security-patch-actions/.github/workflows/create-patch.yml@de0fac2e4500dabe0349d3a4ad11e92923b09a26
+    secrets: inherit

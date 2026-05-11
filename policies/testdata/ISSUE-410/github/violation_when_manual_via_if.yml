@@ -1,0 +1,17 @@
+# Companion fixture: a CodeQL job gated by `if: github.event_name ==
+# 'workflow_dispatch'` runs only when manually dispatched, which
+# defeats the on-every-push expectation of a security scanner. The
+# rego rule treats this via the when-manual semantics. Currently the
+# rego only checks job.when == "manual" (a GitLab field) so this
+# case may not fire today — kept as a forward-compatible fixture so
+# we notice if the rule grows GitHub-aware logic later.
+name: optional-codeql
+
+on: [push, workflow_dispatch]
+
+jobs:
+  codeql:
+    if: ${{ github.event_name == 'workflow_dispatch' }}
+    runs-on: ubuntu-latest
+    steps:
+      - run: codeql analyze
