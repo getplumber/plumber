@@ -8,7 +8,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250319133953-166f707985bc
 	github.com/cli/go-gh/v2 v2.13.0
 	github.com/google/uuid v1.6.0
-	github.com/hashicorp/go-version v1.8.0
+	github.com/hashicorp/go-version v1.9.0
 	github.com/machinebox/graphql v0.2.2
 	github.com/open-policy-agent/opa v1.15.2
 	github.com/schollz/progressbar/v3 v3.19.0
