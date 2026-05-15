@@ -39,6 +39,7 @@ var controlsMeta = map[string]ControlMeta{
 	"pipelineMustIncludeTemplate":                 {Providers: []string{ProviderGitLab, ProviderGitHub}},
 	"pipelineMustNotEnableDebugTrace":             {Providers: []string{ProviderGitLab, ProviderGitHub}},
 	"pipelineMustNotExecuteUnverifiedScripts":     {Providers: []string{ProviderGitLab, ProviderGitHub}},
+	"pipelineMustNotLeakSecretsInConfig":          {Providers: []string{ProviderGitLab}},
 	"pipelineMustNotIncludeHardcodedJobs":         {Providers: []string{ProviderGitLab, ProviderGitHub}},
 	"pipelineMustNotOverrideJobVariables":         {Providers: []string{ProviderGitLab, ProviderGitHub}},
 	"pipelineMustNotUseDockerInDocker":            {Providers: []string{ProviderGitLab, ProviderGitHub}},

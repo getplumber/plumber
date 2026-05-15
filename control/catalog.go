@@ -112,6 +112,11 @@ func GitLabControls(pc *configuration.PlumberConfig) []ControlEntry {
 		Skipped:     c.PipelineMustNotExecuteUnverifiedScripts == nil || !c.PipelineMustNotExecuteUnverifiedScripts.IsEnabled(),
 	})
 	entries = append(entries, ControlEntry{
+		DisplayName: "Pipeline must not leak secrets in configuration",
+		ControlName: "pipelineMustNotLeakSecretsInConfig",
+		Skipped:     c.PipelineMustNotLeakSecretsInConfig == nil || !c.PipelineMustNotLeakSecretsInConfig.IsEnabled(),
+	})
+	entries = append(entries, ControlEntry{
 		DisplayName: "Pipeline must not override job variables",
 		ControlName: "pipelineMustNotOverrideJobVariables",
 		Skipped:     c.PipelineMustNotOverrideJobVariables == nil || !c.PipelineMustNotOverrideJobVariables.IsEnabled(),

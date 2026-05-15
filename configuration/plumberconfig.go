@@ -87,6 +87,9 @@ var validControlSchema = map[string][]string{
 	"workflowMustIncludeRequiredActions": {
 		"enabled", "required", "requiredGroups",
 	},
+	"pipelineMustNotLeakSecretsInConfig": {
+		"enabled", "gitleaksPath", "gitleaksConfigPath",
+	},
 }
 
 // validControlKeys returns the list of known control names.
@@ -219,6 +222,9 @@ type ControlsConfig struct {
 
 	// PipelineMustNotEnableDebugTrace control configuration
 	PipelineMustNotEnableDebugTrace *DebugTraceControlConfig `yaml:"pipelineMustNotEnableDebugTrace,omitempty"`
+
+	// PipelineMustNotLeakSecretsInConfig control configuration
+	PipelineMustNotLeakSecretsInConfig *SecretDetectionControlConfig `yaml:"pipelineMustNotLeakSecretsInConfig,omitempty"`
 
 	// PipelineMustNotUseUnsafeVariableExpansion control configuration
 	PipelineMustNotUseUnsafeVariableExpansion *VariableInjectionControlConfig `yaml:"pipelineMustNotUseUnsafeVariableExpansion,omitempty"`
@@ -521,6 +527,26 @@ type DebugTraceControlConfig struct {
 	// ForbiddenVariables is a list of CI/CD variable names that must not be set to "true"
 	// Defaults: CI_DEBUG_TRACE, CI_DEBUG_SERVICES
 	ForbiddenVariables []string `yaml:"forbiddenVariables,omitempty"`
+}
+
+// SecretDetectionControlConfig configuration for the pipeline secret detection control
+type SecretDetectionControlConfig struct {
+	// Enabled controls whether this check runs
+	Enabled *bool `yaml:"enabled,omitempty"`
+
+	// GitleaksPath is the path to the gitleaks binary; defaults to "gitleaks" (PATH lookup)
+	GitleaksPath string `yaml:"gitleaksPath,omitempty"`
+
+	// GitleaksConfigPath is an optional path to a custom gitleaks config file
+	GitleaksConfigPath string `yaml:"gitleaksConfigPath,omitempty"`
+}
+
+// IsEnabled reports whether the control is enabled
+func (c *SecretDetectionControlConfig) IsEnabled() bool {
+	if c == nil || c.Enabled == nil {
+		return false
+	}
+	return *c.Enabled
 }
 
 // VariableInjectionControlConfig configuration for the unsafe variable expansion control
@@ -913,6 +939,15 @@ func (c *PlumberConfig) GetPipelineMustIncludeTemplateConfig() *RequiredTemplate
 		return nil
 	}
 	return c.ControlsFor("gitlab").PipelineMustIncludeTemplate
+}
+
+// GetPipelineMustNotLeakSecretsInConfigConfig returns the control configuration.
+// Returns nil if not configured.
+func (c *PlumberConfig) GetPipelineMustNotLeakSecretsInConfigConfig() *SecretDetectionControlConfig {
+	if c == nil {
+		return nil
+	}
+	return c.ControlsFor("gitlab").PipelineMustNotLeakSecretsInConfig
 }
 
 // GetPipelineMustNotEnableDebugTraceConfig returns the control configuration

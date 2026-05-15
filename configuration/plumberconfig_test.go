@@ -331,6 +331,7 @@ func TestValidControlNames(t *testing.T) {
 		"pipelineMustNotEnableDebugTrace",
 		"pipelineMustNotExecuteUnverifiedScripts",
 		"pipelineMustNotIncludeHardcodedJobs",
+		"pipelineMustNotLeakSecretsInConfig",
 		"pipelineMustNotOverrideJobVariables",
 		"pipelineMustNotUseDockerInDocker",
 		"pipelineMustNotUseUnsafeVariableExpansion",

@@ -97,6 +97,8 @@ const (
 	CodeArtipacked ErrorCode = "ISSUE-307"
 	// ISSUE-308: Workflow reads a secret via a dynamic index (secrets[expr])
 	CodeSecretsDynamicIndex ErrorCode = "ISSUE-308"
+	// ISSUE-309: Pipeline configuration contains hardcoded secrets detected by gitleaks
+	CodePipelineLeaksSecrets ErrorCode = "ISSUE-309"
 )
 
 // Issue codes for pipeline composition controls (4xx)
@@ -581,6 +583,15 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Declare the narrowest permissions explicitly: `permissions: { contents: read }` at the workflow level and widen per-job only when a step needs to push, comment on issues, etc. This enforces the principle of least privilege regardless of the repo default setting.",
 		DocURL:      docsBaseURL + string(CodeUndocumentedPermissions),
 		ControlName: "workflowsMustDeclarePermissions",
+	},
+	CodePipelineLeaksSecrets: {
+		Code:        CodePipelineLeaksSecrets,
+		Severity:    SeverityCritical,
+		Title:       "Hardcoded secret detected in pipeline configuration",
+		Description: "The resolved pipeline configuration contains a pattern that matches a hardcoded secret (API token, private key, password, or other credential) embedded directly in the YAML. Secrets committed to pipeline configuration are exposed to everyone with read access to the repository, appear in version history, and are forwarded to every runner that executes the pipeline.",
+		Remediation: "Remove the hardcoded value and store it as a masked, protected CI/CD variable. Reference it in the pipeline as `$MY_SECRET` rather than embedding the value directly.",
+		DocURL:      docsBaseURL + string(CodePipelineLeaksSecrets),
+		ControlName: "pipelineMustNotLeakSecretsInConfig",
 	},
 	CodeSecretsDynamicIndex: {
 		Code:        CodeSecretsDynamicIndex,

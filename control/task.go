@@ -487,6 +487,7 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	// compliance path (the legacy Go controls were retired in
 	// docs/REFACTOR_MULTI_PROVIDER.md §8 Phase A).
 	result.Findings = runRegoEngine(l, conf, project, pipelineOriginData, pipelineImageData, protectionData)
+	result.Findings = append(result.Findings, runSecretDetection(l, conf, pipelineOriginData)...)
 	result.ProtectionData = protectionData
 
 	reportProgress(conf, analysisStepCount, analysisStepCount, "Analysis complete")

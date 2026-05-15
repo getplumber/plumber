@@ -484,6 +484,19 @@ gitlab:
       # Supports wildcards (e.g., https://internal-artifacts.example.com/*).
       trustedUrls: []
       # - https://internal-artifacts.example.com/*
+    # ── Pipeline must not leak secrets in configuration ─────────────
+    #
+    # Runs gitleaks against the resolved pipeline YAML to detect hardcoded
+    # secrets (API tokens, private keys, passwords) committed directly in
+    # the CI configuration. Requires gitleaks to be installed and available
+    # on PATH (or configured via gitleaksPath).
+    pipelineMustNotLeakSecretsInConfig:
+      # Set to true to enable this control (requires gitleaks)
+      enabled: false
+      # Path to the gitleaks binary. Defaults to "gitleaks" (PATH lookup).
+      # gitleaksPath: /usr/local/bin/gitleaks
+      # Optional path to a custom gitleaks configuration file.
+      # gitleaksConfigPath: /path/to/gitleaks.toml
     # ── Pipeline must not use Docker-in-Docker ──────────────────────
     #
     # Detects CI/CD jobs that use Docker-in-Docker (dind) services.
