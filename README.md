@@ -59,16 +59,35 @@ To analyze GitLab from a GitHub clone (or vice versa), pass the explicit URL fla
   <img src="assets/component.gif" alt="Plumber Demo" width="700">
 </p>
 
-## 🚀 Two Ways to Use Plumber
+## 🚀 Three Ways to Use Plumber
 
-Choose **one** of these methods. You don't need both:
+Choose **one** of these methods:
 
 | Method | Providers | Best for | How it works |
 |--------|-----------|----------|--------------|
 | **[CLI](#option-1-cli)** | GitLab + GitHub | Quick evaluation, local testing, one-off scans, security-team audits across many repos | Install the binary and run from terminal (or a GitHub Actions / GitLab CI step) |
 | **[GitLab CI Component](#option-2-gitlab-ci-component)** | GitLab only | Automated checks on every GitLab pipeline run | Add 2 lines to your `.gitlab-ci.yml` |
+| **[GitHub Action](#option-3-github-action)** | GitHub only | Automated checks on every push / PR, findings in the Security tab | Add a `uses: getplumber/plumber@<tag>` step |
 
-> **GitHub Actions integration:** a turnkey reusable workflow / composite action mirroring the GitLab CI Component is on the roadmap. Today, run `./plumber analyze` from a `uses: actions/checkout@<sha>` + `run: ./plumber analyze` step (see [the example below](#trying-it-on-this-repo)). PR comments and repo badges on GitHub are not implemented yet — see the [parity matrix](#flags-that-dont-apply-on-github-yet).
+ **GitHub Actions integration:** Plumber ships a composite action (this repo's root `action.yml`), the GitHub counterpart of the GitLab CI Component. It installs the verified binary, runs the scan, fails the job below your threshold, uploads SARIF to **Code Scanning** (Security tab), and attaches the JSON / PBOM / CycloneDX as artifacts:
+
+```yaml
+permissions:
+  contents: read
+  security-events: write   # for the Code Scanning upload
+jobs:
+  compliance:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: getplumber/plumber@<commit-sha>   # v0.3.10 (pin by SHA, see note below)
+        with:
+          threshold: 80
+```
+
+> Pin third-party actions by **commit SHA**, not a tag. Plumber's own `actionsMustBePinnedByCommitSha` control flags tag-pinned actions, so pin ours the same way: copy the SHA from the [release page](https://github.com/getplumber/plumber/releases) (or let Dependabot/Renovate manage it). The version goes in the trailing comment.
+
+See the [GitHub Action](#option-3-github-action) section for all inputs/outputs. (PR comments and repo badges on GitHub are still on the roadmap, see the [parity matrix](#flags-that-dont-apply-on-github-yet).)
 
 ---
 
@@ -283,7 +302,7 @@ A handful of flags are GitLab-only today. On the GitHub path they are silently i
 | `--ci-config-path` | N/A — GitHub workflows always live under `.github/workflows/` |
 | `--gitlab-url` | N/A — pass `--github-url` instead, or rely on git-remote auto-detection |
 
-Flags that work identically on both providers: `--config`, `--output` (JSON findings), `--pbom` (PBOM JSON; GitHub inventory: container images, third-party actions, reusable workflows), `--pbom-cyclonedx` (CycloneDX 1.5), `--threshold`, `--print`, `--score`, `--score-point`, `--controls`, `--skip-controls`, `--fail-warnings`, `--branch`, `--project` (provider chosen by which URL flag is set).
+Flags that work identically on both providers: `--config`, `--output` (JSON findings), `--pbom` (PBOM JSON; GitHub inventory: container images, third-party actions, reusable workflows), `--pbom-cyclonedx` (CycloneDX 1.5), `--sarif` (SARIF 2.1.0 for GitHub Code Scanning / GitLab), `--glsast` (GitLab SAST report), `--threshold`, `--print`, `--score`, `--score-point`, `--controls`, `--skip-controls`, `--fail-warnings`, `--branch`, `--project` (provider chosen by which URL flag is set).
 
 ### Trying it on this repo
 
@@ -394,6 +413,67 @@ include:
 That's it! Plumber will now run on every pipeline and report compliance issues.
 
 > 💡 **Want to customize?** See [Configuration](#%EF%B8%8F-configuration) to set thresholds, enable/disable controls, and whitelist trusted images.
+
+---
+
+## Option 3: GitHub Action
+
+Add Plumber to your GitHub Actions workflow with a single step. The action (this repo's root `action.yml`) installs the verified release binary, runs the scan, **fails the job** below your threshold, uploads **SARIF** to Code Scanning (findings appear in the **Security** tab), and attaches the JSON report, PBOM, and CycloneDX SBOM as a workflow artifact.
+
+```yaml
+name: Compliance
+on: [push, pull_request]
+
+permissions:
+  contents: read
+  security-events: write   # required to upload SARIF to Code Scanning
+
+jobs:
+  plumber:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: getplumber/plumber@<commit-sha>   # v0.3.10
+        with:
+          threshold: 80
+```
+
+> **Pin by commit SHA, not a tag.** Plumber's `actionsMustBePinnedByCommitSha` control flags tag-pinned third-party actions (a tag is mutable; a SHA is not), so pin ours by SHA and keep the version in the trailing comment. Grab the SHA from the [release page](https://github.com/getplumber/plumber/releases), or let Dependabot/Renovate keep it current. (`actions/checkout@v4` is exempt only because `actions` is a default trusted owner.)
+
+Scan a repo **without checking it out** (security-team audit) by setting `project`:
+
+```yaml
+      - uses: getplumber/plumber@<commit-sha>   # v0.3.10
+        with:
+          project: some-org/some-repo
+          github-token: ${{ secrets.AUDIT_TOKEN }}   # needs repo / Administration:read
+```
+
+<details>
+<summary><b>All inputs</b></summary>
+
+| Input | Default | Description |
+|-------|---------|-------------|
+| `version` | `v0.3.10` | Plumber release to install. Defaults to a pinned tag; bump explicitly when upgrading. |
+| `verify-attestation` | `true` | Verify the downloaded binary's build-provenance attestation (sigstore/SLSA) against the getplumber/plumber release workflow via the `gh` CLI. Anchors the binary to a trusted build regardless of the mutable release tag. Set `false` for air-gapped / GHES setups without attestation access. |
+| `github-token` | `${{ github.token }}` | API token (branch protection, advisory DB) and SARIF upload. `Administration:read` for full `branchMustBeProtected`. |
+| `project` | *(checkout)* | `owner/repo` to scan remotely. Default: scan the checked-out repo. |
+| `github-url` | `github.com` | GitHub Enterprise Server host. |
+| `threshold` | `100` | Minimum compliance %% to pass. |
+| `config-file` | *(auto)* | Path to `.plumber.yaml`. Default: repo `.plumber.yaml`, else built-in defaults. |
+| `controls` / `skip-controls` | — | Run only / skip listed controls (comma-separated, mutually exclusive). |
+| `score` | `true` | Show the Plumber letter score + points. |
+| `fail-warnings` | `false` | Treat config warnings as errors. |
+| `soft-fail` | `false` | Don't fail the job below threshold (still uploads everything). Runtime errors still fail. |
+| `upload-sarif` | `true` | Upload SARIF to Code Scanning (needs `security-events: write`). |
+| `upload-artifacts` | `true` | Upload report / PBOM / SBOM as a workflow artifact. |
+| `output` / `pbom` / `pbom-cyclonedx` / `sarif` | `plumber-report.json` / `plumber-pbom.json` / `plumber-cyclonedx-sbom.json` / `plumber.sarif` | Output paths (set empty to skip). |
+
+**Outputs:** `compliance` (percentage), `passed` (`true`/`false`), `report` (path), `sarif` (path).
+
+</details>
+
+> **Runners:** Linux, macOS, and Windows GitHub-hosted runners are supported (the binary is downloaded per OS/arch and checksum-verified). **GHES:** set `github-url`.
 
 ---
 
@@ -1342,6 +1422,8 @@ Plumber generates multiple output formats to fit different workflows. All artifa
 | **JSON Report** | `--output` | — | `plumber-report.json` | Machine-readable analysis results |
 | **PBOM** | `--pbom` | — | `plumber-pbom.json` | Pipeline Bill of Materials |
 | **CycloneDX** | `--pbom-cyclonedx` | — | `plumber-cyclonedx-sbom.json` | Standard SBOM format |
+| **SARIF** | `--sarif` | — | `plumber.sarif` | SARIF 2.1.0 findings for GitHub Code Scanning / GitLab Security Dashboard |
+| **GitLab SAST** | `--glsast` | — | `gl-sast-report.json` | GitLab SAST report (schema v15) for `artifacts:reports:sast` (Security Dashboard / MR widget) |
 
 ### JSON Report
 
@@ -1653,6 +1735,8 @@ plumber analyze [flags]
 | `--output` | No | — | Write JSON results to file (both providers; GitHub output also includes `partialControls` when a control couldn't fully evaluate). |
 | `--pbom` | No | — | Write PBOM (Pipeline Bill of Materials) to file. **GitLab inventory:** container images + includes (components, templates, project includes, …). **GitHub inventory:** container images (`container:` blocks, `services:`) + third-party actions (`uses: owner/repo@ref`) + reusable-workflow calls. |
 | `--pbom-cyclonedx` | No | — | Same inventory as `--pbom`, serialized as CycloneDX 1.5 SBOM. GitHub action references emit `pkg:github/owner/repo@<sha>` purls. |
+| `--glsast` | No | — | Write findings as a GitLab SAST report (`gl-sast-report.json`, schema v15). Wire into a GitLab job's `artifacts:reports:sast` so findings appear in the Security Dashboard and MR security widget. Each finding carries its issue code as a scanner identifier with the doc URL. |
+| `--sarif` | No | — | Write findings as a SARIF 2.1.0 file. Upload to GitHub Code Scanning (`github/codeql-action/upload-sarif`) to surface findings in the Security tab, or to GitLab's SARIF path. Severity maps to SARIF `level` (critical/high → error, medium → warning, low → note) and `security-severity`. A clean run writes a valid empty-results file so prior alerts are cleared. |
 | `--print` | No | `true` | Print text output to stdout |
 | `--mr-comment` | No | `false` | Post/update a compliance comment on the merge request (MR pipelines only: requires `api` scope) |
 | `--badge` | No | `false` | Create/update a Plumber compliance badge on the project (requires `api` scope; only runs on default branch) |

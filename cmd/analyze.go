@@ -33,6 +33,8 @@ var (
 	threshold         float64
 	pbomFile          string
 	pbomCycloneDXFile string
+	sarifFile         string
+	glsastFile        string
 	mrComment         bool
 	badge             bool
 	showScore         bool
@@ -126,6 +128,8 @@ func init() {
 	analyzeCmd.Flags().StringVarP(&outputFile, "output", "o", "", "Write JSON results to file")
 	analyzeCmd.Flags().StringVar(&pbomFile, "pbom", "", "Write PBOM (Pipeline Bill of Materials) to file")
 	analyzeCmd.Flags().StringVar(&pbomCycloneDXFile, "pbom-cyclonedx", "", "Write PBOM in CycloneDX format (for security tool integration)")
+	analyzeCmd.Flags().StringVar(&sarifFile, "sarif", "", "Write SARIF 2.1.0 results to file (for GitHub Code Scanning / GitLab Security Dashboard)")
+	analyzeCmd.Flags().StringVar(&glsastFile, "glsast", "", "Write a GitLab SAST report (gl-sast-report.json) to file (for the GitLab Security Dashboard / MR widget)")
 	analyzeCmd.Flags().BoolVar(&mrComment, "mr-comment", false, "Post/update a compliance comment on the merge request (requires api scope token; only works in merge request pipelines)")
 	analyzeCmd.Flags().BoolVar(&badge, "badge", false, "Create/update a Plumber compliance badge on the project (requires api scope; only runs on default branch)")
 	analyzeCmd.Flags().BoolVar(&showScore, "score", false, "Banner: letter score, points, bar, severity counts on stdout; points + score in JSON, PBOM, CycloneDX; badge shows letter when set")
@@ -400,6 +404,22 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "PBOM (CycloneDX) written to: %s\n", pbomCycloneDXFile)
+	}
+
+	// Write SARIF report to file if specified
+	if sarifFile != "" {
+		if err := writeSARIFToFile(result, sarifFile); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "SARIF written to: %s\n", sarifFile)
+	}
+
+	// Write GitLab SAST report to file if specified
+	if glsastFile != "" {
+		if err := writeGLSASTToFile(result, glsastFile); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "GitLab SAST report written to: %s\n", glsastFile)
 	}
 
 	// Post merge request comment if explicitly enabled and in a CI merge request pipeline

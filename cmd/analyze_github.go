@@ -284,7 +284,24 @@ func presentGitHubResult(result *control.AnalysisResult, conf *configuration.Con
 		fmt.Fprintf(os.Stderr, "PBOM (CycloneDX) written to: %s\n", pbomCycloneDXFile)
 	}
 
-	if len(result.Findings) > 0 {
+	if sarifFile != "" {
+		if err := writeSARIFToFile(result, sarifFile); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "SARIF written to: %s\n", sarifFile)
+	}
+
+	if glsastFile != "" {
+		if err := writeGLSASTToFile(result, glsastFile); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "GitLab SAST report written to: %s\n", glsastFile)
+	}
+
+	// Check compliance against threshold (mirrors the GitLab path). The
+	// threshold is the gate, not the mere presence of findings, so a run
+	// above the configured threshold passes even with some findings.
+	if compliance < threshold {
 		return &ComplianceError{Compliance: compliance, Threshold: threshold}
 	}
 	return nil

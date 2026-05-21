@@ -1,0 +1,61 @@
+# Runs Plumber on this repository the same way a user would: it analyzes the
+# repo's own workflows, uploads findings to Code Scanning (Security tab), and
+# fails the job when compliance is below threshold. Findings are uploaded even
+# when the scan fails, so the Security tab always reflects the latest state.
+#
+# Plumber is built from source so the gate tracks the code in this repo (the
+# released binary may lag behind --sarif and friends). Once a release with the
+# action exists, this can switch to `uses: getplumber/plumber@<sha>`.
+name: Plumber compliance
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  plumber:
+    name: Plumber analyze
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c # v6.4.0
+        with:
+          go-version: stable
+
+      - name: Build Plumber from source
+        run: |
+          cp .plumber.yaml internal/defaultconfig/default.yaml
+          go build -o plumber .
+
+      - name: Run Plumber analyze
+        id: analyze
+        # Do not abort here on findings: we still want to upload the SARIF
+        # below. The dedicated "Enforce" step turns a finding into a job
+        # failure after the upload has happened.
+        continue-on-error: true
+        run: |
+          ./plumber analyze \
+            --sarif plumber.sarif \
+            --output plumber-report.json \
+            --threshold 100
+
+      - name: Upload SARIF to Code Scanning
+        if: ${{ always() && hashFiles('plumber.sarif') != '' }}
+        uses: github/codeql-action/upload-sarif@95e58e9a2cdfd71adc6e0353d5c52f41a045d225 # v4.35.2
+        with:
+          sarif_file: plumber.sarif
+
+      - name: Enforce compliance threshold
+        if: ${{ always() && steps.analyze.outcome == 'failure' }}
+        run: |
+          echo "::error::Plumber found compliance issues below the threshold. See the analyze step log and the Security tab."
+          exit 1
