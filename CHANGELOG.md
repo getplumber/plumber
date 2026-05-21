@@ -1,3 +1,17 @@
+## [0.3.2](https://github.com/getplumber/plumber/compare/v0.3.1...v0.3.2) (2026-05-21)
+
+
+### 🐛 Bug Fixes
+
+* **config:** Generate correct msg in plumber config generate ([f7cda10](https://github.com/getplumber/plumber/commit/f7cda10664119d058d3baf904ffa7161fcf36f4c))
+
+## [0.3.1](https://github.com/getplumber/plumber/compare/v0.3.0...v0.3.1) (2026-05-21)
+
+
+### 🐛 Bug Fixes
+
+* **ci:** remove ci testing vlaues ([fb7d2e5](https://github.com/getplumber/plumber/commit/fb7d2e5b7a9a5b50e40a0f285f5154ff1961ac8e))
+
 ## [0.3.0](https://github.com/getplumber/plumber/compare/v0.2.22...v0.3.0) (2026-05-20)
 
 
