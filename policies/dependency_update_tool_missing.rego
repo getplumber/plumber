@@ -19,7 +19,7 @@ deny contains finding if {
 	not input.pipeline.renovateConfigPath
 	first_file := input.pipeline.jobs[0].originFile
 	finding := {
-		"code":     "ISSUE-608",
+		"code":     "ISSUE-903",
 		"severity": "medium",
 		"message":  "repository has workflows but neither dependabot.yml nor renovate.json is configured — dependency pins will drift and stale CVEs will persist",
 		"file":     first_file,

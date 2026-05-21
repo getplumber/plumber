@@ -40,6 +40,14 @@ func AggregateGitHubStats(pipeline *ir.NormalizedPipeline, pc *configuration.Plu
 	if gh.SecurityJobsMustNotBeWeakened != nil && len(gh.SecurityJobsMustNotBeWeakened.SecurityJobPatterns) > 0 {
 		securityPatterns = gh.SecurityJobsMustNotBeWeakened.SecurityJobPatterns
 	}
+	// Debug-trace forbidden-variable list — mirrors the same field
+	// the rego rule reads. Empty when the user has not configured
+	// the control or its enabled-toggle is off; in that case the
+	// matcher below short-circuits and DebugTraceFound stays at 0.
+	var debugForbidden []string
+	if gh.PipelineMustNotEnableDebugTrace != nil && gh.PipelineMustNotEnableDebugTrace.IsEnabled() {
+		debugForbidden = gh.PipelineMustNotEnableDebugTrace.ForbiddenVariables
+	}
 
 	// Workflow set — distinct workflow files. Triggers/permissions
 	// are propagated to every job, so we walk jobs but dedupe on
@@ -67,8 +75,28 @@ func AggregateGitHubStats(pipeline *ir.NormalizedPipeline, pc *configuration.Plu
 			}
 		}
 
-		// Jobs total (denominator for Docker-in-Docker).
+		// Jobs total (denominator for Docker-in-Docker, write-all,
+		// and any other per-job rule).
 		stats.JobsTotal++
+
+		// ISSUE-803: count jobs whose effective permissions block is
+		// the literal "write-all" string. The collector propagates a
+		// workflow-level write-all to every job's Permissions, so a
+		// per-job match handles both authoring styles uniformly.
+		if perms, ok := job.Permissions.(string); ok && perms == "write-all" {
+			stats.JobsWithWriteAll++
+		}
+
+		// ISSUE-203 (GitHub side): scan every merged env-var binding
+		// for the configured forbidden-variable names. The collector
+		// folds workflow / job / step env into job.Variables, so a
+		// single per-job walk covers every authoring location.
+		stats.VariableBindingsTotal += len(job.Variables)
+		for k, v := range job.Variables {
+			if isDebugTraceMatch(k, v, debugForbidden) {
+				stats.DebugTraceFound++
+			}
+		}
 
 		// Container images: job-level + services.
 		if job.Image != nil {
@@ -104,9 +132,23 @@ func AggregateGitHubStats(pipeline *ir.NormalizedPipeline, pc *configuration.Plu
 			}
 		}
 
-		// Action refs — count steps[].uses, exclude trustedOwners.
+		// Action refs — count steps[].uses, exclude trustedOwners for
+		// the pin-by-SHA accounting. Supply-chain checks (ISSUE-702
+		// archived, ISSUE-703 known CVEs) inspect EVERY ref because
+		// the rules themselves don't exempt trusted owners; in
+		// practice the API enrichment phase skips first-party refs,
+		// so their metadata is nil and neither counter ticks.
 		for k := range job.Uses {
-			ref := job.Uses[k].Uses
+			use := &job.Uses[k]
+			ref := use.Uses
+			if use.Metadata != nil {
+				if use.Metadata.RepoArchived {
+					stats.ActionRefsArchived++
+				}
+				if len(use.Metadata.Advisories) > 0 {
+					stats.ActionRefsVulnerable++
+				}
+			}
 			if ownerOf(ref) != "" && isTrustedOwner(ref, trustedOwners) {
 				stats.ActionRefsExempt++
 				continue
@@ -336,6 +378,33 @@ func globMatch(pattern, name string) bool {
 	}
 	if strings.HasSuffix(pattern, "*") {
 		return strings.HasPrefix(name, pattern[:len(pattern)-1])
+	}
+	return false
+}
+
+// isDebugTraceMatch mirrors policies/debug_trace.rego's match logic:
+// variable name comparison is case-insensitive, value is truthy when
+// the trimmed lowercase form is "true", "1", or "yes". Returns false
+// fast when the forbidden list is empty (the rego rule short-circuits
+// the same way).
+func isDebugTraceMatch(name, value string, forbidden []string) bool {
+	if len(forbidden) == 0 {
+		return false
+	}
+	upperName := strings.ToUpper(name)
+	matched := false
+	for _, f := range forbidden {
+		if strings.ToUpper(f) == upperName {
+			matched = true
+			break
+		}
+	}
+	if !matched {
+		return false
+	}
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "true", "1", "yes":
+		return true
 	}
 	return false
 }

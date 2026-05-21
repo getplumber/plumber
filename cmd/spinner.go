@@ -53,11 +53,25 @@ func (s *progressSpinner) Stop() {
 }
 
 // Update sets the progress to step/total and updates the label. It is
-// safe to call concurrently.
+// safe to call concurrently. The total may grow across calls (the
+// GitHub remote path emits its listing+fetch ticks before the final
+// grand total is known, then bumps the total once enrichment +
+// branch-protection slots are counted). When total changes, the bar
+// is recreated rather than resized with ChangeMax: progressbar/v3
+// latches `state.finished=true` the first time currentNum reaches
+// the old max, and that flag short-circuits every subsequent render
+// even after the max grows. Recreating yields a fresh state and the
+// late "Resolving branch protection" tick actually paints.
 func (s *progressSpinner) Update(step, total int, message string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.bar == nil {
+	if s.bar == nil || int64(total) != s.bar.GetMax64() {
+		if s.bar != nil {
+			// Clear the existing bar's line in place before swapping.
+			// Without this, ANSI residue from the prior render bleeds
+			// into the new bar's first paint.
+			fmt.Fprint(os.Stderr, "\r\033[K")
+		}
 		s.bar = progressbar.NewOptions(total,
 			progressbar.OptionSetWriter(os.Stderr),
 			progressbar.OptionShowCount(),

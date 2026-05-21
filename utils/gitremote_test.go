@@ -157,6 +157,7 @@ func TestParseGitRemoteURL(t *testing.T) {
 
 			if result == nil {
 				t.Fatalf("ParseGitRemoteURL(%q) = nil, want non-nil", tt.remoteURL)
+				return
 			}
 
 			if result.Host != tt.wantHost {

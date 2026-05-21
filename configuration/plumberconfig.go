@@ -72,6 +72,18 @@ var validControlSchema = map[string][]string{
 	"reusableWorkflowsMustNotInheritSecrets": {
 		"enabled",
 	},
+	"workflowMustNotGrantPermissionsWriteAll": {
+		"enabled",
+	},
+	"actionsMustNotBeArchived": {
+		"enabled",
+	},
+	"actionsMustNotCarryKnownCVEs": {
+		"enabled",
+	},
+	"workflowMustIncludeRequiredActions": {
+		"enabled", "required", "requiredGroups",
+	},
 }
 
 // validControlKeys returns the list of known control names.
@@ -238,6 +250,38 @@ type ControlsConfig struct {
 	// ReusableWorkflowsMustNotInheritSecrets control configuration (GitHub Actions only).
 	// Config-free; toggle via `enabled`.
 	ReusableWorkflowsMustNotInheritSecrets *EnabledOnlyControlConfig `yaml:"reusableWorkflowsMustNotInheritSecrets,omitempty"`
+
+	// WorkflowMustNotGrantPermissionsWriteAll control configuration (GitHub
+	// Actions only). Flags workflows or jobs whose effective `permissions:`
+	// block is the literal `write-all` shortcut, which grants every scope
+	// (contents, packages, deployments, …) write access on GITHUB_TOKEN.
+	// Stricter scope-level audits (per-scope write grants) are out of scope
+	// here; they get their own rule later. Config-free; toggle via `enabled`.
+	WorkflowMustNotGrantPermissionsWriteAll *EnabledOnlyControlConfig `yaml:"workflowMustNotGrantPermissionsWriteAll,omitempty"`
+
+	// ActionsMustNotBeArchived control configuration (GitHub Actions only).
+	// Flags `uses: owner/repo@ref` references whose upstream repository is
+	// archived on GitHub. Driven by per-action API metadata enriched at
+	// collect time. Config-free; toggle via `enabled`.
+	ActionsMustNotBeArchived *EnabledOnlyControlConfig `yaml:"actionsMustNotBeArchived,omitempty"`
+
+	// ActionsMustNotCarryKnownCVEs control configuration (GitHub Actions
+	// only). Flags `uses: owner/repo@ref` references whose upstream
+	// repository carries at least one published advisory in GitHub's
+	// Advisory Database under the `actions` ecosystem. Driven by per-
+	// action API metadata enriched at collect time. Config-free; toggle
+	// via `enabled`.
+	ActionsMustNotCarryKnownCVEs *EnabledOnlyControlConfig `yaml:"actionsMustNotCarryKnownCVEs,omitempty"`
+
+	// WorkflowMustIncludeRequiredActions control configuration (GitHub
+	// Actions only). The GitHub counterpart of
+	// PipelineMustIncludeComponent / PipelineMustIncludeTemplate on
+	// the GitLab side: assert that workflows reference a configured
+	// set of required actions or reusable workflows. Matching is by
+	// `owner/repo[/path]` prefix and ref-agnostic, so
+	// `org/sast-scan` matches `uses: org/sast-scan@v2`,
+	// `uses: org/sast-scan@abc123`, and `uses: org/sast-scan/sub@v1`.
+	WorkflowMustIncludeRequiredActions *RequiredActionsControlConfig `yaml:"workflowMustIncludeRequiredActions,omitempty"`
 }
 
 // EnabledOnlyControlConfig is the shape used for controls that have no
@@ -259,7 +303,7 @@ func (c *EnabledOnlyControlConfig) IsEnabled() bool {
 }
 
 // ActionsPinnedByShaControlConfig configures the GitHub Actions supply-
-// chain pinning check (ISSUE-104). Only meaningful on GitHub workflows.
+// chain pinning check (ISSUE-701). Only meaningful on GitHub workflows.
 type ActionsPinnedByShaControlConfig struct {
 	// Enabled controls whether this check runs
 	Enabled *bool `yaml:"enabled,omitempty"`
@@ -407,6 +451,56 @@ func (c *RequiredComponentsControlConfig) GetResolvedRequiredGroups() ([][]strin
 		return groups, nil
 	}
 	return c.RequiredGroups, nil
+}
+
+// RequiredActionsControlConfig configures the GitHub
+// workflowMustIncludeRequiredActions control. Mirrors
+// RequiredComponentsControlConfig's DNF (Disjunctive Normal Form)
+// shape so users running both providers have one mental model:
+//   - Required is a boolean expression ("a AND b OR c"), parsed via
+//     ParseRequiredExpression into the same OR-of-ANDs groups.
+//   - RequiredGroups is the same DNF written directly.
+//   - The two fields are mutually exclusive at validate-time.
+//
+// Each required entry is an owner/repo prefix (or owner/repo/path
+// for sub-actions and reusable-workflow paths). Matching is
+// ref-agnostic so users can bump pinned SHAs without rewriting the
+// policy.
+type RequiredActionsControlConfig struct {
+	Enabled        *bool      `yaml:"enabled,omitempty"`
+	Required       string     `yaml:"required,omitempty"`
+	RequiredGroups [][]string `yaml:"requiredGroups,omitempty"`
+}
+
+// GetResolvedRequiredGroups returns the effective required groups by
+// resolving either the 'required' expression or the 'requiredGroups'
+// field. Errors when both are set or when the expression is invalid.
+func (c *RequiredActionsControlConfig) GetResolvedRequiredGroups() ([][]string, error) {
+	if c == nil {
+		return nil, nil
+	}
+	hasExpression := c.Required != ""
+	hasGroups := len(c.RequiredGroups) > 0
+	if hasExpression && hasGroups {
+		return nil, fmt.Errorf("workflowMustIncludeRequiredActions: cannot use both 'required' and 'requiredGroups'; use only one")
+	}
+	if hasExpression {
+		groups, err := ParseRequiredExpression(c.Required)
+		if err != nil {
+			return nil, fmt.Errorf("workflowMustIncludeRequiredActions: %w", err)
+		}
+		return groups, nil
+	}
+	return c.RequiredGroups, nil
+}
+
+// IsEnabled returns whether the control is enabled. Returns false
+// when the config block is absent or when `enabled:` is not set.
+func (c *RequiredActionsControlConfig) IsEnabled() bool {
+	if c == nil || c.Enabled == nil {
+		return false
+	}
+	return *c.Enabled
 }
 
 // DebugTraceControlConfig configuration for the debug trace detection control
@@ -660,6 +754,11 @@ func validateControlsConfig(c *ControlsConfig) error {
 	}
 	if tmpl := c.PipelineMustIncludeTemplate; tmpl != nil {
 		if _, err := tmpl.GetResolvedRequiredGroups(); err != nil {
+			return err
+		}
+	}
+	if actions := c.WorkflowMustIncludeRequiredActions; actions != nil {
+		if _, err := actions.GetResolvedRequiredGroups(); err != nil {
 			return err
 		}
 	}

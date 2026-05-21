@@ -53,6 +53,7 @@ jobs:
 	}
 	if result == nil {
 		t.Fatal("expected result, got nil")
+		return
 	}
 	if !result.CiValid {
 		t.Error("expected CiValid=true (jobs discovered)")
@@ -73,7 +74,7 @@ jobs:
 		t.Errorf("unexpected finding on ci/test, got %+v", hits)
 	}
 	// Test asserts on ISSUE-102 only — unrelated defaults-on rules
-	// (ISSUE-304 undocumented permissions, ISSUE-602 no concurrency,
+	// (ISSUE-801 undocumented permissions, ISSUE-418 no concurrency,
 	// …) also fire on this intentionally-minimal fixture and are
 	// tracked in their own suites.
 	if hits["ISSUE-102:ci/lint"]+hits["ISSUE-102:ci/test"] != 1 {

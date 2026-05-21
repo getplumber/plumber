@@ -33,7 +33,7 @@ deny contains finding if {
 	regex.match(sha_pattern, ref)
 	action.metadata.commentTagSha != ref
 	finding := {
-		"code":     "ISSUE-110",
+		"code":     "ISSUE-708",
 		"severity": "medium",
 		"message":  sprintf("job %q pins %q but comment %q names tag %q which resolves to %q — reviewers will misread the version", [job.name, action.uses, action.comment, action.metadata.commentVersion, action.metadata.commentTagSha]),
 		"job":      job.name,
@@ -53,7 +53,7 @@ deny contains finding if {
 	cv != ""
 	_strip_v(ref) != _strip_v(cv)
 	finding := {
-		"code":     "ISSUE-110",
+		"code":     "ISSUE-708",
 		"severity": "medium",
 		"message":  sprintf("job %q pins tag %q with comment %q — ref and comment name different versions", [job.name, action.uses, action.comment]),
 		"job":      job.name,

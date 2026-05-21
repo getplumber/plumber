@@ -137,6 +137,52 @@ func TestFetchGitHubBranchProtection_TargetedSkipsMissingBranches(t *testing.T) 
 	}
 }
 
+// TestFetchGitHubBranchProtection_TargetedRedirectsToDefault checks the
+// real-world GitHub quirk where /repos/.../branches/{stale-name} silently
+// returns the default branch (common after the master→main rename). The
+// caller asked for "master", so the returned "main" payload must be
+// dropped — otherwise main ends up in `out` twice (once from the
+// explicit main lookup, once from the redirected master), inflating
+// BranchesMatched and falsely triggering the "protection details
+// unknown" postflight on the duplicate.
+func TestFetchGitHubBranchProtection_TargetedRedirectsToDefault(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/owner/repo/branches/main", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"name": "main", "protected": true})
+	})
+	mux.HandleFunc("/repos/owner/repo/branches/main/protection", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"allow_force_pushes":            map[string]any{"enabled": false},
+			"required_pull_request_reviews": map[string]any{"require_code_owner_reviews": true},
+		})
+	})
+	// /branches/master "silently" responds with the default branch
+	// (name="main"). This mirrors the live-repo behaviour observed on
+	// getplumber/plumber where /branches/master 200s with main.
+	mux.HandleFunc("/repos/owner/repo/branches/master", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"name": "main", "protected": true})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	swapRESTClient(t, server)
+
+	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+		ExactNames: []string{"main", "master"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(branches) != 1 {
+		t.Fatalf("expected 1 branch (main only; master is a default-branch redirect), got %d: %+v", len(branches), branches)
+	}
+	if branches[0].Name != "main" {
+		t.Errorf("expected main, got %q", branches[0].Name)
+	}
+	if !branches[0].ProtectionDetailsKnown {
+		t.Errorf("expected ProtectionDetailsKnown=true on the genuine main fetch")
+	}
+}
+
 // TestFetchGitHubBranchProtection_TargetedRulesetOnlyBranch verifies
 // that a branch protected via the newer Repository Rulesets API
 // keeps Protected=true even though /protection 404s. Detail is not
@@ -549,6 +595,270 @@ func TestFetchGitHubDefaultBranch_404_DegradesToEmpty(t *testing.T) {
 	}
 	if name != "" {
 		t.Errorf("expected empty default branch on 404, got %q", name)
+	}
+}
+
+// rulesetTestHelpers ───────────────────────────────────────────────
+//
+// The Rulesets fold tests share three handler stubs (classic
+// protection, rules endpoint, branch entry). Each test builds its mux
+// from these so the surface stays small and the assertions read
+// linearly.
+
+func handleBranchEntry(mux *http.ServeMux, owner, repo, name string, protected bool) {
+	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/branches/%s", owner, repo, name), func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"name": name, "protected": protected})
+	})
+}
+
+func handleClassicProtection(mux *http.ServeMux, owner, repo, name string, allowForcePush, codeOwner bool) {
+	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/branches/%s/protection", owner, repo, name), func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"allow_force_pushes":            map[string]any{"enabled": allowForcePush},
+			"required_pull_request_reviews": map[string]any{"require_code_owner_reviews": codeOwner},
+		})
+	})
+}
+
+func handleClassicProtectionStatus(mux *http.ServeMux, owner, repo, name string, status int) {
+	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/branches/%s/protection", owner, repo, name), func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, http.StatusText(status), status)
+	})
+}
+
+func handleEffectiveRules(mux *http.ServeMux, owner, repo, name string, rules []map[string]any) {
+	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/rules/branches/%s", owner, repo, name), func(w http.ResponseWriter, r *http.Request) {
+		// Honour pagination: return the rules on page=1, empty on page=2+.
+		page := r.URL.Query().Get("page")
+		if page != "" && page != "1" {
+			_ = json.NewEncoder(w).Encode([]map[string]any{})
+			return
+		}
+		_ = json.NewEncoder(w).Encode(rules)
+	})
+}
+
+func handleEffectiveRulesStatus(mux *http.ServeMux, owner, repo, name string, status int) {
+	mux.HandleFunc(fmt.Sprintf("/repos/%s/%s/rules/branches/%s", owner, repo, name), func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, http.StatusText(status), status)
+	})
+}
+
+// TestFetchGitHubBranchProtection_RulesetOnlyCodeOwner exercises the
+// Ruleset-only scenario: classic /protection 404s, but the rules
+// endpoint reports a pull_request rule with require_code_owner_review.
+// Without the Rulesets merge this branch landed at PDK=false and the
+// rego rule abstained — silently dropping a real ISSUE-505 signal.
+func TestFetchGitHubBranchProtection_RulesetOnlyCodeOwner(t *testing.T) {
+	mux := http.NewServeMux()
+	handleBranchEntry(mux, "owner", "repo", "main", true)
+	handleClassicProtectionStatus(mux, "owner", "repo", "main", http.StatusNotFound)
+	handleEffectiveRules(mux, "owner", "repo", "main", []map[string]any{
+		{
+			"type":                "pull_request",
+			"ruleset_source_type": "Repository",
+			"ruleset_id":          1,
+			"parameters":          map[string]any{"require_code_owner_review": true},
+		},
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	swapRESTClient(t, server)
+
+	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+		ExactNames: []string{"main"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(branches) != 1 {
+		t.Fatalf("expected 1 branch, got %d: %+v", len(branches), branches)
+	}
+	b := branches[0]
+	if !b.ProtectionDetailsKnown {
+		t.Errorf("expected ProtectionDetailsKnown=true when rules endpoint succeeds even if classic 404s")
+	}
+	if !b.CodeOwnerApprovalRequired {
+		t.Errorf("expected CodeOwnerApprovalRequired=true from ruleset pull_request rule")
+	}
+}
+
+// TestFetchGitHubBranchProtection_ClassicPlusRulesetMerge confirms the
+// "stricter wins" merge: classic reports force-push allowed and no
+// code-owner, the ruleset adds non_fast_forward + a code-owner rule.
+// The final IR must reflect the strict end of both.
+func TestFetchGitHubBranchProtection_ClassicPlusRulesetMerge(t *testing.T) {
+	mux := http.NewServeMux()
+	handleBranchEntry(mux, "owner", "repo", "main", true)
+	handleClassicProtection(mux, "owner", "repo", "main", true, false)
+	handleEffectiveRules(mux, "owner", "repo", "main", []map[string]any{
+		{"type": "non_fast_forward"},
+		{"type": "pull_request", "parameters": map[string]any{"require_code_owner_review": true}},
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	swapRESTClient(t, server)
+
+	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+		ExactNames: []string{"main"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(branches) != 1 {
+		t.Fatalf("expected 1 branch, got %d", len(branches))
+	}
+	b := branches[0]
+	if b.AllowForcePush {
+		t.Errorf("expected AllowForcePush=false (non_fast_forward overrides classic), got true")
+	}
+	if !b.CodeOwnerApprovalRequired {
+		t.Errorf("expected CodeOwnerApprovalRequired=true via ruleset, got false")
+	}
+	if !b.ProtectionDetailsKnown {
+		t.Errorf("expected ProtectionDetailsKnown=true")
+	}
+}
+
+// TestFetchGitHubBranchProtection_MultipleRulesetsBothHaveCodeOwner
+// covers the "two rulesets cover the same branch" case. The endpoint
+// returns the union — same rule type twice with the strict parameter.
+// Idempotent OR semantics keep the merge clean.
+func TestFetchGitHubBranchProtection_MultipleRulesetsBothHaveCodeOwner(t *testing.T) {
+	mux := http.NewServeMux()
+	handleBranchEntry(mux, "owner", "repo", "main", true)
+	handleClassicProtectionStatus(mux, "owner", "repo", "main", http.StatusNotFound)
+	handleEffectiveRules(mux, "owner", "repo", "main", []map[string]any{
+		{"type": "pull_request", "ruleset_id": 1, "parameters": map[string]any{"require_code_owner_review": true}},
+		{"type": "pull_request", "ruleset_id": 2, "parameters": map[string]any{"require_code_owner_review": true}},
+		{"type": "non_fast_forward", "ruleset_id": 2},
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	swapRESTClient(t, server)
+
+	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+		ExactNames: []string{"main"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !branches[0].CodeOwnerApprovalRequired || branches[0].AllowForcePush || !branches[0].ProtectionDetailsKnown {
+		t.Errorf("expected coda=true, afp=false, pdk=true; got %+v", branches[0])
+	}
+}
+
+// TestFetchGitHubBranchProtection_RulesetsForbidden_ClassicSucceeds
+// — when the rules endpoint 403s (typical with a token that has
+// content scope but not Administration:Read on a private repo) we
+// must still keep the classic-derived data and stay PDK=true. The
+// "rulesets adds info on top of classic" branch must not regress to
+// the "both endpoints 403 ⇒ abstain" path.
+func TestFetchGitHubBranchProtection_RulesetsForbidden_ClassicSucceeds(t *testing.T) {
+	mux := http.NewServeMux()
+	handleBranchEntry(mux, "owner", "repo", "main", true)
+	handleClassicProtection(mux, "owner", "repo", "main", false, true)
+	handleEffectiveRulesStatus(mux, "owner", "repo", "main", http.StatusForbidden)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	swapRESTClient(t, server)
+
+	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+		ExactNames: []string{"main"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	b := branches[0]
+	if !b.ProtectionDetailsKnown {
+		t.Errorf("expected PDK=true via classic alone, got false")
+	}
+	if !b.CodeOwnerApprovalRequired {
+		t.Errorf("expected code-owner=true from classic, got false")
+	}
+	if b.AllowForcePush {
+		t.Errorf("expected force-push=false from classic, got true")
+	}
+}
+
+// TestFetchGitHubBranchProtection_BothForbidden — both endpoints
+// degrade. PDK must stay false so the rego rule abstains and the
+// honest-postflight code path surfaces the partial state.
+func TestFetchGitHubBranchProtection_BothForbidden(t *testing.T) {
+	mux := http.NewServeMux()
+	handleBranchEntry(mux, "owner", "repo", "main", true)
+	handleClassicProtectionStatus(mux, "owner", "repo", "main", http.StatusForbidden)
+	handleEffectiveRulesStatus(mux, "owner", "repo", "main", http.StatusForbidden)
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	swapRESTClient(t, server)
+
+	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+		ExactNames: []string{"main"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	b := branches[0]
+	if b.ProtectionDetailsKnown {
+		t.Errorf("expected PDK=false when both endpoints 403, got true")
+	}
+}
+
+// TestFetchGitHubBranchProtection_RulesetsEmpty — the rules endpoint
+// authoritatively says "no active rules" (200 with []). PDK turns
+// true on the back of the successful call alone; the IR flags come
+// from classic.
+func TestFetchGitHubBranchProtection_RulesetsEmpty(t *testing.T) {
+	mux := http.NewServeMux()
+	handleBranchEntry(mux, "owner", "repo", "main", true)
+	handleClassicProtection(mux, "owner", "repo", "main", false, true)
+	handleEffectiveRules(mux, "owner", "repo", "main", []map[string]any{})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	swapRESTClient(t, server)
+
+	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+		ExactNames: []string{"main"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	b := branches[0]
+	if !b.ProtectionDetailsKnown || !b.CodeOwnerApprovalRequired || b.AllowForcePush {
+		t.Errorf("expected pdk=true coda=true afp=false (classic-only), got %+v", b)
+	}
+}
+
+// TestFetchGitHubBranchProtection_OrgLevelRuleset — the endpoint
+// flags org-level rulesets with ruleset_source_type=Organization.
+// We do not filter on source: the merge logic should be identical.
+func TestFetchGitHubBranchProtection_OrgLevelRuleset(t *testing.T) {
+	mux := http.NewServeMux()
+	handleBranchEntry(mux, "owner", "repo", "main", true)
+	handleClassicProtectionStatus(mux, "owner", "repo", "main", http.StatusNotFound)
+	handleEffectiveRules(mux, "owner", "repo", "main", []map[string]any{
+		{
+			"type":                "pull_request",
+			"ruleset_source_type": "Organization",
+			"ruleset_source":      "owner",
+			"ruleset_id":          99,
+			"parameters":          map[string]any{"require_code_owner_review": true},
+		},
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	swapRESTClient(t, server)
+
+	branches, err := FetchGitHubBranchProtection("", "owner", "repo", BranchFetchOptions{
+		ExactNames: []string{"main"},
+	})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	b := branches[0]
+	if !b.CodeOwnerApprovalRequired || !b.ProtectionDetailsKnown {
+		t.Errorf("expected org-level ruleset to be honoured, got %+v", b)
 	}
 }
 

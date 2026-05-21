@@ -24,7 +24,7 @@ deny contains finding if {
 	job := input.pipeline.jobs[i]
 	not job.permissions
 	finding := {
-		"code":     "ISSUE-304",
+		"code":     "ISSUE-801",
 		"severity": "medium",
 		"message":  sprintf("job %q runs with no explicit `permissions:` block — the GITHUB_TOKEN inherits the repository default scope", [job.name]),
 		"job":      job.name,

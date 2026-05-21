@@ -42,29 +42,29 @@ controls:
 ## **Implementation Hints**
 
 <!--
-Optional but appreciated. These are suggestions — contributors are free to 
-take a different approach.
+Optional. Keep it at the level of WHAT the rule should detect and WHICH
+data it needs. Don't prescribe specific Go files — see CONTRIBUTING.md
+("Adding a New Control") for the full file-by-file implementer checklist
+that walks every layer (collector + IR, Rego rule, config plumbing,
+catalog, bench gate, terminal output, JSON output, PBOM/CycloneDX,
+compliance, --skip-controls, plumber config validate, tests, docs).
 
-Consider covering:
-1. Data source: Which collector/data structure provides the input?
-2. New files: What new files would be created?
-3. Logic: High-level algorithm or detection approach
-4. Compliance scoring: How is the 0%-100% score calculated?
+That checklist is copy-pasteable into Claude Code / Cursor / Copilot
+so the implementer (or their LLM) can tick boxes step by step.
+
+Detection logic for every new control lives in a Rego rule under
+`policies/*.rego`. The `control/controlGitlab*.go` Go-pattern layer is
+frozen — DO NOT propose new controls there.
+
+Consider covering (briefly):
+1. Data source: which IR field would the rule read? If the data isn't
+   on the IR yet, does it need collector enrichment (GitLab/GitHub API
+   call, external binary like gitleaks, …)?
+2. Logic: a one-liner of what the rule flags.
+3. Severity + ISSUE code suggestion (or "next available").
+4. Default state: opt-in or default-on? Any external dependency the
+   user would need to install first (e.g., gitleaks for secret detection)?
 -->
-
-## **Files Touched**
-
-<!--
-List the files that would likely need changes. This helps contributors
-scope the work and reviewers know what to expect.
--->
-
-- `control/controlGitlab<Name>.go` (new control)
-- `control/types.go` (add result field to `AnalysisResult`)
-- `control/task.go` (wire the new control in `RunAnalysis()`)
-- `configuration/plumberconfig.go` (add config struct and getter)
-- `.plumber.yaml` (add default config section)
-- `cmd/analyze.go` (add output formatting)
 
 ## **Why It's Valuable**
 

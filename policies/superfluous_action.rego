@@ -37,7 +37,7 @@ deny contains finding if {
 	action := job.uses[j]
 	reason := _superfluous_reason(action.uses)
 	finding := {
-		"code":     "ISSUE-115",
+		"code":     "ISSUE-711",
 		"severity": "low",
 		"message":  sprintf("job %q uses %q — same effect as %q from the runner, drop the third-party dependency", [job.name, action.uses, reason]),
 		"job":      job.name,

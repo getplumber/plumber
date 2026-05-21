@@ -335,6 +335,80 @@ jobs:
 	}
 }
 
+// TestScanGitHubWorkflows_EnvPropagation locks in the merge order
+// for `env:` blocks at workflow, job, and step scope. The IR folds
+// all three into a single Job.Variables map; later writes overwrite
+// earlier ones (step > job > workflow), mirroring GitHub's runtime
+// precedence. Rules that scan workflow content (ISSUE-203 debug
+// trace, ISSUE-207 template injection, …) read Job.Variables, so
+// every level needs to land there or the rule sees nothing.
+func TestScanGitHubWorkflows_EnvPropagation(t *testing.T) {
+	tmp := t.TempDir()
+	wfDir := filepath.Join(tmp, ".github", "workflows")
+	if err := os.MkdirAll(wfDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	workflow := `name: env-merge
+on: push
+env:
+  WORKFLOW_ONLY: wf-value
+  OVERRIDE_ME: from-workflow
+jobs:
+  only-workflow-env:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo hi
+  job-overrides-workflow:
+    runs-on: ubuntu-latest
+    env:
+      JOB_ONLY: job-value
+      OVERRIDE_ME: from-job
+    steps:
+      - run: echo hi
+  step-overrides-job-and-workflow:
+    runs-on: ubuntu-latest
+    env:
+      OVERRIDE_ME: from-job
+    steps:
+      - run: echo hi
+        env:
+          STEP_ONLY: step-value
+          OVERRIDE_ME: from-step
+`
+	if err := os.WriteFile(filepath.Join(wfDir, "env.yml"), []byte(workflow), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	pipeline, partial, err := ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
+	if err != nil || len(partial) != 0 {
+		t.Fatalf("unexpected: err=%v partial=%v", err, partial)
+	}
+
+	got := map[string]map[string]string{}
+	for _, j := range pipeline.Jobs {
+		got[j.Name] = j.Variables
+	}
+
+	// Workflow-only env reaches a job that declares no env:. This was
+	// the false-negative gap behind ISSUE-203 missing workflow-level
+	// ACTIONS_STEP_DEBUG / ACTIONS_RUNNER_DEBUG toggles.
+	if v := got["env/only-workflow-env"]["WORKFLOW_ONLY"]; v != "wf-value" {
+		t.Errorf("only-workflow-env: expected WORKFLOW_ONLY=wf-value, got %q (got=%v)", v, got["env/only-workflow-env"])
+	}
+
+	// Job env extends workflow env and overrides on key collision.
+	jobEnv := got["env/job-overrides-workflow"]
+	if jobEnv["WORKFLOW_ONLY"] != "wf-value" || jobEnv["JOB_ONLY"] != "job-value" || jobEnv["OVERRIDE_ME"] != "from-job" {
+		t.Errorf("job-overrides-workflow: bad merge: %v", jobEnv)
+	}
+
+	// Step env wins over both job and workflow.
+	stepEnv := got["env/step-overrides-job-and-workflow"]
+	if stepEnv["WORKFLOW_ONLY"] != "wf-value" || stepEnv["STEP_ONLY"] != "step-value" || stepEnv["OVERRIDE_ME"] != "from-step" {
+		t.Errorf("step-overrides-job-and-workflow: bad merge: %v", stepEnv)
+	}
+}
+
 func TestScanGitHubWorkflows_ParseErrorReportedAsPartial(t *testing.T) {
 	tmp := t.TempDir()
 	wfDir := filepath.Join(tmp, ".github", "workflows")

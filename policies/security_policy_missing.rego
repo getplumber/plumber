@@ -19,7 +19,7 @@ deny contains finding if {
 	not input.pipeline.securityPolicyPath
 	first_file := input.pipeline.jobs[0].originFile
 	finding := {
-		"code":     "ISSUE-610",
+		"code":     "ISSUE-905",
 		"severity": "low",
 		"message":  "repository has workflows but no SECURITY.md policy file — add one at the repo root or under .github/ to document the disclosure channel",
 		"file":     first_file,

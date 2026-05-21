@@ -53,7 +53,7 @@ deny contains finding if {
 	trigger := job.triggers[j]
 	dangerous_events[trigger]
 	finding := {
-		"code":     "ISSUE-414",
+		"code":     "ISSUE-802",
 		"severity": "critical",
 		"message":  sprintf("job %q is reachable via the dangerous trigger %q", [job.name, trigger]),
 		"job":      job.name,

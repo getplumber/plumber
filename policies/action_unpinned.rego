@@ -34,7 +34,7 @@ deny contains finding if {
 	not _is_local(use.uses)
 	not _is_trusted_owner(use.uses)
 	finding := {
-		"code":     "ISSUE-104",
+		"code":     "ISSUE-701",
 		"severity": "high",
 		"message":  sprintf("job %q references action %q with a mutable ref — pin by commit SHA instead", [job.name, use.uses]),
 		"job":      job.name,
@@ -59,7 +59,7 @@ deny contains finding if {
 	not _is_local(use)
 	not _is_trusted_owner(use)
 	finding := {
-		"code":     "ISSUE-104",
+		"code":     "ISSUE-701",
 		"severity": "high",
 		"message":  sprintf("job %q calls reusable workflow %q with a mutable ref — pin by commit SHA instead", [job.name, use]),
 		"job":      job.name,

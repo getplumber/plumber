@@ -18,7 +18,7 @@ import (
 // isn't owner/repo shaped. Lacking auth or scope, the collector
 // returns an empty slice and the rego rule emits no findings — the
 // same degraded-mode contract as the action-metadata enrichment.
-func enrichGitHubBranches(l *logrus.Entry, pipeline *ir.NormalizedPipeline, host string, pc *configuration.PlumberConfig, projectPath string) {
+func enrichGitHubBranches(l *logrus.Entry, pipeline *ir.NormalizedPipeline, host string, pc *configuration.PlumberConfig, projectPath string, onProgress func(message string)) {
 	if pipeline == nil || pc == nil {
 		return
 	}
@@ -65,9 +65,35 @@ func enrichGitHubBranches(l *logrus.Entry, pipeline *ir.NormalizedPipeline, host
 		exact = append(exact, pipeline.DefaultBranch)
 	}
 
+	// Predicate used by the collector to skip protection-detail
+	// fetches on branches the user did not ask about. Same scope
+	// rule as branch_non_compliant.rego: a branch is in scope when
+	// it matches any namePattern, or when it equals the repo's
+	// default branch and defaultMustBeProtected is on. Patterns use
+	// the same simple-glob shape as elsewhere (exact match or a
+	// trailing `/*` directory suffix); anything more elaborate
+	// falls through to false, and we just pay for that one branch.
+	defaultRequired := cfg.DefaultMustBeProtected != nil && *cfg.DefaultMustBeProtected
+	inScope := func(name string) bool {
+		for _, p := range cfg.NamePatterns {
+			if p == name {
+				return true
+			}
+			if strings.HasSuffix(p, "/*") && strings.HasPrefix(name, strings.TrimSuffix(p, "/*")+"/") {
+				return true
+			}
+		}
+		if defaultRequired && pipeline.DefaultBranch != "" && name == pipeline.DefaultBranch {
+			return true
+		}
+		return false
+	}
+
 	branches, err := collector.FetchGitHubBranchProtection(host, parts[0], parts[1], collector.BranchFetchOptions{
 		ExactNames: exact,
 		Listing:    listing,
+		OnProgress: onProgress,
+		InScope:    inScope,
 	})
 	if err != nil {
 		l.WithError(err).Warn("GitHub branch-protection fetch failed; branchMustBeProtected will see zero branches")
@@ -123,7 +149,20 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 	}
 
 	if shouldRunControl(controlBranchMustBeProtected, conf) {
-		enrichGitHubBranches(l, pipeline, conf.GithubAPIHost, conf.PlumberConfig, conf.ProjectPath)
+		total := collector.TotalProgressStepsForPipeline(pipeline)
+		if conf.ProgressFunc != nil {
+			conf.ProgressFunc(total-2, total, "Resolving branch protection")
+		}
+		var onProgress func(string)
+		if conf.ProgressFunc != nil {
+			onProgress = func(message string) {
+				// Re-emit at the same slot, just update the label.
+				// The spinner re-renders the bar with the new text
+				// so the user sees pagination/per-branch ticks live.
+				conf.ProgressFunc(total-2, total, message)
+			}
+		}
+		enrichGitHubBranches(l, pipeline, conf.GithubAPIHost, conf.PlumberConfig, conf.ProjectPath, onProgress)
 	}
 
 	if conf.ProgressFunc != nil {
@@ -204,7 +243,17 @@ func RunGitHubAnalysisRemote(conf *configuration.Configuration, owner, repo, ref
 	}
 
 	if shouldRunControl(controlBranchMustBeProtected, conf) {
-		enrichGitHubBranches(l, pipeline, conf.GithubAPIHost, conf.PlumberConfig, owner+"/"+repo)
+		total := collector.TotalProgressStepsForPipeline(pipeline)
+		if conf.ProgressFunc != nil {
+			conf.ProgressFunc(total-2, total, "Resolving branch protection")
+		}
+		var onProgress func(string)
+		if conf.ProgressFunc != nil {
+			onProgress = func(message string) {
+				conf.ProgressFunc(total-2, total, message)
+			}
+		}
+		enrichGitHubBranches(l, pipeline, conf.GithubAPIHost, conf.PlumberConfig, owner+"/"+repo, onProgress)
 	}
 
 	if conf.ProgressFunc != nil {

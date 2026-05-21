@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"sort"
+	"strings"
 
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
@@ -47,6 +48,16 @@ func buildLegacyResultGitHub(e control.ControlEntry, result *control.AnalysisRes
 		return "dangerousTriggersResult", buildDangerousTriggersBlock(common, result, findings)
 	case "workflowsMustDeclarePermissions":
 		return "permissionsResult", buildPermissionsBlock(common, result, findings)
+	case "workflowMustIncludeRequiredActions":
+		return "requiredActionsResult", buildRequiredActionsBlock(common, pc.ControlsFor("github").WorkflowMustIncludeRequiredActions, result, findings)
+	case "workflowMustNotGrantPermissionsWriteAll":
+		return "excessivePermissionsResult", buildExcessivePermissionsBlock(common, result, findings)
+	case "actionsMustNotBeArchived":
+		return "archivedActionsResult", buildArchivedActionsBlock(common, result, findings)
+	case "actionsMustNotCarryKnownCVEs":
+		return "knownVulnerableActionsResult", buildKnownVulnerableActionsBlock(common, result, findings)
+	case "pipelineMustNotEnableDebugTrace":
+		return "debugTraceResult", buildDebugTraceBlockGitHub(common, result, findings)
 	}
 	return "", nil
 }
@@ -61,7 +72,7 @@ func statsOf(result *control.AnalysisResult) control.GitHubAnalysisStats {
 	return *result.GitHubStats
 }
 
-// buildActionPinningBlock — ISSUE-104. Total = third-party action
+// buildActionPinningBlock — ISSUE-701. Total = third-party action
 // references in scope (i.e. excluding trustedOwners). Findings are
 // the unpinned subset.
 func buildActionPinningBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
@@ -314,7 +325,7 @@ func buildReusableSecretsBlock(c legacyCommon, result *control.AnalysisResult, f
 	}
 }
 
-// buildTemplateInjectionBlock — ISSUE-206. Denominator is the total
+// buildTemplateInjectionBlock — ISSUE-207. Denominator is the total
 // scanned script lines.
 func buildTemplateInjectionBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
 	s := statsOf(result)
@@ -333,7 +344,7 @@ func buildTemplateInjectionBlock(c legacyCommon, result *control.AnalysisResult,
 	}
 }
 
-// buildDangerousTriggersBlock — ISSUE-414. Denominator is workflows
+// buildDangerousTriggersBlock — ISSUE-802. Denominator is workflows
 // total; numerator is workflows whose trigger set intersects the
 // dangerous-triggers list.
 func buildDangerousTriggersBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
@@ -352,7 +363,7 @@ func buildDangerousTriggersBlock(c legacyCommon, result *control.AnalysisResult,
 	}
 }
 
-// buildPermissionsBlock — ISSUE-304. Denominator is total workflows;
+// buildPermissionsBlock — ISSUE-801. Denominator is total workflows;
 // numerator is workflows missing an explicit `permissions:` block.
 func buildPermissionsBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
 	s := statsOf(result)
@@ -361,6 +372,196 @@ func buildPermissionsBlock(c legacyCommon, result *control.AnalysisResult, findi
 		"metrics": map[string]any{
 			"workflowsTotal":              s.WorkflowsTotal,
 			"workflowsMissingPermissions": s.WorkflowsMissingPermissions,
+		},
+		"compliance": c.Compliance,
+		"version":    "0.1.0",
+		"ciValid":    c.CiValid,
+		"ciMissing":  c.CiMissing,
+		"skipped":    c.Skipped,
+	}
+}
+
+// buildRequiredActionsBlock builds the ISSUE-417 result block. Per-group requirement
+// satisfaction shape mirrors the GitLab requiredComponentsResult /
+// requiredTemplatesResult blocks so any consumer that already
+// scripts the GitLab side gets the same fields back. Each
+// `requirementGroups[i]` is one AND group; `present` shows which
+// required entries the scan found referenced in the workflows;
+// `missing` lists the gaps the user must add. `satisfiedGroups`
+// counts groups whose every entry resolved, matching the
+// `anySatisfiedGroup` boolean. Compliance follows the catalog's
+// binary rule (100 when no finding, 0 otherwise).
+func buildRequiredActionsBlock(c legacyCommon, cfg *configuration.RequiredActionsControlConfig, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	var groups [][]string
+	if cfg != nil && !c.Skipped {
+		groups, _ = cfg.GetResolvedRequiredGroups()
+	}
+	requirementGroups, satisfied := _resolveRequiredActionGroups(groups, result)
+	return map[string]any{
+		"requirementGroups": requirementGroups,
+		"issues":            projectFindings(findings, "job"),
+		"metrics": map[string]any{
+			"totalGroups":       len(requirementGroups),
+			"satisfiedGroups":   satisfied,
+			"anySatisfiedGroup": len(requirementGroups) > 0 && satisfied > 0,
+		},
+		"compliance": c.Compliance,
+		"version":    "0.1.0",
+		"ciValid":    c.CiValid,
+		"ciMissing":  c.CiMissing,
+		"skipped":    c.Skipped,
+	}
+}
+
+// _resolveRequiredActionGroups walks the configured DNF and returns
+// the per-group present/missing breakdown plus the satisfied-group
+// count. Same ref-agnostic, slash-guarded match as required_actions.rego
+// so the JSON view and the rule never disagree on what counts as
+// "present".
+func _resolveRequiredActionGroups(groups [][]string, result *control.AnalysisResult) ([]map[string]any, int) {
+	out := make([]map[string]any, 0, len(groups))
+	satisfied := 0
+	for _, group := range groups {
+		present := make([]string, 0, len(group))
+		missing := make([]string, 0, len(group))
+		for _, req := range group {
+			if _requiredActionReferenced(req, result) {
+				present = append(present, req)
+			} else {
+				missing = append(missing, req)
+			}
+		}
+		allPresent := len(missing) == 0 && len(group) > 0
+		if allPresent {
+			satisfied++
+		}
+		out = append(out, map[string]any{
+			"required":     group,
+			"present":      present,
+			"missing":      missing,
+			"satisfied":    allPresent,
+		})
+	}
+	return out, satisfied
+}
+
+func _requiredActionReferenced(required string, result *control.AnalysisResult) bool {
+	if result == nil || result.GitHubPipeline == nil {
+		return false
+	}
+	for i := range result.GitHubPipeline.Jobs {
+		job := &result.GitHubPipeline.Jobs[i]
+		if job.ReusableWorkflowUses != "" && _actionRefMatches(job.ReusableWorkflowUses, required) {
+			return true
+		}
+		for k := range job.Uses {
+			if _actionRefMatches(job.Uses[k].Uses, required) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func _actionRefMatches(reference, required string) bool {
+	if reference == "" || required == "" {
+		return false
+	}
+	normalized := reference
+	if idx := strings.Index(normalized, "@"); idx >= 0 {
+		normalized = normalized[:idx]
+	}
+	if normalized == required {
+		return true
+	}
+	return strings.HasPrefix(normalized, required+"/")
+}
+
+// buildExcessivePermissionsBlock — ISSUE-803. Denominator is total
+// jobs (workflow-level permissions: write-all gets propagated to each
+// job by the collector, so the per-job denominator gives the right
+// "X jobs of Y" ratio whether the offending grant lives at workflow
+// or job scope). Numerator is the finding count, which the rego
+// emits one-per-job that resolves to write-all.
+func buildExcessivePermissionsBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	s := statsOf(result)
+	return map[string]any{
+		"issues": projectFindings(findings, "job"),
+		"metrics": map[string]any{
+			"jobsTotal":        s.JobsTotal,
+			"jobsWithWriteAll": len(findings),
+		},
+		"compliance": c.Compliance,
+		"version":    "0.1.0",
+		"ciValid":    c.CiValid,
+		"ciMissing":  c.CiMissing,
+		"skipped":    c.Skipped,
+	}
+}
+
+// buildArchivedActionsBlock — ISSUE-702. Denominator is the number
+// of action refs scanned (same denominator the action-pinning block
+// uses), so a "X of Y" ratio is meaningful even when the GitHub API
+// metadata enrichment hit a quota and some refs went unresolved.
+// Numerator is the finding count, one per (job, archived-action) pair.
+func buildArchivedActionsBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	s := statsOf(result)
+	return map[string]any{
+		"issues": projectFindings(findings, "job"),
+		"metrics": map[string]any{
+			"actionRefsTotal":    s.ActionRefsTotal,
+			"actionRefsArchived": len(findings),
+		},
+		"compliance": c.Compliance,
+		"version":    "0.1.0",
+		"ciValid":    c.CiValid,
+		"ciMissing":  c.CiMissing,
+		"skipped":    c.Skipped,
+	}
+}
+
+// buildDebugTraceBlockGitHub — ISSUE-203 on the GitHub path. The
+// GitLab equivalent (buildDebugTraceBlock) leans on
+// _countAllVariableBindings, which walks GitLab-only `Origins`
+// metadata. GitHub jobs carry their merged `env:` block directly in
+// `Job.Variables`, so the denominator here is the sum of those map
+// sizes across the IR. Numerator is the finding count; the rego
+// emits one finding per (job, debug-variable) pair that resolves to
+// a truthy value.
+func buildDebugTraceBlockGitHub(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	total := 0
+	if result != nil && result.GitHubPipeline != nil {
+		for _, j := range result.GitHubPipeline.Jobs {
+			total += len(j.Variables)
+		}
+	}
+	return map[string]any{
+		"issues": projectFindings(findings, "job"),
+		"metrics": map[string]any{
+			"totalVariablesChecked": total,
+			"forbiddenFound":        len(findings),
+		},
+		"compliance": c.Compliance,
+		"version":    "0.1.0",
+		"ciValid":    c.CiValid,
+		"ciMissing":  c.CiMissing,
+		"skipped":    c.Skipped,
+	}
+}
+
+// buildKnownVulnerableActionsBlock — ISSUE-703. Same denominator as
+// the archived-actions block (total action refs); numerator counts
+// every (job, vulnerable-action) pair the rego flagged. The list of
+// GHSA IDs per finding is preserved inside `issues[*].advisories` —
+// downstream consumers (dashboards) typically aggregate on the IDs to
+// dedupe across multiple callers of the same compromised action.
+func buildKnownVulnerableActionsBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	s := statsOf(result)
+	return map[string]any{
+		"issues": projectFindings(findings, "job"),
+		"metrics": map[string]any{
+			"actionRefsTotal":      s.ActionRefsTotal,
+			"actionRefsVulnerable": len(findings),
 		},
 		"compliance": c.Compliance,
 		"version":    "0.1.0",

@@ -18,7 +18,7 @@ deny contains finding if {
 	pw != ""
 	not _is_expression(pw)
 	finding := {
-		"code":     "ISSUE-105",
+		"code":     "ISSUE-704",
 		"severity": "critical",
 		"message":  sprintf("job %q sets container.credentials.password to a literal value — use ${{ secrets.* }} instead", [job.name]),
 		"job":      job.name,

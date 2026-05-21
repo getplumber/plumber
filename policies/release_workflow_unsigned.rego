@@ -55,7 +55,7 @@ deny contains finding if {
 	not _job_self_signs(job)
 	not _job_runs_signing_step(job)
 	finding := {
-		"code":     "ISSUE-112",
+		"code":     "ISSUE-712",
 		"severity": "medium",
 		"message":  sprintf("job %q publishes release artefacts without any signing step — add cosign / sigstore / GPG alongside the publish action", [job.name]),
 		"job":      job.name,

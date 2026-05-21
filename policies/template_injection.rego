@@ -7,7 +7,7 @@
 # up executing arbitrary code with the repo's secrets.
 #
 # Severity is "critical" for the same reasons as dangerous-triggers
-# (ISSUE-414): this is the pattern behind the March 2025
+# (ISSUE-802): this is the pattern behind the March 2025
 # tj-actions/changed-files supply-chain compromise
 # (CVE-2025-30066). The safe way to use such values is via an env:
 # binding, then dereferencing the environment variable ("$TITLE"),
@@ -34,7 +34,7 @@ deny contains finding if {
 	pattern := unsafe_patterns[k]
 	regex.match(pattern, script)
 	finding := {
-		"code":     "ISSUE-206",
+		"code":     "ISSUE-207",
 		"severity": "critical",
 		"message":  sprintf("job %q interpolates a user-controlled template expression into an inline script (template-injection risk)", [job.name]),
 		"job":      job.name,

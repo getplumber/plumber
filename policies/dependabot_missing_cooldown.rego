@@ -13,7 +13,7 @@ deny contains finding if {
 	some i
 	ecosystem := input.pipeline.dependabot.missingCooldownEcosystems[i]
 	finding := {
-		"code":     "ISSUE-607",
+		"code":     "ISSUE-902",
 		"severity": "low",
 		"message":  sprintf("dependabot ecosystem %q has no cooldown window — a compromised upstream release would reach an auto-merge PR immediately", [ecosystem]),
 		"file":     input.pipeline.dependabot.path,

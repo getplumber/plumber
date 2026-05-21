@@ -1,3 +1,113 @@
+## [0.3.1](https://github.com/getplumber/plumber/compare/v0.3.0...v0.3.1) (2026-05-21)
+
+
+### 🐛 Bug Fixes
+
+* **ci:** remove ci testing vlaues ([fb7d2e5](https://github.com/getplumber/plumber/commit/fb7d2e5b7a9a5b50e40a0f285f5154ff1961ac8e))
+
+## [0.3.0](https://github.com/getplumber/plumber/compare/v0.2.22...v0.3.0) (2026-05-20)
+
+
+### ⚠ BREAKING CHANGES
+
+* **config:** .plumber.yaml schema is now per-provider. Existing
+v1 files keep working with a deprecation warning; run
+`plumber config migrate` to upgrade on disk.
+
+Update .plumber.yaml from the flat top-level controls: block (legacy v1)
+to a per-provider layout where each control lives under gitlab.controls:
+or github.controls:. Same control name, different values per platform:
+the trusted-registry list on GitLab is registry.gitlab.com/..., on
+GitHub it's ghcr.io/<org>/..., and there was no way to express that
+before. v2 fixes it.
+
+Schema:
+- version: "2.0" = current per-provider schema. version: "1.0" =
+  legacy flat schema (auto-converted in memory at load time, with a
+  deprecation warning).
+- Add ProviderConfig / AuthConfig types; PlumberConfig now carries
+  GitLab/GitHub fields and a ControlsFor(provider) helper.
+- LoadPlumberConfig detects v1 vs v2 by structural inspection, runs
+  convertV1ToV2 for legacy files, rejects unsupported version values,
+  and scans the raw YAML for the deprecated engine: key (warning
+  only — the field is gone from the struct).
+- ValidateKnownKeys handles both v1 (controls.X.subkey) and v2
+  (gitlab.controls.X.subkey, github.controls.X.subkey) paths.
+
+Migration tooling:
+- Add `plumber config migrate` subcommand. Rewrites a v1 .plumber.yaml
+  into v2 on disk, preserving comments via the yaml.v3 node API.
+  Default writes <input>.v2; --in-place overwrites with a .bak backup.
+  No-op on already-v2 files. Refuses to migrate mixed v1+v2 files
+  (top-level controls AND a gitlab.controls already present); the user
+  resolves manually.
+
+Caller migration:
+- cmd/legacy_json.go, cmd/render_details.go, cmd/init.go,
+  control/task.go (evaluatePolicies now takes a provider arg),
+  control/task_github.go, control/catalog.go (GitLabControls,
+  FilterFindingsByEnabledControls, DisabledControlNames take
+  *ControlsConfig directly) — all rewired to read through
+  ControlsFor("gitlab"|"github") so each provider sees its own values.
+- 14 legacy getter methods on PlumberConfig
+  (GetBranchMustBeProtectedConfig, etc.) updated to read from the v2
+  location. The branch-protection one was gating the collector —
+  without this fix, branch findings silently disappeared on real
+  GitLab pipelines.
+
+Side-quest fix that surfaced during validation:
+- policies/security_jobs_weakened.rego — _weakening_reason(job) was a
+  function with three := bodies that could each return a different
+  string for the same job. Real-world pipelines triggering two of them
+  at once (e.g. when:manual at job level AND a rules: override) hit
+  Rego's eval_conflict_error and the engine returned zero findings.
+  Each weakening signal is now its own deny rule; Rego set semantics
+  allows multiple findings per job naturally. New regression test
+  TestIssue410_MultipleWeakeningsOnOneJob.
+
+Default config:
+- .plumber.yaml updated to v2 shape with version: "2.0".
+
+Docs:
+- New docs/plumber-yaml-v2-migration.md: 30-second migration, before/
+  after, rationale, backward-compat, anchors for shared values, edge
+  cases, deprecation timeline, manual cookbook.
+- Replace the README "Multi-provider configuration (roadmap)"
+  subsection with a real "Multi-provider configuration" section
+  showing v2 example, anchor pattern, and a link to the migration
+  guide.
+
+### ✨ Features
+
+* **analysis:** Rego/OPA engine with GitHub provider and GitLab parity ([c487121](https://github.com/getplumber/plumber/commit/c48712114e5b2d3a222697c5a3af263c97f80284)), closes [#148](https://github.com/getplumber/plumber/issues/148) [#148](https://github.com/getplumber/plumber/issues/148)
+* **config:** per-provider YAML schema (v2.0); plumber config migrate; docs ([bf84cfd](https://github.com/getplumber/plumber/commit/bf84cfd462afce54d469f9f7c9ae3b5597d20e88))
+* **controls:** add workflowMustIncludeRequiredActions; fix includes count ([8d262f8](https://github.com/getplumber/plumber/commit/8d262f821d49851e62b7188c3c573c3d5ea6fe59))
+* **controls:** ISSUE-203 GitHub hardening — expression env + $GITHUB_ENV script writes (all critical) ([c85c1ab](https://github.com/getplumber/plumber/commit/c85c1abc6dfe8f4df6dbb7dbf41bd4eb50381086))
+* **controls:** ship 4 GitHub controls + fix 2 collector caveats ([3b903ef](https://github.com/getplumber/plumber/commit/3b903ef48d8f6ef9cd86159ebbb751bf7fc5dce9))
+* **github:** bench-list gating + GitLab-semantic parity + GHES URL ([b5e4293](https://github.com/getplumber/plumber/commit/b5e429340c495b7bd425af35aa2f9719aff504b0))
+* **github:** branchMustBeProtected — first project-governance control ([4200bf1](https://github.com/getplumber/plumber/commit/4200bf12ded9359563609ce880a494a33d45f8d9))
+* **github:** close the GitHub-side gaps — wizard, artifacts, filters, parity ([2d49870](https://github.com/getplumber/plumber/commit/2d498708e2f641f1ac02b750b6b8edf875bccd54))
+* **github:** honest auth UX — preflight banner + postflight skipped markers ([c033cdb](https://github.com/getplumber/plumber/commit/c033cdb0f0ee04a00ef7b379783b894a5b531ac1))
+* **github:** per-control parity output + skip API when no consumer ships ([da2d8a7](https://github.com/getplumber/plumber/commit/da2d8a7fe60e0b64e284c900cdcba5a2b758f43c))
+* **github:** upstream fetch via --github-url + --project (parity with GitLab) ([5dca4f5](https://github.com/getplumber/plumber/commit/5dca4f550beb429893d0f917cfb983c1a3790076))
+
+
+### 🐛 Bug Fixes
+
+* **artifact:** Correctly display outputs ([53f5df8](https://github.com/getplumber/plumber/commit/53f5df809b02fb8811aad5c565269292b62d8a1e))
+* **artifact:** Flatten rego output from findings to root ([5790964](https://github.com/getplumber/plumber/commit/5790964a497adf9eb680475dcc1331ca9a6c61e9))
+* **comments:** Copilot comments ([d928465](https://github.com/getplumber/plumber/commit/d928465eccd3a420e61ca8ee7e35a0fd5051c719))
+* **control:** Job variables override should not only detect user-overridden sensitive variables ([a6dd96f](https://github.com/getplumber/plumber/commit/a6dd96f346d10f6b5095c029a5c3c3ae283d826d))
+* **ctrls:** Rename issue codes ([b21942c](https://github.com/getplumber/plumber/commit/b21942c7afdd7726e0fa762f29d89e7333a5e9d7))
+* **dockerfile:** Fix image and disable automatic creation of cli ([372620e](https://github.com/getplumber/plumber/commit/372620e9e5797554d729fc474deaa820af3faec3))
+* **github:** branch-protection accuracy + issue [#158](https://github.com/getplumber/plumber/issues/158) ([1da1d63](https://github.com/getplumber/plumber/commit/1da1d63dbb3b201f96cd4ef4d81cb252fbaf833d))
+* **github:** branchMustBeProtected — populate defaultBranch + drop access-level mapping ([1ef4533](https://github.com/getplumber/plumber/commit/1ef4533649e3ac2652cc83a75253845620097d07))
+* **github:** Fix sha bugs in github integration ([ae08ae8](https://github.com/getplumber/plumber/commit/ae08ae8af7d7e0ceba203510e5a8ed9056fbec0c))
+* **github:** live progress + skip out-of-scope branches in protection fetch ([74e2f66](https://github.com/getplumber/plumber/commit/74e2f66b6d6030f0a8ba37ad26812ffaf3ef5018))
+* **issues:** Update links to new issues doc ([e1d01fc](https://github.com/getplumber/plumber/commit/e1d01fc7de86756576cffa333e331ba16cbacd78))
+* **test:** Add missing test files) ([1637920](https://github.com/getplumber/plumber/commit/163792078e6622b0544f5e2519dd02d17fb4266d))
+* **test:** Fix test to include new workflow control ([c2e5f6a](https://github.com/getplumber/plumber/commit/c2e5f6a8daa93524f52803fa3d33a56534db42ba))
+
 ## [0.2.22](https://github.com/getplumber/plumber/compare/v0.2.21...v0.2.22) (2026-05-01)
 
 

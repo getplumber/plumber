@@ -2,7 +2,7 @@ package control
 
 // docsBaseURL is the base URL for Plumber issue documentation.
 // Each issue code links to its dedicated documentation page.
-const docsBaseURL = "https://getplumber.io/docs/use-plumber/issues/"
+const docsBaseURL = "https://getplumber.io/docs/cli/issues/"
 
 // ErrorCode represents a unique Plumber issue code (ISSUE-XXX format).
 type ErrorCode string
@@ -25,30 +25,30 @@ const (
 	CodeImageForbiddenTag ErrorCode = "ISSUE-102"
 	// ISSUE-103: Container image is not pinned by digest
 	CodeImageNotPinnedByDigest ErrorCode = "ISSUE-103"
-	// ISSUE-104: Third-party GitHub Action reference is not pinned by commit SHA
-	CodeActionUnpinned ErrorCode = "ISSUE-104"
-	// ISSUE-105: Container registry password is hard-coded in the workflow
-	CodeContainerHardcodedCredentials ErrorCode = "ISSUE-105"
-	// ISSUE-106: Release/publish workflow primes a build cache from attacker-controlled artifacts
-	CodeCachePoisoning ErrorCode = "ISSUE-106"
-	// ISSUE-108: Action is hosted in an archived GitHub repository
-	CodeActionArchivedRepo ErrorCode = "ISSUE-108"
-	// ISSUE-109: Pinned commit SHA does not exist in the action's upstream repository
-	CodeImpostorCommit ErrorCode = "ISSUE-109"
-	// ISSUE-110: `# vX.Y.Z` comment does not match the SHA the ref resolves to
-	CodeRefVersionMismatch ErrorCode = "ISSUE-110"
-	// ISSUE-111: Action pinned by SHA is stale vs the latest upstream release
-	CodeStaleActionRef ErrorCode = "ISSUE-111"
-	// ISSUE-113: Symbolic ref collides with both a tag and a branch upstream
-	CodeRefConfusion ErrorCode = "ISSUE-113"
-	// ISSUE-114: Action version carries a published security advisory
-	CodeKnownVulnerableAction ErrorCode = "ISSUE-114"
-	// ISSUE-115: Third-party action duplicates a runner built-in (gh CLI, etc.)
-	CodeSuperfluousAction ErrorCode = "ISSUE-115"
-	// ISSUE-107: Dockerfile FROM reference is not pinned by digest
-	CodeDockerfileUnpinnedBase ErrorCode = "ISSUE-107"
-	// ISSUE-112: Release / publish workflow produces unsigned artefacts
-	CodeReleaseWorkflowUnsigned ErrorCode = "ISSUE-112"
+	// ISSUE-701: Third-party GitHub Action reference is not pinned by commit SHA
+	CodeActionUnpinned ErrorCode = "ISSUE-701"
+	// ISSUE-704: Container registry password is hard-coded in the workflow
+	CodeContainerHardcodedCredentials ErrorCode = "ISSUE-704"
+	// ISSUE-705: Release/publish workflow primes a build cache from attacker-controlled artifacts
+	CodeCachePoisoning ErrorCode = "ISSUE-705"
+	// ISSUE-702: Action is hosted in an archived GitHub repository
+	CodeActionArchivedRepo ErrorCode = "ISSUE-702"
+	// ISSUE-707: Pinned commit SHA does not exist in the action's upstream repository
+	CodeImpostorCommit ErrorCode = "ISSUE-707"
+	// ISSUE-708: `# vX.Y.Z` comment does not match the SHA the ref resolves to
+	CodeRefVersionMismatch ErrorCode = "ISSUE-708"
+	// ISSUE-709: Action pinned by SHA is stale vs the latest upstream release
+	CodeStaleActionRef ErrorCode = "ISSUE-709"
+	// ISSUE-710: Symbolic ref collides with both a tag and a branch upstream
+	CodeRefConfusion ErrorCode = "ISSUE-710"
+	// ISSUE-703: Action version carries a published security advisory
+	CodeKnownVulnerableAction ErrorCode = "ISSUE-703"
+	// ISSUE-711: Third-party action duplicates a runner built-in (gh CLI, etc.)
+	CodeSuperfluousAction ErrorCode = "ISSUE-711"
+	// ISSUE-706: Dockerfile FROM reference is not pinned by digest
+	CodeDockerfileUnpinnedBase ErrorCode = "ISSUE-706"
+	// ISSUE-712: Release / publish workflow produces unsigned artefacts
+	CodeReleaseWorkflowUnsigned ErrorCode = "ISSUE-712"
 )
 
 // Issue codes for CI/CD variable controls (2xx)
@@ -59,8 +59,8 @@ const (
 	CodeUnsafeVariableExpansion ErrorCode = "ISSUE-204"
 	// ISSUE-205: A variable that should only be set in CI/CD Settings is overridden in the pipeline config
 	CodeJobVariableOverridden ErrorCode = "ISSUE-205"
-	// ISSUE-206: Workflow inlines user-controlled template expressions into a run: script
-	CodeTemplateInjection ErrorCode = "ISSUE-206"
+	// ISSUE-207: Workflow inlines user-controlled template expressions into a run: script
+	CodeTemplateInjection ErrorCode = "ISSUE-207"
 	// ISSUE-208: Workflow re-enables deprecated GitHub Actions workflow commands
 	CodeInsecureCommands ErrorCode = "ISSUE-208"
 	// ISSUE-209: Workflow writes untrusted content to $GITHUB_ENV or $GITHUB_PATH
@@ -87,8 +87,8 @@ const (
 	CodeSecretsInherit ErrorCode = "ISSUE-302"
 	// ISSUE-303: Secret dereferenced via fromJSON bypasses log redaction
 	CodeUnredactedSecrets ErrorCode = "ISSUE-303"
-	// ISSUE-304: Workflow grants no explicit permissions, relying on the repo default
-	CodeUndocumentedPermissions ErrorCode = "ISSUE-304"
+	// ISSUE-801: Workflow grants no explicit permissions, relying on the repo default
+	CodeUndocumentedPermissions ErrorCode = "ISSUE-801"
 	// ISSUE-305: Secret used without an environment gate
 	CodeSecretsOutsideEnv ErrorCode = "ISSUE-305"
 	// ISSUE-306: GitHub App token issued with revocation disabled
@@ -123,34 +123,36 @@ const (
 	CodeDockerInDockerUsage ErrorCode = "ISSUE-412"
 	// ISSUE-413: CI/CD job uses Docker-in-Docker with insecure daemon configuration
 	CodeDockerInDockerInsecure ErrorCode = "ISSUE-413"
-	// ISSUE-414: Workflow subscribes to a dangerous trigger (pull_request_target, workflow_run)
-	CodeDangerousTriggers ErrorCode = "ISSUE-414"
-	// ISSUE-415: pull_request_target workflow explicitly checks out the PR head (tj-actions pattern)
-	CodePullRequestTargetWithHeadCheckout ErrorCode = "ISSUE-415"
+	// ISSUE-802: Workflow subscribes to a dangerous trigger (pull_request_target, workflow_run)
+	CodeDangerousTriggers ErrorCode = "ISSUE-802"
+	// ISSUE-804: pull_request_target workflow explicitly checks out the PR head (tj-actions pattern)
+	CodePullRequestTargetWithHeadCheckout ErrorCode = "ISSUE-804"
+	// ISSUE-417: Required action or reusable workflow is not referenced anywhere in the project's workflows
+	CodeRequiredActionMissing ErrorCode = "ISSUE-417"
 )
 
 // Issue codes for workflow-hygiene controls (6xx)
 const (
 	// ISSUE-601: Workflow has no explicit `name:` field
 	CodeAnonymousDefinition ErrorCode = "ISSUE-601"
-	// ISSUE-602: Workflow has no `concurrency:` block at either level
-	CodeMissingConcurrency ErrorCode = "ISSUE-602"
-	// ISSUE-603: Workflow uses a misfeature pattern (shell: cmd, inline pip install curl|sh, …)
-	CodeWorkflowMisfeature ErrorCode = "ISSUE-603"
-	// ISSUE-604: Workflow script contains obfuscation (zero-width / non-ASCII unicode, bidi)
-	CodeWorkflowObfuscation ErrorCode = "ISSUE-604"
-	// ISSUE-605: PyPI / npm publish relies on a static token instead of OIDC trusted publishing
-	CodeUseTrustedPublishing ErrorCode = "ISSUE-605"
-	// ISSUE-606: dependabot.yml re-enables insecure external code execution
-	CodeDependabotInsecureExec ErrorCode = "ISSUE-606"
-	// ISSUE-607: dependabot.yml update ecosystem has no cooldown window
-	CodeDependabotMissingCooldown ErrorCode = "ISSUE-607"
-	// ISSUE-608: Repository has workflows but no dependency update tool configured
-	CodeDependencyUpdateToolMissing ErrorCode = "ISSUE-608"
-	// ISSUE-609: Repository has workflows but none runs a SAST scanner
-	CodeSASTWorkflowMissing ErrorCode = "ISSUE-609"
-	// ISSUE-610: Repository has workflows but no SECURITY.md policy file
-	CodeSecurityPolicyMissing ErrorCode = "ISSUE-610"
+	// ISSUE-418: Workflow has no `concurrency:` block at either level
+	CodeMissingConcurrency ErrorCode = "ISSUE-418"
+	// ISSUE-419: Workflow uses a misfeature pattern (shell: cmd, inline pip install curl|sh, …)
+	CodeWorkflowMisfeature ErrorCode = "ISSUE-419"
+	// ISSUE-420: Workflow script contains obfuscation (zero-width / non-ASCII unicode, bidi)
+	CodeWorkflowObfuscation ErrorCode = "ISSUE-420"
+	// ISSUE-421: PyPI / npm publish relies on a static token instead of OIDC trusted publishing
+	CodeUseTrustedPublishing ErrorCode = "ISSUE-421"
+	// ISSUE-901: dependabot.yml re-enables insecure external code execution
+	CodeDependabotInsecureExec ErrorCode = "ISSUE-901"
+	// ISSUE-902: dependabot.yml update ecosystem has no cooldown window
+	CodeDependabotMissingCooldown ErrorCode = "ISSUE-902"
+	// ISSUE-903: Repository has workflows but no dependency update tool configured
+	CodeDependencyUpdateToolMissing ErrorCode = "ISSUE-903"
+	// ISSUE-904: Repository has workflows but none runs a SAST scanner
+	CodeSASTWorkflowMissing ErrorCode = "ISSUE-904"
+	// ISSUE-905: Repository has workflows but no SECURITY.md policy file
+	CodeSecurityPolicyMissing ErrorCode = "ISSUE-905"
 )
 
 // Issue codes for access and authorization controls (5xx)
@@ -159,8 +161,8 @@ const (
 	CodeBranchUnprotected ErrorCode = "ISSUE-501"
 	// ISSUE-505: Branch has non-compliant protection settings
 	CodeBranchNonCompliant ErrorCode = "ISSUE-505"
-	// ISSUE-509: Job runs with overly broad permissions (write-all)
-	CodeExcessivePermissions ErrorCode = "ISSUE-509"
+	// ISSUE-803: Job runs with overly broad permissions (write-all)
+	CodeExcessivePermissions ErrorCode = "ISSUE-803"
 )
 
 // ErrorCodeInfo provides metadata about an issue code.
@@ -519,7 +521,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Code:        CodeUnsafeGithubContextDump,
 		Severity:    SeverityHigh,
 		Title:       "Entire `github` context serialised with toJson(github)",
-		Description: "A `run:` step, env binding or action input serialises the whole `github` context (or `github.event`) with `toJson(...)`. The resulting JSON carries every user-controllable field GitHub exposes — PR title, issue body, fork branch name, commit message — bundled with metadata the workflow might otherwise believe is trusted. Any downstream consumer (log line, third-party action, HTTP header) then sees a payload that is trivially shell-injectable under a privileged trigger (`pull_request_target`, `workflow_run`). Same risk class as ISSUE-206 template-injection, but the dump form is worse: a single `echo $JSON` leaks the full attack surface rather than one field.",
+		Description: "A `run:` step, env binding or action input serialises the whole `github` context (or `github.event`) with `toJson(...)`. The resulting JSON carries every user-controllable field GitHub exposes — PR title, issue body, fork branch name, commit message — bundled with metadata the workflow might otherwise believe is trusted. Any downstream consumer (log line, third-party action, HTTP header) then sees a payload that is trivially shell-injectable under a privileged trigger (`pull_request_target`, `workflow_run`). Same risk class as ISSUE-207 template-injection, but the dump form is worse: a single `echo $JSON` leaks the full attack surface rather than one field.",
 		Remediation: "Never pass the `github` context whole. Extract the exact fields you need into named `env:` bindings first (`env: { PR_TITLE: ${{ github.event.pull_request.title }} }`), then reference the environment variable from the shell — expansion quotes the value automatically. If the downstream tool genuinely requires JSON, build it explicitly from the named fields with `jq -n --arg title \"$PR_TITLE\" '{title: $title}'`.",
 		DocURL:      docsBaseURL + string(CodeUnsafeGithubContextDump),
 		ControlName: "workflowMustNotExportEntireGitHubContext",
@@ -537,7 +539,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Code:        CodeTemplateInjectionVars,
 		Severity:    SeverityLow,
 		Title:       "Maintainer-adjacent template (`vars.*` or `inputs.*`) expanded into a shell script",
-		Description: "A `run:` step inlines a `${{ vars.X }}` or `${{ inputs.X }}` expression directly into the shell command. `vars` values come from repository / organisation / environment variables set by maintainers; `inputs` values come from the caller of a reusable workflow. Neither is PR-author-controlled by default (ISSUE-206 covers that case), but both flip to attacker-controlled under specific conditions: a compromised maintainer account, a misconfigured org-level variable, or a caller workflow that proxies `github.event.*` into a reusable-workflow input. The canonical remediation is identical to ISSUE-206: bind the value through `env:` first, then reference the environment variable from the shell so expansion quotes it automatically.",
+		Description: "A `run:` step inlines a `${{ vars.X }}` or `${{ inputs.X }}` expression directly into the shell command. `vars` values come from repository / organisation / environment variables set by maintainers; `inputs` values come from the caller of a reusable workflow. Neither is PR-author-controlled by default (ISSUE-207 covers that case), but both flip to attacker-controlled under specific conditions: a compromised maintainer account, a misconfigured org-level variable, or a caller workflow that proxies `github.event.*` into a reusable-workflow input. The canonical remediation is identical to ISSUE-207: bind the value through `env:` first, then reference the environment variable from the shell so expansion quotes it automatically.",
 		Remediation: "Replace `${{ vars.X }}` / `${{ inputs.X }}` in the `run:` body with an `env:` binding plus `$X` dereference. Example: `env: { REGISTRY: ${{ vars.REGISTRY }} }` at the step, then `docker login \"$REGISTRY\"` in the script.",
 		DocURL:      docsBaseURL + string(CodeTemplateInjectionVars),
 		ControlName: "workflowMustNotInjectVarsInScripts",
@@ -600,7 +602,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Code:        CodeSecretsOutsideEnv,
 		Severity:    SeverityMedium,
 		Title:       "Deploy / release job uses secrets without an `environment:` gate",
-		Description: "A GitHub Actions job that consumes production secrets (deploy, release, publish) does not declare an `environment:` field. Environments are the gatekeeper GitHub exposes for required reviewers, wait timers, and deployment branch rules — without one, any caller on the configured trigger goes straight to the secret-bearing step, no human-in-the-loop. Combined with a spoofable trigger (ISSUE-414) or an over-broad branch pattern, the secret can be exfiltrated without any review.",
+		Description: "A GitHub Actions job that consumes production secrets (deploy, release, publish) does not declare an `environment:` field. Environments are the gatekeeper GitHub exposes for required reviewers, wait timers, and deployment branch rules — without one, any caller on the configured trigger goes straight to the secret-bearing step, no human-in-the-loop. Combined with a spoofable trigger (ISSUE-802) or an over-broad branch pattern, the secret can be exfiltrated without any review.",
 		Remediation: "Put production secrets behind environments. Attach the environment to the deploy job (`environment: production`) and configure required reviewers / wait timers on the environment in the repository settings.",
 		DocURL:      docsBaseURL + string(CodeSecretsOutsideEnv),
 		ControlName: "deployJobsMustUseEnvironmentGate",
@@ -726,10 +728,19 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Code:        CodePullRequestTargetWithHeadCheckout,
 		Severity:    SeverityCritical,
 		Title:       "pull_request_target workflow explicitly checks out the PR head",
-		Description: "A workflow triggered by `pull_request_target` calls `actions/checkout` with an explicit `ref:` pointing at the pull request's head (e.g. `github.event.pull_request.head.sha`, `github.head_ref`). This is the exact pattern behind the March 2025 tj-actions/changed-files compromise (CVE-2025-30066): the workflow has access to the base repository's secrets AND it executes code controlled by the PR author. Any shell step that runs after the checkout is a direct path to secret exfiltration. Unlike the broader dangerous-triggers check (ISSUE-414) which flags the trigger itself, this rule flags the actual exploitable combination.",
+		Description: "A workflow triggered by `pull_request_target` calls `actions/checkout` with an explicit `ref:` pointing at the pull request's head (e.g. `github.event.pull_request.head.sha`, `github.head_ref`). This is the exact pattern behind the March 2025 tj-actions/changed-files compromise (CVE-2025-30066): the workflow has access to the base repository's secrets AND it executes code controlled by the PR author. Any shell step that runs after the checkout is a direct path to secret exfiltration. Unlike the broader dangerous-triggers check (ISSUE-802) which flags the trigger itself, this rule flags the actual exploitable combination.",
 		Remediation: "Either switch to the standard `pull_request` event (runs in the fork's context, no base-repo secrets), or remove the explicit `ref:` input so `actions/checkout` falls back to the base repository's SHA. If cross-context code must be examined, split the job: a small pull_request_target job gathers metadata, then hands off to a separate pull_request workflow that executes the fork code.",
 		DocURL:      docsBaseURL + string(CodePullRequestTargetWithHeadCheckout),
 		ControlName: "pullRequestTargetMustNotCheckoutHead",
+	},
+	CodeRequiredActionMissing: {
+		Code:        CodeRequiredActionMissing,
+		Severity:    SeverityHigh,
+		Title:       "Required action or reusable workflow is missing",
+		Description: "A GitHub action or reusable workflow declared as required in `workflowMustIncludeRequiredActions.requiredGroups` is not referenced by any job or step in the project's `.github/workflows/` files. The missing reference means a mandatory security scan, compliance check, or organization-wide workflow is not actually running on this repository.",
+		Remediation: "Add a `uses: <owner>/<repo>[@<ref>]` step that references the required action, or a `jobs.<name>.uses: <owner>/<repo>/.github/workflows/<file>.yml@<ref>` job that calls the required reusable workflow. The exact path declared in `.plumber.yaml` under `workflowMustIncludeRequiredActions` is matched ref-agnostically, so any pinned ref works.",
+		DocURL:      docsBaseURL + string(CodeRequiredActionMissing),
+		ControlName: "workflowMustIncludeRequiredActions",
 	},
 	CodeExcessivePermissions: {
 		Code:        CodeExcessivePermissions,

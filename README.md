@@ -36,18 +36,6 @@
 
 ---
 
-> [!IMPORTANT]
-> **🚧 v0.3.0 is in beta — first-class GitHub Actions support is being stress-tested**
->
-> The `main` branch is preparing **v0.3.0**, which adds GitHub Actions analysis alongside GitLab and migrates `.plumber.yaml` to a per-provider schema (`gitlab.controls:` / `github.controls:`). It's currently being polished with the ambassador group and **is not yet recommended for production**.
->
-> - **Stable, production-ready (GitLab only):** browse the project at [**v0.2.22**](https://github.com/getplumber/plumber/tree/v0.2.22) — README, install instructions, and source as shipped at that tag. 
-> - **Beta (early testers, GitLab + GitHub Actions):** [v0.3.0-beta](https://github.com/getplumber/plumber/releases). See the [test plan](docs/release-announcement-0.3.0-beta.md) and report findings on [issues](https://github.com/getplumber/plumber/issues).
->
-> Everything below describes the **v0.3.0** surface. If you're on v0.2.x today, your setup keeps working unchanged when you upgrade — your existing `.plumber.yaml` auto-converts in memory and `plumber config migrate` upgrades it on disk when you're ready.
-
----
-
 ## 🤔 What is Plumber?
 
 Plumber is a compliance scanner for CI/CD. It supports two providers:
@@ -57,28 +45,7 @@ Plumber is a compliance scanner for CI/CD. It supports two providers:
 
 Both providers share **one** Rego policy engine and a **single** `.plumber.yaml` config (per-provider sections). Provider is auto-detected from your git `origin`; pass `--gitlab-url` / `--github-url` to override.
 
-**Examples of what Plumber catches**
-
-GitLab pipelines (14 controls - see the [Gitlab CI controls](#gitlab-ci-controls) section):
-- Container images using mutable tags (`latest`, `dev`) or from untrusted registries
-- Unprotected branches; missing force-push / code-owner-approval rules
-- Hardcoded jobs (not from reusable components / templates), outdated or forbidden include refs (`main`, `HEAD`)
-- Missing required components / templates
-- Debug trace variables (`CI_DEBUG_TRACE`) leaking secrets in job logs
-- Unsafe variable injection via `eval` / `sh -c` (OWASP CICD-SEC-1)
-- Weakened security jobs — `allow_failure: true`, `when: manual`, `rules: [{when: never}]` on SAST, Secret Detection, etc. (OWASP CICD-SEC-4)
-- Docker-in-Docker services enabling container escape on shared runners
-
-GitHub Actions workflows (9 controls — see the [GitHub Actions controls](#github-actions-controls) section):
-- Third-party actions referenced by tag/branch instead of a 40-char SHA (CVE-2025-30066-class supply-chain risk)
-- Container images using mutable tags (`latest`, …)
-- Default / matched branches lacking a protection rule (and, with admin scope, missing force-push / code-owner-approval rules)
-- Workflows missing an explicit `permissions:` block (defaults to repo-wide `GITHUB_TOKEN`)
-- Dangerous triggers (`pull_request_target`, `workflow_run`, …) running with base-repo secrets
-- Reusable workflow calls using `secrets: inherit` instead of an explicit map
-- Template-injection sinks like `${{ github.event.* }}` interpolated into `run:` shells
-- Weakened security scanners (`continue-on-error: true` on CodeQL, TruffleHog, Gitleaks, OSV-Scanner, etc.)
-- Docker-in-Docker services on GitHub-hosted runners
+Plumber ships **14 GitLab CI controls** and **14 GitHub Actions controls**. See the [GitLab CI controls](#gitlab-ci-controls) and [GitHub Actions controls](#github-actions-controls) sections for the full list of what each flags and how to configure it.
 
 **How does it work?** Plumber connects to your provider (or reads workflow files from disk), normalizes the pipeline into a provider-agnostic IR, evaluates Rego policies against it, and reports findings. You define what's allowed in `.plumber.yaml`. When your local clone matches the analyzed project, GitLab analysis can use your local `.gitlab-ci.yml` (or a [custom path](#custom-ci-configuration-file-path)) so you can validate before push; GitHub analysis reads `.github/workflows/` from your local repo by default and only hits the GitHub API for repo-level data (branch protection, etc.) when scope allows. Both paths report per-control compliance percentages and honor `--threshold` for exit-code gating.
 
@@ -317,24 +284,6 @@ A handful of flags are GitLab-only today. On the GitHub path they are silently i
 | `--gitlab-url` | N/A — pass `--github-url` instead, or rely on git-remote auto-detection |
 
 Flags that work identically on both providers: `--config`, `--output` (JSON findings), `--pbom` (PBOM JSON; GitHub inventory: container images, third-party actions, reusable workflows), `--pbom-cyclonedx` (CycloneDX 1.5), `--threshold`, `--print`, `--score`, `--score-point`, `--controls`, `--skip-controls`, `--fail-warnings`, `--branch`, `--project` (provider chosen by which URL flag is set).
-
-#### Bench: which GitHub controls don't run yet
-
-The Rego engine ships ~50 GitHub Actions policies. Nine have substantive test fixtures and ship default-on; the rest are on the dev-side bench (`configuration/registry.go::benchedControls`). Benched policies are excluded at engine load time — they don't execute, don't produce findings, and don't appear in the output.
-
-Today's shipping GitHub set:
-
-- `actionsMustBePinnedByCommitSha` — third-party actions must use a 40-char SHA, not a tag/branch.
-- `branchMustBeProtected` — repository default branch (and any matching pattern) must have a protection rule. Inspects repo settings via the GitHub branch-protection API; needs `repo` (classic PAT) or "Administration: read" (fine-grained PAT). The first project-governance control on the GitHub path; everything else here is pipeline-governance.
-- `containerImageMustNotUseForbiddenTags` — pin container images by digest or version, not `latest`.
-- `pipelineMustNotUseDockerInDocker` — flag DinD services and insecure daemon configs.
-- `reusableWorkflowsMustNotInheritSecrets` — explicit secret mapping instead of `secrets: inherit`.
-- `securityJobsMustNotBeWeakened` — no `allow_failure: true` / `when: manual` / rules-block neutering.
-- `workflowMustNotInjectUserInputInScripts` — block `${{ github.event.* }}` inlining into shell.
-- `workflowMustNotUseDangerousTriggers` — flag `pull_request_target` / `workflow_run` patterns.
-- `workflowsMustDeclarePermissions` — workflows must set an explicit `permissions:` block.
-
-To unbench more controls as we add tests/docs, edit `benchedControls` in `configuration/registry.go`.
 
 ### Trying it on this repo
 
@@ -594,7 +543,7 @@ The migration preserves comments, wraps `controls:` under `gitlab.controls:`, an
 
 ### Available Controls
 
-Plumber ships **14 GitLab CI controls** and **9 GitHub Actions controls** today. They are configured per-provider in [`.plumber.yaml`](./.plumber.yaml) and can be enabled / disabled / tuned independently. The Rego engine also includes ~50 additional GitHub policies on the dev-side bench (see [`configuration/registry.go`](configuration/registry.go) → `benchedControls`); benched policies are excluded at engine load time and don't affect output until promoted.
+Plumber ships **14 GitLab CI controls** and **14 GitHub Actions controls** today. They are configured per-provider in [`.plumber.yaml`](./.plumber.yaml) and can be enabled / disabled / tuned independently.
 
 #### GitLab CI controls
 
@@ -979,7 +928,7 @@ Consider using [Kaniko](https://github.com/GoogleContainerTools/kaniko) or [Buil
 
 #### GitHub Actions controls
 
-Nine controls ship default-on for GitHub. Four are cross-provider (`branchMustBeProtected`, `containerImageMustNotUseForbiddenTags`, `pipelineMustNotUseDockerInDocker`, `securityJobsMustNotBeWeakened`) — same control name as GitLab, GitHub-specific values; configure them under `github.controls.*`.
+Fourteen controls ship on GitHub. Five are cross-provider (`branchMustBeProtected`, `containerImageMustNotUseForbiddenTags`, `pipelineMustNotEnableDebugTrace`, `pipelineMustNotUseDockerInDocker`, `securityJobsMustNotBeWeakened`); same control name as GitLab, GitHub-specific values, configure them under `github.controls.*`. Thirteen of the fourteen are default-on; `workflowMustIncludeRequiredActions` is opt-in (no findings until you populate `requiredGroups`).
 
 <details>
 <summary><b>1. Actions must be pinned by commit SHA</b></summary>
@@ -998,7 +947,7 @@ github:
         - github
 ```
 
-Issue code: ISSUE-104.
+Issue code: ISSUE-701.
 
 </details>
 
@@ -1083,7 +1032,18 @@ Issue code: ISSUE-302.
 
 Same intent as the GitLab control: GitHub Actions lets you neutralize a security scan by setting `continue-on-error: true` (mapped to the same IR field as GitLab's `allow_failure: true`), or by gating it behind `if: false` / manual-only triggers. The pipeline still looks compliant, but no scan is enforced. Maps to [OWASP CICD-SEC-4](https://owasp.org/www-project-top-10-ci-cd-security-risks/) (Poisoned Pipeline Execution).
 
-GitHub job names are namespaced as `{workflow}/{job}`, so the patterns use leading + trailing wildcards: a bare `codeql` would never match `myworkflow/codeql`. The defaults cover GitHub-native scanners (CodeQL, TruffleHog, Gitleaks, OSV-Scanner, Dependency-Review) plus generic fallbacks.
+The job name plumber matches against is built from two pieces: the workflow filename with its `.yml`/`.yaml` extension stripped, and the job id from the YAML, joined with a slash. So `.github/workflows/codeql-analysis.yml` containing `jobs.analyze` is matched as `codeql-analysis/analyze`; `.github/workflows/workflow.yml` containing `jobs.my-sast` is matched as `workflow/my-sast`. The namespace exists so two workflow files defining a job with the same id do not collide.
+
+Patterns can target whichever part of that name is stable for your repo:
+
+| Pattern shape | Matches |
+|---|---|
+| `*<token>*` | Token anywhere in the name. The defaults use this for resilience to unknown workflow files. |
+| `<workflow>/*` | Every job in one workflow file. |
+| `*/<jobid>` | Specific job id, any workflow. |
+| `<workflow>/<jobid>` | Exact match, no wildcard. |
+
+The defaults below ship wildcard-wrapped because plumber does not know your repo's workflow-file convention. If your security jobs live in a known layout you can drop the wildcards for tighter matching. They cover GitHub-native scanners (CodeQL, TruffleHog, Gitleaks, OSV-Scanner, Dependency-Review) plus generic fallbacks.
 
 ```yaml
 github:
@@ -1136,7 +1096,7 @@ github:
       enabled: true
 ```
 
-Issue code: ISSUE-206.
+Issue code: ISSUE-207.
 
 </details>
 
@@ -1154,7 +1114,7 @@ github:
       enabled: true
 ```
 
-Issue code: ISSUE-414.
+Issue code: ISSUE-802.
 
 </details>
 
@@ -1170,11 +1130,130 @@ github:
       enabled: true
 ```
 
-Issue code: ISSUE-304.
+Issue code: ISSUE-801.
 
 </details>
 
-> **What's not yet shipping on GitHub:** ~40 additional GitHub policies live in `policies/*.rego` (action-supply-chain enrichment, dependabot cooldown, OIDC trusted publishing, release-artefact signing, security policy, etc.) but are gated behind the dev bench until each clears the ship-ready bar (substantive rule + ≥3 fixtures + docs). Track promotion in [`configuration/registry.go`](configuration/registry.go) → `benchedControls`.
+<details>
+<summary><b>10. Workflows must include required actions</b></summary>
+
+GitHub counterpart of GitLab's `pipelineMustIncludeComponent` / `pipelineMustIncludeTemplate`. Asserts that every workflow file under `.github/workflows/` collectively references a set of required actions or reusable workflows. Useful for enforcing organisation-wide security scans, compliance jobs, or shared release pipelines.
+
+The control covers both ways GitHub lets you reference external code, transparently:
+
+- Step-level action: `steps: [{ uses: myorg/sast-scan@v2 }]`
+- Job-level reusable workflow: `jobs.security.uses: myorg/policy/.github/workflows/scan.yml@v2`
+
+Each required entry is an `owner/repo[/path]` string. Matching is ref-agnostic, so bumping a pinned SHA does not invalidate the policy. A slash-guard prevents accidental prefix collisions: `myorg/sast-scan` matches `myorg/sast-scan@<anything>` and `myorg/sast-scan/sub@<anything>`, but not `myorg/sast-scan-fork@<anything>`.
+
+Two ways to define requirements (use one, not both), same shape as the GitLab side:
+
+```yaml
+github:
+  controls:
+    workflowMustIncludeRequiredActions:
+      enabled: true
+      # Option 1, expression syntax (AND tighter than OR):
+      # required: myorg/sast-scan AND myorg/dependency-review
+      # required: (myorg/sast-scan AND myorg/secret-scan) OR myorg/full-security-suite
+      #
+      # Option 2, "OR of ANDs" array syntax:
+      requiredGroups:
+        - ["myorg/sast-scan", "myorg/dependency-review"]
+        - ["myorg/full-security-suite"]
+```
+
+The policy is satisfied when ANY group is fully present. One ISSUE-417 finding is emitted per missing required entry per group, so the report points the user at exactly which slot is empty. Disabled by default; opt in once your org has settled on the action set every repo is expected to wire up.
+
+Issue code: ISSUE-417.
+
+</details>
+
+<details>
+<summary><b>11. Workflow must not grant write-all permissions</b></summary>
+
+Flags workflows and jobs whose effective `permissions:` block is the literal `write-all` shortcut. `write-all` grants `GITHUB_TOKEN` every scope at once (contents, packages, deployments, id-token, …), so any compromise inside the workflow — a malicious dependency, a script-injection bug, a third-party action turning evil — gets to do anything the repo allows: push to default branch, publish releases, mint OIDC tokens for cloud accounts, mark deployments succeeded.
+
+Workflow-level `permissions: write-all` is propagated to every job by the runner, so the rule reads each job's effective permissions and catches both the workflow-level and the job-level shortcut the same way.
+
+This control pairs with `workflowsMustDeclarePermissions`, which catches the related "no `permissions:` block at all" case (many repos default to write-all when no block is declared). Together they enforce the least-privilege baseline regardless of how a workflow chose to declare (or omit) its token scope.
+
+```yaml
+github:
+  controls:
+    workflowMustNotGrantPermissionsWriteAll:
+      enabled: true
+```
+
+Stricter scope-level audits (e.g. flagging `contents: write` on jobs that should be read-only) are handled by other rules; this one is about the blanket shortcut. Static YAML in `.github/workflows/` only; does not flag scope maps, `read-all`, or missing blocks (ISSUE-801). Default-on, no parameters.
+
+Issue code: ISSUE-803.
+
+</details>
+
+<details>
+<summary><b>12. Actions must not reference archived repositories</b></summary>
+
+Flags `uses: owner/repo@ref` references whose upstream GitHub repository is archived. Archived repos no longer receive maintenance, so open vulnerabilities stay open and runtime compatibility regressions accumulate; pinning by SHA does not save the caller because the last maintainer (or someone who later acquires the namespace) can still push new code under the same repository name.
+
+Driven by GitHub API metadata on step-level `uses: owner/repo@ref` in committed workflow YAML (not reusable-workflow `jobs.*.uses`, not local `./.github/actions/*`). One cached `GET /repos/{owner}/{repo}` per action repository. Without `gh` / `GH_TOKEN` the rule abstains (no finding).
+
+```yaml
+github:
+  controls:
+    actionsMustNotBeArchived:
+      enabled: true
+```
+
+Default-on, no parameters. The PBOM tags each archived include with `archived: true` (JSON) / `plumber:archived` (CycloneDX) so downstream dashboards can dedupe across multiple callers of the same abandoned action.
+
+Issue code: ISSUE-702.
+
+</details>
+
+<details>
+<summary><b>13. Actions must not carry known CVEs</b></summary>
+
+Cross-references step-level `uses: owner/repo@ref` in committed workflows against the GitHub Advisory Database (`actions` ecosystem). One cached query per `owner/repo`. When the pinned ref resolves to a semver tag, advisories are filtered by `vulnerable_version_range`; unresolvable commit SHAs may match any advisory for that repo (conservative). Catches the published-CVE supply-chain class (tj-actions/changed-files CVE-2025-30066, reviewdog, vulnerable `actions/artifact`, etc.).
+
+Requires `gh` / `GH_TOKEN` (same abstain-without-auth contract as `actionsMustNotBeArchived`). Upgrade past the fixed-in version and re-pin the SHA to clear the finding.
+
+```yaml
+github:
+  controls:
+    actionsMustNotCarryKnownCVEs:
+      enabled: true
+```
+
+Default-on, no parameters. The PBOM tags each affected include with `hasCve: true` plus an `advisories: [GHSA-…, …]` list (JSON) / `plumber:has-cve` plus `plumber:advisories` properties (CycloneDX), so downstream consumers can pivot on the GHSA IDs across the inventory.
+
+Issue code: ISSUE-703.
+
+</details>
+
+<details>
+<summary><b>14. Pipeline must not enable debug trace</b></summary>
+
+GitHub side of the cross-provider `pipelineMustNotEnableDebugTrace` rule (the GitLab side catches `CI_DEBUG_TRACE` / `CI_DEBUG_SERVICES`). Flags workflows or jobs that set `ACTIONS_STEP_DEBUG` or `ACTIONS_RUNNER_DEBUG` to a truthy value (`true`, `1`, `yes` — case-insensitive, trimmed).
+
+When either debug toggle is on, the runner prints every environment variable (including masked secrets) and every internal action SDK call into the job log. The masking layer is bypassed for the dump itself, so any secret consumed by the workflow lands in plaintext in the run log and remains visible to anyone with `actions: read` plus indefinitely on log artefacts.
+
+Variable name matching is case-insensitive. The rule walks static `env:` in workflow YAML merged from workflow-, job-, and step-level scopes, also flags `${{ }}` expression bindings on forbidden names (truthiness cannot be verified statically), and flags `run:` lines that write forbidden names to `$GITHUB_ENV`. All variants emit ISSUE-203 critical findings. Does not see org/repo Variables with no YAML reference or UI-only "Re-run with debug logging".
+
+```yaml
+github:
+  controls:
+    pipelineMustNotEnableDebugTrace:
+      enabled: true
+      forbiddenVariables:
+        - ACTIONS_STEP_DEBUG
+        - ACTIONS_RUNNER_DEBUG
+        # Add other diagnostic-toggle variables your org wants caught
+```
+
+Default-on with the two GitHub-native debug variables pre-populated; extend the list if your runner image honours additional diagnostic toggles. Issue code: ISSUE-203 (shared with the GitLab side; the message names the GitHub variable when triggered there).
+
+</details>
 
 ### Selective Control Execution
 
@@ -1228,16 +1307,21 @@ Controls not selected are reported as **skipped** in the output. The `--controls
 </details>
 
 <details>
-<summary><b>Valid control names — GitHub (9)</b></summary>
+<summary><b>Valid control names, GitHub (14)</b></summary>
 
 | Control Name | Cross-provider? |
 |-------------|---|
 | `actionsMustBePinnedByCommitSha` | GitHub-only |
+| `actionsMustNotBeArchived` | GitHub-only |
+| `actionsMustNotCarryKnownCVEs` | GitHub-only |
 | `branchMustBeProtected` | ✓ shared with GitLab |
 | `containerImageMustNotUseForbiddenTags` | ✓ shared with GitLab |
+| `pipelineMustNotEnableDebugTrace` | ✓ shared with GitLab |
 | `pipelineMustNotUseDockerInDocker` | ✓ shared with GitLab |
 | `reusableWorkflowsMustNotInheritSecrets` | GitHub-only |
 | `securityJobsMustNotBeWeakened` | ✓ shared with GitLab |
+| `workflowMustIncludeRequiredActions` | GitHub-only |
+| `workflowMustNotGrantPermissionsWriteAll` | GitHub-only |
 | `workflowMustNotInjectUserInputInScripts` | GitHub-only |
 | `workflowMustNotUseDangerousTriggers` | GitHub-only |
 | `workflowsMustDeclarePermissions` | GitHub-only |
@@ -1276,7 +1360,7 @@ With `--score` and/or `--score-point`, the JSON also includes a `plumberScore` o
 Plumber separates **letter score** (A–E) from numeric **points** (0–100). Points are computed from open issues grouped by **issue code**, with weight and cap derived from each code's documented **severity** (Critical, High, Medium, Low). Distinct codes at the same severity each consume their own cap, so different *types* of issues keep affecting the score. **Critical malus** can cap final points when any Critical issue is present. The active ruleset is profile **`scoring-v3`**.
 
 📖 Full specification: **[docs/scoring.md](docs/scoring.md)**  
-📖 Severity per issue code: [Plumber issues docs](https://getplumber.io/docs/use-plumber/issues/)
+📖 Severity per issue code: [Plumber issues docs](https://getplumber.io/docs/cli/issues/)
 
 ### Pipeline Bill of Materials (PBOM)
 
@@ -1580,7 +1664,7 @@ plumber analyze [flags]
 | `--ci-config-path` | No | auto-detect | Override the CI configuration file path (default: auto-detected from GitLab project settings, usually `.gitlab-ci.yml`). See [Custom CI Configuration File Path](#custom-ci-configuration-file-path) |
 | `--verbose`, `-v` | No | `false` | Enable verbose/debug output for troubleshooting |
 
-> **Plumber score:** how letter **A–E**, numeric **points**, and **Critical malus** are computed is documented in **[docs/scoring.md](docs/scoring.md)** (profile `scoring-v3`, per-code caps). Issue **severities** come from each issue’s documented code ([issues](https://getplumber.io/docs/use-plumber/issues/)).
+> **Plumber score:** how letter **A–E**, numeric **points**, and **Critical malus** are computed is documented in **[docs/scoring.md](docs/scoring.md)** (profile `scoring-v3`, per-code caps). Issue **severities** come from each issue’s documented code ([issues](https://getplumber.io/docs/cli/issues/)).
 
 > \* Auto-detected from git remote (`origin`) if not specified. Supports both SSH and HTTPS remote URLs.
 
@@ -1592,7 +1676,7 @@ plumber analyze [flags]
 | `GH_TOKEN` | Optional (preferred) | GitHub PAT (fine-grained or classic). Required in GitHub upstream-fetch mode (`--github-url`). Optional in local-clone mode (enables repo-level controls). Takes precedence over `GITHUB_TOKEN` and `gh` CLI. |
 | `GITHUB_TOKEN` | Optional | Same role as `GH_TOKEN`. Auto-set by GitHub Actions runners — pick this up natively when running plumber as a workflow step. |
 | `GH_ENTERPRISE_TOKEN` | Optional | Authentication for GitHub Enterprise Server (`--github-url ghes.example.com`). |
-| `PLUMBER_DISABLE_GITHUB_API` | No | Set to any value to skip the GitHub action-metadata enrichment loop in local-clone mode. Useful for fast iteration when you don't need archived-repo / advisory-database / ref-version checks. Has no effect today since those controls are still on the bench, but kept as a documented escape hatch. |
+| `PLUMBER_DISABLE_GITHUB_API` | No | Set to any value to skip the GitHub action-metadata enrichment loop in local-clone mode (the archived-repo and known-CVE advisory checks). Speeds up local iteration when you don't need those checks. |
 | `PLUMBER_NO_UPDATE_CHECK` | No | Set to any value (e.g., `1`) to disable the automatic version check. |
 
 ### Automatic Version Check
@@ -1833,7 +1917,7 @@ Remediation:
   privileged mode and avoid the security risks of running a Docker
   daemon inside a CI container.
 
-Documentation: https://getplumber.io/docs/use-plumber/issues/ISSUE-412
+Documentation: https://getplumber.io/docs/cli/issues/ISSUE-412
 ```
 
 ---

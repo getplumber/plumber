@@ -6,10 +6,10 @@ func TestIsRegoFileBenchedForProvider_allCodesBenched(t *testing.T) {
 	// dependabotEcosystemsMustHaveCooldown is GitHub-benched today.
 	content := []byte(`package dependabot_cooldown
 deny contains finding if {
-    finding := {"code": "ISSUE-607", "severity": "low"}
+    finding := {"code": "ISSUE-902", "severity": "low"}
 }`)
 	if !IsRegoFileBenchedForProvider(content, "github") {
-		t.Error("expected ISSUE-607-only file to be benched on GitHub")
+		t.Error("expected ISSUE-902-only file to be benched on GitHub")
 	}
 }
 
@@ -18,7 +18,7 @@ func TestIsRegoFileBenchedForProvider_oneShipping_keepsLoaded(t *testing.T) {
 	// bench code appears in the same file, the file must load.
 	content := []byte(`package security
 deny contains finding if { finding := {"code": "ISSUE-410"} }
-deny contains finding if { finding := {"code": "ISSUE-607"} }`)
+deny contains finding if { finding := {"code": "ISSUE-902"} }`)
 	if IsRegoFileBenchedForProvider(content, "github") {
 		t.Error("file with at least one shipping code must load")
 	}

@@ -182,15 +182,48 @@ func wrapProgress(fn ProgressFunc, grandTotal int) ProgressFunc {
 	}
 }
 
+// wrapProgressRemote is the remote-mode counterpart of wrapProgress.
+// The remote scan already consumed slots 1..(1+N) for the listing
+// and per-file fetch phase (N = pipeline.WorkflowFileCount), so the
+// enrichment phase that follows occupies slots (2+N)..(1+N+M). The
+// inner counter from enrichActionsWithAPIMetadata is offset by
+// (1+N), the total is set to the pipeline-wide grand total returned
+// by TotalProgressStepsForPipeline so the bar keeps climbing
+// smoothly into the trailing caller-owned slots.
+func wrapProgressRemote(fn ProgressFunc, pipeline *ir.NormalizedPipeline) ProgressFunc {
+	if fn == nil || pipeline == nil {
+		return nil
+	}
+	offset := 1 + pipeline.WorkflowFileCount
+	grandTotal := TotalProgressStepsForPipeline(pipeline)
+	return func(done, _ int, message string) {
+		fn(offset+done, grandTotal, message)
+	}
+}
+
 // TotalProgressStepsForPipeline returns the grand total the caller
-// (RunGitHubAnalysis) should use when emitting its own progress
-// update for the policy-evaluation phase, so it keeps the bar in
-// sync with what the collector reported.
+// (RunGitHubAnalysis / RunGitHubAnalysisRemote) should use when
+// emitting its own progress updates for the post-scan phases, so the
+// bar stays in sync with what the collector already reported.
+//
+// Layout in slots, both modes:
+//
+//	1                    "Scanning" (local) or "Listing" (remote)
+//	2..(1+N)             per-file fetch ticks (remote only;
+//	                     WorkflowFileCount is 0 in local mode)
+//	(2+N)..(1+N+M)       per-action enrichment ticks (M = unique refs)
+//	(2+N+M)              "Resolving branch protection"
+//	(3+N+M)              "Evaluating policies"
+//	(4+N+M)              "Analysis complete"
+//
+// Total = N + M + 4. WorkflowFileCount is populated by
+// ScanGitHubWorkflowsRemote; local scans leave it at zero so the
+// formula collapses to M + 4 there.
 func TotalProgressStepsForPipeline(pipeline *ir.NormalizedPipeline) int {
 	if pipeline == nil {
-		return 3
+		return 4
 	}
-	return countUniqueActionRefs(pipeline) + 3
+	return pipeline.WorkflowFileCount + countUniqueActionRefs(pipeline) + 4
 }
 
 // ProgressFunc is the signature callers use to observe the progress
@@ -351,6 +384,7 @@ type ghWorkflowHeader struct {
 	On          any            `yaml:"on"`
 	Permissions any            `yaml:"permissions"`
 	Concurrency any            `yaml:"concurrency"`
+	Env         any            `yaml:"env"`
 	Jobs        map[string]any `yaml:"jobs"`
 }
 
@@ -371,6 +405,7 @@ func parseGitHubWorkflowJobs(data []byte, namespace, originFile string) ([]ir.Jo
 	}
 
 	workflowPerms := normalizeGitHubPermissions(wf.Permissions)
+	workflowEnv := normalizeGitHubEnv(wf.Env)
 	triggers := extractGitHubTriggers(wf.On)
 	jobLines := scanGitHubJobLines(data)
 	usesLines := scanGitHubUsesLines(data)
@@ -416,16 +451,29 @@ func parseGitHubWorkflowJobs(data []byte, namespace, originFile string) ([]ir.Jo
 		if scripts := extractGitHubRunScripts(section["steps"]); len(scripts) > 0 {
 			job.Scripts = scripts
 		}
-		// Aggregate job-level `env:` with every step-level `env:` into
-		// a single Variables map. The semantics differ at runtime
-		// (step-level envs only apply to their own step), but the
-		// rego policies pattern-match over template expressions in
-		// value strings — not over runtime scope — so folding them
+		// Aggregate workflow-level + job-level `env:` with every
+		// step-level `env:` into a single Variables map. The runtime
+		// semantics differ (workflow env is inherited by every job;
+		// job env extends that; step env applies to one step), but
+		// the rego policies pattern-match over template expressions
+		// in value strings — not over runtime scope — so folding them
 		// together gives a complete surface to scan. Later entries
-		// overwrite earlier ones on collisions; that is acceptable
-		// because the patterns we look for are present or absent
-		// regardless of which binding wins the collision.
-		envVars := normalizeGitHubEnv(section["env"])
+		// overwrite earlier ones on collisions, mirroring GitHub's
+		// runtime precedence (step > job > workflow); the policies we
+		// care about flag patterns regardless of which binding wins.
+		var envVars map[string]string
+		for k, v := range workflowEnv {
+			if envVars == nil {
+				envVars = map[string]string{}
+			}
+			envVars[k] = v
+		}
+		for k, v := range normalizeGitHubEnv(section["env"]) {
+			if envVars == nil {
+				envVars = map[string]string{}
+			}
+			envVars[k] = v
+		}
 		for k, v := range extractGitHubStepEnvs(section["steps"]) {
 			if envVars == nil {
 				envVars = map[string]string{}
@@ -530,7 +578,7 @@ func ghStringify(v any) string {
 // scanGitHubUsesComments walks the raw workflow bytes and returns a
 // map of `uses` value -> trailing `# comment`. yaml.v2 discards
 // comments during parse, so we recover them here. Used by
-// ref-version-mismatch (ISSUE-110): a `@<sha> # v4.1.0` comment
+// ref-version-mismatch (ISSUE-708): a `@<sha> # v4.1.0` comment
 // tells the reviewer which version the SHA is supposed to be; the
 // policy verifies the claim against the actual tag metadata.
 func scanGitHubUsesComments(data []byte) map[string]string {
@@ -556,7 +604,7 @@ func scanGitHubUsesComments(data []byte) map[string]string {
 // steps into plain maps without preserving positions, so the
 // collector re-scans the bytes and pairs each `[]ir.Action` entry
 // with the matching line by positional index. Fires for
-// ISSUE-104/110/111/114 where the reviewer needs the exact step, not
+// ISSUE-701/110/111/114 where the reviewer needs the exact step, not
 // the enclosing job header.
 func scanGitHubUsesLines(data []byte) map[string][]int {
 	out := map[string][]int{}

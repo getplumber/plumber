@@ -54,18 +54,34 @@ func ScanGitHubWorkflowsRemote(host, owner, repo, ref string, enrichActionMetada
 		return nil, nil, fmt.Errorf("list workflows: %w", err)
 	}
 
-	// Total = list + per-file fetch + (optional) per-action API
-	// enrich. Caller can compute the action count after parsing.
-	totalSteps := 1 + len(listing)
+	// Record the file count on the pipeline so the caller can use
+	// TotalProgressStepsForPipeline for the post-scan slots without
+	// having to thread `len(listing)` through extra return values.
+	pipeline.WorkflowFileCount = len(listing)
+
+	// Progress bar layout (slots 1..(4+N+M), see
+	// TotalProgressStepsForPipeline for the full breakdown):
+	//   1                slot for the listing call itself
+	//   2..(1+N)         one slot per workflow file fetched here
+	//   (2+N)..(1+N+M)   one slot per unique action ref (enrichment
+	//                    phase below; M known only after parsing)
+	//   (2+N+M)..(4+N+M) caller's trailing slots (branch protection
+	//                    resolve, policy eval, analysis complete)
+	//
+	// During the listing + fetch phase M is unknown, so we report
+	// against a partial total (1+N) to keep the bar's percentage
+	// monotonic for the visible phase. After parsing we switch to
+	// the full total via wrapProgress.
+	listingTotal := 1 + len(listing)
 	if progressFn != nil {
-		progressFn(1, totalSteps, "Listing workflow files")
+		progressFn(1, listingTotal, "Listing workflow files")
 	}
 
 	var partialErrors []error
 	for i, item := range listing {
 		baseName := workflowBaseName(item.Name)
 		if progressFn != nil {
-			progressFn(2+i, totalSteps, "Fetching "+item.Path)
+			progressFn(2+i, listingTotal, "Fetching "+item.Path)
 		}
 		raw, fetchErr := fetchFileContent(rest, owner, repo, item.Path, ref)
 		if fetchErr != nil {
@@ -85,7 +101,11 @@ func ScanGitHubWorkflowsRemote(host, owner, repo, ref string, enrichActionMetada
 	})
 
 	if enrichActionMetadata {
-		enrichActionsWithAPIMetadata(pipeline, host, nil)
+		// Now that parsing is done, we know the unique action count
+		// and can switch to the grand total. wrapProgressRemote maps
+		// the enrichment's local 1..M counter into global slots
+		// (2+N)..(1+N+M).
+		enrichActionsWithAPIMetadata(pipeline, host, wrapProgressRemote(progressFn, pipeline))
 	}
 
 	return pipeline, partialErrors, nil

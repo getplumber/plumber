@@ -22,6 +22,20 @@ type GitHubComplianceData struct {
 	// UnpinnedActions keys on the full action ref (`actions/checkout@v4`);
 	// true when the ref is not a 40-char SHA.
 	UnpinnedActions map[string]bool
+	// ArchivedActions keys on the full action ref; true when the
+	// upstream repository is archived (ISSUE-702). Sourced from the
+	// per-action GitHub API metadata enrichment.
+	ArchivedActions map[string]bool
+	// VulnerableActions keys on the full action ref; true when the
+	// upstream repository has at least one published GitHub Advisory
+	// (ISSUE-703). Same metadata enrichment path as ArchivedActions.
+	VulnerableActions map[string]bool
+	// ActionAdvisories keys on the full action ref, value is the
+	// list of GHSA IDs published against the action's repository.
+	// Populated alongside VulnerableActions and surfaced into the
+	// Include / CDX layer so consumers see which advisories triggered
+	// the finding.
+	ActionAdvisories map[string][]string
 }
 
 // NewGitHubGenerator creates a PBOM generator pre-configured for the
@@ -200,6 +214,17 @@ func (g *Generator) processGitHubIncludes(pipeline *ir.NormalizedPipeline) []Inc
 				// dedicated property below.
 				notPinned := !unpinned
 				inc.UpToDate = &notPinned
+			}
+			if archived, ok := g.githubData.ArchivedActions[r]; ok {
+				v := archived
+				inc.Archived = &v
+			}
+			if vuln, ok := g.githubData.VulnerableActions[r]; ok {
+				v := vuln
+				inc.HasCVE = &v
+			}
+			if adv, ok := g.githubData.ActionAdvisories[r]; ok && len(adv) > 0 {
+				inc.Advisories = append([]string(nil), adv...)
 			}
 		}
 		// Comment from the workflow file ("@abc123 # v4.1.0") is the

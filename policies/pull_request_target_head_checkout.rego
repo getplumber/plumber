@@ -5,7 +5,7 @@
 # (github.event.pull_request.head.sha, github.head_ref, …).
 #
 # pull_request_target already fires the broader dangerous-triggers
-# check (ISSUE-414) — this rule pinpoints the exploitable
+# check (ISSUE-802) — this rule pinpoints the exploitable
 # configuration where base-repo secrets AND fork-controlled code
 # coexist in the same run. The severity is critical and distinct so
 # an operator can prioritise it above the general trigger warning.
@@ -32,7 +32,7 @@ deny contains finding if {
 	is_string(ref)
 	_ref_points_at_pr_head(ref)
 	finding := {
-		"code":     "ISSUE-415",
+		"code":     "ISSUE-804",
 		"severity": "critical",
 		"message":  sprintf("job %q runs under pull_request_target AND checks out the PR head (ref=%q) — base-repo secrets and fork-controlled code in the same run (tj-actions / CVE-2025-30066 pattern)", [job.name, ref]),
 		"job":      job.name,

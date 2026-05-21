@@ -23,7 +23,7 @@ deny contains finding if {
 	job := input.pipeline.jobs[i]
 	_job_contains_obfuscation(job)
 	finding := {
-		"code":     "ISSUE-604",
+		"code":     "ISSUE-420",
 		"severity": "high",
 		"message":  sprintf("job %q contains zero-width or bidirectional Unicode in its scripts / env / action inputs — Trojan Source / invisible-character attack pattern", [job.name]),
 		"job":      job.name,

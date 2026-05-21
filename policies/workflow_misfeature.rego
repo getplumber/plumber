@@ -24,7 +24,7 @@ deny contains finding if {
 	is_string(path)
 	_uploads_checkout_dir(path)
 	finding := {
-		"code":     "ISSUE-603",
+		"code":     "ISSUE-419",
 		"severity": "medium",
 		"message":  sprintf("job %q uploads the checkout directory as an artefact (path=%q) — `.git/` leaks with it, pair with ISSUE-307 to understand the risk", [job.name, path]),
 		"job":      job.name,

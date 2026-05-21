@@ -20,7 +20,7 @@ deny contains finding if {
 	action := job.uses[j]
 	action.metadata.refIsAmbiguous == true
 	finding := {
-		"code":     "ISSUE-113",
+		"code":     "ISSUE-710",
 		"severity": "medium",
 		"message":  sprintf("job %q references %q — the ref name resolves as both a tag AND a branch upstream, which revision runs is ambiguous", [job.name, action.uses]),
 		"job":      job.name,

@@ -39,6 +39,45 @@ func TestFilterFindingsByEnabledControls_dropsDisabledControlFindings(t *testing
 	}
 }
 
+func TestFilterFindingsByEnabledControls_dropsAbsentControlFindings(t *testing.T) {
+	// v0.2.22 parity: every legacy control wrapper in
+	// control/controlGitlab*.go at tag v0.2.22 sets `p.Enabled = false`
+	// when its section is missing from .plumber.yaml — Run() then
+	// short-circuits with `result.Skipped = true`. The Rego port must
+	// match: findings for absent controls are dropped here so the
+	// score, the compliance row, and the legacy JSON `*Result` block
+	// all agree. Issue #158 was the regression where v0.3.0-beta.2
+	// kept these findings in the score.
+	enabled := true
+	disabled := false
+	pc := &configuration.PlumberConfig{
+		GitLab: &configuration.ProviderConfig{
+			Controls: configuration.ControlsConfig{
+				BranchMustBeProtected: &configuration.BranchProtectionControlConfig{
+					Enabled: &enabled,
+				},
+				// DinD explicitly disabled — findings must be dropped.
+				PipelineMustNotUseDockerInDocker: &configuration.DockerInDockerControlConfig{
+					Enabled: &disabled,
+				},
+				// pipelineMustNotIncludeHardcodedJobs is absent — its
+				// findings must also be dropped (v0.2.22 parity).
+			},
+		},
+	}
+
+	findings := []opaengine.Finding{
+		{Code: string(CodeDockerInDockerUsage), Severity: "high"},   // disabled → drop
+		{Code: string(CodeJobHardcoded), Severity: "medium"},        // absent → drop
+		{Code: string(CodeBranchUnprotected), Severity: "critical"}, // enabled → keep
+	}
+
+	out := FilterFindingsByEnabledControls(findings, "gitlab", pc.ControlsFor("gitlab"), nil, nil)
+	if len(out) != 1 || out[0].Code != string(CodeBranchUnprotected) {
+		t.Fatalf("expected only BranchUnprotected to pass; got %+v", out)
+	}
+}
+
 func TestFilterFindingsByEnabledControls_noConfigKeepsAll(t *testing.T) {
 	findings := []opaengine.Finding{
 		{Code: string(CodeImageNotPinnedByDigest), Severity: "high"},

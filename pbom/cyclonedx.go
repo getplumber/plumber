@@ -192,6 +192,18 @@ func (p *PBOM) ToCycloneDX(plumberVersion string) *CycloneDX {
 					})
 			}
 		}
+		if inc.Archived != nil {
+			component.Properties = append(component.Properties,
+				CycloneDXProperty{Name: "plumber:archived", Value: fmt.Sprintf("%t", *inc.Archived)})
+		}
+		if inc.HasCVE != nil {
+			component.Properties = append(component.Properties,
+				CycloneDXProperty{Name: "plumber:has-cve", Value: fmt.Sprintf("%t", *inc.HasCVE)})
+		}
+		if len(inc.Advisories) > 0 {
+			component.Properties = append(component.Properties,
+				CycloneDXProperty{Name: "plumber:advisories", Value: strings.Join(inc.Advisories, ",")})
+		}
 
 		cdx.Components = append(cdx.Components, component)
 	}

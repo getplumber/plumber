@@ -13,24 +13,24 @@ reading the upstream docs.
 | :--- | :--- | :--- |
 | [ISSUE-102](#issue-102--image-mutable-tag) | `image-mutable-tag` | high |
 | [ISSUE-103](#issue-103--image-not-pinned-by-digest) | `image-not-pinned-by-digest` | high |
-| [ISSUE-104](#issue-104--action-unpinned) | `action-unpinned` | high |
-| [ISSUE-105](#issue-105--container-hardcoded-credentials) | `container-hardcoded-credentials` | **critical** |
-| [ISSUE-106](#issue-106--cache-poisoning) | `cache-poisoning` | high |
-| [ISSUE-107](#issue-107--dockerfile-unpinned-base) | `dockerfile-unpinned-base` | medium |
-| [ISSUE-108](#issue-108--action-archived-repo) | `action-archived-repo` | high _(API)_ |
-| [ISSUE-109](#issue-109--impostor-commit) | `impostor-commit` | **critical** _(API)_ |
-| [ISSUE-110](#issue-110--ref-version-mismatch) | `ref-version-mismatch` | medium _(API)_ |
-| [ISSUE-111](#issue-111--stale-action-ref) | `stale-action-ref` | low _(API)_ |
-| [ISSUE-112](#issue-112--release-workflow-unsigned) | `release-workflow-unsigned` | medium |
-| [ISSUE-113](#issue-113--ref-confusion) | `ref-confusion` | medium _(API)_ |
-| [ISSUE-114](#issue-114--known-vulnerable-action) | `known-vulnerable-action` | **critical** _(API)_ |
-| [ISSUE-115](#issue-115--superfluous-action) | `superfluous-action` | low |
+| [ISSUE-701](#issue-104--action-unpinned) | `action-unpinned` | high |
+| [ISSUE-704](#issue-105--container-hardcoded-credentials) | `container-hardcoded-credentials` | **critical** |
+| [ISSUE-705](#issue-106--cache-poisoning) | `cache-poisoning` | high |
+| [ISSUE-706](#issue-107--dockerfile-unpinned-base) | `dockerfile-unpinned-base` | medium |
+| [ISSUE-702](#issue-108--action-archived-repo) | `action-archived-repo` | high _(API)_ |
+| [ISSUE-707](#issue-109--impostor-commit) | `impostor-commit` | **critical** _(API)_ |
+| [ISSUE-708](#issue-110--ref-version-mismatch) | `ref-version-mismatch` | medium _(API)_ |
+| [ISSUE-709](#issue-111--stale-action-ref) | `stale-action-ref` | low _(API)_ |
+| [ISSUE-712](#issue-112--release-workflow-unsigned) | `release-workflow-unsigned` | medium |
+| [ISSUE-710](#issue-113--ref-confusion) | `ref-confusion` | medium _(API)_ |
+| [ISSUE-703](#issue-114--known-vulnerable-action) | `known-vulnerable-action` | **critical** _(API)_ |
+| [ISSUE-711](#issue-115--superfluous-action) | `superfluous-action` | low |
 
 ### Expressions & injections — `2xx`
 
 | Code | Name | Severity |
 | :--- | :--- | :--- |
-| [ISSUE-206](#issue-206--template-injection) | `template-injection` | **critical** |
+| [ISSUE-207](#issue-206--template-injection) | `template-injection` | **critical** |
 | [ISSUE-208](#issue-208--insecure-commands) | `insecure-commands` | high |
 | [ISSUE-209](#issue-209--github-env-injection) | `github-env-injection` | **critical** |
 | [ISSUE-210](#issue-210--bot-conditions) | `bot-conditions` | high |
@@ -47,7 +47,7 @@ reading the upstream docs.
 | [ISSUE-301](#issue-301--overprovisioned-secrets) | `overprovisioned-secrets` | **critical** |
 | [ISSUE-302](#issue-302--secrets-inherit) | `secrets-inherit` | high |
 | [ISSUE-303](#issue-303--unredacted-secrets) | `unredacted-secrets` | high |
-| [ISSUE-304](#issue-304--undocumented-permissions) | `undocumented-permissions` | medium |
+| [ISSUE-801](#issue-304--undocumented-permissions) | `undocumented-permissions` | medium |
 | [ISSUE-305](#issue-305--secrets-outside-env) | `secrets-outside-env` | medium |
 | [ISSUE-306](#issue-306--github-app-skip-revoke) | `github-app-skip-revoke` | high |
 | [ISSUE-307](#issue-307--artipacked) | `artipacked` | high |
@@ -57,29 +57,29 @@ reading the upstream docs.
 
 | Code | Name | Severity |
 | :--- | :--- | :--- |
-| [ISSUE-414](#issue-414--dangerous-triggers) | `dangerous-triggers` | **critical** |
-| [ISSUE-415](#issue-415--pull-request-target-with-head-checkout) | `pull-request-target-with-head-checkout` | **critical** |
+| [ISSUE-802](#issue-414--dangerous-triggers) | `dangerous-triggers` | **critical** |
+| [ISSUE-804](#issue-415--pull-request-target-with-head-checkout) | `pull-request-target-with-head-checkout` | **critical** |
 
 ### Access & authorisation — `5xx`
 
 | Code | Name | Severity |
 | :--- | :--- | :--- |
-| [ISSUE-509](#issue-509--excessive-permissions) | `excessive-permissions` | high |
+| [ISSUE-803](#issue-509--excessive-permissions) | `excessive-permissions` | high |
 
 ### Workflow hygiene — `6xx`
 
 | Code | Name | Severity |
 | :--- | :--- | :--- |
 | [ISSUE-601](#issue-601--anonymous-definition) | `anonymous-definition` | low |
-| [ISSUE-602](#issue-602--missing-concurrency) | `missing-concurrency` | medium |
-| [ISSUE-603](#issue-603--workflow-misfeature) | `workflow-misfeature` | medium |
-| [ISSUE-604](#issue-604--workflow-obfuscation) | `workflow-obfuscation` | high |
-| [ISSUE-605](#issue-605--use-trusted-publishing) | `use-trusted-publishing` | high |
-| [ISSUE-606](#issue-606--dependabot-insecure-exec) | `dependabot-insecure-exec` | **critical** |
-| [ISSUE-607](#issue-607--dependabot-missing-cooldown) | `dependabot-missing-cooldown` | low |
-| [ISSUE-608](#issue-608--dependency-update-tool-missing) | `dependency-update-tool-missing` | medium |
-| [ISSUE-609](#issue-609--sast-workflow-missing) | `sast-workflow-missing` | low |
-| [ISSUE-610](#issue-610--security-policy-missing) | `security-policy-missing` | low |
+| [ISSUE-418](#issue-602--missing-concurrency) | `missing-concurrency` | medium |
+| [ISSUE-419](#issue-603--workflow-misfeature) | `workflow-misfeature` | medium |
+| [ISSUE-420](#issue-604--workflow-obfuscation) | `workflow-obfuscation` | high |
+| [ISSUE-421](#issue-605--use-trusted-publishing) | `use-trusted-publishing` | high |
+| [ISSUE-901](#issue-606--dependabot-insecure-exec) | `dependabot-insecure-exec` | **critical** |
+| [ISSUE-902](#issue-607--dependabot-missing-cooldown) | `dependabot-missing-cooldown` | low |
+| [ISSUE-903](#issue-608--dependency-update-tool-missing) | `dependency-update-tool-missing` | medium |
+| [ISSUE-904](#issue-609--sast-workflow-missing) | `sast-workflow-missing` | low |
+| [ISSUE-905](#issue-610--security-policy-missing) | `security-policy-missing` | low |
 
 ### Run / output conventions
 
@@ -152,7 +152,7 @@ prints the digest for the tag you just pulled.
 
 ---
 
-## ISSUE-104 — `action-unpinned`
+## ISSUE-701 — `action-unpinned`
 
 **Severity:** `high` • **Control:** `actionsMustBePinnedByCommitSha`
 
@@ -182,7 +182,7 @@ set `enabled: false` on projects that are not yet ready to migrate.
 
 ---
 
-## ISSUE-105 — `container-hardcoded-credentials`
+## ISSUE-704 — `container-hardcoded-credentials`
 
 **Severity:** `critical` • **Control:** `containerCredentialsMustComeFromSecrets`
 
@@ -214,7 +214,7 @@ jobs:
 
 ---
 
-## ISSUE-106 — `cache-poisoning`
+## ISSUE-705 — `cache-poisoning`
 
 **Severity:** `high` • **Control:** `releaseWorkflowsMustNotRestoreUntrustedCache`
 
@@ -252,7 +252,7 @@ jobs:
 
 ---
 
-## ISSUE-107 — `dockerfile-unpinned-base`
+## ISSUE-706 — `dockerfile-unpinned-base`
 
 **Severity:** `medium` • **Control:** `dockerfilesMustPinBaseImageByDigest`
 
@@ -280,7 +280,7 @@ with Dependabot (`package-ecosystem: docker`) or Renovate
 
 ---
 
-## ISSUE-108 — `action-archived-repo`
+## ISSUE-702 — `action-archived-repo`
 
 **Severity:** `high` _(API)_ • **Control:** `actionsMustNotBeArchived`
 
@@ -301,7 +301,7 @@ last maintainer is still possible.
 
 ---
 
-## ISSUE-109 — `impostor-commit`
+## ISSUE-707 — `impostor-commit`
 
 **Severity:** `critical` _(API)_ • **Control:** `actionRefsMustExistUpstream`
 
@@ -327,7 +327,7 @@ Either way, the review trusted a SHA the repository never approved.
 
 ---
 
-## ISSUE-110 — `ref-version-mismatch`
+## ISSUE-708 — `ref-version-mismatch`
 
 **Severity:** `medium` _(API)_ • **Control:** `actionPinCommentsMustMatchSha`
 
@@ -347,7 +347,7 @@ annotation — a silent downgrade slips through unnoticed.
 
 ---
 
-## ISSUE-111 — `stale-action-ref`
+## ISSUE-709 — `stale-action-ref`
 
 **Severity:** `low` _(API)_ • **Control:** `actionPinsMustNotBeStale`
 
@@ -370,7 +370,7 @@ to automate the upgrade loop.
 
 ---
 
-## ISSUE-112 — `release-workflow-unsigned`
+## ISSUE-712 — `release-workflow-unsigned`
 
 **Severity:** `medium` • **Control:** `releaseWorkflowsMustSignArtefacts`
 
@@ -426,7 +426,7 @@ silent.
 
 ---
 
-## ISSUE-113 — `ref-confusion`
+## ISSUE-710 — `ref-confusion`
 
 **Severity:** `medium` _(API)_ • **Control:** `actionRefsMustNotCollide`
 
@@ -453,7 +453,7 @@ caller.
 
 ---
 
-## ISSUE-114 — `known-vulnerable-action`
+## ISSUE-703 — `known-vulnerable-action`
 
 **Severity:** `critical` _(API)_ • **Control:** `actionsMustNotCarryKnownCVEs`
 
@@ -469,10 +469,10 @@ identifier it matched, so the terminal renderer turns each entry
 into a clickable link:
 
 ```text
-CRIT  [ISSUE-114] job "build" references "tj-actions/changed-files@v45" —
+CRIT  [ISSUE-703] job "build" references "tj-actions/changed-files@v45" —
        published advisories: GHSA-mrrh-fwg8-r2c3 (https://github.com/advisories/GHSA-mrrh-fwg8-r2c3)
    ↳ at .github/workflows/ci.yml:28
-   ↳ docs: https://getplumber.io/docs/use-plumber/issues/ISSUE-114
+   ↳ docs: https://getplumber.io/docs/cli/issues/ISSUE-703
 ```
 
 ```yaml
@@ -491,7 +491,7 @@ and `patched_versions` fields.
 
 ---
 
-## ISSUE-115 — `superfluous-action`
+## ISSUE-711 — `superfluous-action`
 
 **Severity:** `low` • **Control:** `actionsMustNotDuplicateRunnerBuiltins`
 
@@ -528,7 +528,7 @@ dependency.
 
 ---
 
-## ISSUE-206 — `template-injection`
+## ISSUE-207 — `template-injection`
 
 **Severity:** `critical` • **Control:** `workflowMustNotInjectUserInputInScripts`
 
@@ -725,7 +725,7 @@ jobs:
       - run: jq -n --arg n "$PR_NUMBER" --arg a "$PR_AUTHOR" '{number:$n,author:$a}' > /tmp/event.json
 ```
 
-Same risk class as ISSUE-206 template-injection, but the dump form
+Same risk class as ISSUE-207 template-injection, but the dump form
 is worse: one line leaks the whole field set rather than one
 field.
 
@@ -764,7 +764,7 @@ combine with Dependabot to keep runs reproducible AND fresh.
 
 **Severity:** `low` • **Control:** `workflowMustNotInjectVarsInScripts`
 
-Same shape as ISSUE-206 template-injection but sourced from
+Same shape as ISSUE-207 template-injection but sourced from
 maintainer-adjacent values rather than PR-author input. Two kinds
 are flagged:
 
@@ -890,7 +890,7 @@ jobs:
 
 ---
 
-## ISSUE-304 — `undocumented-permissions`
+## ISSUE-801 — `undocumented-permissions`
 
 **Severity:** `medium` • **Control:** `workflowsMustDeclarePermissions`
 
@@ -1052,7 +1052,7 @@ reviewability.
 
 ---
 
-## ISSUE-414 — `dangerous-triggers`
+## ISSUE-802 — `dangerous-triggers`
 
 **Severity:** `critical` • **Control:** `workflowMustNotUseDangerousTriggers`
 
@@ -1080,7 +1080,7 @@ on:
 
 ---
 
-## ISSUE-415 — `pull-request-target-with-head-checkout`
+## ISSUE-804 — `pull-request-target-with-head-checkout`
 
 **Severity:** `critical` • **Control:** `pullRequestTargetMustNotCheckoutHead`
 
@@ -1120,7 +1120,7 @@ jobs:
 
 ---
 
-## ISSUE-509 — `excessive-permissions`
+## ISSUE-803 — `excessive-permissions`
 
 **Severity:** `high` • **Control:** `workflowMustNotGrantPermissionsWriteAll`
 
@@ -1181,7 +1181,7 @@ jobs:
 
 ---
 
-## ISSUE-602 — `missing-concurrency`
+## ISSUE-418 — `missing-concurrency`
 
 **Severity:** `medium` • **Control:** `workflowsMustDeclareConcurrency`
 
@@ -1217,7 +1217,7 @@ jobs:
 
 ---
 
-## ISSUE-603 — `workflow-misfeature`
+## ISSUE-419 — `workflow-misfeature`
 
 **Severity:** `medium` • **Control:** `workflowMustNotUseKnownMisfeatures`
 
@@ -1244,7 +1244,7 @@ GITHUB_TOKEN; even alone it leaks the full git history.
 
 ---
 
-## ISSUE-604 — `workflow-obfuscation`
+## ISSUE-420 — `workflow-obfuscation`
 
 **Severity:** `high` • **Control:** `workflowMustNotContainObfuscation`
 
@@ -1274,7 +1274,7 @@ the sustainable fix.
 
 ---
 
-## ISSUE-605 — `use-trusted-publishing`
+## ISSUE-421 — `use-trusted-publishing`
 
 **Severity:** `high` • **Control:** `publishWorkflowsMustUseOidcTrustedPublishing`
 
@@ -1316,7 +1316,7 @@ trusted publishing flow).
 
 ---
 
-## ISSUE-606 — `dependabot-insecure-exec`
+## ISSUE-901 — `dependabot-insecure-exec`
 
 **Severity:** `critical` • **Control:** `dependabotMustNotAllowInsecureExternalCodeExecution`
 
@@ -1347,7 +1347,7 @@ updates:
 
 ---
 
-## ISSUE-607 — `dependabot-missing-cooldown`
+## ISSUE-902 — `dependabot-missing-cooldown`
 
 **Severity:** `low` • **Control:** `dependabotEcosystemsMustHaveCooldown`
 
@@ -1381,7 +1381,7 @@ updates:
 
 ---
 
-## ISSUE-608 — `dependency-update-tool-missing`
+## ISSUE-903 — `dependency-update-tool-missing`
 
 **Severity:** `medium` • **Control:** `repositoriesMustConfigureDependencyUpdates`
 
@@ -1419,7 +1419,7 @@ Either one satisfies the rule.
 
 ---
 
-## ISSUE-609 — `sast-workflow-missing`
+## ISSUE-904 — `sast-workflow-missing`
 
 **Severity:** `low` • **Control:** `repositoriesMustRunSAST`
 
@@ -1460,7 +1460,7 @@ vendor.
 
 ---
 
-## ISSUE-610 — `security-policy-missing`
+## ISSUE-905 — `security-policy-missing`
 
 **Severity:** `low` • **Control:** `repositoriesMustPublishSecurityPolicy`
 
@@ -1512,25 +1512,25 @@ and in `.plumber.yaml`) is declared in
 | Code | ControlName |
 | :--- | :--- |
 | ISSUE-102 / 103 | `containerImageMustNotUseForbiddenTags` |
-| ISSUE-104 | `actionsMustBePinnedByCommitSha` |
-| ISSUE-107 | `dockerfilesMustPinBaseImageByDigest` |
-| ISSUE-112 | `releaseWorkflowsMustSignArtefacts` |
-| ISSUE-113 | `actionRefsMustNotCollide` |
-| ISSUE-114 | `actionsMustNotCarryKnownCVEs` |
-| ISSUE-115 | `actionsMustNotDuplicateRunnerBuiltins` |
+| ISSUE-701 | `actionsMustBePinnedByCommitSha` |
+| ISSUE-706 | `dockerfilesMustPinBaseImageByDigest` |
+| ISSUE-712 | `releaseWorkflowsMustSignArtefacts` |
+| ISSUE-710 | `actionRefsMustNotCollide` |
+| ISSUE-703 | `actionsMustNotCarryKnownCVEs` |
+| ISSUE-711 | `actionsMustNotDuplicateRunnerBuiltins` |
 | ISSUE-213 | `workflowMustNotExportEntireGitHubContext` |
 | ISSUE-214 | `workflowMustPinPackageInstalls` |
 | ISSUE-215 | `workflowMustNotInjectVarsInScripts` |
 | ISSUE-308 | `workflowMustNotIndexSecretsDynamically` |
-| ISSUE-414 / 415 | `workflowMustNotUseDangerousTriggers`, `pullRequestTargetMustNotCheckoutHead` |
-| ISSUE-607 | `dependabotEcosystemsMustHaveCooldown` |
-| ISSUE-608 | `repositoriesMustConfigureDependencyUpdates` |
-| ISSUE-609 | `repositoriesMustRunSAST` |
-| ISSUE-610 | `repositoriesMustPublishSecurityPolicy` |
+| ISSUE-802 / 415 | `workflowMustNotUseDangerousTriggers`, `pullRequestTargetMustNotCheckoutHead` |
+| ISSUE-902 | `dependabotEcosystemsMustHaveCooldown` |
+| ISSUE-903 | `repositoriesMustConfigureDependencyUpdates` |
+| ISSUE-904 | `repositoriesMustRunSAST` |
+| ISSUE-905 | `repositoriesMustPublishSecurityPolicy` |
 
 ### API-backed rules
 
-ISSUE-108 / 109 / 110 / 111 / 113 / 114 call the GitHub REST API
+ISSUE-702 / 109 / 110 / 111 / 113 / 114 call the GitHub REST API
 via `github.com/cli/go-gh`, which reuses the locally stored `gh`
 token. Without `gh auth login`, those rules degrade silently (no
 false positives) rather than failing the run.
@@ -1553,7 +1553,7 @@ plumber analyze --print=false --output findings.json
   "ciValid": true,
   "findings": [
     {
-      "code": "ISSUE-414",
+      "code": "ISSUE-802",
       "severity": "critical",
       "message": "job \"preview\" is reachable via the dangerous trigger \"pull_request_target\"",
       "job": "pr-preview/preview",

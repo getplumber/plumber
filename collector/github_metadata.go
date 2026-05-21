@@ -190,7 +190,7 @@ func (c *GitHubMetadataClient) resolveUncached(owner, repo, ref string) GitHubMe
 	// Probe in order: tag → branch → commit. First hit wins, but
 	// when we match a tag we still check whether a same-named branch
 	// exists upstream — that cross-existence is what ref-confusion
-	// (ISSUE-113) is about.
+	// (ISSUE-710) is about.
 	if sha, ok := c.resolveTag(owner, repo, ref); ok {
 		m.RefKind = "tag"
 		m.TagSha = sha
@@ -417,7 +417,7 @@ func (c *GitHubMetadataClient) isRepoArchived(owner, repo string) bool {
 // are not the user-facing release. The date-sorted order is also
 // misleading when maintainers backport a fix to an older line and
 // republish it *after* a newer major (e.g. v3.1.0 republished after
-// v8.0.1). ISSUE-111 is a semver-drift signal, so Plumber walks the
+// v8.0.1). ISSUE-709 is a semver-drift signal, so Plumber walks the
 // first few pages and picks the highest semver among non-draft,
 // non-prerelease tags whose semver itself has no prerelease segment.
 func (c *GitHubMetadataClient) latestReleaseTag(owner, repo string) string {

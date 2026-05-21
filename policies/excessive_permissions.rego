@@ -15,7 +15,7 @@ deny contains finding if {
 	job := input.pipeline.jobs[i]
 	job.permissions == "write-all"
 	finding := {
-		"code":     "ISSUE-509",
+		"code":     "ISSUE-803",
 		"severity": "high",
 		"message":  sprintf("job %q runs with overly broad permissions: \"write-all\"", [job.name]),
 		"job":      job.name,

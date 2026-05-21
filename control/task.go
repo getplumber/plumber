@@ -257,6 +257,14 @@ func buildEngineConfig(controls *configuration.ControlsConfig) map[string]any {
 		cfg["actionsMustBePinnedByCommitSha"] = entry
 	}
 
+	if c := controls.WorkflowMustIncludeRequiredActions; c != nil && c.IsEnabled() {
+		if groups, err := c.GetResolvedRequiredGroups(); err == nil && len(groups) > 0 {
+			cfg["workflowMustIncludeRequiredActions"] = map[string]any{
+				"requiredGroups": toAnyGroups(groups),
+			}
+		}
+	}
+
 	if len(cfg) == 0 {
 		return nil
 	}

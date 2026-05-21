@@ -82,7 +82,8 @@ func controlsConfigIsZero(c ControlsConfig) bool {
 		c.PipelineMustNotExecuteUnverifiedScripts == nil &&
 		c.PipelineMustNotOverrideJobVariables == nil &&
 		c.PipelineMustNotUseDockerInDocker == nil &&
-		c.ActionsMustBePinnedByCommitSha == nil
+		c.ActionsMustBePinnedByCommitSha == nil &&
+		c.WorkflowMustIncludeRequiredActions == nil
 }
 
 // controlsConfigEqual is a shallow pointer-identity comparison used
@@ -106,7 +107,8 @@ func controlsConfigEqual(a, b ControlsConfig) bool {
 		a.PipelineMustNotExecuteUnverifiedScripts == b.PipelineMustNotExecuteUnverifiedScripts &&
 		a.PipelineMustNotOverrideJobVariables == b.PipelineMustNotOverrideJobVariables &&
 		a.PipelineMustNotUseDockerInDocker == b.PipelineMustNotUseDockerInDocker &&
-		a.ActionsMustBePinnedByCommitSha == b.ActionsMustBePinnedByCommitSha
+		a.ActionsMustBePinnedByCommitSha == b.ActionsMustBePinnedByCommitSha &&
+		a.WorkflowMustIncludeRequiredActions == b.WorkflowMustIncludeRequiredActions
 }
 
 // ProviderConfig returns the named provider's config, or nil if absent.

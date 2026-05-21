@@ -584,13 +584,34 @@ github:
     # project-specific prefixes still match.
     securityJobsMustNotBeWeakened:
       enabled: true
-      # GitHub Actions job names are namespaced as `{workflow}/{job}`,
-      # so every pattern below uses leading + trailing wildcards: a
-      # bare `codeql` would never match `myworkflow/codeql`. The
-      # canonical scanner names (codeql, trufflehog, gitleaks,
-      # osv-scanner, dependency-review) appear as `*name*` substrings;
-      # the trailing entries cover ad-hoc names like
-      # `myorg-sast-bandit` that match the wildcard suffix patterns.
+      # How patterns are matched
+      # ────────────────────────
+      # Each pattern is a glob (`*` matches any substring) compared
+      # against the job name plumber builds for every job in your
+      # workflows. That name is:
+      #
+      #     <workflow filename, .yml/.yaml stripped>/<job id in YAML>
+      #
+      # Examples:
+      #   .github/workflows/codeql-analysis.yml + jobs.analyze
+      #       -> codeql-analysis/analyze
+      #   .github/workflows/ci.yml             + jobs.lint
+      #       -> ci/lint
+      #   .github/workflows/workflow.yml       + jobs.my-sast
+      #       -> workflow/my-sast
+      #
+      # The namespace exists so two workflow files defining a job
+      # with the same id do not collide. Patterns can target whichever
+      # part of that name is stable for your repo:
+      #   "*<token>*"           token anywhere in the name (resilient)
+      #   "<workflow>/*"        every job in one workflow file
+      #   "*/<jobid>"           specific job id, any workflow
+      #   "<workflow>/<jobid>"  exact match, no wildcard
+      #
+      # The defaults below ship wildcard-wrapped because plumber does
+      # not know your repo's workflow-file convention. If your jobs
+      # follow a known layout you can drop the wildcards for tighter
+      # matching.
       securityJobPatterns:
         - "*codeql*"
         - "*dependency-review*"
@@ -605,6 +626,17 @@ github:
         - "*-security-*"
         - "*-audit"
         - "*-audit-*"
+        # Real-world slash-form examples (commented; uncomment / adapt
+        # to your repo for a tighter match than the wildcards above).
+        # Format reminder: <workflow-filename-without-extension>/<job-id>.
+        #
+        # - codeql-analysis/analyze              # GitHub's default CodeQL template
+        # - dependency-review/dependency-review  # GitHub's default Dependency Review template
+        # - security/gitleaks                    # gitleaks job in security.yml
+        # - security/trufflehog                  # trufflehog job in security.yml
+        # - security/*                           # every job in security.yml
+        # - "*/sast"                             # any job named "sast", any workflow
+        # - ci/semgrep-sast                      # exact match, no wildcard
       allowFailureMustBeFalse:
         enabled: true
       rulesMustNotBeRedefined:
@@ -669,4 +701,176 @@ github:
         - dev
       allowForcePush: false
       codeOwnerApprovalRequired: true
+
+    # ============================================================================
+    # Workflows must include required actions
+    # ============================================================================
+    # Asserts that every workflow file under .github/workflows/
+    # collectively references a set of required actions or reusable
+    # workflows. The GitHub counterpart of
+    # pipelineMustIncludeComponent / pipelineMustIncludeTemplate on
+    # the GitLab side.
+    #
+    # GitHub has two ways to "include" something external; the
+    # control treats both the same so you do not have to declare
+    # which is which:
+    #
+    #   Step-level action:
+    #     steps:
+    #       - uses: myorg/sast-scan@v2
+    #
+    #   Job-level reusable workflow call:
+    #     jobs:
+    #       security:
+    #         uses: myorg/policy/.github/workflows/scan.yml@v2
+    #
+    # Each required entry is an `owner/repo[/path]` string. Matching
+    # is ref-agnostic so bumping a pinned SHA does not invalidate
+    # the policy. A slash-guard prevents accidental prefix
+    # collisions: `myorg/sast-scan` matches
+    # `myorg/sast-scan@<anything>` and
+    # `myorg/sast-scan/sub@<anything>`, but NOT
+    # `myorg/sast-scan-fork@<anything>`.
+    #
+    # Two ways to define requirements (use one, not both):
+    #
+    # Option 1, Expression syntax ('required'):
+    #   A natural boolean expression using AND, OR, and parentheses.
+    #   AND binds tighter than OR, so "a AND b OR c" means
+    #   "(a AND b) OR c".
+    #
+    #   required: myorg/sast-scan AND myorg/dependency-review
+    #   required: (myorg/sast-scan AND myorg/secret-scan) OR myorg/full-security-suite
+    #
+    # Option 2, Array syntax ('requiredGroups'):
+    #   A list of groups using "OR of ANDs" logic:
+    #     - Each inner array = items that must ALL be present (AND)
+    #     - Outer array = only ONE group needs to be satisfied (OR)
+    #
+    #   requiredGroups:
+    #     - ["myorg/sast-scan", "myorg/dependency-review"]
+    #     - ["myorg/full-security-suite"]
+    #
+    # Disabled by default; opt in once your organization has settled
+    # on the action set every repo is expected to wire up.
+    workflowMustIncludeRequiredActions:
+      enabled: false
+      # required: myorg/sast-scan AND myorg/policy/.github/workflows/scan.yml
+      requiredGroups: []
+
+    # ===========================================
+    # Workflow must not grant write-all permissions
+    # ===========================================
+    # Flags workflows and jobs whose effective `permissions:` block is the
+    # literal `write-all` shortcut. write-all gives GITHUB_TOKEN every
+    # scope (contents, packages, deployments, id-token, …) at the same
+    # time, so any compromise in the workflow — a malicious dependency,
+    # a script-injection bug, a third-party action turning evil — gets
+    # to do anything the repo allows: push to main, publish releases,
+    # mint OIDC tokens for cloud accounts, mark deployments succeeded.
+    #
+    # Workflow-level `permissions: write-all` is propagated to every
+    # job by the GitHub Actions runner; the rule reads the per-job
+    # effective permissions, so a workflow-level grant is caught the
+    # same way as a job-level one.
+    #
+    # Scope: static `permissions:` in committed workflow YAML only.
+    # Flags the literal string shortcut `write-all` on a job's effective
+    # permissions (workflow-level `write-all` is propagated to every job).
+    #
+    # Does not flag: `permissions: { contents: write, … }` maps, `read-all`,
+    # or missing `permissions:` (see `workflowsMustDeclarePermissions` /
+    # ISSUE-801). Does not evaluate `${{ }}` expressions or permissions
+    # inside callee reusable-workflow files Plumber did not fetch.
+    #
+    # Pair with `workflowsMustDeclarePermissions` for the full story.
+    workflowMustNotGrantPermissionsWriteAll:
+      enabled: true
+
+    # ===========================================
+    # Actions must not reference archived repositories
+    # ===========================================
+    # Flags `uses: owner/repo@ref` references whose upstream repository
+    # is archived on GitHub. Archived repos no longer receive
+    # maintenance: open vulnerabilities stay open, dependency bumps
+    # stop, runtime compatibility regressions accumulate. Pinning by
+    # SHA does not save the caller — the last maintainer (or someone
+    # who later acquires the namespace) can still push new code under
+    # the original repository name.
+    #
+    # Scope: committed `.github/workflows/*.{yml,yaml}` only; step-level
+    # `uses: owner/repo@ref` (not reusable-workflow `jobs.*.uses`, not
+    # local `./.github/actions/*`). Requires GitHub API auth; without it
+    # the rule abstains (no finding).
+    #
+    # How it works: `GET /repos/{owner}/{repo}` → `archived` flag, one
+    # cached lookup per `owner/repo` (all refs share the same result).
+    #
+    # Does not see: callee reusable-workflow files, deleted/private repos
+    # (lookup may fail silently → abstain).
+    actionsMustNotBeArchived:
+      enabled: true
+
+    # ===========================================
+    # Actions must not carry known CVEs
+    # ===========================================
+    # Cross-references every `uses: owner/repo@ref` against the GitHub
+    # Advisory Database under the `actions` ecosystem. A positive hit
+    # means at least one published advisory targets the action's
+    # repository. This is the rule that catches the published-CVE
+    # supply-chain class — tj-actions/changed-files (CVE-2025-30066),
+    # reviewdog/action-setup (March 2025), unpatched versions of
+    # `actions/artifact`.
+    #
+    # Scope: committed `.github/workflows/*.{yml,yaml}` only; step-level
+    # `uses: owner/repo@ref` (not reusable-workflow `jobs.*.uses`, not
+    # `./.github/actions/*`, not `docker://`). Requires GitHub API auth
+    # (`gh` / GH_TOKEN); without it the rule abstains (no finding).
+    #
+    # How it works: one Advisory Database query per `owner/repo`
+    # (`ecosystem=actions`), cached. When the pinned ref resolves to a
+    # semver tag, Plumber filters advisories by `vulnerable_version_range`.
+    # When the ref is an unresolvable commit SHA, any advisory for that
+    # repo may match (conservative). Upgrade past the fixed-in version and
+    # re-pin the SHA to clear the finding.
+    #
+    # Does not see: org/repo Variables, runtime `$GITHUB_ENV` writes, or
+    # actions nested inside composite actions you do not call directly.
+    actionsMustNotCarryKnownCVEs:
+      enabled: true
+
+    # ===========================================
+    # Pipeline must not enable debug trace
+    # ===========================================
+    # GitHub-side parallel of the GitLab `pipelineMustNotEnableDebugTrace`
+    # control. Flags workflows or jobs that set the GitHub Actions
+    # debug-trace toggles to a truthy value (`true`, `1`, `yes`).
+    #
+    # When `ACTIONS_STEP_DEBUG=true` or `ACTIONS_RUNNER_DEBUG=true`,
+    # the runner prints every environment variable (including masked
+    # secrets) and every internal action SDK call into the job log.
+    # The masking layer is bypassed for the dump itself, so any
+    # secret consumed by the workflow lands in plaintext in the run
+    # log and is then visible to anyone with `actions: read` on the
+    # repository, plus indefinitely on log artefacts.
+    #
+    # Scope: static `env:` in committed `.github/workflows/*.{yml,yaml}`.
+    # The collector merges workflow-, job-, and step-level `env:` into
+    # each job (step > job > workflow precedence on name collisions).
+    #
+    # Truthy values: `true`, `1`, `yes` (case-insensitive, trimmed).
+    # Variable names: case-insensitive match against `forbiddenVariables`.
+    #
+    # Also flags: `${{ }}` values on forbidden names in static `env:`
+    # (cannot verify off statically), and `run:` lines that write a
+    # forbidden name to `$GITHUB_ENV`. All ISSUE-203 findings are critical.
+    #
+    # Does not see: org/repo/environment Variables with no YAML reference,
+    # env inside callee reusable workflows Plumber did not fetch, or GitHub
+    # UI "Re-run with debug logging" (not in YAML).
+    pipelineMustNotEnableDebugTrace:
+      enabled: true
+      forbiddenVariables:
+        - ACTIONS_STEP_DEBUG
+        - ACTIONS_RUNNER_DEBUG
 

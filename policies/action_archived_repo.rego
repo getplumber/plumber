@@ -17,10 +17,11 @@ deny contains finding if {
 	action := job.uses[j]
 	action.metadata.repoArchived == true
 	finding := {
-		"code":     "ISSUE-108",
+		"code":     "ISSUE-702",
 		"severity": "high",
 		"message":  sprintf("job %q references %q whose upstream repository is archived — no security patches are coming", [job.name, action.uses]),
 		"job":      job.name,
+		"uses":     action.uses,
 		"line":     object.get(action, "line", 0),
 	}
 }

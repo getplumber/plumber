@@ -23,6 +23,14 @@ type NormalizedPipeline struct {
 	Branches      []Branch          `json:"branches,omitempty"`
 	Dependabot    *DependabotConfig `json:"dependabot,omitempty"`
 
+	// WorkflowFileCount is the number of workflow files the GitHub
+	// collector fetched in remote (--github-url) mode. Used by
+	// TotalProgressStepsForPipeline to size the progress bar across
+	// the listing+fetch+enrichment phases of upstream-fetch scans.
+	// Stays zero in local-clone mode (the local scanner reports a
+	// single "Scanning" tick rather than per-file).
+	WorkflowFileCount int `json:"-"`
+
 	// GlobalVariables are pipeline-level variables declared at the top
 	// of the source (e.g. `variables:` block at the root of
 	// .gitlab-ci.yml). Includes the merge with upstream component /

@@ -24,7 +24,7 @@ deny contains finding if {
 	pinned != ""
 	pinned != action.metadata.latestReleaseSha
 	finding := {
-		"code":     "ISSUE-111",
+		"code":     "ISSUE-709",
 		"severity": "low",
 		"message":  sprintf("job %q pins %q behind the latest release %q — refresh to pick up upstream security fixes", [job.name, action.uses, action.metadata.latestTag]),
 		"job":      job.name,

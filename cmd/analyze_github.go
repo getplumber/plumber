@@ -264,7 +264,7 @@ func presentGitHubResult(result *control.AnalysisResult, conf *configuration.Con
 	}
 
 	if outputFile != "" {
-		if err := writeJSONToFile(result, plumberConfig, threshold, compliance, outputFile, scoreResult, scoreMode, "github"); err != nil {
+		if err := writeJSONToFile(result, plumberConfig, threshold, compliance, outputFile, scoreResult, scoreMode, "github", conf.ControlsFilter, conf.SkipControlsFilter); err != nil {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "Results written to: %s\n", outputFile)
@@ -350,6 +350,9 @@ func buildGitHubPBOMCompliance(result *control.AnalysisResult) *pbom.GitHubCompl
 		ForbiddenTagImages:   map[string]bool{},
 		ImagesPinnedByDigest: map[string]bool{},
 		UnpinnedActions:      map[string]bool{},
+		ArchivedActions:      map[string]bool{},
+		VulnerableActions:    map[string]bool{},
+		ActionAdvisories:     map[string][]string{},
 	}
 	for _, f := range result.Findings {
 		switch f.Code {
@@ -360,6 +363,25 @@ func buildGitHubPBOMCompliance(result *control.AnalysisResult) *pbom.GitHubCompl
 		case string(control.CodeActionUnpinned):
 			if v, ok := f.Data["uses"].(string); ok && v != "" {
 				out.UnpinnedActions[v] = true
+			}
+		case string(control.CodeActionArchivedRepo):
+			if v, ok := f.Data["uses"].(string); ok && v != "" {
+				out.ArchivedActions[v] = true
+			}
+		case string(control.CodeKnownVulnerableAction):
+			if v, ok := f.Data["uses"].(string); ok && v != "" {
+				out.VulnerableActions[v] = true
+				if advRaw, ok := f.Data["advisories"].([]any); ok {
+					ids := make([]string, 0, len(advRaw))
+					for _, a := range advRaw {
+						if s, ok := a.(string); ok && s != "" {
+							ids = append(ids, s)
+						}
+					}
+					if len(ids) > 0 {
+						out.ActionAdvisories[v] = ids
+					}
+				}
 			}
 		}
 	}
@@ -474,5 +496,4 @@ func printGitHubFindings(result *control.AnalysisResult, conf *configuration.Con
 	fmt.Println()
 	printComplianceTable(summaries, overallCompliance, 100)
 }
-
 

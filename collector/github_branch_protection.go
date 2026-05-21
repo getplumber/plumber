@@ -35,6 +35,32 @@ type BranchFetchOptions struct {
 	// targeted path covers the typical config and avoids the
 	// pagination foot-gun.
 	Listing bool
+
+	// OnProgress, when non-nil, is invoked at user-meaningful
+	// checkpoints during the fetch: each listing page (with a
+	// running branches-seen count) and each per-branch protection-
+	// detail call. The caller is expected to forward these to its
+	// progress spinner as label updates at the same global slot;
+	// the messages are short single-line strings already shaped for
+	// terminal display. Used by the CLI to keep the bar's label
+	// alive during the otherwise-silent "Resolving branch
+	// protection" phase on large repos (grafana/grafana has 772
+	// branches across 8 listing pages, ~10s of API time).
+	OnProgress func(message string)
+
+	// InScope, when non-nil, gates the slow protection-detail calls
+	// during the listing pagination: branches for which InScope
+	// returns false are still added to the IR (Protected flag
+	// preserved from the listing so ISSUE-501 still has the data it
+	// needs) but the classic /protection + Rulesets endpoints are
+	// skipped for them. Saves hundreds of API calls on repos where
+	// the listing returns many protected branches that do not match
+	// any of the user's configured namePatterns (grafana's hundreds
+	// of `release-X.Y.Z` branches when the config asks for
+	// `release/*`, for example). The rego rule applies the same
+	// scope check at evaluation time; this just avoids paying for
+	// data the rule is going to discard.
+	InScope func(name string) bool
 }
 
 // maxBranchListingPages caps the number of /branches?page=N requests
@@ -95,9 +121,22 @@ func FetchGitHubBranchProtection(host, owner, repo string, opts BranchFetchOptio
 	// Targeted fetches first. Each name lands on /branches/{name}
 	// directly — no pagination, no alphabetical ordering quirks —
 	// which is the whole point of this code path.
+	//
+	// GitHub silently redirects /branches/{stale-or-missing} to the
+	// repo's default branch in some cases (typical scenario: the user
+	// renamed `master` to `main` and the old URL still 200s with main
+	// data). We detect that by comparing the API-returned entry.Name
+	// against the input `name` and skipping the entry when they
+	// differ — otherwise main gets added twice (once for the explicit
+	// `main` lookup, once for the redirected `master`), inflating
+	// BranchesMatched and falsely triggering the "protection details
+	// unknown" postflight on the duplicate.
 	for _, name := range opts.ExactNames {
 		if name == "" || seen[name] {
 			continue
+		}
+		if opts.OnProgress != nil {
+			opts.OnProgress(fmt.Sprintf("Resolving protection for %s", name))
 		}
 		entry, ferr := fetchBranchByName(rest, owner, repo, name)
 		if ferr != nil {
@@ -119,17 +158,27 @@ func FetchGitHubBranchProtection(host, owner, repo string, opts BranchFetchOptio
 			}
 			return nil, fmt.Errorf("branch %q: %w", name, ferr)
 		}
-		if entry != nil {
-			out = append(out, *entry)
-			seen[name] = true
+		if entry == nil {
+			continue
 		}
+		// Drop entries where GitHub silently redirected us to a
+		// different branch (default-branch fallback for stale or
+		// renamed names). The user did not ask about that branch.
+		if entry.Name != name {
+			continue
+		}
+		if seen[entry.Name] {
+			continue
+		}
+		out = append(out, *entry)
+		seen[entry.Name] = true
 	}
 
 	if !opts.Listing {
 		return out, nil
 	}
 
-	listed, err := listBranchesPaginated(rest, owner, repo)
+	listed, err := listBranchesPaginated(rest, owner, repo, opts.OnProgress)
 	if err != nil {
 		// Listing failure on top of a successful targeted phase:
 		// degrade quietly. Wildcard patterns will simply have no
@@ -147,22 +196,41 @@ func FetchGitHubBranchProtection(host, owner, repo string, opts BranchFetchOptio
 			continue
 		}
 		entry := ir.Branch{Name: b.Name, Protected: b.Protected}
-		if b.Protected {
+		// Only pay for protection-detail calls on branches the user
+		// asked about. Out-of-scope protected branches stay in the
+		// IR with Protected=true but no detail data; the rego rule
+		// abstains on them anyway via its own scope check.
+		if b.Protected && (opts.InScope == nil || opts.InScope(b.Name)) {
+			if opts.OnProgress != nil {
+				opts.OnProgress(fmt.Sprintf("Resolving protection for %s", b.Name))
+			}
+			// Same two-source merge as fetchBranchByName: classic
+			// Branch Protection + Rulesets effective-rules. Stricter
+			// wins; ProtectionDetailsKnown turns true if either
+			// source returned 200. See fetchBranchByName for the
+			// rationale.
 			detail, derr := fetchBranchProtection(rest, owner, repo, b.Name)
-			// 200 → ProtectionDetailsKnown=true; 404 (rulesets-only)
-			// or 403 (token lacks admin scope) → leave it false so
-			// branch_non_compliant.rego abstains instead of false-
-			// positiving on the zero defaults. Same three-way contract
-			// as fetchBranchByName above.
+			classicOK := false
 			switch {
 			case derr == nil && detail != nil:
 				entry.AllowForcePush = detail.AllowForcePushes.Enabled
 				entry.CodeOwnerApprovalRequired = detail.RequiredPullRequestReviews.RequireCodeOwnerReviews
-				entry.ProtectionDetailsKnown = true
+				classicOK = true
 			case derr != nil && (isNotFound(derr) || isUnauthorized(derr)):
-				// Detail unavailable.
+				// Detail unavailable on this source.
 			case derr != nil:
 				return nil, fmt.Errorf("branch %q protection: %w", b.Name, derr)
+			}
+
+			rules, rulesOK, rerr := fetchBranchEffectiveRules(rest, owner, repo, b.Name)
+			if rerr != nil {
+				return nil, rerr
+			}
+			if rulesOK {
+				applyEffectiveRules(&entry, rules)
+			}
+			if classicOK || rulesOK {
+				entry.ProtectionDetailsKnown = true
 			}
 		}
 		out = append(out, entry)
@@ -172,22 +240,22 @@ func FetchGitHubBranchProtection(host, owner, repo string, opts BranchFetchOptio
 }
 
 // fetchBranchByName resolves /repos/{owner}/{repo}/branches/{branch}
-// for a single branch. When the API marks it protected, the
-// protection-detail endpoint is consulted (admin-only on GitHub).
+// for a single branch. When the API marks it protected, two endpoints
+// are consulted and their results merged into the IR:
 //
-// Three outcomes for the protection-detail call:
-//   - 200: AllowForcePush + CodeOwnerApprovalRequired land in the IR
-//     and ProtectionDetailsKnown=true so branch_non_compliant.rego
-//     trusts those values.
-//   - 404: ruleset-only branch, the legacy /protection endpoint
-//     doesn't apply. ProtectionDetailsKnown=false; the branch_non_
-//     compliant rule abstains, branch_unprotected still uses the
-//     authoritative `Protected` flag from the listing.
-//   - 403: token lacks Administration:read / repo scope. Same
-//     contract as 404 (preserve the entry, mark detail unknown). A
-//     prior implementation propagated the error and wiped the whole
-//     result, which silently dropped ISSUE-501 too — this branch is
-//     authored for content-only tokens to keep ISSUE-501 working.
+//   - /branches/{name}/protection — classic Branch Protection (older
+//     mechanism). Provides AllowForcePush + CodeOwnerApprovalRequired.
+//   - /rules/branches/{name} — the effective rules from Repository
+//     Rulesets (newer mechanism, GA 2023) plus any org-level Rulesets
+//     the repo inherits. Stricter wins: a `non_fast_forward` rule
+//     blocks force-push regardless of what classic says, and any
+//     `pull_request` rule with require_code_owner_review:true makes
+//     code-owner approval required.
+//
+// `ProtectionDetailsKnown` is set when EITHER source returned 200 —
+// branches managed purely by Rulesets used to land at PDK=false
+// because classic /protection 404s, and that hid real ISSUE-505
+// findings (or false-positived them when classic had stale data).
 func fetchBranchByName(rest *api.RESTClient, owner, repo, name string) (*ir.Branch, error) {
 	endpoint := fmt.Sprintf("repos/%s/%s/branches/%s", owner, repo, name)
 	var entry remoteBranchEntry
@@ -195,18 +263,38 @@ func fetchBranchByName(rest *api.RESTClient, owner, repo, name string) (*ir.Bran
 		return nil, err
 	}
 	out := &ir.Branch{Name: entry.Name, Protected: entry.Protected}
-	if entry.Protected {
-		detail, derr := fetchBranchProtection(rest, owner, repo, name)
-		switch {
-		case derr == nil && detail != nil:
-			out.AllowForcePush = detail.AllowForcePushes.Enabled
-			out.CodeOwnerApprovalRequired = detail.RequiredPullRequestReviews.RequireCodeOwnerReviews
-			out.ProtectionDetailsKnown = true
-		case derr != nil && (isNotFound(derr) || isUnauthorized(derr)):
-			// Detail unavailable; ProtectionDetailsKnown stays false.
-		case derr != nil:
-			return nil, fmt.Errorf("branch %q protection: %w", name, derr)
-		}
+	if !entry.Protected {
+		return out, nil
+	}
+
+	// Classic Branch Protection — may 404 (ruleset-only branch) or
+	// 403 (token lacks scope); both degrade to "detail unknown".
+	detail, derr := fetchBranchProtection(rest, owner, repo, name)
+	classicOK := false
+	switch {
+	case derr == nil && detail != nil:
+		out.AllowForcePush = detail.AllowForcePushes.Enabled
+		out.CodeOwnerApprovalRequired = detail.RequiredPullRequestReviews.RequireCodeOwnerReviews
+		classicOK = true
+	case derr != nil && (isNotFound(derr) || isUnauthorized(derr)):
+		// Detail unavailable on this source; rulesets may still answer.
+	case derr != nil:
+		return nil, fmt.Errorf("branch %q protection: %w", name, derr)
+	}
+
+	// Repository + Organization Rulesets via the effective-rules
+	// endpoint. Stricter wins: applyEffectiveRules can only tighten
+	// flags relative to what classic returned, never loosen them.
+	rules, rulesOK, rerr := fetchBranchEffectiveRules(rest, owner, repo, name)
+	if rerr != nil {
+		return nil, rerr
+	}
+	if rulesOK {
+		applyEffectiveRules(out, rules)
+	}
+
+	if classicOK || rulesOK {
+		out.ProtectionDetailsKnown = true
 	}
 	return out, nil
 }
@@ -216,6 +304,29 @@ func fetchBranchByName(rest *api.RESTClient, owner, repo, name string) (*ir.Bran
 type remoteBranchEntry struct {
 	Name      string `json:"name"`
 	Protected bool   `json:"protected"`
+}
+
+// remoteBranchRule is one entry in the array returned by
+// /repos/{o}/{r}/rules/branches/{branch}. GitHub returns the union of
+// all *active* rules effective for that branch — classic Branch
+// Protection, repo-level Rulesets, and any org-level Rulesets the
+// repo inherits, in a single flat list. `type` discriminates which
+// `parameters` shape applies; we only unmarshal the two types that
+// map to ISSUE-505 sub-checks today. New rule types can be added by
+// extending RuleParameters without breaking existing callers.
+type remoteBranchRule struct {
+	Type              string         `json:"type"`
+	RulesetSourceType string         `json:"ruleset_source_type,omitempty"`
+	RulesetID         int            `json:"ruleset_id,omitempty"`
+	Parameters        RuleParameters `json:"parameters"`
+}
+
+// RuleParameters is the union of parameter shapes across rule types
+// we care about. JSON unmarshal populates only the fields present in
+// the source — extras are silently ignored.
+type RuleParameters struct {
+	// pull_request rule
+	RequireCodeOwnerReview bool `json:"require_code_owner_review,omitempty"`
 }
 
 // remoteBranchProtection is the slim subset of
@@ -263,15 +374,83 @@ func FetchGitHubDefaultBranch(host, owner, repo string) (string, error) {
 	return meta.DefaultBranch, nil
 }
 
+// fetchBranchEffectiveRules calls /repos/{o}/{r}/rules/branches/{branch}
+// and returns the effective rules unioned across classic Branch
+// Protection, repo-level Rulesets, and org-level Rulesets the repo
+// inherits. Walks pages until a short page or the listing cap so
+// repos with dozens of rules don't silently truncate. Returns:
+//
+//   - (rules, true, nil) on a 200 (even an empty array — that's an
+//     authoritative "no active rules" answer, callers can mark
+//     ProtectionDetailsKnown=true on the back of it).
+//   - (nil, false, nil) on a 401/403/404, mirroring the same
+//     graceful degradation contract as fetchBranchProtection above.
+//   - (nil, false, err) on any other failure.
+func fetchBranchEffectiveRules(rest *api.RESTClient, owner, repo, branch string) ([]remoteBranchRule, bool, error) {
+	const perPage = 100
+	var out []remoteBranchRule
+	for page := 1; page <= maxBranchListingPages; page++ {
+		endpoint := fmt.Sprintf("repos/%s/%s/rules/branches/%s?per_page=%d&page=%d", owner, repo, branch, perPage, page)
+		var batch []remoteBranchRule
+		if err := rest.Get(endpoint, &batch); err != nil {
+			if isUnauthorized(err) || isNotFound(err) {
+				return nil, false, nil
+			}
+			return nil, false, fmt.Errorf("branch %q rules: %w", branch, err)
+		}
+		if len(batch) == 0 {
+			break
+		}
+		out = append(out, batch...)
+		if len(batch) < perPage {
+			break
+		}
+	}
+	return out, true, nil
+}
+
+// applyEffectiveRules folds the rules endpoint's output into b's
+// protection-state flags. Stricter wins:
+//
+//   - any "non_fast_forward" rule ⇒ force-push is blocked ⇒
+//     b.AllowForcePush stays / becomes false.
+//   - any "pull_request" rule with require_code_owner_review:true ⇒
+//     b.CodeOwnerApprovalRequired becomes true.
+//
+// Other rule types are ignored — they don't map to ISSUE-505
+// sub-checks today. Idempotent: calling repeatedly with the same
+// rules cannot un-set a stricter flag.
+func applyEffectiveRules(b *ir.Branch, rules []remoteBranchRule) {
+	if b == nil {
+		return
+	}
+	for _, r := range rules {
+		switch r.Type {
+		case "non_fast_forward":
+			b.AllowForcePush = false
+		case "pull_request":
+			if r.Parameters.RequireCodeOwnerReview {
+				b.CodeOwnerApprovalRequired = true
+			}
+		}
+	}
+}
+
 // listBranchesPaginated walks /repos/{o}/{r}/branches one page at a
 // time until either the API returns a short page (signalling the
 // last page) or maxBranchListingPages is hit. Errors short-circuit
 // and return whatever was collected up to that point alongside the
-// error — the caller decides whether to degrade or propagate.
-func listBranchesPaginated(rest *api.RESTClient, owner, repo string) ([]remoteBranchEntry, error) {
+// error; the caller decides whether to degrade or propagate.
+// onProgress, when non-nil, receives a short label after each page
+// so the CLI's progress spinner can keep the user informed during
+// long pagination runs (grafana-class repos can take 5-15s here).
+func listBranchesPaginated(rest *api.RESTClient, owner, repo string, onProgress func(message string)) ([]remoteBranchEntry, error) {
 	const perPage = 100
 	var out []remoteBranchEntry
 	for page := 1; page <= maxBranchListingPages; page++ {
+		if onProgress != nil {
+			onProgress(fmt.Sprintf("Listing branches (page %d, %d collected)", page, len(out)))
+		}
 		endpoint := fmt.Sprintf("repos/%s/%s/branches?per_page=%d&page=%d", owner, repo, perPage, page)
 		var batch []remoteBranchEntry
 		if err := rest.Get(endpoint, &batch); err != nil {

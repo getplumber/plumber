@@ -30,7 +30,7 @@ deny contains finding if {
 	ecosystem := _publish_action_ecosystem(action.uses)
 	_step_uses_static_token(action)
 	finding := {
-		"code":     "ISSUE-605",
+		"code":     "ISSUE-421",
 		"severity": "high",
 		"message":  sprintf("job %q publishes to %s via %q with a static token — migrate to OIDC trusted publishing", [job.name, ecosystem, action.uses]),
 		"job":      job.name,

@@ -380,7 +380,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 
 	// Write JSON to file if specified
 	if outputFile != "" {
-		if err := writeJSONToFile(result, conf.PlumberConfig, threshold, compliance, outputFile, scoreResult, scoreMode, "gitlab"); err != nil {
+		if err := writeJSONToFile(result, conf.PlumberConfig, threshold, compliance, outputFile, scoreResult, scoreMode, "gitlab", conf.ControlsFilter, conf.SkipControlsFilter); err != nil {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "Results written to: %s\n", outputFile)
@@ -528,7 +528,7 @@ func parseControlsFilter(raw string) ([]string, error) {
 	return controls, nil
 }
 
-func writeJSONToFile(result *control.AnalysisResult, pc *configuration.PlumberConfig, threshold, compliance float64, filePath string, score *control.PlumberScoreResult, scoreMode bool, provider string) error {
+func writeJSONToFile(result *control.AnalysisResult, pc *configuration.PlumberConfig, threshold, compliance float64, filePath string, score *control.PlumberScoreResult, scoreMode bool, provider string, includeOnly, skip []string) error {
 	// Marshal AnalysisResult into a generic map so the per-control
 	// `*Result` legacy blocks can sit alongside its existing fields
 	// without forcing every consumer to follow the dev's flat-findings
@@ -558,7 +558,7 @@ func writeJSONToFile(result *control.AnalysisResult, pc *configuration.PlumberCo
 	if partial := partialControlEntries(result); len(partial) > 0 {
 		output["partialControls"] = partial
 	}
-	for k, v := range legacyResultsByName(result, pc, provider) {
+	for k, v := range legacyResultsByName(result, pc, provider, includeOnly, skip) {
 		output[k] = v
 	}
 
@@ -1489,7 +1489,7 @@ func printIssuesTable(controls []controlSummary) {
 	}
 
 	fmt.Println(indentBlock(tbl.String(), "  "))
-	fmt.Printf("  %s\n", styleDim.Render("↳ docs: https://getplumber.io/docs/use-plumber/issues/<code>"))
+	fmt.Printf("  %s\n", styleDim.Render("↳ docs: https://getplumber.io/docs/cli/issues/<code>"))
 }
 
 // indentBlock prefixes every line of s with prefix. Used because

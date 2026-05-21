@@ -1,6 +1,6 @@
 # template-injection-vars — flag `run:` scripts that expand a
 # maintainer-adjacent template directly into the shell. Distinct
-# from ISSUE-206 (template-injection) which targets PR-author-
+# from ISSUE-207 (template-injection) which targets PR-author-
 # controlled `github.event.*` / `github.head_ref` — here the
 # sources are:
 #
@@ -14,7 +14,7 @@
 #                   `github.event.*` into inputs), the surface
 #                   flips to PR-author-controlled.
 #
-# Confidence is lower than ISSUE-206; severity stays at "low".
+# Confidence is lower than ISSUE-207; severity stays at "low".
 # The fix is the same for both: bind the value through `env:`
 # first, then dereference the shell variable from the `run:` body
 # so expansion quotes the value instead of concatenating it as

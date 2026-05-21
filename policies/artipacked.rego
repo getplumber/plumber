@@ -7,8 +7,8 @@
 # documented mitigation is a one-liner: `with: persist-credentials:
 # false`.
 #
-# This check pairs with dangerous-triggers (ISSUE-414) and
-# template-injection (ISSUE-206): the persisted credential is
+# This check pairs with dangerous-triggers (ISSUE-802) and
+# template-injection (ISSUE-207): the persisted credential is
 # precisely what an attacker harvests once they escalate through the
 # trigger / injection path.
 package artipacked

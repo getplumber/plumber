@@ -22,7 +22,7 @@ deny contains finding if {
 	not _is_scratch(base.image)
 	not _is_stage_ref(base.image)
 	finding := {
-		"code":     "ISSUE-107",
+		"code":     "ISSUE-706",
 		"severity": "medium",
 		"message":  sprintf("Dockerfile references base image %q without a @sha256 digest — pin by digest to neutralise registry-side retagging", [base.image]),
 		"file":     df.path,

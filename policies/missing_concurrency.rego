@@ -17,7 +17,7 @@ deny contains finding if {
 	input.pipeline.provider == "github"
 	some file in _workflow_files_missing_concurrency
 	finding := {
-		"code":     "ISSUE-602",
+		"code":     "ISSUE-418",
 		"severity": "medium",
 		"message":  sprintf("workflow file %q declares no concurrency group — concurrent runs will race on caches, deploys and artefacts", [file]),
 		"file":     file,

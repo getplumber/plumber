@@ -236,7 +236,7 @@ func marshalDataForSort(d map[string]any) []byte {
 // finding gets a `docUrl` derived from its code so consumers (CI
 // gates, dashboards, MR comments) can link back without hard-coding
 // the format on their side.
-const docURLBase = "https://getplumber.io/docs/use-plumber/issues/"
+const docURLBase = "https://getplumber.io/docs/cli/issues/"
 
 // enrichFindingsWithJobLocation fills File and Line on every finding
 // whose Job field matches a job in the pipeline — saves every policy

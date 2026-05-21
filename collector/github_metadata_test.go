@@ -6,7 +6,7 @@ import (
 	version "github.com/hashicorp/go-version"
 )
 
-// Test_versionInRange locks the ISSUE-114 range-filter semantics.
+// Test_versionInRange locks the ISSUE-703 range-filter semantics.
 // The scenario comes from a real-world false positive: the codeql-
 // action pinned at v4.35.1 was flagged for GHSA-vqf5-2xx6-9wfm
 // whose range covers `>= 3.26.11, <= 3.28.2` and `>= 2.26.11, <

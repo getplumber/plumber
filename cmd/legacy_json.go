@@ -39,7 +39,12 @@ func _minAccessLevelGitlab(levels []gitlab.BranchProtectionAccessLevel) int {
 // Returned map keys match the legacy JSON field names
 // (imageForbiddenTagsResult, imageAuthorizedSourcesResult, …) so the
 // caller can splice them straight into the output struct.
-func legacyResultsByName(result *control.AnalysisResult, pc *configuration.PlumberConfig, provider string) map[string]any {
+// legacyResultsByName builds the JSON blocks. The includeOnly / skip
+// slices come from the `--controls` / `--skip-controls` flags and are
+// applied via control.MarkSkippedByFilter so the per-block `skipped:`
+// field tracks both the YAML enabled flag AND the CLI filter. Pass
+// nil/empty when no filter is active.
+func legacyResultsByName(result *control.AnalysisResult, pc *configuration.PlumberConfig, provider string, includeOnly, skip []string) map[string]any {
 	if result == nil || pc == nil {
 		return nil
 	}
@@ -48,7 +53,9 @@ func legacyResultsByName(result *control.AnalysisResult, pc *configuration.Plumb
 
 	switch provider {
 	case "github":
-		for _, e := range control.GitHubControls(pc) {
+		entries := control.GitHubControls(pc)
+		control.MarkSkippedByFilter(entries, includeOnly, skip)
+		for _, e := range entries {
 			fs := findingsByControl[e.ControlName]
 			key, block := buildLegacyResultGitHub(e, result, pc, fs)
 			if key == "" {
@@ -57,7 +64,9 @@ func legacyResultsByName(result *control.AnalysisResult, pc *configuration.Plumb
 			out[key] = block
 		}
 	default:
-		for _, e := range control.GitLabControls(pc) {
+		entries := control.GitLabControls(pc)
+		control.MarkSkippedByFilter(entries, includeOnly, skip)
+		for _, e := range entries {
 			fs := findingsByControl[e.ControlName]
 			key, block := buildLegacyResult(e, result, pc, fs)
 			if key == "" {
@@ -134,7 +143,7 @@ type legacyCommon struct {
 func projectFinding(f opaengine.Finding, jobNameKey string) map[string]any {
 	out := map[string]any{
 		"code":   f.Code,
-		"docUrl": "https://getplumber.io/docs/use-plumber/issues/" + f.Code,
+		"docUrl": "https://getplumber.io/docs/cli/issues/" + f.Code,
 	}
 	if f.Job != "" && jobNameKey != "" {
 		out[jobNameKey] = f.Job
@@ -847,10 +856,19 @@ func buildUnverifiedScriptsBlock(c legacyCommon, result *control.AnalysisResult,
 }
 
 func buildJobVariablesOverrideBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	// v0.2.x parity: when the user supplied no protected-variable
+	// list (control absent from .plumber.yaml, hence Skipped), there
+	// is nothing to compare against — report 0 variables checked
+	// instead of the project-authored count, matching the legacy
+	// JSON consumers key on.
+	totalChecked := 0
+	if !c.Skipped {
+		totalChecked = _countProjectAuthoredVariables(result)
+	}
 	return map[string]any{
 		"issues": projectFindings(findings, "job"),
 		"metrics": map[string]any{
-			"totalVariablesChecked": _countProjectAuthoredVariables(result),
+			"totalVariablesChecked": totalChecked,
 			"overriddenFound":       len(findings),
 		},
 		"compliance": c.Compliance,

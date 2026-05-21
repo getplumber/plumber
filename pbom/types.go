@@ -116,6 +116,15 @@ type Include struct {
 	// Override information (populated from control results)
 	Overridden     bool                        `json:"overridden,omitempty"`
 	OverriddenJobs []utils.OverriddenJobDetail `json:"overriddenJobs,omitempty"`
+
+	// GitHub-only compliance enrichments populated from GitHubComplianceData.
+	// Archived is true when the action's upstream repository is archived
+	// (ISSUE-702). HasCVE is true when the action's upstream carries at
+	// least one published GitHub Advisory (ISSUE-703). Advisories is the
+	// list of GHSA IDs that triggered HasCVE.
+	Archived   *bool    `json:"archived,omitempty"`
+	HasCVE     *bool    `json:"hasCve,omitempty"`
+	Advisories []string `json:"advisories,omitempty"`
 }
 
 // Summary provides aggregate statistics about the pipeline dependencies

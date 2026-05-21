@@ -274,6 +274,7 @@ func TestControlsFor_returnsZeroWhenAbsent(t *testing.T) {
 	got := pc.ControlsFor("gitlab")
 	if got == nil {
 		t.Fatal("ControlsFor must never return nil")
+		return
 	}
 	if !controlsConfigIsZero(*got) {
 		t.Errorf("expected zero ControlsConfig, got %#v", *got)

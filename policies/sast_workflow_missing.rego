@@ -41,7 +41,7 @@ deny contains finding if {
 	# has something to show in the `↳ at` hint.
 	first_file := input.pipeline.jobs[0].originFile
 	finding := {
-		"code":     "ISSUE-609",
+		"code":     "ISSUE-904",
 		"severity": "low",
 		"message":  "repository ships workflows but none runs a recognised SAST scanner — add CodeQL / Semgrep / SonarQube / Trivy",
 		"file":     first_file,

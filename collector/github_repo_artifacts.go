@@ -129,7 +129,7 @@ func collectDockerfileCandidates(dir string, depth int, out map[string]struct{})
 // idiomatic Dockerfiles pin the digest at the top (`ARG
 // GOLANG_IMAGE_TAG=1.26-bookworm@sha256:…`) and reuse the variable
 // across stages. Without substitution the parser would treat those
-// stages as unpinned and flag false ISSUE-107 findings.
+// stages as unpinned and flag false ISSUE-706 findings.
 func parseDockerfileBases(path string) (ir.Dockerfile, error) {
 	f, err := os.Open(path) // #nosec G304
 	if err != nil {

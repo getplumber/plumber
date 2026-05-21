@@ -17,7 +17,7 @@ deny contains finding if {
 	some i
 	ecosystem := input.pipeline.dependabot.insecureExecEcosystems[i]
 	finding := {
-		"code":     "ISSUE-606",
+		"code":     "ISSUE-901",
 		"severity": "critical",
 		"message":  sprintf("dependabot ecosystem %q re-enables insecure-external-code-execution — set it back to `deny` or remove the override", [ecosystem]),
 		"file":     input.pipeline.dependabot.path,

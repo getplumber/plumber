@@ -84,6 +84,7 @@ var controlsMeta = map[string]ControlMeta{
 	"workflowMustNotUseDangerousTriggers":                 {Providers: []string{ProviderGitHub}},
 	"workflowMustNotUseKnownMisfeatures":                  {Providers: []string{ProviderGitHub}},
 	"workflowMustNotWriteUntrustedContentToGitHubEnv":     {Providers: []string{ProviderGitHub}},
+	"workflowMustIncludeRequiredActions":                  {Providers: []string{ProviderGitHub}},
 	"workflowMustPinPackageInstalls":                      {Providers: []string{ProviderGitHub}},
 	"workflowsMustDeclareConcurrency":                     {Providers: []string{ProviderGitHub}},
 	"workflowsMustDeclarePermissions":                     {Providers: []string{ProviderGitHub}},
@@ -122,8 +123,6 @@ var benchedControls = map[string]map[string]struct{}{
 		"actionPinsMustNotBeStale":              {},
 		"actionRefsMustExistUpstream":           {},
 		"actionRefsMustNotCollide":              {},
-		"actionsMustNotBeArchived":              {},
-		"actionsMustNotCarryKnownCVEs":          {},
 		"actionsMustNotDuplicateRunnerBuiltins": {},
 
 		// Repo-artifact / setup-side controls (need fixture coverage).
@@ -148,7 +147,6 @@ var benchedControls = map[string]map[string]struct{}{
 		"workflowMustNotContainObfuscation":               {},
 		"workflowMustNotExportEntireGitHubContext":        {},
 		"workflowMustNotExportEntireSecretsContext":       {},
-		"workflowMustNotGrantPermissionsWriteAll":         {},
 		"workflowMustNotIndexSecretsDynamically":          {},
 		"workflowMustNotInjectVarsInScripts":              {},
 		"workflowMustNotReEnableInsecureCommands":         {},
@@ -167,7 +165,6 @@ var benchedControls = map[string]map[string]struct{}{
 		"includesMustNotUseForbiddenVersions":         {},
 		"pipelineMustIncludeComponent":                {},
 		"pipelineMustIncludeTemplate":                 {},
-		"pipelineMustNotEnableDebugTrace":             {},
 		"pipelineMustNotExecuteUnverifiedScripts":     {},
 		"pipelineMustNotIncludeHardcodedJobs":         {},
 		"pipelineMustNotOverrideJobVariables":         {},

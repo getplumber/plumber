@@ -36,7 +36,7 @@ deny contains finding if {
 	_uses_cache_action(action.uses)
 	not _key_is_release_scoped(action)
 	finding := {
-		"code":     "ISSUE-106",
+		"code":     "ISSUE-705",
 		"severity": "high",
 		"message":  sprintf("job %q restores a cache via %q on a release-type trigger — scope the key to the release ref or disable caching on publish paths", [job.name, action.uses]),
 		"job":      job.name,

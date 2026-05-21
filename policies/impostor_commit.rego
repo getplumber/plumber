@@ -24,7 +24,7 @@ deny contains finding if {
 	action.metadata
 	action.metadata.refExists == false
 	finding := {
-		"code":     "ISSUE-109",
+		"code":     "ISSUE-707",
 		"severity": "critical",
 		"message":  sprintf("job %q pins action %q to a commit SHA that does not exist in the upstream repository — typo or impostor-commit attack", [job.name, action.uses]),
 		"job":      job.name,

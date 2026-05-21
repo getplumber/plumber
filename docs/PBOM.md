@@ -57,7 +57,7 @@ CycloneDX was chosen because Plumber's primary use case is pipeline security, an
 | GitLab CI components | `gitlab.com/components/sast` | **No** |
 | GitLab templates | `Security/SAST.gitlab-ci.yml` | **No** |
 | Remote/local includes | Custom YAML files | **No** |
-| GitHub Actions | `actions/checkout@<sha>` | **Limited.** GitHub's own [security advisories database](https://github.com/advisories) tracks Action-specific CVEs — Plumber's `actionsMustNotCarryKnownCVEs` control (currently benched, ships next) checks every `uses:` against that DB at analysis time. Generic CVE scanners do not. |
+| GitHub Actions | `actions/checkout@<sha>` | **Limited.** GitHub's own [security advisories database](https://github.com/advisories) tracks Action-specific CVEs. Plumber's `actionsMustNotCarryKnownCVEs` control (default-on) checks every `uses:` against that DB at analysis time and stamps each affected include with `hasCve: true` plus its `advisories: [GHSA-…]` list. Generic CVE scanners do not. |
 | GitHub reusable workflows | `myorg/shared/.github/workflows/x.yml` | **No** |
 
 **Why?** GitLab CI templates and components are configuration files, not software packages. No vulnerability database (NVD, OSV, etc.) tracks CVEs for them. Docker image PURLs provide metadata-level lookups only, not the full vulnerability surface of the image contents.
@@ -184,12 +184,15 @@ Each entry represents a CI/CD include dependency. Fields vary by include type: o
 | `project` | string | GitLab: source project path for `project` includes. GitHub: action owner (e.g., `actions`) for `action` entries. |
 | `version` | string | Pinned version. For GitHub `action` entries: the ref the workflow pinned (typically a 40-char SHA). For GitHub `reusableWorkflow`: the ref after `@`. |
 | `latestVersion` | string | GitLab: latest available release of the include. GitHub: the human-readable `# vX.Y.Z` comment annotation that lives next to the SHA in the workflow file (when present). |
-| `upToDate` | bool | GitLab: whether the include is on its latest release. GitHub `action` entries: tri-state pinning indicator — `false` means the ref is **not** a 40-char SHA (i.e. unpinned, ISSUE-104 candidate). |
+| `upToDate` | bool | GitLab: whether the include is on its latest release. GitHub `action` entries: tri-state pinning indicator — `false` means the ref is **not** a 40-char SHA (i.e. unpinned, ISSUE-701 candidate). |
 | `componentName` | string | GitLab `component` only |
 | `fromCatalog` | bool | GitLab `component` only |
 | `nested` | bool | GitLab only: `true` when this include was pulled in by another include. |
 | `overridden` | bool | GitLab only: `true` when one or more of the include's jobs were overridden locally with forbidden CI/CD keywords. |
 | `overriddenJobs` | array | GitLab only: details of which jobs are overridden and with which keywords. Only present when `overridden` is `true`. JSON uses camelCase (`overriddenJobs`, `overriddenKeys`), not snake_case. |
+| `archived` | bool | GitHub `action` only. `true` when the action's upstream repository is archived (ISSUE-702 finding). Omitted when the GitHub API metadata enrichment did not resolve (no token, offline, non-GitHub action). |
+| `hasCve` | bool | GitHub `action` only. `true` when the action's upstream repository carries at least one published advisory in the GitHub Advisory Database under the `actions` ecosystem (ISSUE-703 finding). Same omitted-when-unresolved contract as `archived`. |
+| `advisories` | string[] | GitHub `action` only. GHSA IDs that triggered `hasCve`. Empty/omitted when `hasCve` is unset or false. |
 
 Each entry in `overriddenJobs[]`:
 
@@ -283,7 +286,7 @@ All fields are always present (default to `0`). The provider-specific include co
 
 ### `plumberScore` Object (optional)
 
-Present only when analysis is run with `--score` and/or `--score-point`. Field meanings and the exact formula (weights, log₂ growth, per-severity caps, Critical malus, letter thresholds) are documented in **[scoring.md](scoring.md)**. Issue severities per code follow the [issues](https://getplumber.io/docs/use-plumber/issues/) documentation.
+Present only when analysis is run with `--score` and/or `--score-point`. Field meanings and the exact formula (weights, log₂ growth, per-severity caps, Critical malus, letter thresholds) are documented in **[scoring.md](scoring.md)**. Issue severities per code follow the [issues](https://getplumber.io/docs/cli/issues/) documentation.
 
 | Field | Type | Description |
 |-------|------|-------------|
@@ -395,7 +398,7 @@ pkg:github/owner/repo/.github/workflows/x.yml@ref   (GitHub reusable workflows)
 pkg:generic/sanitized-location@version    (other types)
 ```
 
-For GitHub actions the `version` field on the component is the actual ref the workflow pinned (typically a 40-char SHA when the project follows ISSUE-104 pinning); the `plumber:latest-version` property carries the human-readable `# vX.Y.Z` annotation when present.
+For GitHub actions the `version` field on the component is the actual ref the workflow pinned (typically a 40-char SHA when the project follows ISSUE-701 pinning); the `plumber:latest-version` property carries the human-readable `# vX.Y.Z` annotation when present.
 
 ### Custom Properties (`plumber:*`)
 
@@ -417,6 +420,9 @@ CycloneDX components carry Plumber-specific metadata as properties:
 | `plumber:nested` | includes | GitLab only. `"true"` if nested include |
 | `plumber:overridden` | includes | GitLab only. `"true"` if the include's jobs are overridden with forbidden keywords |
 | `plumber:overridden-job` | includes | GitLab only. `"jobName:key1,key2"` — one property per overridden job with its forbidden keys |
+| `plumber:archived` | includes | GitHub `action` only. `"true"` / `"false"` — upstream repository archived state (ISSUE-702). |
+| `plumber:has-cve` | includes | GitHub `action` only. `"true"` / `"false"` — at least one published advisory targets the action repository (ISSUE-703). |
+| `plumber:advisories` | includes | GitHub `action` only. Comma-separated list of GHSA IDs that triggered `plumber:has-cve`. |
 | `plumber:gitlab-url` | metadata.component | **GitLab only.** GitLab instance URL |
 | `plumber:project-id` | metadata.component | **GitLab only.** GitLab project ID |
 | `plumber:provider` | metadata.component | **GitHub only.** Always `"github"` — distinguishes the GitHub PBOM lineage from the historical GitLab one |
@@ -447,7 +453,7 @@ jobs:
       contents: read         # read workflow files + repo metadata
       # administration: read # uncomment if you also want ISSUE-505 (force-push, code-owner) evaluated
     steps:
-      - uses: actions/checkout@<sha>   # pin via SHA per ISSUE-104
+      - uses: actions/checkout@<sha>   # pin via SHA per ISSUE-701
       - run: |
           curl -LO https://github.com/getplumber/plumber/releases/latest/download/plumber-linux-amd64
           chmod +x plumber-linux-amd64

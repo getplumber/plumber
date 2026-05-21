@@ -19,7 +19,7 @@ package github_env_injection
 import rego.v1
 
 # Expressions GitHub considers attacker-influenceable under fork-based
-# triggers. Same list as the template-injection policy (ISSUE-206);
+# triggers. Same list as the template-injection policy (ISSUE-207);
 # any value under `github.event.*` or `github.head_ref` can be
 # replaced by a PR author.
 unsafe_patterns := [
