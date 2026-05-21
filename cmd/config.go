@@ -360,8 +360,13 @@ func runConfigGenerate(cmd *cobra.Command, args []string) error {
 	fmt.Printf("Generated %s\n", configGenerateOutput)
 	fmt.Println("\nNext steps:")
 	fmt.Println("  1. Review and customize the configuration for your needs")
-	fmt.Println("  2. Export the GITLAB_TOKEN environment variable if you haven't already")
-	fmt.Println("  3. Run: plumber analyze --gitlab-url <url> --project <path>")
+	if detected := autoDetectProviderForInit(); len(detected) == 1 && detected[0] == provGitHub {
+		fmt.Println("  2. Authenticate: run `gh auth login`, or export GH_TOKEN=<token>")
+		fmt.Println("  3. Run: plumber analyze  (auto-detects your repo, or: plumber analyze --github-url github.com --project <owner>/<repo>)")
+	} else {
+		fmt.Println("  2. Export the GITLAB_TOKEN environment variable if you haven't already")
+		fmt.Println("  3. Run: plumber analyze  (auto-detects your repo, or: plumber analyze --gitlab-url <url> --project <group>/<project>)")
+	}
 
 	return nil
 }
