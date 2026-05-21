@@ -1,38 +1,27 @@
-name: OpenSSF Scorecard (demo violations — DO NOT COMMIT)
+name: OpenSSF Scorecard
 
 on:
   push:
     branches: [main]
-  pull_request_target:
   branch_protection_rule:
   schedule:
     - cron: '30 1 * * 1'
 
-permissions: write-all
+permissions: {}
 
 jobs:
   analysis:
     name: Scorecard Analysis
     runs-on: ubuntu-24.04
-    container:
-      image: node:latest
-    env:
-      ACTIONS_STEP_DEBUG: "true"
+    permissions:
+      contents: read
+      security-events: write
+      id-token: write
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
           persist-credentials: false
-
-      - uses: tj-actions/changed-files@v45
-
-      - uses: tibdex/github-app-token@v2.1.0
-        with:
-          app_id: ${{ secrets.APP_ID }}
-          private_key: ${{ secrets.APP_KEY }}
-
-      - name: Echo PR title
-        run: echo "Scanning ${{ github.event.pull_request.title }}"
 
       - name: Run Scorecard
         uses: ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a # v2.4.3
@@ -46,10 +35,9 @@ jobs:
         with:
           sarif_file: results.sarif
 
-  scan:
-    name: gitleaks
-    runs-on: ubuntu-24.04
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
-      - uses: gitleaks/gitleaks-action@v2
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: scorecard-results
+          path: results.sarif
+          retention-days: 5
