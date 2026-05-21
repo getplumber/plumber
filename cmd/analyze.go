@@ -871,24 +871,44 @@ const (
 	colorGreenBright = "\033[92m"
 	colorBold        = "\033[1m"
 	colorDim         = "\033[2m"
-	colorBgRed       = "\033[41m"
-	colorBgYellow    = "\033[43m"
-	colorBlack       = "\033[30m"
-	colorWhite       = "\033[97m"
 )
 
 func severityTag(code control.ErrorCode) string {
 	switch control.SeverityForCode(code) {
 	case control.SeverityCritical:
-		return fmt.Sprintf("%s%s CRIT %s", colorBgRed, colorWhite, colorReset)
+		return renderSeverityBadge(control.SeverityCritical, " CRIT ")
 	case control.SeverityHigh:
-		return fmt.Sprintf("%s%s HIGH %s", colorBgYellow, colorBlack, colorReset)
+		return renderSeverityBadge(control.SeverityHigh, " HIGH ")
 	case control.SeverityMedium:
-		return fmt.Sprintf("%s MED  %s", colorCyan, colorReset)
+		return renderSeverityBadge(control.SeverityMedium, " MED  ")
 	case control.SeverityLow:
-		return fmt.Sprintf("%s LOW  %s", colorBlue, colorReset)
+		return renderSeverityBadge(control.SeverityLow, " LOW  ")
 	default:
-		return fmt.Sprintf("%s MED  %s", colorCyan, colorReset)
+		return renderSeverityBadge(control.SeverityMedium, " MED  ")
+	}
+}
+
+// renderSeverityBadge renders a label as a filled severity badge in
+// absolute truecolor: a fixed bright background plus a guaranteed-
+// contrast ink, so it stays readable on dark, light, and beige
+// terminals alike, because the badge brings its own background instead
+// of depending on contrast with the terminal's. Uses truecolor rather
+// than the remappable 16-color ANSI palette so themes can't mangle it.
+// Shared by the controls table (highestSeverityLabel) and the
+// per-finding inline tags (severityTag) so both look identical.
+// See issue #170.
+func renderSeverityBadge(sev control.IssueSeverity, label string) string {
+	switch sev {
+	case control.SeverityCritical:
+		return lipgloss.NewStyle().Background(colCritical).Foreground(colInkLight).Bold(true).Render(label)
+	case control.SeverityHigh:
+		return lipgloss.NewStyle().Background(colHigh).Foreground(colInkDark).Bold(true).Render(label)
+	case control.SeverityMedium:
+		return lipgloss.NewStyle().Background(colMedium).Foreground(colInkDark).Bold(true).Render(label)
+	case control.SeverityLow:
+		return lipgloss.NewStyle().Background(colLow).Foreground(colInkDark).Bold(true).Render(label)
+	default:
+		return styleDim.Render(label)
 	}
 }
 
@@ -902,15 +922,15 @@ func highestSeverityLabel(c control.SeverityCounts, visibleWidth int) string {
 	}
 	switch {
 	case c.Critical > 0:
-		return fmt.Sprintf("%s%s%s%s", colorBgRed, colorWhite, pad("Critical"), colorReset)
+		return renderSeverityBadge(control.SeverityCritical, pad("Critical"))
 	case c.High > 0:
-		return fmt.Sprintf("%s%s%s%s", colorBgYellow, colorBlack, pad("High"), colorReset)
+		return renderSeverityBadge(control.SeverityHigh, pad("High"))
 	case c.Medium > 0:
-		return fmt.Sprintf("%s%s%s", colorCyan, pad("Medium"), colorReset)
+		return renderSeverityBadge(control.SeverityMedium, pad("Medium"))
 	case c.Low > 0:
-		return fmt.Sprintf("%s%s%s", colorBlue, pad("Low"), colorReset)
+		return renderSeverityBadge(control.SeverityLow, pad("Low"))
 	default:
-		return fmt.Sprintf("%s%s%s", colorDim, pad("-"), colorReset)
+		return styleDim.Render(pad("-"))
 	}
 }
 
@@ -937,20 +957,23 @@ func scoreBar(finalPoints float64, width int) string {
 	if filled > width {
 		filled = width
 	}
-	var barColor string
+	// Truecolor (theme-independent), matching the score-letter tier
+	// colors: A/B green, C yellow, D amber, E red. The unfilled track
+	// uses the faint attribute, which is background-agnostic.
+	var barColor lipgloss.Color
 	switch {
-	case finalPoints >= 90:
-		barColor = colorGreen
 	case finalPoints >= 71:
-		barColor = colorGreenBright
+		barColor = colPass
 	case finalPoints >= 51:
-		barColor = colorYellow
+		barColor = colMedium
 	case finalPoints >= 31:
-		barColor = "\033[38;5;208m"
+		barColor = colHigh
 	default:
-		barColor = colorRed
+		barColor = colCritical
 	}
-	return barColor + strings.Repeat("█", filled) + colorDim + strings.Repeat("░", width-filled) + colorReset
+	full := lipgloss.NewStyle().Foreground(barColor).Render(strings.Repeat("█", filled))
+	track := styleDim.Render(strings.Repeat("░", width-filled))
+	return full + track
 }
 
 // controlSummary holds summary data for a control

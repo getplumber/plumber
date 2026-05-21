@@ -17,6 +17,13 @@ var (
 	colAccent   = lipgloss.Color("#5CCDEF")
 	colMuted    = lipgloss.Color("#6C7280")
 	colBody     = lipgloss.Color("#D5D8DC")
+
+	// Badge "ink": the foreground used on filled severity badges. These are
+	// absolute truecolor values (not the terminal's remappable 16-color
+	// ANSI palette), so the badge text stays readable regardless of the
+	// user's light/dark theme. See issue #170.
+	colInkLight = lipgloss.Color("#FFFFFF") // on saturated/dark badge bg (Critical)
+	colInkDark  = lipgloss.Color("#1A1A1A") // on bright badge bg (High)
 )
 
 // Semantic styles — prefer these over raw colors to keep call sites
