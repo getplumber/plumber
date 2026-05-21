@@ -66,7 +66,7 @@ For the default template with comments (suitable for CI or scripts), run:
   plumber config generate -o .plumber.yaml`)
 	}
 
-	state, err := runInitWizard()
+	state, err := runInitWizard(false)
 	if err != nil {
 		return err
 	}
@@ -188,7 +188,7 @@ func printInitSection(label string) {
 	fmt.Fprintf(os.Stderr, "\n── %s ──\n\n", label)
 }
 
-func runInitWizard() (*initWizardState, error) {
+func runInitWizard(skipAnalyzePrompt bool) (*initWizardState, error) {
 	fmt.Fprintln(os.Stderr, "Welcome to Plumber.")
 	fmt.Fprintln(os.Stderr, "This wizard creates a .plumber.yaml tailored to your project.")
 	fmt.Fprintln(os.Stderr, "Press Enter to accept defaults, Space to toggle, and Ctrl-C to quit.")
@@ -586,15 +586,17 @@ func runInitWizard() (*initWizardState, error) {
 		}
 	}
 
-	fmt.Fprintln(os.Stderr)
-	var runAnalyze bool
-	if err := survey.AskOne(&survey.Confirm{
-		Message: "Run 'plumber analyze' after writing? (" + runAnalyzeAuthHint(st.Providers) + ")",
-		Default: false,
-	}, &runAnalyze); err != nil {
-		return nil, err
+	if !skipAnalyzePrompt {
+		fmt.Fprintln(os.Stderr)
+		var runAnalyze bool
+		if err := survey.AskOne(&survey.Confirm{
+			Message: "Run 'plumber analyze' after writing? (" + runAnalyzeAuthHint(st.Providers) + ")",
+			Default: false,
+		}, &runAnalyze); err != nil {
+			return nil, err
+		}
+		st.runAnalyzeAfter = runAnalyze
 	}
-	st.runAnalyzeAfter = runAnalyze
 	return st, nil
 }
 

@@ -37,6 +37,7 @@ Thumbs.db
 # Build output
 dist/
 build/
+plumber
 
 # Embedded config (copied from .plumber.yaml during build)
 internal/defaultconfig/default.yaml

@@ -9,12 +9,14 @@ import (
 	"strings"
 	"unicode/utf8"
 
+	"github.com/AlecAivazis/survey/v2"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/lipgloss/table"
 	"github.com/getplumber/plumber/collector"
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
 	glabCI "github.com/getplumber/plumber/gitlab"
+	"github.com/getplumber/plumber/internal/defaultconfig"
 	"github.com/getplumber/plumber/pbom"
 	"github.com/getplumber/plumber/utils"
 	"github.com/sirupsen/logrus"
@@ -182,6 +184,70 @@ func printProviderDetection(provider, reason string) {
 	fmt.Fprintf(os.Stderr, "  To change: --provider github|gitlab, or --github-url <host> / --gitlab-url <url> to also target a specific host/remote.\n")
 }
 
+// loadConfigOrOffer loads the Plumber config file. When the file is missing and
+// the terminal is interactive, it prompts the user to generate a config on the
+// spot (via the wizard or the default template) and then reloads it so the
+// calling analyze command can continue uninterrupted.
+func loadConfigOrOffer(cfgFile string) (*configuration.PlumberConfig, string, []string, error) {
+	pc, path, warnings, err := configuration.LoadPlumberConfig(cfgFile)
+	if err == nil {
+		return pc, path, warnings, nil
+	}
+
+	if !strings.Contains(err.Error(), "config file not found") {
+		return nil, "", nil, fmt.Errorf("configuration error: %w", err)
+	}
+
+	// Config file not found — in non-interactive mode just show the hint.
+	if !isInteractiveInit() {
+		return nil, "", nil, fmt.Errorf("configuration file not found: %w. Create one with `plumber config generate` or `plumber config init`", err)
+	}
+
+	fmt.Fprintf(os.Stderr, "\nNo configuration file found at %q.\n\n", cfgFile)
+
+	const (
+		choiceWizard   = "Interactive wizard  (plumber config init)"
+		choiceGenerate = "Default template    (plumber config generate)"
+		choiceNo       = "No, exit"
+	)
+
+	var choice string
+	if surveyErr := survey.AskOne(&survey.Select{
+		Message: "Would you like to generate a configuration file now?",
+		Options: []string{choiceWizard, choiceGenerate, choiceNo},
+		Default: choiceWizard,
+	}, &choice); surveyErr != nil || choice == choiceNo {
+		return nil, "", nil, fmt.Errorf("configuration file not found: %w. Create one with `plumber config generate` or `plumber config init`", err)
+	}
+
+	switch choice {
+	case choiceWizard:
+		state, wizErr := runInitWizard(true) // skip "run analyze after?" — we're already in analyze
+		if wizErr != nil {
+			return nil, "", nil, fmt.Errorf("config init failed: %w", wizErr)
+		}
+		cfg := state.toPlumberConfig()
+		if writeErr := writeInitConfig(cfg, cfgFile, false, true, "plumber analyze"); writeErr != nil {
+			return nil, "", nil, fmt.Errorf("config init failed: %w", writeErr)
+		}
+		printInitNextSteps(cfgFile, state.Providers)
+	case choiceGenerate:
+		if writeErr := os.WriteFile(cfgFile, defaultconfig.Get(), 0644); writeErr != nil {
+			return nil, "", nil, fmt.Errorf("failed to write config file: %w", writeErr)
+		}
+		fmt.Fprintf(os.Stderr, "Generated %s\n", cfgFile)
+	default:
+		return nil, "", nil, fmt.Errorf("configuration file not found: %w. Create one with `plumber config generate` or `plumber config init`", err)
+	}
+
+	// Reload after generation.
+	pc, path, warnings, err = configuration.LoadPlumberConfig(cfgFile)
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("failed to reload config after generation: %w", err)
+	}
+	return pc, path, warnings, nil
+}
+
 func runAnalyze(cmd *cobra.Command, args []string) error {
 	// Set log level based on verbose flag
 	// Default: WarnLevel (quiet output, only show warnings/errors)
@@ -326,13 +392,10 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	// Clean up URL
 	cleanGitlabURL := strings.TrimSuffix(gitlabURL, "/")
 
-	// Load Plumber configuration (required)
-	plumberConfig, configPath, configWarnings, err := configuration.LoadPlumberConfig(configFile)
+	// Load Plumber configuration (required), offering to generate one if missing.
+	plumberConfig, configPath, configWarnings, err := loadConfigOrOffer(configFile)
 	if err != nil {
-		if strings.Contains(err.Error(), "config file not found") {
-			return fmt.Errorf("configuration file not found: %w. Create one with `plumber config generate` or `plumber config init`", err)
-		}
-		return fmt.Errorf("configuration error: %w", err)
+		return err
 	}
 
 	if len(configWarnings) > 0 {
