@@ -45,28 +45,7 @@ Plumber is a compliance scanner for CI/CD. It supports two providers:
 
 Both providers share **one** Rego policy engine and a **single** `.plumber.yaml` config (per-provider sections). Provider is auto-detected from your git `origin`; pass `--gitlab-url` / `--github-url` to override.
 
-**Examples of what Plumber catches**
-
-GitLab pipelines (14 controls - see the [Gitlab CI controls](#gitlab-ci-controls) section):
-- Container images using mutable tags (`latest`, `dev`) or from untrusted registries
-- Unprotected branches; missing force-push / code-owner-approval rules
-- Hardcoded jobs (not from reusable components / templates), outdated or forbidden include refs (`main`, `HEAD`)
-- Missing required components / templates
-- Debug trace variables (`CI_DEBUG_TRACE`) leaking secrets in job logs
-- Unsafe variable injection via `eval` / `sh -c` (OWASP CICD-SEC-1)
-- Weakened security jobs — `allow_failure: true`, `when: manual`, `rules: [{when: never}]` on SAST, Secret Detection, etc. (OWASP CICD-SEC-4)
-- Docker-in-Docker services enabling container escape on shared runners
-
-GitHub Actions workflows (9 controls — see the [GitHub Actions controls](#github-actions-controls) section):
-- Third-party actions referenced by tag/branch instead of a 40-char SHA (CVE-2025-30066-class supply-chain risk)
-- Container images using mutable tags (`latest`, …)
-- Default / matched branches lacking a protection rule (and, with admin scope, missing force-push / code-owner-approval rules)
-- Workflows missing an explicit `permissions:` block (defaults to repo-wide `GITHUB_TOKEN`)
-- Dangerous triggers (`pull_request_target`, `workflow_run`, …) running with base-repo secrets
-- Reusable workflow calls using `secrets: inherit` instead of an explicit map
-- Template-injection sinks like `${{ github.event.* }}` interpolated into `run:` shells
-- Weakened security scanners (`continue-on-error: true` on CodeQL, TruffleHog, Gitleaks, OSV-Scanner, etc.)
-- Docker-in-Docker services on GitHub-hosted runners
+Plumber ships **14 GitLab CI controls** and **14 GitHub Actions controls**. See the [GitLab CI controls](#gitlab-ci-controls) and [GitHub Actions controls](#github-actions-controls) sections for the full list of what each flags and how to configure it.
 
 **How does it work?** Plumber connects to your provider (or reads workflow files from disk), normalizes the pipeline into a provider-agnostic IR, evaluates Rego policies against it, and reports findings. You define what's allowed in `.plumber.yaml`. When your local clone matches the analyzed project, GitLab analysis can use your local `.gitlab-ci.yml` (or a [custom path](#custom-ci-configuration-file-path)) so you can validate before push; GitHub analysis reads `.github/workflows/` from your local repo by default and only hits the GitHub API for repo-level data (branch protection, etc.) when scope allows. Both paths report per-control compliance percentages and honor `--threshold` for exit-code gating.
 
@@ -305,24 +284,6 @@ A handful of flags are GitLab-only today. On the GitHub path they are silently i
 | `--gitlab-url` | N/A — pass `--github-url` instead, or rely on git-remote auto-detection |
 
 Flags that work identically on both providers: `--config`, `--output` (JSON findings), `--pbom` (PBOM JSON; GitHub inventory: container images, third-party actions, reusable workflows), `--pbom-cyclonedx` (CycloneDX 1.5), `--threshold`, `--print`, `--score`, `--score-point`, `--controls`, `--skip-controls`, `--fail-warnings`, `--branch`, `--project` (provider chosen by which URL flag is set).
-
-#### Bench: which GitHub controls don't run yet
-
-The Rego engine ships ~50 GitHub Actions policies. Nine have substantive test fixtures and ship default-on; the rest are on the dev-side bench (`configuration/registry.go::benchedControls`). Benched policies are excluded at engine load time — they don't execute, don't produce findings, and don't appear in the output.
-
-Today's shipping GitHub set:
-
-- `actionsMustBePinnedByCommitSha` — third-party actions must use a 40-char SHA, not a tag/branch.
-- `branchMustBeProtected` — repository default branch (and any matching pattern) must have a protection rule. Inspects repo settings via the GitHub branch-protection API; needs `repo` (classic PAT) or "Administration: read" (fine-grained PAT). The first project-governance control on the GitHub path; everything else here is pipeline-governance.
-- `containerImageMustNotUseForbiddenTags` — pin container images by digest or version, not `latest`.
-- `pipelineMustNotUseDockerInDocker` — flag DinD services and insecure daemon configs.
-- `reusableWorkflowsMustNotInheritSecrets` — explicit secret mapping instead of `secrets: inherit`.
-- `securityJobsMustNotBeWeakened` — no `allow_failure: true` / `when: manual` / rules-block neutering.
-- `workflowMustNotInjectUserInputInScripts` — block `${{ github.event.* }}` inlining into shell.
-- `workflowMustNotUseDangerousTriggers` — flag `pull_request_target` / `workflow_run` patterns.
-- `workflowsMustDeclarePermissions` — workflows must set an explicit `permissions:` block.
-
-To unbench more controls as we add tests/docs, edit `benchedControls` in `configuration/registry.go`.
 
 ### Trying it on this repo
 
@@ -582,7 +543,7 @@ The migration preserves comments, wraps `controls:` under `gitlab.controls:`, an
 
 ### Available Controls
 
-Plumber ships **14 GitLab CI controls** and **9 GitHub Actions controls** today. They are configured per-provider in [`.plumber.yaml`](./.plumber.yaml) and can be enabled / disabled / tuned independently. The Rego engine also includes ~50 additional GitHub policies on the dev-side bench (see [`configuration/registry.go`](configuration/registry.go) → `benchedControls`); benched policies are excluded at engine load time and don't affect output until promoted.
+Plumber ships **14 GitLab CI controls** and **14 GitHub Actions controls** today. They are configured per-provider in [`.plumber.yaml`](./.plumber.yaml) and can be enabled / disabled / tuned independently.
 
 #### GitLab CI controls
 
@@ -1294,8 +1255,6 @@ Default-on with the two GitHub-native debug variables pre-populated; extend the 
 
 </details>
 
-> **What's not yet shipping on GitHub:** ~36 additional GitHub policies live in `policies/*.rego` (action-supply-chain enrichment, dependabot cooldown, OIDC trusted publishing, release-artefact signing, security policy, etc.) but are gated behind the dev bench until each clears the ship-ready bar (substantive rule + ≥3 fixtures + docs). Track promotion in [`configuration/registry.go`](configuration/registry.go) → `benchedControls`.
-
 ### Selective Control Execution
 
 You can run or skip specific controls using their YAML key names from `.plumber.yaml`. This is useful for iterative debugging or targeted CI checks.
@@ -1717,7 +1676,7 @@ plumber analyze [flags]
 | `GH_TOKEN` | Optional (preferred) | GitHub PAT (fine-grained or classic). Required in GitHub upstream-fetch mode (`--github-url`). Optional in local-clone mode (enables repo-level controls). Takes precedence over `GITHUB_TOKEN` and `gh` CLI. |
 | `GITHUB_TOKEN` | Optional | Same role as `GH_TOKEN`. Auto-set by GitHub Actions runners — pick this up natively when running plumber as a workflow step. |
 | `GH_ENTERPRISE_TOKEN` | Optional | Authentication for GitHub Enterprise Server (`--github-url ghes.example.com`). |
-| `PLUMBER_DISABLE_GITHUB_API` | No | Set to any value to skip the GitHub action-metadata enrichment loop in local-clone mode. Useful for fast iteration when you don't need archived-repo / advisory-database / ref-version checks. Has no effect today since those controls are still on the bench, but kept as a documented escape hatch. |
+| `PLUMBER_DISABLE_GITHUB_API` | No | Set to any value to skip the GitHub action-metadata enrichment loop in local-clone mode (the archived-repo and known-CVE advisory checks). Speeds up local iteration when you don't need those checks. |
 | `PLUMBER_NO_UPDATE_CHECK` | No | Set to any value (e.g., `1`) to disable the automatic version check. |
 
 ### Automatic Version Check
