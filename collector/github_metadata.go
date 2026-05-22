@@ -293,24 +293,31 @@ func (c *GitHubMetadataClient) advisoriesForRepo(owner, repo string) []advisoryI
 }
 
 // resolveRefToVersion turns the ref string into a comparable semver
-// value: if the ref is already a tag, strip the leading "v"; if
-// it is a 40-char commit SHA, look it up in the repo's tag list and
-// use the matching tag. Returns nil when the version cannot be
-// determined — callers then fall back to "flag everything" so a
-// genuine CVE does not slip past because Plumber could not match
-// the SHA to a release.
+// value: a 40-char commit SHA is looked up in the repo's tag list and
+// the matching tag is parsed; any other ref is parsed directly as a
+// tag. Returns nil when the version cannot be determined — callers
+// then fall back to "flag everything" so a genuine CVE does not slip
+// past because Plumber could not match the SHA to a release.
+//
+// The SHA branch is tried first on purpose: hashicorp/go-version
+// parses a hex SHA that begins with a digit as a semver value
+// (e.g. "2d756ea…" -> 2.0.0-d756ea…, the leading digit becoming the
+// core and the rest a prerelease label). Parsing the ref as a tag
+// first would short-circuit the SHA lookup and, because a prerelease
+// version satisfies no plain constraint, silently drop every advisory.
 func (c *GitHubMetadataClient) resolveRefToVersion(owner, repo, ref string) *version.Version {
-	// Tag-shaped ref: parse directly.
-	if v, err := version.NewVersion(strings.TrimPrefix(ref, "v")); err == nil {
-		return v
-	}
-	// SHA-shaped ref: look up the tag.
+	// SHA-shaped ref: resolve through the repo's tag list.
 	if _isCommitSha(ref) {
 		if tag := c.resolveCommitToTag(owner, repo, ref); tag != "" {
 			if v, err := version.NewVersion(strings.TrimPrefix(tag, "v")); err == nil {
 				return v
 			}
 		}
+		return nil
+	}
+	// Tag-shaped ref: parse directly.
+	if v, err := version.NewVersion(strings.TrimPrefix(ref, "v")); err == nil {
+		return v
 	}
 	return nil
 }
@@ -339,11 +346,16 @@ func (c *GitHubMetadataClient) resolveCommitToTag(owner, repo, sha string) strin
 }
 
 // fetchAllTags walks the paginated `/repos/{owner}/{repo}/tags`
-// endpoint and returns a SHA → tag-name map. The map contains
-// every tag even when several tags share a SHA — the last tag wins,
-// which is acceptable for the version-comparison use case.
+// endpoint and returns a SHA → tag-name map. When several tags point
+// at the same commit — typically a moving major alias (`v4`) and the
+// exact release tag (`v4.3.0`) — the most specific tag wins, so the
+// advisory range filter compares against the real pinned version
+// rather than the alias.
 func (c *GitHubMetadataClient) fetchAllTags(owner, repo string) map[string]string {
 	out := map[string]string{}
+	if c.rest == nil {
+		return out
+	}
 	for page := 1; page <= 20; page++ { // hard cap 2000 tags
 		var resp []struct {
 			Name   string `json:"name"`
@@ -356,15 +368,51 @@ func (c *GitHubMetadataClient) fetchAllTags(owner, repo string) map[string]strin
 			break
 		}
 		for _, t := range resp {
-			if t.Name != "" && t.Commit.Sha != "" {
-				out[t.Commit.Sha] = t.Name
+			if t.Name == "" || t.Commit.Sha == "" {
+				continue
 			}
+			if prev, ok := out[t.Commit.Sha]; ok {
+				out[t.Commit.Sha] = _moreSpecificTag(prev, t.Name)
+				continue
+			}
+			out[t.Commit.Sha] = t.Name
 		}
 		if len(resp) < 100 {
 			break
 		}
 	}
 	return out
+}
+
+// _moreSpecificTag returns whichever of two tag names that point at the
+// same commit pins a version most precisely. A release commit is often
+// reachable from both a moving major alias ("v4") and the exact release
+// tag ("v4.3.0"); the advisory range filter must compare against the
+// exact release, otherwise "v4" parses as 4.0.0 and can fall inside a
+// vulnerable range the real version sits outside of. A semver tag beats
+// a non-semver one; among semver tags the one with more dotted segments
+// wins; an exact version comparison breaks any remaining tie.
+func _moreSpecificTag(a, b string) string {
+	av, aerr := version.NewVersion(strings.TrimPrefix(a, "v"))
+	bv, berr := version.NewVersion(strings.TrimPrefix(b, "v"))
+	switch {
+	case aerr == nil && berr != nil:
+		return a
+	case berr == nil && aerr != nil:
+		return b
+	case aerr != nil && berr != nil:
+		return a
+	}
+	if da, db := strings.Count(a, "."), strings.Count(b, "."); da != db {
+		if da > db {
+			return a
+		}
+		return b
+	}
+	if bv.GreaterThan(av) {
+		return b
+	}
+	return a
 }
 
 // _versionInRange parses the GitHub-advisory version range syntax
