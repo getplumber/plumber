@@ -510,7 +510,19 @@ func TestIssue206_TemplateInjection(t *testing.T) {
 			expectedHits: []string{"violation_head_ref/bad"},
 		},
 		{
+			fixture:      "violation_comment_body.yml",
+			expectedHits: []string{"violation_comment_body/bad"},
+		},
+		{
 			fixture:      "clean_env_var.yml",
+			expectedHits: nil,
+		},
+		{
+			fixture:      "clean_pr_number.yml",
+			expectedHits: nil,
+		},
+		{
+			fixture:      "clean_event_fork.yml",
 			expectedHits: nil,
 		},
 	}

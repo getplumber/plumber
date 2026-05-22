@@ -1,0 +1,11 @@
+# Comment body is user-controlled free text pasted verbatim into a
+# shell command — a crafted comment runs arbitrary code. Expected:
+# 1 finding on bad.
+name: Injection via comment body
+on: issue_comment
+
+jobs:
+  bad:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "comment was ${{ github.event.comment.body }}"

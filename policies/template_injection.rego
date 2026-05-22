@@ -18,13 +18,36 @@ package template_injection
 
 import rego.v1
 
-# Regex patterns matching template expressions whose value is under
-# the control of an unprivileged PR author. Additional patterns can
-# be added here as the check evolves; the shared message keeps the
-# output simple regardless of which pattern matched.
+# Regex patterns matching template expressions whose value is
+# attacker-controlled FREE TEXT — the genuine template-injection
+# sinks. A pull-request author, issue/comment author or fork owner
+# can put arbitrary shell metacharacters in any of these.
+#
+# Numeric, boolean, enum and SHA fields (`pull_request.number`,
+# `*.commits`, `head.repo.fork`, `event_name`, `author_association`,
+# `*.sha`, `github.repository`, …) are deliberately NOT matched: they
+# cannot carry an injection payload, and flagging them drowns the
+# real signal in false positives.
+#
+# `[^}]*` keeps every match inside a single `${{ … }}` expression so
+# an unrelated safe expression on the same line cannot trigger one.
 unsafe_patterns := [
-	`\${{\s*github\.event\.`,
-	`\${{\s*github\.head_ref\s*}}`,
+	# Titles and bodies — issue, pull_request, comment, review,
+	# discussion.
+	`\${{[^}]*github\.event\.[^}]*\.(title|body)\b`,
+	# Branch / ref names controlled on the attacker's fork.
+	`\${{[^}]*github\.head_ref\b`,
+	`\${{[^}]*github\.event\.[^}]*\.head\.(ref|label)\b`,
+	`\${{[^}]*github\.event\.[^}]*head_branch\b`,
+	`\${{[^}]*github\.event\.[^}]*default_branch\b`,
+	# Commit messages.
+	`\${{[^}]*github\.event\.[^}]*\.message\b`,
+	# Repository metadata an attacker sets on their fork.
+	`\${{[^}]*github\.event\.[^}]*\.(description|homepage)\b`,
+	# Author / committer identity free text.
+	`\${{[^}]*github\.event\.[^}]*(author|committer)\.(name|email)\b`,
+	# GitHub Pages page name.
+	`\${{[^}]*github\.event\.[^}]*page_name\b`,
 ]
 
 deny contains finding if {
