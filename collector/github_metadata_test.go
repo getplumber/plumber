@@ -78,3 +78,67 @@ func Test_resolveRefToVersion_commitSHA(t *testing.T) {
 		t.Errorf("resolveRefToVersion(v4.3.0) = %v, want 4.3.0", v)
 	}
 }
+
+// Test_partialTagBounds locks the moving-tag recognition: only bare
+// major (`v4`) and major.minor (`v4.1`) tags resolve to a span;
+// exact tags, SHAs and non-semver refs do not.
+func Test_partialTagBounds(t *testing.T) {
+	cases := []struct {
+		ref               string
+		wantOK            bool
+		wantFloor, wantHi string
+	}{
+		{"v4", true, "4.0.0", "4.999999.999999"},
+		{"4", true, "4.0.0", "4.999999.999999"},
+		{"v44", true, "44.0.0", "44.999999.999999"},
+		{"v4.1", true, "4.1.0", "4.1.999999"},
+		{"v4.1.0", false, "", ""}, // exact version — not a moving tag
+		{"main", false, "", ""},
+		{"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", false, "", ""},
+	}
+	for _, c := range cases {
+		floor, ceil, ok := _partialTagBounds(c.ref)
+		if ok != c.wantOK {
+			t.Errorf("_partialTagBounds(%q) ok = %v, want %v", c.ref, ok, c.wantOK)
+			continue
+		}
+		if !ok {
+			continue
+		}
+		wantFloor, _ := version.NewVersion(c.wantFloor)
+		wantHi, _ := version.NewVersion(c.wantHi)
+		if !floor.Equal(wantFloor) || !ceil.Equal(wantHi) {
+			t.Errorf("_partialTagBounds(%q) = (%s, %s), want (%s, %s)", c.ref, floor, ceil, c.wantFloor, c.wantHi)
+		}
+	}
+}
+
+// Test_refCoveredByRange is the ISSUE-195 regression: a moving major /
+// major.minor tag is reported for an advisory only when the whole span
+// it floats across is vulnerable, while exact pins keep the plain
+// single-version semantics.
+func Test_refCoveredByRange(t *testing.T) {
+	cases := []struct {
+		ref, rng, ver string
+		want          bool
+	}{
+		// Moving tags — partial: flagged only if the whole series is vulnerable.
+		{"v4", ">= 4.0.0, < 4.1.3", "", false},   // download-artifact@v4 vs GHSA-cxww — the FP this fixes
+		{"v44", "<= 45.0.7", "", true},           // all of v44.x is vulnerable
+		{"v4.1", ">= 4.0.0, < 4.1.3", "", false}, // moving minor tag — only 4.1.0-4.1.2 affected
+		{"v5", ">= 5, < 6.4.0", "", true},        // all of v5.x is vulnerable
+		// Exact pins / resolved SHAs — single-version check, unchanged.
+		{"v4.1.0", ">= 4.0.0, < 4.1.3", "4.1.0", true},  // exact in-range pin still fires
+		{"v4.3.0", ">= 4.0.0, < 4.1.3", "4.3.0", false}, // exact out-of-range stays silent
+	}
+	for _, c := range cases {
+		var rv *version.Version
+		if c.ver != "" {
+			rv, _ = version.NewVersion(c.ver)
+		}
+		got := _refCoveredByRange(c.ref, rv, c.rng)
+		if got != c.want {
+			t.Errorf("_refCoveredByRange(%q, %q) = %v, want %v", c.ref, c.rng, got, c.want)
+		}
+	}
+}

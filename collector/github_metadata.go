@@ -224,6 +224,10 @@ func (c *GitHubMetadataClient) resolveUncached(owner, repo, ref string) GitHubMe
 // tag, commit SHA that does not point at a release), the filter
 // degrades to "keep advisories that reference this package at
 // all" — better a false positive than a silent miss on a real CVE.
+//
+// A moving major / major.minor tag (`v4`, `v4.1`) is matched against
+// the whole version span it can float across, not against its floor —
+// see _refCoveredByRange.
 func (c *GitHubMetadataClient) advisoriesForRef(owner, repo, ref string) []string {
 	infos := c.advisoriesForRepo(owner, repo)
 	if len(infos) == 0 {
@@ -239,7 +243,7 @@ func (c *GitHubMetadataClient) advisoriesForRef(owner, repo, ref string) []strin
 		if _, dup := seen[a.GhsaID]; dup {
 			continue
 		}
-		if refVersion == nil || _versionInRange(refVersion, a.VulnerableRange) {
+		if _refCoveredByRange(ref, refVersion, a.VulnerableRange) {
 			out = append(out, a.GhsaID)
 			seen[a.GhsaID] = struct{}{}
 		}
@@ -326,6 +330,51 @@ var _shaOnly = regexp.MustCompile(`^[0-9a-f]{40}$`)
 
 func _isCommitSha(ref string) bool {
 	return _shaOnly.MatchString(ref)
+}
+
+var (
+	_majorTagOnly      = regexp.MustCompile(`^v?([0-9]+)$`)
+	_majorMinorTagOnly = regexp.MustCompile(`^v?([0-9]+\.[0-9]+)$`)
+)
+
+// _partialTagBounds recognises a moving major (`v4`) or major.minor
+// (`v4.1`) tag and returns the inclusive version span it can resolve
+// to. ok is false for exact `vX.Y.Z` tags, commit SHAs and any
+// non-semver ref. The high bound uses a saturated patch (and minor)
+// component so no real release sorts above it.
+func _partialTagBounds(ref string) (floor, ceil *version.Version, ok bool) {
+	if m := _majorTagOnly.FindStringSubmatch(ref); m != nil {
+		floor, _ = version.NewVersion(m[1])
+		ceil, _ = version.NewVersion(m[1] + ".999999.999999")
+		return floor, ceil, floor != nil && ceil != nil
+	}
+	if m := _majorMinorTagOnly.FindStringSubmatch(ref); m != nil {
+		floor, _ = version.NewVersion(m[1])
+		ceil, _ = version.NewVersion(m[1] + ".999999")
+		return floor, ceil, floor != nil && ceil != nil
+	}
+	return nil, nil, false
+}
+
+// _refCoveredByRange reports whether an action ref should be treated
+// as affected by an advisory whose vulnerable range is rangeExpr.
+//
+// A moving major / major.minor tag (`v4`, `v4.1`) is not a fixed
+// version — it floats across a whole span of releases. Parsing it as
+// its floor (`v4` -> 4.0.0) and point-checking that floor false-
+// positives whenever an advisory only affects the start of the series,
+// because the tag actually points at the latest, patched release. Such
+// a tag is therefore reported only when the ENTIRE span it can float
+// across is vulnerable.
+//
+// Exact tags (`v4.1.0`) and SHA-resolved versions use a plain single-
+// version check; an unresolvable ref (refVersion nil) is kept
+// conservatively — better a false positive than a silent miss.
+func _refCoveredByRange(ref string, refVersion *version.Version, rangeExpr string) bool {
+	if floor, ceil, ok := _partialTagBounds(ref); ok {
+		return _versionInRange(floor, rangeExpr) && _versionInRange(ceil, rangeExpr)
+	}
+	return refVersion == nil || _versionInRange(refVersion, rangeExpr)
 }
 
 // resolveCommitToTag returns the release tag pointing at the given
