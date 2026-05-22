@@ -404,11 +404,12 @@ func TestIssue509_ExcessivePermissions(t *testing.T) {
 	}
 }
 
-// TestIssue414_DangerousTriggers drives the dangerous_triggers policy
-// against fixtures covering the two primary risky trigger types and
-// the safe baseline. As for ISSUE-803 the test exercises the real
-// production collector (ScanGitHubWorkflows) rather than the test-time
-// parser.
+// TestIssue414_DangerousTriggers drives the dangerous_triggers policy.
+// ISSUE-802 fires only on the exploitable combination — a dangerous
+// trigger AND a checkout of fork-controlled code — so the violation
+// fixtures pin the checkout ref to the PR / workflow_run head, and the
+// clean fixtures cover a metadata-only job and a fork-guarded job. The
+// test exercises the real production collector (ScanGitHubWorkflows).
 func TestIssue414_DangerousTriggers(t *testing.T) {
 	cases := []struct {
 		fixture      string
@@ -426,11 +427,21 @@ func TestIssue414_DangerousTriggers(t *testing.T) {
 			fixture:      "clean_pull_request.yml",
 			expectedHits: nil,
 		},
-		// Regression: the extended dangerous-events set must fire
-		// once per (job, trigger) pair. The fixture has one job and
-		// seven dangerous triggers (issue_comment + 2 PR review
-		// variants + 2 discussion variants + gollum + fork), so
-		// expect the same job name to appear seven times.
+		// pull_request_target without an untrusted checkout — the
+		// common, safe metadata pattern. Must stay silent.
+		{
+			fixture:      "clean_metadata_no_checkout.yml",
+			expectedHits: nil,
+		},
+		// pull_request_target + head checkout, but a job-level `if:`
+		// restricts execution to same-repo PRs. Must stay silent.
+		{
+			fixture:      "clean_fork_guard.yml",
+			expectedHits: nil,
+		},
+		// Regression: the extended dangerous-events set. The job is
+		// reachable from seven dangerous events AND checks out
+		// fork-controlled code, so it fires once per event.
 		{
 			fixture: "violation_extended_triggers.yml",
 			expectedHits: []string{

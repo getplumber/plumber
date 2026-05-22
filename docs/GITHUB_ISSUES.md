@@ -1056,27 +1056,50 @@ reviewability.
 
 **Severity:** `critical` • **Control:** `workflowMustNotUseDangerousTriggers`
 
-The workflow subscribes to `pull_request_target` or `workflow_run`.
-Both run with the base repository's secrets AND are influenceable by
-an unprivileged caller. Combined with any form of user-content checkout
-or template injection, this becomes a direct secret-exfiltration path —
-the pattern behind the March 2025 tj-actions compromise (CVE-2025-30066).
+A job runs under a trigger that combines attacker-controlled input with
+the base repository's secrets — `pull_request_target`, `workflow_run`,
+`issue_comment`, `pull_request_review`, `pull_request_review_comment`,
+`discussion`, `discussion_comment`, `gollum`, `fork` — **and checks out
+fork-controlled code** (an `actions/checkout` whose `ref:` is the PR or
+workflow_run head). Untrusted code then executes with the base repo's
+secrets and token — the March 2025 tj-actions compromise (CVE-2025-30066).
+
+Subscribing to such a trigger is **not** flagged on its own: metadata
+jobs — labelling, milestones, comments, notifications — legitimately
+need them and are safe without an untrusted checkout. The finding fires
+only on the exploitable combination, and abstains when a job-level `if:`
+restricts execution to same-repository pull requests.
 
 ```yaml
-# ❌ before
-name: PR preview
+# ❌ before — pull_request_target checks out the PR head
 on:
   pull_request_target:
     types: [opened, synchronize]
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - run: npm install && npm test
 ```
 
 ```yaml
-# ✅ after — standard pull_request runs in the fork's context
-name: PR preview
-on:
-  pull_request:
-    types: [opened, synchronize]
+# ✅ after — same-repository guard: fork code never runs
+jobs:
+  preview:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - run: npm install && npm test
 ```
+
+Alternative: run fork code under a plain `pull_request` trigger (no
+base-repo secrets), or drop the head checkout entirely.
 
 ---
 

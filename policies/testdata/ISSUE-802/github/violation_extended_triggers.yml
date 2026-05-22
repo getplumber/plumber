@@ -1,9 +1,7 @@
-# Regression fixture for the extended dangerous-events set landed
-# 2026-05-07. Each job exercises one of the events the original
-# rule missed (issue_comment, pull_request_review,
-# pull_request_review_comment, discussion_comment, discussion,
-# gollum, fork). Every one runs with secrets while being fired by
-# an unprivileged user.
+# Regression fixture for the extended dangerous-events set. The job is
+# reachable from seven dangerous events AND checks out fork-controlled
+# code, so the rule fires once per event. Expected: 7 findings on
+# comment-handler.
 name: extended-dangerous-triggers
 
 on:
@@ -24,4 +22,7 @@ jobs:
   comment-handler:
     runs-on: ubuntu-latest
     steps:
-      - run: echo "fired by an issue commenter"
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - run: echo "fired by an unprivileged user"

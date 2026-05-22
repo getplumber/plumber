@@ -1,5 +1,7 @@
 # workflow_run runs with secrets regardless of the originating
-# workflow's trust boundary. Expected: 1 finding on post.
+# workflow's trust boundary; checking out that run's head pulls
+# fork-controlled code into the privileged context. Expected: 1
+# finding on post.
 name: After CI
 on:
   workflow_run:
@@ -10,4 +12,7 @@ jobs:
   post:
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
       - run: echo "post-run"
