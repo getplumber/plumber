@@ -3148,7 +3148,10 @@ func TestIssue415_PullRequestTargetWithHeadCheckout(t *testing.T) {
 		expectedHits []string
 	}{
 		{"violation_head_sha.yml", []string{"violation_head_sha/preview"}},
+		{"violation_head_ref.yml", []string{"violation_head_ref/preview"}},
 		{"clean_no_ref.yml", nil},
+		{"clean_pull_request.yml", nil},
+		{"clean_fork_guard.yml", nil},
 	}
 	runGitHubFixtureCases(t, "ISSUE-804", cases)
 }

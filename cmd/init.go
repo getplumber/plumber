@@ -37,15 +37,16 @@ const (
 
 	// GitHub-applicable composition checks (new). The cross-provider ones
 	// (security jobs, DinD) reuse compSecurity / compDinD above.
-	compActionPin           = "Require third-party actions pinned by commit SHA"
-	compDangerousTriggers   = "Flag dangerous workflow triggers (pull_request_target, workflow_run, …)"
-	compDeclarePermissions  = "Require workflows to declare an explicit permissions: block"
-	compReusableSecrets     = "Forbid reusable-workflow calls using secrets: inherit"
-	compTemplateInjection   = "Detect script-injection sinks (${{ github.event.* }} → run:)"
-	compWriteAllPerms       = "Forbid permissions: write-all in workflows"
-	compArchivedActions     = "Flag third-party actions from archived repositories"
-	compKnownCVEs           = "Flag third-party actions with known CVEs (GitHub Advisory DB)"
-	compDebugTraceGitHub    = "Flag Actions debug logging (ACTIONS_STEP_DEBUG / ACTIONS_RUNNER_DEBUG)"
+	compActionPin          = "Require third-party actions pinned by commit SHA"
+	compDangerousTriggers  = "Flag dangerous workflow triggers (pull_request_target, workflow_run, …)"
+	compPRTargetHead       = "Forbid pull_request_target workflows that check out the PR head"
+	compDeclarePermissions = "Require workflows to declare an explicit permissions: block"
+	compReusableSecrets    = "Forbid reusable-workflow calls using secrets: inherit"
+	compTemplateInjection  = "Detect script-injection sinks (${{ github.event.* }} → run:)"
+	compWriteAllPerms      = "Forbid permissions: write-all in workflows"
+	compArchivedActions    = "Flag third-party actions from archived repositories"
+	compKnownCVEs          = "Flag third-party actions with known CVEs (GitHub Advisory DB)"
+	compDebugTraceGitHub   = "Flag Actions debug logging (ACTIONS_STEP_DEBUG / ACTIONS_RUNNER_DEBUG)"
 )
 
 var (
@@ -698,6 +699,7 @@ func compositionOptionsForProviders(providers []string) []string {
 		out = append(out,
 			compActionPin,
 			compDangerousTriggers,
+			compPRTargetHead,
 			compDeclarePermissions,
 			compReusableSecrets,
 			compTemplateInjection,
@@ -1130,6 +1132,9 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 			if compSelected(st, compDangerousTriggers) {
 				githubSection.Controls.WorkflowMustNotUseDangerousTriggers = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
 			}
+			if compSelected(st, compPRTargetHead) {
+				githubSection.Controls.PullRequestTargetMustNotCheckoutHead = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
+			}
 			if compSelected(st, compDeclarePermissions) {
 				githubSection.Controls.WorkflowsMustDeclarePermissions = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
 			}
@@ -1246,7 +1251,7 @@ func starterPlumberConfig() *configuration.PlumberConfig {
 		TrustedURLsText:        strings.Join(defaultTrustedURLs(), "\n"),
 		CompositionChoices: []string{
 			compHardcoded, compUpToDate, compForbidden, compSecurity, compScripts, compJobVars, compDinD,
-			compActionPin, compDangerousTriggers, compDeclarePermissions, compReusableSecrets, compTemplateInjection,
+			compActionPin, compDangerousTriggers, compPRTargetHead, compDeclarePermissions, compReusableSecrets, compTemplateInjection,
 			compWriteAllPerms, compArchivedActions, compKnownCVEs, compDebugTraceGitHub,
 		},
 		ActionPinTrustedOwnersMultiline:        strings.Join(defaultGitHubTrustedActionOwners(), "\n"),

@@ -1290,6 +1290,12 @@ jobs:
       - run: gh pr edit --add-label auto-preview
 ```
 
+A job-level `if:` that restricts the job to same-repository pull
+requests — `github.event.pull_request.head.repo.full_name ==
+github.repository`, or a `head.repo.fork` check — is recognised as a
+valid mitigation: fork-controlled code never runs, so a job carrying
+such a guard is not flagged.
+
 ---
 
 ## ISSUE-803 — `excessive-permissions`
