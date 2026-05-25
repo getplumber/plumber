@@ -1,5 +1,5 @@
-name: "Plumber CI/CD Compliance Scan"
-description: "Scan GitHub Actions workflows and repository settings for CI/CD compliance and supply-chain risks. Fails the job below a compliance threshold and uploads SARIF, PBOM and CycloneDX."
+name: "Plumber Compliance Scanner"
+description: "CI/CD compliance scanner for GitHub Actions workflows and repository settings. Uploads SARIF to Code Scanning."
 author: "Plumber (getplumber.io)"
 
 branding:
@@ -8,8 +8,8 @@ branding:
 
 inputs:
   version:
-    description: "Plumber release tag to install (e.g. v0.3.17). Downloaded from GitHub Releases and verified against checksums.txt and SLSA attestation"
-    default: "v0.3.17"
+    description: "Plumber release tag to install (e.g. v0.3.21). Downloaded from GitHub Releases and verified against checksums.txt and SLSA attestation"
+    default: "v0.3.21"
   verify-attestation:
     description: "Verify the downloaded binary's build-provenance attestation (sigstore/SLSA) against the getplumber/plumber release workflow, using the gh CLI. This anchors the binary to a trusted build regardless of the mutable release tag. Disable for air-gapped or GHES setups without attestation access."
     default: "true"

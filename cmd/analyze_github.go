@@ -29,12 +29,9 @@ import (
 func runGitHubAnalyze(cmd *cobra.Command, info *utils.GitRemoteInfo, controlsFilterList, skipControlsList []string) error {
 	fmt.Fprintf(os.Stderr, "GitHub project: %s (local clone)\n", info.ProjectPath)
 
-	plumberConfig, configPath, configWarnings, err := configuration.LoadPlumberConfig(configFile)
+	plumberConfig, configPath, configWarnings, err := loadConfigOrOffer(configFile)
 	if err != nil {
-		if strings.Contains(err.Error(), "config file not found") {
-			return fmt.Errorf("configuration file not found: %w. Create one with `plumber config generate` or `plumber config init`", err)
-		}
-		return fmt.Errorf("configuration error: %w", err)
+		return err
 	}
 	if len(configWarnings) > 0 {
 		fmt.Fprintf(os.Stderr, "Configuration validation warnings:\n")
@@ -111,12 +108,9 @@ func runGitHubAnalyzeRemote(cmd *cobra.Command, host, project, ref string, contr
 	}
 	owner, repo := parts[0], parts[1]
 
-	plumberConfig, configPath, configWarnings, err := configuration.LoadPlumberConfig(configFile)
+	plumberConfig, configPath, configWarnings, err := loadConfigOrOffer(configFile)
 	if err != nil {
-		if strings.Contains(err.Error(), "config file not found") {
-			return fmt.Errorf("configuration file not found: %w. Create one with `plumber config generate` or `plumber config init`", err)
-		}
-		return fmt.Errorf("configuration error: %w", err)
+		return err
 	}
 	if len(configWarnings) > 0 {
 		fmt.Fprintf(os.Stderr, "Configuration validation warnings:\n")

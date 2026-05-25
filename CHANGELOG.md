@@ -1,3 +1,31 @@
+## [0.3.21](https://github.com/getplumber/plumber/compare/v0.3.20...v0.3.21) (2026-05-25)
+
+
+### ✨ Features
+
+* **init:** Interactive configuration generation when no config file ([5dd70c9](https://github.com/getplumber/plumber/commit/5dd70c91b1ec91e0c5471fa603a7fe0274446b49))
+
+## [0.3.20](https://github.com/getplumber/plumber/compare/v0.3.19...v0.3.20) (2026-05-25)
+
+
+### 🐛 Bug Fixes
+
+* **ci:** Fix gitlab sast description ([c572607](https://github.com/getplumber/plumber/commit/c572607603f7fa372adb56af879cae7623037c09))
+
+## [0.3.19](https://github.com/getplumber/plumber/compare/v0.3.18...v0.3.19) (2026-05-25)
+
+
+### ✨ Features
+
+* **action:** Update action documentation to stop conflict with existing name ([4401339](https://github.com/getplumber/plumber/commit/4401339a6e13a512de835a8bc9d8ef4355f732d0))
+
+## [0.3.18](https://github.com/getplumber/plumber/compare/v0.3.17...v0.3.18) (2026-05-25)
+
+
+### ✨ Features
+
+* **action:** Update action documentation ([ce01848](https://github.com/getplumber/plumber/commit/ce0184848f0632fd927c8db780413b6dd0e76611))
+
 ## [0.3.17](https://github.com/getplumber/plumber/compare/v0.3.16...v0.3.17) (2026-05-22)
 
 

@@ -2,8 +2,10 @@ package cmd
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
 
+	"github.com/getplumber/plumber/control"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 )
 
@@ -66,6 +68,48 @@ func TestBuildGLSAST_SchemaRequiredFields(t *testing.T) {
 	// id is deterministic for the same finding.
 	if got := glsastID(findings[0]); got != rep.Vulnerabilities[0].ID {
 		t.Errorf("id not deterministic: %q vs %q", got, rep.Vulnerabilities[0].ID)
+	}
+}
+
+func TestBuildGLSAST_DescriptionIncludesFindingMessage(t *testing.T) {
+	// GitLab's Vulnerability Report UI ignores the deprecated `message`
+	// field, so the per-finding detail must end up in `description` to be
+	// visible to users. Pick a code that has registry metadata so we also
+	// confirm the generic description is preserved.
+	code := "ISSUE-101"
+	info := control.LookupCode(control.ErrorCode(code))
+	if info == nil || info.Description == "" {
+		t.Fatalf("test prerequisite: %s should have a registered description", code)
+	}
+
+	msg := `job "gitleaks" uses image from untrusted source: docker.io/zricethezav/gitleaks:v8.15.0`
+	rep := buildGLSAST([]opaengine.Finding{
+		{Code: code, Severity: "high", Message: msg, File: ".gitlab-ci.yml", Line: 56},
+	})
+	if len(rep.Vulnerabilities) != 1 {
+		t.Fatalf("vulnerabilities = %d, want 1", len(rep.Vulnerabilities))
+	}
+	got := rep.Vulnerabilities[0].Description
+	if !strings.Contains(got, info.Description) {
+		t.Errorf("description dropped the generic blurb:\n got: %q\n want substring: %q", got, info.Description)
+	}
+	if !strings.Contains(got, msg) {
+		t.Errorf("description does not include the per-finding message:\n got: %q\n want substring: %q", got, msg)
+	}
+}
+
+func TestBuildGLSAST_DescriptionFallsBackToMessage(t *testing.T) {
+	// A finding for an unknown code has no registry description; the
+	// message should still surface in `description` rather than being lost.
+	msg := "some specific detail"
+	rep := buildGLSAST([]opaengine.Finding{
+		{Code: "ISSUE-UNKNOWN", Severity: "low", Message: msg, File: ".gitlab-ci.yml", Line: 1},
+	})
+	if len(rep.Vulnerabilities) != 1 {
+		t.Fatalf("vulnerabilities = %d, want 1", len(rep.Vulnerabilities))
+	}
+	if rep.Vulnerabilities[0].Description != msg {
+		t.Errorf("description = %q, want %q", rep.Vulnerabilities[0].Description, msg)
 	}
 }
 
