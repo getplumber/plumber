@@ -485,6 +485,16 @@ CRIT  [ISSUE-703] job "build" references "tj-actions/changed-files@v45" —
 - uses: tj-actions/changed-files@<fixed-sha> # v46.0.1 or later
 ```
 
+**How the version check decides what to flag.** Exact tags (`@v45.2.0`)
+and SHA-resolved versions are point-checked against each advisory's
+`vulnerable_version_range`. Moving partial tags (`@v45`, `@v45.2`) are
+span-checked across the whole release series they can float across, so
+a partial tag fires only when the **entire** span is vulnerable — `@v4`
+floating to `v4.3.0` does not match an advisory covering
+`>= 4.0.0, < 4.1.3`. SHA pins are resolved through the repo's tag list
+to the most specific tag that points at the commit, so a moving major
+alias never shadows the exact release.
+
 Tip: `gh api "/advisories?ecosystem=actions&affects=tj-actions/changed-files"`
 lists every advisory known for an action, with the `vulnerable_version_range`
 and `patched_versions` fields.
