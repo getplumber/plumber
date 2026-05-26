@@ -7,6 +7,7 @@ import (
 	"github.com/getplumber/plumber/collector"
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/internal/ir"
+	"github.com/getplumber/plumber/utils"
 	"github.com/sirupsen/logrus"
 )
 
@@ -176,12 +177,21 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 	result := &AnalysisResult{
 		ProjectPath:    conf.ProjectPath,
 		DefaultBranch:  defaultBranch,
+		AnalyzeBranch:  conf.Branch,
 		CIConfigSource: "local",
 		CiValid:        len(pipeline.Jobs) > 0,
 		CiMissing:      len(pipeline.Jobs) == 0,
 		Findings:       evaluatePolicies(l, conf, "github", pipeline),
 		GitHubStats:    AggregateGitHubStats(pipeline, conf.PlumberConfig),
 		GitHubPipeline: pipeline,
+	}
+	// Resolve the local clone's HEAD SHA so source links in the report
+	// point at the exact commit being analysed instead of a mutable
+	// branch name. CI runs already get the SHA from GITHUB_SHA; this
+	// covers the developer-laptop case where `plumber analyze` runs
+	// against a working tree on whatever branch they checked out.
+	if conf.IsLocalProject && conf.GitRepoRoot != "" {
+		result.HeadCommitSha = utils.DetectGitHeadSHA(conf.GitRepoRoot)
 	}
 	ApplyGitHubFindingCounts(result.GitHubStats, result.Findings)
 	if conf.ProgressFunc != nil {
@@ -268,6 +278,7 @@ func RunGitHubAnalysisRemote(conf *configuration.Configuration, owner, repo, ref
 	result := &AnalysisResult{
 		ProjectPath:    owner + "/" + repo,
 		DefaultBranch:  defaultBranch,
+		AnalyzeBranch:  ref,
 		CIConfigSource: "remote",
 		CiValid:        len(pipeline.Jobs) > 0,
 		CiMissing:      len(pipeline.Jobs) == 0,

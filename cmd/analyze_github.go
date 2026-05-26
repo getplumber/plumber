@@ -51,6 +51,11 @@ func runGitHubAnalyze(cmd *cobra.Command, info *utils.GitRemoteInfo, controlsFil
 	conf := configuration.NewDefaultConfiguration()
 	conf.ProjectPath = info.ProjectPath
 	conf.GitRepoRoot = info.RepoRoot
+	// This command is the local-clone GitHub flow: the working tree
+	// at info.RepoRoot is, by construction, the project we are about
+	// to analyse. Flag it so downstream code (e.g. the source-link
+	// builder) emits absolute local paths instead of remote blob URLs.
+	conf.IsLocalProject = true
 	conf.Branch = defaultBranch
 	conf.PlumberConfig = plumberConfig
 	conf.ControlsFilter = controlsFilterList
@@ -244,6 +249,12 @@ func presentGitHubResult(result *control.AnalysisResult, conf *configuration.Con
 		s := control.ComputePlumberScore(codeCounts)
 		scoreResult = &s
 	}
+
+	// Decorate every finding with a clickable link. In CI this is the
+	// host forge's web URL anchored to the analysed commit; locally
+	// it falls back to an absolute `<path>:<line>` reference that
+	// editors and terminals turn into a jump-to-source action.
+	newLocationLinker(conf, result, "github").Annotate(result.Findings)
 
 	findingsByControl := control.FindingsByControl(result.Findings)
 	entries := control.GitHubControls(plumberConfig)

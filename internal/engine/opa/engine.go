@@ -40,7 +40,13 @@ type Finding struct {
 	Job      string         `json:"-"`
 	File     string         `json:"-"`
 	Line     int            `json:"-"`
-	Data     map[string]any `json:"-"`
+	// URL is a clickable pointer to the offending file/line, populated at
+	// output time (not by Rego). In CI it is the remote blob URL on the
+	// host forge; locally it is the absolute filesystem path with the
+	// :line suffix that VS Code / iTerm recognise as a source reference.
+	// Empty when no useful link can be built (missing file/line, etc.).
+	URL  string         `json:"-"`
+	Data map[string]any `json:"-"`
 }
 
 // MarshalJSON flattens the canonical fields and the Data payload into
@@ -69,6 +75,9 @@ func (f Finding) MarshalJSON() ([]byte, error) {
 	}
 	if f.Line != 0 {
 		out["line"] = f.Line
+	}
+	if f.URL != "" {
+		out["url"] = f.URL
 	}
 	return json.Marshal(out)
 }
@@ -104,6 +113,10 @@ func (f *Finding) UnmarshalJSON(b []byte) error {
 	if v, ok := raw["line"].(float64); ok {
 		f.Line = int(v)
 		delete(raw, "line")
+	}
+	if v, ok := raw["url"].(string); ok {
+		f.URL = v
+		delete(raw, "url")
 	}
 	if len(raw) > 0 {
 		f.Data = raw

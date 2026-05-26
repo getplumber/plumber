@@ -15,6 +15,15 @@ type AnalysisResult struct {
 	ProjectPath   string `json:"projectPath"`
 	ProjectID     int    `json:"projectId"`
 	DefaultBranch string `json:"defaultBranch"`
+	// AnalyzeBranch is the branch the analysis actually ran against
+	// (--branch or the project's default). May differ from DefaultBranch.
+	AnalyzeBranch string `json:"analyzeBranch,omitempty"`
+	// HeadCommitSha is the head SHA of the analyzed branch, when known.
+	// Used to build stable remote source links so that, even if the
+	// branch moves later, links in the artifact still point at the
+	// exact code that produced the finding. Empty when the SHA could
+	// not be resolved (e.g. local-only runs without a fetched HEAD).
+	HeadCommitSha string `json:"headCommitSha,omitempty"`
 
 	// CI configuration status
 	CiValid        bool     `json:"ciValid"`

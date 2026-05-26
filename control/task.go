@@ -314,6 +314,7 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	// Update result with project info
 	result.ProjectID = project.IdOnPlatform
 	result.DefaultBranch = project.DefaultBranch
+	result.HeadCommitSha = project.LatestHeadCommitSha
 
 	l.WithFields(logrus.Fields{
 		"projectID":     project.IdOnPlatform,
@@ -355,6 +356,10 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 				projectInfo.LatestHeadCommitSha = branchSha
 			}
 		}
+	}
+	result.AnalyzeBranch = projectInfo.AnalyzeBranch
+	if projectInfo.LatestHeadCommitSha != "" {
+		result.HeadCommitSha = projectInfo.LatestHeadCommitSha
 	}
 
 	///////////////////////

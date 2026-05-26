@@ -22,8 +22,14 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o plumber .
 # Final stage - Alpine (small, has shell for CI compatibility)
 FROM alpine:3.22@sha256:55ae5d250caebc548793f321534bc6a8ef1d116f334f18f4ada1b2daad3251b2
 
-# Upgrade base packages (including OpenSSL) and install CA certificates
-RUN apk --no-cache upgrade && apk --no-cache add ca-certificates
+# Upgrade base packages (including OpenSSL) and install CA certificates +
+# git. Plumber shells out to `git` for auto-detection of the remote URL,
+# repo root and HEAD SHA when analysing a local clone (see
+# utils/gitremote.go). Without it, ad-hoc `docker run` invocations against
+# a mounted working tree silently degrade and the user has to pass every
+# coordinate (--gitlab-url / --github-url / --project / --branch)
+# explicitly. The added layer is ~5 MB.
+RUN apk --no-cache upgrade && apk --no-cache add ca-certificates git
 
 # Copy binary from builder
 COPY --from=builder /app/plumber /plumber

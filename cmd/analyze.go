@@ -429,8 +429,16 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	conf.CIConfigPathOverride = ciConfigPath
 
 	// Determine if the local git repo matches the project being analyzed.
-	// Local CI file support only applies when the local repo IS the analyzed project.
-	if gitRepoRoot != "" && gitRemoteURL != "" {
+	// Local CI file support only applies when the local repo IS the analyzed
+	// project AND the user did not explicitly name a project on the CLI.
+	// When --gitlab-url or --project is passed, treat the run the same way
+	// the GitHub path treats `--github-url + --project`: force remote-fetch
+	// of the CI YAML and emit remote source links, regardless of what
+	// clone happens to be in the current working directory. Symmetric CLI
+	// semantics across providers: explicit project name = analyse exactly
+	// that project, ignore my pwd.
+	explicitProject := gitlabURLFromFlag || projectFromFlag
+	if !explicitProject && gitRepoRoot != "" && gitRemoteURL != "" {
 		sameURL := strings.TrimSuffix(gitRemoteURL, "/") == cleanGitlabURL
 		samePath := gitRemoteProjectPath == projectPath
 		conf.IsLocalProject = sameURL && samePath
@@ -458,6 +466,14 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	if err != nil {
 		return fmt.Errorf("analysis failed: %w", err)
 	}
+
+	// Decorate every finding with a clickable link. In CI this is the
+	// host forge's web URL anchored to the analysed commit; locally
+	// it falls back to an absolute `<path>:<line>` reference that
+	// editors and terminals turn into a jump-to-source action. Done
+	// once, before any output writer runs, so terminal + JSON + SARIF
+	// + GitLab SAST all see the same value.
+	newLocationLinker(conf, result, "gitlab").Annotate(result.Findings)
 
 	// Overall compliance is the share of enabled controls that emitted
 	// no finding. One control = one unit, regardless of how many

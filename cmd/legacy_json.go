@@ -148,8 +148,16 @@ func projectFinding(f opaengine.Finding, jobNameKey string) map[string]any {
 	if f.Job != "" && jobNameKey != "" {
 		out[jobNameKey] = f.Job
 	}
+	// `url` is the per-finding clickable pointer populated by the
+	// location linker. Emitted on every per-control issue block so
+	// downstream consumers (dashboards, MR-comment renderers,
+	// scripts) can hyperlink to the offending file at the analysed
+	// commit without having to recompose it themselves.
+	if f.URL != "" {
+		out["url"] = f.URL
+	}
 	for k, v := range f.Data {
-		if k == "docUrl" {
+		if k == "docUrl" || k == "url" {
 			continue
 		}
 		out[k] = v

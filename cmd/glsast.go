@@ -65,6 +65,17 @@ type glsastVuln struct {
 	Scanner     glsastVulnScanner  `json:"scanner"`
 	Identifiers []glsastIdentifier `json:"identifiers"`
 	Location    glsastLocation     `json:"location"`
+	Links       []glsastLink       `json:"links,omitempty"`
+}
+
+// glsastLink is a schema-supported pointer that GitLab renders as a
+// clickable link in the Vulnerability detail panel (and surfaces in
+// MR security widget tooltips). Used here to carry the per-finding
+// source-file URL — either a forge blob URL when running in CI / on a
+// remote project, or an absolute path locally.
+type glsastLink struct {
+	Name string `json:"name,omitempty"`
+	URL  string `json:"url"`
 }
 
 type glsastVulnScanner struct {
@@ -138,6 +149,14 @@ func buildGLSAST(findings []opaengine.Finding) glsastReport {
 			Scanner:     glsastVulnScanner{ID: "plumber", Name: "Plumber"},
 			Identifiers: []glsastIdentifier{{Type: "plumber", Name: "Plumber " + f.Code, Value: f.Code}},
 			Location:    glsastLocation{File: reportFilePath(f.File), StartLine: f.Line},
+		}
+		// Surface the clickable source pointer through the schema's
+		// `links` array. We only emit links with an http(s) scheme —
+		// the GitLab UI tries to navigate to whatever it sees, and a
+		// local filesystem path renders as a broken link in the
+		// Security Dashboard.
+		if strings.HasPrefix(f.URL, "http://") || strings.HasPrefix(f.URL, "https://") {
+			v.Links = append(v.Links, glsastLink{Name: "Source", URL: f.URL})
 		}
 		if info := control.LookupCode(control.ErrorCode(f.Code)); info != nil {
 			v.Name = info.Title

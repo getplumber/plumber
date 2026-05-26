@@ -85,10 +85,11 @@ type sarifConfig struct {
 }
 
 type sarifResult struct {
-	RuleID    string          `json:"ruleId"`
-	Level     string          `json:"level"`
-	Message   sarifText       `json:"message"`
-	Locations []sarifLocation `json:"locations,omitempty"`
+	RuleID     string          `json:"ruleId"`
+	Level      string          `json:"level"`
+	Message    sarifText       `json:"message"`
+	Locations  []sarifLocation `json:"locations,omitempty"`
+	Properties map[string]any  `json:"properties,omitempty"`
 }
 
 type sarifLocation struct {
@@ -190,6 +191,15 @@ func buildSARIF(findings []opaengine.Finding, fallbackURI string) sarifLog {
 			RuleID:  f.Code,
 			Level:   sarifLevel(severity),
 			Message: sarifText{Text: f.Message},
+		}
+		// SARIF's `artifactLocation.uri` must stay repo-relative so
+		// GitHub Code Scanning can map the alert to a file in the
+		// commit. The clickable forge URL goes into a property bag,
+		// where editors and uploaders that look for it (e.g. the
+		// VS Code SARIF viewer) can surface it without breaking the
+		// Code Scanning ingestion contract.
+		if f.URL != "" {
+			res.Properties = map[string]any{"url": f.URL}
 		}
 		if uri := reportFilePath(f.File); uri != "" {
 			phys := sarifPhysical{ArtifactLocation: sarifArtifact{URI: uri}}

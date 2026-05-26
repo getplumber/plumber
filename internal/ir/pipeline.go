@@ -276,14 +276,22 @@ type Image struct {
 // behaviour was overridden locally with one of the CI/CD keys that
 // meaningfully change semantics (script, image, rules, …).
 type Include struct {
-	Kind           string          `json:"kind"`
-	Source         string          `json:"source"`
-	Ref            string          `json:"ref,omitempty"`
-	Current        string          `json:"current,omitempty"`
-	Path           string          `json:"path,omitempty"`
-	AltPath        string          `json:"altPath,omitempty"`
-	Nested         bool            `json:"nested,omitempty"`
-	ComponentName  string          `json:"componentName,omitempty"`
+	Kind          string `json:"kind"`
+	Source        string `json:"source"`
+	Ref           string `json:"ref,omitempty"`
+	Current       string `json:"current,omitempty"`
+	Path          string `json:"path,omitempty"`
+	AltPath       string `json:"altPath,omitempty"`
+	Nested        bool   `json:"nested,omitempty"`
+	ComponentName string `json:"componentName,omitempty"`
+	// OriginFile + OriginLine point at the line in the user's
+	// .gitlab-ci.yml that introduced this include. They let rules
+	// emit findings with a clickable source pointer instead of a
+	// repo-level "somewhere in the config" reference. Empty for
+	// nested includes pulled in transitively by an upstream
+	// component.
+	OriginFile string `json:"originFile,omitempty"`
+	OriginLine int    `json:"originLine,omitempty"`
 	// OriginHash is a stable identifier for the origin of this
 	// include, used by external tooling to deduplicate the same
 	// upstream source across pipelines.

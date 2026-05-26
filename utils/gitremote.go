@@ -137,6 +137,23 @@ func DetectGitRepoRoot() string {
 	return strings.TrimSpace(string(output))
 }
 
+// DetectGitHeadSHA returns the full commit SHA of HEAD at repoRoot.
+// Used to anchor remote source links to the exact code that was
+// analysed instead of a mutable branch name. Returns "" when repoRoot
+// is empty, not a git repository, or in a detached state with no
+// resolvable HEAD (rare); callers fall back to a branch-name link.
+func DetectGitHeadSHA(repoRoot string) string {
+	if repoRoot == "" {
+		return ""
+	}
+	cmd := exec.Command("git", "-C", repoRoot, "rev-parse", "HEAD")
+	output, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(output))
+}
+
 // ParseGitRemoteURL parses a git remote URL and extracts host and project path.
 // Supports the following formats:
 //   - SSH URL:       ssh://git@host[:port]/group/project.git

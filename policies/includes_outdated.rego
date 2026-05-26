@@ -21,6 +21,8 @@ deny contains finding if {
 		"severity":              "medium",
 		"message":               sprintf("%s uses version '%s' (latest: %s)", [inc.source, inc.ref, inc.current]),
 		"job":                   inc.source,
+		"file":                  object.get(inc, "originFile", ""),
+		"line":                  object.get(inc, "originLine", 0),
 		"version":               inc.ref,
 		"latestVersion":         inc.current,
 		"gitlabIncludeLocation": inc.source,

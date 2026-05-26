@@ -42,8 +42,11 @@ func ToNormalizedPipeline(
 	}
 
 	imagesByJob := indexImagesByJob(images)
-	pipeline.Jobs = buildJobs(origin, imagesByJob, ciConfigPath)
-	pipeline.Includes = buildIncludes(origin)
+	// Includes are built first so jobs sourced from an upstream
+	// component / template can inherit their include's source pointer
+	// when the job itself has no line in the user's .gitlab-ci.yml.
+	pipeline.Includes = buildIncludes(origin, ciConfigPath)
+	pipeline.Jobs = buildJobs(origin, imagesByJob, ciConfigPath, pipeline.Includes)
 	pipeline.Branches = buildBranches(protection)
 	if origin != nil && origin.MergedConf != nil {
 		if globals := extractGitLabVariables(origin.MergedConf.GlobalVariables); len(globals) > 0 {
@@ -119,10 +122,15 @@ func _minAccessLevel(levels []gitlab.BranchProtectionAccessLevel) int {
 // is available for this origin). Path/AltPath expose normalized forms
 // for policy-side comparison, and OverriddenJobs enumerates the jobs
 // redefined locally with forbidden CI/CD keys.
-func buildIncludes(origin *GitlabPipelineOriginData) []ir.Include {
+func buildIncludes(origin *GitlabPipelineOriginData, ciConfigPath string) []ir.Include {
 	if origin == nil || len(origin.Origins) == 0 {
 		return nil
 	}
+	// Pre-index the user's CI YAML so each include can be tied back to
+	// the line that introduced it. Top-level includes get a precise
+	// pointer; nested ones (transitively pulled in by another include)
+	// don't appear in the user's file and stay file/line-less.
+	includeLines := scanGitLabIncludeLines(origin.ConfString)
 	out := make([]ir.Include, 0, len(origin.Origins))
 	for i := range origin.Origins {
 		o := &origin.Origins[i]
@@ -160,7 +168,124 @@ func buildIncludes(origin *GitlabPipelineOriginData) []ir.Include {
 			}
 		}
 		inc.OverriddenJobs = CollectOverriddenJobs(o, origin)
+		// Attach the source-file pointer last so it covers Source,
+		// ComponentName, and the Plumber-augmented Path candidate.
+		if !inc.Nested {
+			if line := matchIncludeLine(inc, includeLines); line > 0 {
+				inc.OriginFile = ciConfigPath
+				inc.OriginLine = line
+			}
+		}
 		out = append(out, inc)
+	}
+	return out
+}
+
+// scanGitLabIncludeLines walks the raw `.gitlab-ci.yml` and returns
+// every line that lives inside the top-level `include:` block. The
+// result is keyed by line text (trimmed) so callers can match an
+// include's known source against the line that introduced it. This is
+// a lightweight scanner, not a full YAML parser — adequate because we
+// only need to find which one-of-N `include:` entries a given source
+// was written on.
+func scanGitLabIncludeLines(raw string) map[int]string {
+	out := map[int]string{}
+	if raw == "" {
+		return out
+	}
+	inInclude := false
+	includeIndent := -1
+	for i, line := range strings.Split(raw, "\n") {
+		trimmed := strings.TrimRight(line, "\r")
+		stripped := strings.TrimLeft(trimmed, " \t")
+		if stripped == "" || strings.HasPrefix(stripped, "#") {
+			continue
+		}
+		indent := len(trimmed) - len(stripped)
+		if !inInclude {
+			if indent == 0 && (stripped == "include:" || strings.HasPrefix(stripped, "include:")) {
+				inInclude = true
+				includeIndent = 0
+			}
+			continue
+		}
+		// We are inside the include block. A top-level YAML key
+		// (column 0) that is not "include:" ends the block.
+		if indent <= includeIndent && stripped != "include:" {
+			inInclude = false
+			continue
+		}
+		out[i+1] = stripped
+	}
+	return out
+}
+
+// matchIncludeLine returns the 1-based line number from includeLines
+// whose text references the include's source/component/path. Longer
+// candidates are matched first so a project include of
+// `group/sub/proj` does not steal a line that names `sub/proj`. Returns
+// 0 when no candidate is found.
+func matchIncludeLine(inc ir.Include, includeLines map[int]string) int {
+	candidates := []string{inc.Source, inc.ComponentName, inc.Path, inc.AltPath}
+	sort.SliceStable(candidates, func(i, j int) bool {
+		return len(candidates[i]) > len(candidates[j])
+	})
+	// Scan in line order so the first include written wins when two
+	// candidates would each match the same line.
+	keys := make([]int, 0, len(includeLines))
+	for k := range includeLines {
+		keys = append(keys, k)
+	}
+	sort.Ints(keys)
+	for _, c := range candidates {
+		if c == "" {
+			continue
+		}
+		for _, k := range keys {
+			if strings.Contains(includeLines[k], c) {
+				return k
+			}
+		}
+	}
+	return 0
+}
+
+// indexIncludeLineByJob walks origin.Origins (the raw provenance the
+// collector built before flattening) and returns a map from job name
+// to the line number of the include directive that pulled the job
+// in. Lookup proceeds via the OriginHash carried on both the
+// origin-side record and the ir.Include — that ties the two
+// representations together without us having to re-derive the match
+// from string-equal source paths.
+func indexIncludeLineByJob(origin *GitlabPipelineOriginData, includes []ir.Include) map[string]int {
+	if origin == nil || len(origin.Origins) == 0 || len(includes) == 0 {
+		return nil
+	}
+	lineByHash := make(map[uint64]int, len(includes))
+	for _, inc := range includes {
+		if inc.OriginLine > 0 && inc.OriginHash != 0 {
+			lineByHash[inc.OriginHash] = inc.OriginLine
+		}
+	}
+	if len(lineByHash) == 0 {
+		return nil
+	}
+	out := map[string]int{}
+	for i := range origin.Origins {
+		o := &origin.Origins[i]
+		line, ok := lineByHash[o.OriginHash]
+		if !ok || line == 0 {
+			continue
+		}
+		for _, j := range o.Jobs {
+			if j.Name == "" {
+				continue
+			}
+			if _, seen := out[j.Name]; seen {
+				continue
+			}
+			out[j.Name] = line
+		}
 	}
 	return out
 }
@@ -269,18 +394,20 @@ func imageFromInfo(info GitlabPipelineImageInfo) ir.Image {
 	return img
 }
 
-func buildJobs(origin *GitlabPipelineOriginData, imagesByJob map[string]ir.Image, ciConfigPath string) []ir.Job {
+func buildJobs(origin *GitlabPipelineOriginData, imagesByJob map[string]ir.Image, ciConfigPath string, includes []ir.Include) []ir.Job {
 	if origin == nil || len(origin.JobMap) == 0 {
 		return nil
 	}
 	// The raw CI YAML carries only the root-file job headers; jobs
-	// pulled in via include/component have a different source file
-	// that the collector does not track per-job yet. Scanning the
-	// root string at least covers hardcoded jobs, which is the main
-	// class of findings users click through.
+	// pulled in via include/component are not in there, so we map
+	// them back to the include directive that introduced them and
+	// borrow that line. Hardcoded jobs (declared directly in the
+	// user's .gitlab-ci.yml) get their own header line. Net effect:
+	// every finding has a clickable pointer into the user's file.
 	lineByJob := scanGitLabJobLines(origin.ConfString)
 	originKindByJob := indexJobOriginKind(origin)
 	overrideKeysByJob := indexOverrideKeys(origin)
+	includeLineByJob := indexIncludeLineByJob(origin, includes)
 	jobs := make([]ir.Job, 0, len(origin.JobMap))
 	for name, data := range origin.JobMap {
 		if data == nil {
@@ -303,6 +430,13 @@ func buildJobs(origin *GitlabPipelineOriginData, imagesByJob map[string]ir.Image
 			}
 		}
 		if line, ok := lineByJob[name]; ok {
+			job.OriginFile = ciConfigPath
+			job.OriginLine = line
+		} else if line, ok := includeLineByJob[name]; ok && line > 0 {
+			// Job came from an include / component / template. The
+			// upstream file isn't part of the user's repo, so the
+			// most useful pointer is the include directive in the
+			// user's .gitlab-ci.yml that pulled the job in.
 			job.OriginFile = ciConfigPath
 			job.OriginLine = line
 		}
