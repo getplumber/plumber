@@ -1,0 +1,15 @@
+heredoc_to_bash:
+  image: alpine:3.19
+  script:
+    - |
+      cat <<'EOF' | bash
+      echo "operator-authored, in-tree content"
+      EOF
+
+heredoc_dash_marker:
+  image: alpine:3.19
+  script:
+    - |
+      cat <<-EOF | sh
+        echo "dash-stripped heredoc"
+      EOF

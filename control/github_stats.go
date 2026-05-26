@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/getplumber/plumber/configuration"
+	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	"github.com/getplumber/plumber/internal/ir"
 )
 
@@ -210,6 +211,19 @@ func AggregateGitHubStats(pipeline *ir.NormalizedPipeline, pc *configuration.Plu
 		}
 	}
 	return stats
+}
+
+// ApplyGitHubFindingCounts fills per-control finding counters on stats
+// after Rego evaluation (denominators come from AggregateGitHubStats).
+func ApplyGitHubFindingCounts(stats *GitHubAnalysisStats, findings []opaengine.Finding) {
+	if stats == nil {
+		return
+	}
+	for _, f := range findings {
+		if f.Code == string(CodeUnverifiedScriptExecution) {
+			stats.UnverifiedScriptsFound++
+		}
+	}
 }
 
 // branchMatchesPattern is a tiny matcher that mirrors the rego

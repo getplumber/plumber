@@ -117,7 +117,7 @@ const (
 	CodeComponentOverridden ErrorCode = "ISSUE-409"
 	// ISSUE-410: Security job is weakened (allow_failure, rules override, when: manual)
 	CodeSecurityJobWeakened ErrorCode = "ISSUE-410"
-	// ISSUE-411: Pipeline downloads and executes a script without integrity verification (curl|bash, wget|sh)
+	// ISSUE-411: Pipeline executes unverified scripts (curl|bash, base64|bash, download-then-exec, |sh)
 	CodeUnverifiedScriptExecution ErrorCode = "ISSUE-411"
 	// ISSUE-412: CI/CD job uses a Docker-in-Docker (dind) service
 	CodeDockerInDockerUsage ErrorCode = "ISSUE-412"
@@ -428,8 +428,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Code:        CodeUnverifiedScriptExecution,
 		Severity:    SeverityHigh,
 		Title:       "Unverified script execution",
-		Description: "A CI/CD job downloads and immediately executes a script from the internet (e.g., curl | bash, wget | sh) without verifying its integrity. An attacker who compromises the remote URL can serve a modified script that exfiltrates secrets.",
-		Remediation: "Download the script to a file first, verify its checksum against a known-good value, then execute it. Alternatively, vendor the script into your repository or use a trusted package manager.",
+		Description: "A CI/CD job executes a script without integrity verification: pipe-to-shell (curl | bash), download-then-exec, redirect-then-exec, base64-decode-to-shell (Megalodon-style), or any command piped into bash/sh. An attacker can exfiltrate CI secrets via a compromised URL or obfuscated inline payload.",
+		Remediation: "Download scripts to a file, verify checksum or signature on the same line, then execute. Avoid piping remote or encoded content directly into a shell. Vendor scripts in-repo or use trusted package managers.",
 		DocURL:      docsBaseURL + string(CodeUnverifiedScriptExecution),
 		ControlName: "pipelineMustNotExecuteUnverifiedScripts",
 	},

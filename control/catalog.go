@@ -169,6 +169,11 @@ func GitHubControls(pc *configuration.PlumberConfig) []ControlEntry {
 		Skipped:     c.PipelineMustNotUseDockerInDocker == nil || !c.PipelineMustNotUseDockerInDocker.IsEnabled(),
 	})
 	entries = append(entries, ControlEntry{
+		DisplayName: "Pipeline must not execute unverified scripts",
+		ControlName: "pipelineMustNotExecuteUnverifiedScripts",
+		Skipped:     c.PipelineMustNotExecuteUnverifiedScripts == nil || !c.PipelineMustNotExecuteUnverifiedScripts.IsEnabled(),
+	})
+	entries = append(entries, ControlEntry{
 		DisplayName: "Reusable workflows must not inherit secrets",
 		ControlName: "reusableWorkflowsMustNotInheritSecrets",
 		Skipped:     c.ReusableWorkflowsMustNotInheritSecrets == nil || !c.ReusableWorkflowsMustNotInheritSecrets.IsEnabled(),

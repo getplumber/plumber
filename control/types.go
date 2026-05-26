@@ -111,6 +111,9 @@ type GitHubAnalysisStats struct {
 	// Workflow content scanned for template injection (ISSUE-207).
 	ScriptLinesTotal int
 
+	// Unverified script execution (ISSUE-411).
+	UnverifiedScriptsFound int
+
 	// Workflows + properties (ISSUE-802, ISSUE-801).
 	WorkflowsTotal               int
 	WorkflowsWithDangerousTrigger int

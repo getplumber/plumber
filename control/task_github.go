@@ -183,6 +183,7 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 		GitHubStats:    AggregateGitHubStats(pipeline, conf.PlumberConfig),
 		GitHubPipeline: pipeline,
 	}
+	ApplyGitHubFindingCounts(result.GitHubStats, result.Findings)
 	if conf.ProgressFunc != nil {
 		total := collector.TotalProgressStepsForPipeline(pipeline)
 		conf.ProgressFunc(total, total, "Analysis complete")
@@ -274,6 +275,7 @@ func RunGitHubAnalysisRemote(conf *configuration.Configuration, owner, repo, ref
 		GitHubStats:    AggregateGitHubStats(pipeline, conf.PlumberConfig),
 		GitHubPipeline: pipeline,
 	}
+	ApplyGitHubFindingCounts(result.GitHubStats, result.Findings)
 	if conf.ProgressFunc != nil {
 		total := collector.TotalProgressStepsForPipeline(pipeline)
 		conf.ProgressFunc(total, total, "Analysis complete")

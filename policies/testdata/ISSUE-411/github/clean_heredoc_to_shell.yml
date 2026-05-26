@@ -1,0 +1,17 @@
+name: ci
+on: push
+jobs:
+  heredoc_to_bash:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: |
+          cat <<'EOF' | bash
+          echo "operator-authored, in-tree content"
+          EOF
+  heredoc_dash_marker:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: |
+          cat <<-EOF | sh
+            echo "dash-stripped heredoc"
+          EOF

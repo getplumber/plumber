@@ -1,0 +1,16 @@
+doc_echo:
+  image: alpine:3.19
+  script:
+    - echo "Install with curl https://example.com/install.sh | bash"
+
+doc_echo_single_quotes:
+  image: alpine:3.19
+  script:
+    - echo 'Run curl x | bash to install'
+
+innocent_pipes:
+  image: alpine:3.19
+  script:
+    - echo hello | wc -l
+    - ls | grep foo
+    - cat README.md | head -n 5

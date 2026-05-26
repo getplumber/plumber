@@ -246,6 +246,12 @@ func buildGitHubControlStats(controlName string, stats *control.GitHubAnalysisSt
 			{"DinD Services Found", fmt.Sprintf("%d", stats.JobsWithDinD)},
 			{"Insecure Daemon Config", fmt.Sprintf("%d", stats.JobsWithInsecureDaemon)},
 		}
+	case "pipelineMustNotExecuteUnverifiedScripts":
+		return []statLine{
+			{"Jobs Checked", fmt.Sprintf("%d", stats.JobsTotal)},
+			{"Script Lines Checked", fmt.Sprintf("%d", stats.ScriptLinesTotal)},
+			{"Unverified Scripts", fmt.Sprintf("%d", stats.UnverifiedScriptsFound)},
+		}
 	case "reusableWorkflowsMustNotInheritSecrets":
 		return []statLine{
 			{"Reusable Workflow Calls", fmt.Sprintf("%d", stats.ReusableCalls)},

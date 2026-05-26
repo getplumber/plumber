@@ -58,6 +58,8 @@ func buildLegacyResultGitHub(e control.ControlEntry, result *control.AnalysisRes
 		return "knownVulnerableActionsResult", buildKnownVulnerableActionsBlock(common, result, findings)
 	case "pipelineMustNotEnableDebugTrace":
 		return "debugTraceResult", buildDebugTraceBlockGitHub(common, result, findings)
+	case "pipelineMustNotExecuteUnverifiedScripts":
+		return "unverifiedScriptsResult", buildUnverifiedScriptsBlockGitHub(common, result, findings)
 	}
 	return "", nil
 }
@@ -562,6 +564,23 @@ func buildKnownVulnerableActionsBlock(c legacyCommon, result *control.AnalysisRe
 		"metrics": map[string]any{
 			"actionRefsTotal":      s.ActionRefsTotal,
 			"actionRefsVulnerable": len(findings),
+		},
+		"compliance": c.Compliance,
+		"version":    "0.1.0",
+		"ciValid":    c.CiValid,
+		"ciMissing":  c.CiMissing,
+		"skipped":    c.Skipped,
+	}
+}
+
+func buildUnverifiedScriptsBlockGitHub(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	s := statsOf(result)
+	return map[string]any{
+		"issues": projectFindings(_sortedFindings(findings), "job"),
+		"metrics": map[string]any{
+			"jobsChecked":             s.JobsTotal,
+			"totalScriptLinesChecked": s.ScriptLinesTotal,
+			"unverifiedScriptsFound":  len(findings),
 		},
 		"compliance": c.Compliance,
 		"version":    "0.1.0",

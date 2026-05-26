@@ -1,0 +1,17 @@
+name: ci
+on: push
+jobs:
+  doc_echo:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo "Install with curl https://example.com/install.sh | bash"
+  doc_echo_single_quotes:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo 'Run curl x | bash to install'
+  innocent_pipes:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: echo hello | wc -l
+      - run: ls | grep foo
+      - run: cat README.md | head -n 5

@@ -31,7 +31,7 @@ const (
 	compUpToDate  = "Require catalog includes to be up to date"
 	compForbidden = "Forbid mutable include refs (latest, main, HEAD, …)"
 	compSecurity  = "Detect weakened security scanning jobs"
-	compScripts   = "Detect unverified remote script execution (curl|bash, …)"
+	compScripts   = "Detect unverified script execution (curl|bash, base64|bash, |sh, …)"
 	compJobVars   = "Detect sensitive variables overridden in pipeline YAML"
 	compDinD      = "Detect Docker-in-Docker (dind) usage"
 
@@ -389,7 +389,7 @@ func runInitWizard(skipAnalyzePrompt bool) (*initWizardState, error) {
 			}
 		}
 
-		if compSelected(st, compScripts) && hasProvider(st, "gitlab") {
+		if compSelected(st, compScripts) && (hasProvider(st, "gitlab") || hasProvider(st, "github")) {
 			fmt.Fprintf(os.Stderr, "\n  › Unverified scripts\n")
 			if err := survey.AskOne(&survey.Multiline{
 				Message: "Script host URL patterns to trust (one per line)",
@@ -1023,12 +1023,6 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 					DefaultBranchIsForbiddenVersion: boolPtrInit(st.DefaultBranchIsForbiddenVersion),
 				}
 			}
-			if compSelected(st, compScripts) {
-				gitlabSection.Controls.PipelineMustNotExecuteUnverifiedScripts = &configuration.UnverifiedScriptsControlConfig{
-					Enabled:     boolPtrInit(true),
-					TrustedUrls: parseLinesInit(st.ScriptTrustedURLsMultiline),
-				}
-			}
 			if compSelected(st, compJobVars) {
 				vars := parseLinesInit(st.JobOverrideVariablesMultiline)
 				if len(vars) == 0 {
@@ -1090,6 +1084,20 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 					RulesMustNotBeRedefined: &configuration.SecurityJobsSubControlToggle{Enabled: boolPtrInit(st.SecuritySubRulesGitHub)},
 					WhenMustNotBeManual:     &configuration.SecurityJobsSubControlToggle{Enabled: boolPtrInit(st.SecuritySubWhenNotManualGitHub)},
 				}
+			}
+		}
+
+		// Cross-provider: unverified scripts.
+		if compSelected(st, compScripts) {
+			block := &configuration.UnverifiedScriptsControlConfig{
+				Enabled:     boolPtrInit(true),
+				TrustedUrls: parseLinesInit(st.ScriptTrustedURLsMultiline),
+			}
+			if gitlabSection != nil {
+				gitlabSection.Controls.PipelineMustNotExecuteUnverifiedScripts = block
+			}
+			if githubSection != nil {
+				githubSection.Controls.PipelineMustNotExecuteUnverifiedScripts = block
 			}
 		}
 

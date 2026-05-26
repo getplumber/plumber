@@ -833,12 +833,50 @@ func TestIssue203_DebugTrace(t *testing.T) {
 	}, cfg)
 }
 
-// TestIssue411_UnverifiedScripts flags pipe-to-shell patterns.
+// TestIssue411_UnverifiedScripts flags unverified inline script execution.
 func TestIssue411_UnverifiedScripts(t *testing.T) {
 	runGitLabPolicyCases(t, "ISSUE-411", []policyCase{
 		{"violation_pipe_to_shell.gitlab-ci.yml", []string{"install"}},
+		{"violation_base64_pipe_to_shell.gitlab-ci.yml", []string{"megalodon"}},
+		{"violation_download_and_exec.gitlab-ci.yml", []string{"install"}},
+		{"violation_redirect_exec.gitlab-ci.yml", []string{"deploy"}},
+		// A heredoc marker on the same line as a curl|wget pipe-to-
+		// shell must NOT shield the download — heredoc-as-camouflage
+		// is still pipe-to-shell with the base repo's privileges.
+		{"violation_curl_pipe_bash_with_heredoc.gitlab-ci.yml", []string{"bypass_attempt"}},
+		// A verification keyword inside a quoted string is not a real
+		// verification step — must still fire.
+		{"violation_verify_keyword_in_string.gitlab-ci.yml", []string{"bypass"}},
 		{"clean_checksum.gitlab-ci.yml", nil},
+		// FP guards: pipe-to-shell substrings inside quoted strings.
+		{"clean_pipe_inside_docstring.gitlab-ci.yml", nil},
+		// FP guards: heredoc-to-shell is operator-authored in-tree
+		// content, exempt only when there's no download on the line.
+		{"clean_heredoc_to_shell.gitlab-ci.yml", nil},
 	}, nil)
+}
+
+func TestIssue411_UnverifiedScripts_GitHub(t *testing.T) {
+	runGitHubFixtureCases(t, "ISSUE-411", []struct {
+		fixture      string
+		expectedHits []string
+	}{
+		{"violation_megalodon.yml", []string{"violation_megalodon/run"}},
+		{"violation_curl_pipe_bash.yml", []string{"violation_curl_pipe_bash/setup"}},
+		// Heredoc-as-camouflage: a curl pipe-to-shell on a line that
+		// also carries a `<<EOF` marker still fires.
+		{"violation_curl_pipe_bash_with_heredoc.yml", []string{"violation_curl_pipe_bash_with_heredoc/bypass_attempt"}},
+		// Verification-keyword-in-string bypass: putting `sha256sum`
+		// inside a quoted echo must not exempt the line.
+		{"violation_verify_keyword_in_string.yml", []string{"violation_verify_keyword_in_string/bypass"}},
+		{"clean_no_shell_pipes.yml", nil},
+		// FP guards: pipe-to-shell substrings inside quoted strings
+		// (instructional echo of install commands) must not fire.
+		{"clean_pipe_inside_docstring.yml", nil},
+		// FP guards: heredoc-to-shell with no download on the line is
+		// operator-authored in-tree content.
+		{"clean_heredoc_to_shell.yml", nil},
+	})
 }
 
 // TestIssue403_IncludesOutdated flags includes whose ref differs from
