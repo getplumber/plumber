@@ -7,6 +7,23 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
+// specSeparatedCI is a multi-document YAML that mirrors what users get when
+// they copy the Plumber CI component template into their .gitlab-ci.yml.
+// The `spec:` block is in the first document; the actual job is in the second.
+const specSeparatedCI = `
+spec:
+  inputs:
+    gitlab_token:
+      default: $GITLAB_TOKEN
+
+---
+
+plumber:
+  stage: .pre
+  script:
+    - /plumber analyze
+`
+
 func TestIncludeList_UnmarshalYAML(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -180,4 +197,44 @@ func TestIncludeList_DirectUnmarshal(t *testing.T) {
 	if !reflect.DeepEqual(il, want) {
 		t.Errorf("direct scalar unmarshal mismatch\n  got:  %#v\n  want: %#v", il, want)
 	}
+}
+
+// TestUnmarshalMultiDocGitlabCI_SpecSeparated is a regression test for the bug
+// where a CI file starting with a `spec:` document followed by `---` and job
+// definitions caused hardcoded jobs to be invisible: yaml.Unmarshal only read
+// the first document, so GitlabJobs was always empty for such files.
+func TestUnmarshalMultiDocGitlabCI_SpecSeparated(t *testing.T) {
+	conf, err := unmarshalMultiDocGitlabCI([]byte(specSeparatedCI))
+	if err != nil {
+		t.Fatalf("unmarshalMultiDocGitlabCI: %v", err)
+	}
+
+	// The `spec:` block must be captured.
+	if conf.Spec == nil {
+		t.Error("expected Spec to be populated from the first document, got nil")
+	}
+
+	// The `plumber` job from the second document must be present.
+	if conf.GitlabJobs == nil {
+		t.Fatal("expected GitlabJobs to be non-nil")
+	}
+	if _, ok := conf.GitlabJobs["plumber"]; !ok {
+		t.Errorf("expected 'plumber' job in GitlabJobs, got keys: %v", jobKeys(conf.GitlabJobs))
+	}
+
+	// Verify plain yaml.Unmarshal (single-doc) would miss the job — confirms
+	// the regression scenario that this test guards against.
+	var singleDoc GitlabCIConf
+	_ = yaml.Unmarshal([]byte(specSeparatedCI), &singleDoc)
+	if _, ok := singleDoc.GitlabJobs["plumber"]; ok {
+		t.Log("note: yaml.Unmarshal now reads multi-doc; this test may need revisiting")
+	}
+}
+
+func jobKeys(m map[string]interface{}) []string {
+	keys := make([]string, 0, len(m))
+	for k := range m {
+		keys = append(keys, k)
+	}
+	return keys
 }

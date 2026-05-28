@@ -1,8 +1,10 @@
 package gitlab
 
 import (
+	"bytes"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -203,15 +205,22 @@ func GetFullGitlabCI(project *ProjectInfo, ref, token, url string, conf *configu
 		return nil, nil, nil, confStr, "", err
 	}
 
-	// Unmarshal the original configuration
-	if err := yaml.Unmarshal(confByte, &gitlabConf); err != nil {
+	// Unmarshal the original configuration. CI component template files use a
+	// multi-document YAML layout where `spec:` is the first document and job
+	// definitions come after the `---` separator. yaml.Unmarshal only reads
+	// the first document, so jobs in the second document would be invisible
+	// to the hardcoded-job detector. unmarshalMultiDocGitlabCI merges all
+	// documents so that jobs defined after a `spec:` block are still seen.
+	var unmarshalErr error
+	gitlabConf, unmarshalErr = unmarshalMultiDocGitlabCI(confByte)
+	if unmarshalErr != nil {
 		if mergedResponse.CiConfig.Status == "INVALID" {
-			l.WithError(err).Info("Unable to unmarshal the configuration to GitlabCIConf, but the CI config is invalid")
+			l.WithError(unmarshalErr).Info("Unable to unmarshal the configuration to GitlabCIConf, but the CI config is invalid")
 			return nil, nil, &mergedResponse, confStr, mergedResponse.CiConfig.MergedYaml, nil
 		}
 
-		l.WithError(err).Error("Unable to unmarshal the configuration to GitlabCIConf")
-		return nil, nil, &mergedResponse, confStr, mergedResponse.CiConfig.MergedYaml, err
+		l.WithError(unmarshalErr).Error("Unable to unmarshal the configuration to GitlabCIConf")
+		return nil, nil, &mergedResponse, confStr, mergedResponse.CiConfig.MergedYaml, unmarshalErr
 	}
 
 	// Extract and unmarshal the merged configuration
@@ -221,6 +230,54 @@ func GetFullGitlabCI(project *ProjectInfo, ref, token, url string, conf *configu
 	}
 
 	return &gitlabConf, &mergedConf, &mergedResponse, confStr, mergedResponse.CiConfig.MergedYaml, nil
+}
+
+// unmarshalMultiDocGitlabCI decodes all YAML documents in data and merges them
+// into a single GitlabCIConf. This handles CI component template files that
+// start with a `spec:` block in the first document and define jobs after a
+// `---` separator in subsequent documents. With a plain yaml.Unmarshal only
+// the first document would be read, causing jobs in later documents to be
+// invisible to the hardcoded-job detector in the collector.
+func unmarshalMultiDocGitlabCI(data []byte) (GitlabCIConf, error) {
+	result := GitlabCIConf{}
+	decoder := yaml.NewDecoder(bytes.NewReader(data))
+	for {
+		var doc GitlabCIConf
+		err := decoder.Decode(&doc)
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		if err != nil {
+			return result, err
+		}
+		// Merge jobs from every document so that jobs defined after a `spec:`
+		// block are visible to the hardcoded-job detector.
+		if doc.GitlabJobs != nil {
+			if result.GitlabJobs == nil {
+				result.GitlabJobs = make(map[string]interface{})
+			}
+			for k, v := range doc.GitlabJobs {
+				result.GitlabJobs[k] = v
+			}
+		}
+		// Take top-level fields from the first non-empty document that sets them.
+		if result.Spec == nil && doc.Spec != nil {
+			result.Spec = doc.Spec
+		}
+		if result.Include == nil && doc.Include != nil {
+			result.Include = doc.Include
+		}
+		if result.Stages == nil && doc.Stages != nil {
+			result.Stages = doc.Stages
+		}
+		if result.GlobalVariables == nil && doc.GlobalVariables != nil {
+			result.GlobalVariables = doc.GlobalVariables
+		}
+		if result.Workflow == nil && doc.Workflow != nil {
+			result.Workflow = doc.Workflow
+		}
+	}
+	return result, nil
 }
 
 // ResolveLocalIncludes pre-processes a local CI configuration to inline include:local entries
