@@ -5,76 +5,76 @@ spec:
     # Requires a GitLab token with read_api + read_repository scopes (or api scope if mr_comment is enabled)
     # Set GITLAB_TOKEN as a CI/CD variable in Settings > CI/CD > Variables
     gitlab_token:
-      description: "GitLab API token (requires read_api + read_repository scopes, or api scope if mr_comment is enabled)"
+      description: GitLab API token (requires read_api + read_repository scopes, or api scope if mr_comment is enabled)
       default: $GITLAB_TOKEN
-    
+
     # Project configuration
     # These can be overridden but default to GitLab CI predefined variables
     project_path:
-      description: "Full path of the GitLab project to analyze"
+      description: Full path of the GitLab project to analyze
       default: $CI_PROJECT_PATH
     branch:
-      description: "Branch to analyze"
+      description: Branch to analyze
       default: $CI_COMMIT_REF_NAME
     server_url:
-      description: "GitLab instance URL"
+      description: GitLab instance URL
       default: $CI_SERVER_URL
     ci_config_path:
-      description: "CI configuration file path. Defaults to the GitLab predefined variable $CI_CONFIG_PATH (usually .gitlab-ci.yml). Override to point at a different file."
+      description: CI configuration file path. Defaults to the GitLab predefined variable $CI_CONFIG_PATH (usually .gitlab-ci.yml). Override to point at a different file.
       default: $CI_CONFIG_PATH
-    
+
     # Control configuration
     # Default conf can be found at https://gitlab.com/getplumber/plumber/-/blob/main/.plumber.yaml
     # Priority: 1) config_file input (if set), 2) .plumber.yaml in repo (if exists), 3) default config
     config_file:
-      description: "Path to your .plumber.yaml config file (relative to repo root). If not set, uses .plumber.yaml from repo if present, otherwise uses default config."
+      description: Path to your .plumber.yaml config file (relative to repo root). If not set, uses .plumber.yaml from repo if present, otherwise uses default config.
       default: ""
-    
+
     # Compliance configuration
     threshold:
-      description: "Minimum compliance percentage required to pass (0-100)"
+      description: Minimum compliance percentage required to pass (0-100)
       type: number
       default: 100
-    
+
     # Output configuration
     print_output:
-      description: "Print text output to stdout"
+      description: Print text output to stdout
       type: boolean
       default: true
     output_file:
-      description: "Write JSON results to file (optional, leave empty to skip)"
-      default: "plumber-report.json"
+      description: Write JSON results to file (optional, leave empty to skip)
+      default: plumber-report.json
     pbom_file:
-      description: "Write PBOM (Pipeline Bill of Materials) to file (optional, leave empty to skip)"
-      default: "plumber-pbom.json"
+      description: Write PBOM (Pipeline Bill of Materials) to file (optional, leave empty to skip)
+      default: plumber-pbom.json
     pbom_cyclonedx_file:
-      description: "Write PBOM in CycloneDX SBOM format for security tool integration (optional, leave empty to skip)"
-      default: "plumber-cyclonedx-sbom.json"
+      description: Write PBOM in CycloneDX SBOM format for security tool integration (optional, leave empty to skip)
+      default: plumber-cyclonedx-sbom.json
     glsast_file:
-      description: "Write a GitLab SAST report (gl-sast-report.json) so findings appear in the Security Dashboard and MR security widget. Auto-uploaded via artifacts:reports:sast. Leave empty to skip."
-      default: "gl-sast-report.json"
+      description: Write a GitLab SAST report (gl-sast-report.json) so findings appear in the Security Dashboard and MR security widget. Auto-uploaded via artifacts:reports:sast. Leave empty to skip.
+      default: gl-sast-report.json
 
     # Job configuration
     stage:
-      description: "Stage to run the job in"
-      default: ".pre"
+      description: Stage to run the job in
+      default: .pre
     image:
       description: "Docker image to use for the job"
       default: "getplumber/plumber@sha256:b429acc758d497da976c1783eda7b8a12d55f6e51bae6909c2741db0c35d4304" #v0.3.43
     allow_failure:
-      description: "Allow the job to fail without failing the pipeline"
+      description: Allow the job to fail without failing the pipeline
       default: false
       type: boolean
     verbose:
-      description: "Enable verbose/debug output for troubleshooting"
+      description: Enable verbose/debug output for troubleshooting
       default: false
       type: boolean
     mr_comment:
-      description: "Post/update a compliance summary comment on the merge request (requires api scope on the token)"
+      description: Post/update a compliance summary comment on the merge request (requires api scope on the token)
       default: false
       type: boolean
     badge:
-      description: "Create/update a Plumber compliance badge on the project (requires api scope; only runs on default branch pipelines)"
+      description: Create/update a Plumber compliance badge on the project (requires api scope; only runs on default branch pipelines)
       default: false
       type: boolean
     score:
@@ -82,17 +82,17 @@ spec:
       default: false
       type: boolean
     score_point:
-      description: "Like score plus full points breakdown in stdout and MR comment; if both score and score_point are true, points mode is used"
+      description: Like score plus full points breakdown in stdout and MR comment; if both score and score_point are true, points mode is used
       default: false
       type: boolean
     controls:
-      description: "Run only listed controls (comma-separated control names). Cannot be used with skip_controls."
+      description: Run only listed controls (comma-separated control names). Cannot be used with skip_controls.
       default: ""
     skip_controls:
-      description: "Skip listed controls (comma-separated control names). Cannot be used with controls."
+      description: Skip listed controls (comma-separated control names). Cannot be used with controls.
       default: ""
     fail_warnings:
-      description: "Treat configuration warnings (unknown keys) as errors (exit 2)"
+      description: Treat configuration warnings (unknown keys) as errors (exit 2)
       default: false
       type: boolean
 
@@ -166,55 +166,25 @@ spec:
         CONFIG_PATH="/.plumber.yaml"
         echo "Using default config: $CONFIG_PATH"
       fi
-      
-      OUTPUT_FLAG=""
-      if [ -n "$[[ inputs.output_file ]]" ]; then
-        OUTPUT_FLAG="--output $[[ inputs.output_file ]]"
-      fi
-      PBOM_FLAG=""
-      if [ -n "$[[ inputs.pbom_file ]]" ]; then
-        PBOM_FLAG="--pbom $[[ inputs.pbom_file ]]"
-      fi
-      PBOM_CDX_FLAG=""
-      if [ -n "$[[ inputs.pbom_cyclonedx_file ]]" ]; then
-        PBOM_CDX_FLAG="--pbom-cyclonedx $[[ inputs.pbom_cyclonedx_file ]]"
-      fi
-      GLSAST_FLAG=""
-      if [ -n "$[[ inputs.glsast_file ]]" ]; then
-        GLSAST_FLAG="--glsast $[[ inputs.glsast_file ]]"
-      fi
-      VERBOSE_FLAG=""
-      if [ "$[[ inputs.verbose ]]" = "true" ]; then
-        VERBOSE_FLAG="--verbose"
-      fi
-      MR_COMMENT_FLAG=""
-      if [ "$[[ inputs.mr_comment ]]" = "true" ]; then
-        MR_COMMENT_FLAG="--mr-comment"
-      fi
-      BADGE_FLAG=""
-      if [ "$[[ inputs.badge ]]" = "true" ]; then
-        BADGE_FLAG="--badge"
-      fi
-      SCORE_FLAG=""
-      if [ "$[[ inputs.score ]]" = "true" ]; then
-        SCORE_FLAG="--score"
-      fi
-      SCORE_POINT_FLAG=""
-      if [ "$[[ inputs.score_point ]]" = "true" ]; then
-        SCORE_POINT_FLAG="--score-point"
-      fi
-      CONTROLS_FLAG=""
-      if [ -n "$[[ inputs.controls ]]" ]; then
-        CONTROLS_FLAG="--controls $[[ inputs.controls ]]"
-      fi
-      SKIP_CONTROLS_FLAG=""
-      if [ -n "$[[ inputs.skip_controls ]]" ]; then
-        SKIP_CONTROLS_FLAG="--skip-controls $[[ inputs.skip_controls ]]"
-      fi
-      FAIL_WARNINGS_FLAG=""
-      if [ "$[[ inputs.fail_warnings ]]" = "true" ]; then
-        FAIL_WARNINGS_FLAG="--fail-warnings"
-      fi
+
+      set --
+
+      # flags with value
+      [ -n "$[[ inputs.output_file ]]" ] && set -- "$@" --output "$[[ inputs.output_file ]]"
+      [ -n "$[[ inputs.pbom_file ]]" ] && set -- "$@" --pbom "$[[ inputs.pbom_file ]]"
+      [ -n "$[[ inputs.pbom_cyclonedx_file ]]" ] && set -- "$@" --pbom-cyclonedx "$[[ inputs.pbom_cyclonedx_file ]]"
+      [ -n "$[[ inputs.glsast_file ]]" ] && set -- "$@" --glsast "$[[ inputs.glsast_file ]]"
+      [ -n "$[[ inputs.controls ]]" ] && set -- "$@" --controls "$[[ inputs.controls ]]"
+      [ -n "$[[ inputs.skip_controls ]]" ] && set -- "$@" --skip-controls "$[[ inputs.skip_controls ]]"
+
+      # boolean flags
+      [ "$[[ inputs.verbose ]]" = "true" ] && set -- "$@" --verbose
+      [ "$[[ inputs.mr_comment ]]" = "true" ] && set -- "$@" --mr-comment
+      [ "$[[ inputs.badge ]]" = "true" ] && set -- "$@" --badge
+      [ "$[[ inputs.score ]]" = "true" ] && set -- "$@" --score
+      [ "$[[ inputs.score_point ]]" = "true" ] && set -- "$@" --score-point
+      [ "$[[ inputs.fail_warnings ]]" = "true" ] && set -- "$@" --fail-warnings
+
       /plumber analyze \
         --gitlab-url "$[[ inputs.server_url ]]" \
         --project "$[[ inputs.project_path ]]" \
@@ -223,18 +193,7 @@ spec:
         --threshold "$[[ inputs.threshold ]]" \
         --print="$[[ inputs.print_output ]]" \
         --ci-config-path "$[[ inputs.ci_config_path ]]" \
-        $OUTPUT_FLAG \
-        $PBOM_FLAG \
-        $PBOM_CDX_FLAG \
-        $GLSAST_FLAG \
-        $VERBOSE_FLAG \
-        $MR_COMMENT_FLAG \
-        $BADGE_FLAG \
-        $SCORE_FLAG \
-        $SCORE_POINT_FLAG \
-        $CONTROLS_FLAG \
-        $SKIP_CONTROLS_FLAG \
-        $FAIL_WARNINGS_FLAG
+        "$@"
   artifacts:
     paths:
       - $[[ inputs.output_file ]]
