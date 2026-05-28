@@ -856,6 +856,23 @@ func TestIssue411_UnverifiedScripts(t *testing.T) {
 	}, nil)
 }
 
+// TestIssue411_UnverifiedScripts_TrustedBareHostname is a regression test for
+// the bug where trustedUrls only matched https?:// URLs, so bare-hostname
+// commands like `curl -sL firebase.tools | bash` were never suppressed.
+func TestIssue411_UnverifiedScripts_TrustedBareHostname(t *testing.T) {
+	cfg := map[string]any{
+		"unverifiedScripts": map[string]any{
+			"trustedUrls": []string{"firebase.tools", "firebase.tools/*"},
+		},
+	}
+	runGitLabPolicyCases(t, "ISSUE-411", []policyCase{
+		// Bare hostname in trustedUrls — must not fire.
+		{"clean_trusted_bare_hostname.gitlab-ci.yml", nil},
+		// Untrusted URL still fires even when trustedUrls is set.
+		{"violation_pipe_to_shell.gitlab-ci.yml", []string{"install"}},
+	}, cfg)
+}
+
 func TestIssue411_UnverifiedScripts_GitHub(t *testing.T) {
 	runGitHubFixtureCases(t, "ISSUE-411", []struct {
 		fixture      string
@@ -906,6 +923,53 @@ func TestIssue403_IncludesOutdated(t *testing.T) {
 	}
 	if hits != 1 {
 		t.Fatalf("expected 1 ISSUE-403 finding, got %d", hits)
+	}
+}
+
+// TestIssue403_IncludesOutdated_PartialSemver is a regression test for the bug
+// where a partial semver ref like "@1" or "@1.2" was incorrectly reported as
+// outdated when the latest version was "1.2.4". In GitLab component semantics,
+// "@1" tracks the latest 1.x.x, so it is never out of date within that major.
+func TestIssue403_IncludesOutdated_PartialSemver(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFS(policies.FS); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+
+	cases := []struct {
+		ref     string
+		current string
+		wantHit bool
+	}{
+		{"1", "1.2.4", false},    // major-only prefix, never outdated
+		{"v1", "v1.2.4", false},  // v-prefixed major-only
+		{"1.2", "1.2.4", false},  // major.minor prefix, never outdated
+		{"1", "2.0.0", true},     // major changed — genuinely outdated
+		{"1.0.0", "1.2.3", true}, // full semver — outdated as before
+	}
+
+	for _, c := range cases {
+		t.Run(fmt.Sprintf("ref=%s/current=%s", c.ref, c.current), func(t *testing.T) {
+			pipeline := &ir.NormalizedPipeline{
+				Provider: ir.ProviderGitLab,
+				Includes: []ir.Include{
+					{Kind: "component", Source: "plumber/base", Ref: c.ref, Current: c.current},
+				},
+			}
+			findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+			if err != nil {
+				t.Fatalf("evaluate: %v", err)
+			}
+			got := false
+			for _, f := range findings {
+				if f.Code == "ISSUE-403" {
+					got = true
+				}
+			}
+			if got != c.wantHit {
+				t.Fatalf("ref=%s current=%s: wantHit=%v got=%v", c.ref, c.current, c.wantHit, got)
+			}
+		})
 	}
 }
 

@@ -111,3 +111,22 @@ _line_is_trusted(line) if {
 	url := regex.find_n(`https?://[^\s|;)'"]+`, line, -1)[_]
 	glob.match(pattern, null, url)
 }
+
+# Bare-hostname URLs (no scheme) are common in curl/wget commands such as
+# `curl -sL firebase.tools | bash`. Normalise them to https:// so patterns
+# like "https://firebase.tools" and "https://firebase.tools/*" match.
+_line_is_trusted(line) if {
+	some pattern in input.config.unverifiedScripts.trustedUrls
+	bare := regex.find_n(`\b[a-zA-Z0-9][a-zA-Z0-9-]*(?:\.[a-zA-Z0-9][a-zA-Z0-9-]+)+(?:/[^\s|;)'"]*)?`, line, -1)[_]
+	not startswith(bare, "http")
+	glob.match(pattern, null, concat("", ["https://", bare]))
+}
+
+# Also try matching bare-hostname tokens directly against the pattern so that
+# patterns without a scheme ("firebase.tools", "firebase.tools/*") also work.
+_line_is_trusted(line) if {
+	some pattern in input.config.unverifiedScripts.trustedUrls
+	bare := regex.find_n(`\b[a-zA-Z0-9][a-zA-Z0-9-]*(?:\.[a-zA-Z0-9][a-zA-Z0-9-]+)+(?:/[^\s|;)'"]*)?`, line, -1)[_]
+	not startswith(bare, "http")
+	glob.match(pattern, null, bare)
+}
