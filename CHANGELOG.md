@@ -1,3 +1,11 @@
+## [0.3.28](https://github.com/getplumber/plumber/compare/v0.3.27...v0.3.28) (2026-06-01)
+
+
+### 🐛 Bug Fixes
+
+* **controls:** scope ISSUE-411 trustedUrls to the curl/wget fetch target ([3541e75](https://github.com/getplumber/plumber/commit/3541e75507e0c9803b11b31b2417b20d9594234d)), closes [#214](https://github.com/getplumber/plumber/issues/214)
+* **controls:** trustedUrls bare-hostname matching and partial semver false positives ([a7975cd](https://github.com/getplumber/plumber/commit/a7975cd7986fa28a0743ed6d8f2d3635b15f6cd0))
+
 ## [0.3.27](https://github.com/getplumber/plumber/compare/v0.3.26...v0.3.27) (2026-05-26)
 
 

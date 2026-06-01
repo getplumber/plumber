@@ -1,0 +1,9 @@
+name: install
+on: push
+jobs:
+  install:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Install Firebase CLI
+        run: |
+          curl -sL firebase.tools | bash

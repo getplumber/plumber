@@ -429,7 +429,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
-      - uses: getplumber/plumber@5ffae3c0c0968875259829e80992863963b3c2d4   # v0.3.27
+      - uses: getplumber/plumber@9ae6135a41eeeb0dc35d111b886207e8b698a18d   # v0.3.28
         with:
           threshold: 80
 ```
@@ -439,7 +439,7 @@ jobs:
 Scan a repo **without checking it out** (security-team audit) by setting `project`:
 
 ```yaml
-      - uses: getplumber/plumber@5ffae3c0c0968875259829e80992863963b3c2d4   # v0.3.27
+      - uses: getplumber/plumber@9ae6135a41eeeb0dc35d111b886207e8b698a18d   # v0.3.28
         with:
           project: some-org/some-repo
           github-token: ${{ secrets.AUDIT_TOKEN }}   # needs repo / Administration:read
@@ -450,7 +450,7 @@ Scan a repo **without checking it out** (security-team audit) by setting `projec
 
 | Input | Default | Description |
 |-------|---------|-------------|
-| `version` | `v0.3.27` | Plumber release to install. Defaults to a pinned tag; bump explicitly when upgrading. |
+| `version` | `v0.3.28` | Plumber release to install. Defaults to a pinned tag; bump explicitly when upgrading. |
 | `verify-attestation` | `true` | Verify the downloaded binary's build-provenance attestation (sigstore/SLSA) against the getplumber/plumber release workflow via the `gh` CLI. Anchors the binary to a trusted build regardless of the mutable release tag. Set `false` for air-gapped / GHES setups without attestation access. |
 | `github-token` | `${{ github.token }}` | API token (branch protection, advisory DB) and SARIF upload. `Administration:read` for full `branchMustBeProtected`. |
 | `project` | *(checkout)* | `owner/repo` to scan remotely. Default: scan the checked-out repo. |
@@ -1355,7 +1355,7 @@ github:
       trustedUrls: []
 ```
 
-`trustedUrls` is host-precise: `https://example.com/*` exempts `example.com/install.sh` but NOT `evil.example.com/install.sh`. Issue code: ISSUE-411 (shared with the GitLab side).
+`trustedUrls` is host-precise: `https://example.com/*` exempts `example.com/install.sh` but NOT `evil.example.com/install.sh`. Patterns can be written with or without a scheme: `firebase.tools`, `firebase.tools/*`, and `https://firebase.tools` all match a `curl -sL firebase.tools | bash`. Trust is scoped to the `curl`/`wget` fetch target on the line, so a mention of a trusted host inside an `echo` string, a `#` comment, or a different line of the same `run:` block cannot grant trust to a curl that fetches an untrusted host. Issue code: ISSUE-411 (shared with the GitLab side).
 
 </details>
 
