@@ -1355,7 +1355,7 @@ github:
       trustedUrls: []
 ```
 
-`trustedUrls` is host-precise: `https://example.com/*` exempts `example.com/install.sh` but NOT `evil.example.com/install.sh`. Issue code: ISSUE-411 (shared with the GitLab side).
+`trustedUrls` is host-precise: `https://example.com/*` exempts `example.com/install.sh` but NOT `evil.example.com/install.sh`. Patterns can be written with or without a scheme: `firebase.tools`, `firebase.tools/*`, and `https://firebase.tools` all match a `curl -sL firebase.tools | bash`. Trust is scoped to the `curl`/`wget` fetch target on the line, so a mention of a trusted host inside an `echo` string, a `#` comment, or a different line of the same `run:` block cannot grant trust to a curl that fetches an untrusted host. Issue code: ISSUE-411 (shared with the GitLab side).
 
 </details>
 

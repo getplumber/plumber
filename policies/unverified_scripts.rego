@@ -32,10 +32,12 @@ deny contains finding if {
 	# Verification keyword check runs on the stripped line so an
 	# attacker can't bypass the rule by putting `sha256sum` /
 	# `cosign verify` inside a quoted string ("must sha256sum first").
-	# The trust-URL check stays on the raw line because URLs are often
-	# legitimately quoted in shell commands.
+	# Trust check runs on the stripped line and against the actual
+	# curl/wget fetch target so a mention of a trusted host inside an
+	# echo string, a `#` comment, or a different physical line of the
+	# same `run:` block cannot suppress the finding for the real fetch.
 	not _line_is_verified(visible)
-	not _line_is_trusted(line)
+	not _fetch_target_is_trusted(visible)
 	finding := {
 		"code":       "ISSUE-411",
 		"severity":   "high",
@@ -45,11 +47,15 @@ deny contains finding if {
 	}
 }
 
-# Strip quoted substrings (double then single quotes) so a pipe-to-
-# shell that sits entirely inside a string literal does not match.
+# Strip quoted substrings (double then single quotes) and inline `#`
+# comments so neither a pipe-to-shell hidden in a string literal nor a
+# trusted hostname mentioned in a trailing comment can grant trust to
+# the rest of the line. Inline comments require leading whitespace so
+# URL fragments (`https://example.com/path#frag`) are preserved.
 _visible_line(line) := stripped if {
 	once := regex.replace(line, `"[^"]*"`, "")
-	stripped := regex.replace(once, `'[^']*'`, "")
+	twice := regex.replace(once, `'[^']*'`, "")
+	stripped := regex.replace(twice, `\s+#.*`, "")
 }
 
 # Heredoc on the same line — `cat <<EOF | bash`, `<<-EOF`, `<<'EOF'`,
@@ -101,32 +107,36 @@ _line_is_verified(line) if {
 	regex.match(`(?i)(sha256sum|sha512sum|sha1sum|shasum|gpg\s+--verify|cosign\s+verify)`, line)
 }
 
-# A line is trusted when it references at least one URL whose host
-# (and optional path prefix) matches a user-configured glob in
-# pipelineMustNotExecuteUnverifiedScripts.trustedUrls. Mirrors the
-# legacy isTrusted helper: extract every http(s) URL on the line and
-# allow the line as soon as any of them matches a trusted pattern.
-_line_is_trusted(line) if {
-	some pattern in input.config.unverifiedScripts.trustedUrls
-	url := regex.find_n(`https?://[^\s|;)'"]+`, line, -1)[_]
-	glob.match(pattern, null, url)
+# Extract every URL or bare-hostname token that appears as a fetch
+# target on a curl/wget command in the visible (quote/comment stripped)
+# line. Trust suppression applies only when ALL extracted targets match
+# a configured pattern, so an attacker cannot grant trust by mentioning
+# a trusted host inside a string or comment alongside a real curl to an
+# untrusted target. If the unsafe line is not a curl/wget download
+# (base64 pipe, generic `| bash`), the set is empty and trust never
+# applies.
+_fetch_targets(visible) := targets if {
+	regex.match(`(?i)\b(curl|wget)\b`, visible)
+	targets := {t |
+		some t in regex.find_n(`https?://[^\s|;)'"]+|\b[a-zA-Z0-9][a-zA-Z0-9-]*(?:\.[a-zA-Z0-9][a-zA-Z0-9-]+)+(?:/[^\s|;)'"]*)?`, visible, -1)
+	}
 }
 
-# Bare-hostname URLs (no scheme) are common in curl/wget commands such as
-# `curl -sL firebase.tools | bash`. Normalise them to https:// so patterns
-# like "https://firebase.tools" and "https://firebase.tools/*" match.
-_line_is_trusted(line) if {
-	some pattern in input.config.unverifiedScripts.trustedUrls
-	bare := regex.find_n(`\b[a-zA-Z0-9][a-zA-Z0-9-]*(?:\.[a-zA-Z0-9][a-zA-Z0-9-]+)+(?:/[^\s|;)'"]*)?`, line, -1)[_]
-	not startswith(bare, "http")
-	glob.match(pattern, null, concat("", ["https://", bare]))
+_fetch_target_is_trusted(visible) if {
+	targets := _fetch_targets(visible)
+	count(targets) > 0
+	every target in targets {
+		_target_is_trusted(target)
+	}
 }
 
-# Also try matching bare-hostname tokens directly against the pattern so that
-# patterns without a scheme ("firebase.tools", "firebase.tools/*") also work.
-_line_is_trusted(line) if {
+# A target matches trustedUrls when any configured glob matches either
+# the target as-extracted (so patterns like "firebase.tools" or
+# "https://firebase.tools" both work) or the target with the scheme
+# prepended ("firebase.tools" -> "https://firebase.tools" lets a
+# pattern with scheme match a bare-hostname fetch).
+_target_is_trusted(target) if {
 	some pattern in input.config.unverifiedScripts.trustedUrls
-	bare := regex.find_n(`\b[a-zA-Z0-9][a-zA-Z0-9-]*(?:\.[a-zA-Z0-9][a-zA-Z0-9-]+)+(?:/[^\s|;)'"]*)?`, line, -1)[_]
-	not startswith(bare, "http")
-	glob.match(pattern, null, bare)
+	some candidate in [target, concat("", ["https://", target])]
+	glob.match(pattern, null, candidate)
 }

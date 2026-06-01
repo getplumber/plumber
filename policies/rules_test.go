@@ -870,6 +870,53 @@ func TestIssue411_UnverifiedScripts_TrustedBareHostname(t *testing.T) {
 		{"clean_trusted_bare_hostname.gitlab-ci.yml", nil},
 		// Untrusted URL still fires even when trustedUrls is set.
 		{"violation_pipe_to_shell.gitlab-ci.yml", []string{"install"}},
+		// Decoy bypass: trusted hostname mentioned in a trailing echo on
+		// the same line as a real curl|bash to an untrusted host must
+		// still fire. Trust scopes to the curl/wget target.
+		{"violation_trusted_hostname_decoy_in_echo.gitlab-ci.yml", []string{"install"}},
+	}, cfg)
+}
+
+// TestIssue411_UnverifiedScripts_TrustedBareHostname_GitHub is the GitHub-side
+// regression for issue #214 (originally filed against GitHub Actions): a
+// schemeless trustedUrls pattern must suppress curl|bash to that host, and
+// must not be defeated by a decoy mention of the trusted host in an echo
+// or `#` comment in the same `run:` block.
+func TestIssue411_UnverifiedScripts_TrustedBareHostname_GitHub(t *testing.T) {
+	cfg := map[string]any{
+		"unverifiedScripts": map[string]any{
+			"trustedUrls": []string{"firebase.tools", "firebase.tools/*"},
+		},
+	}
+	runGitHubFixtureCasesWithConfig(t, "ISSUE-411", []struct {
+		fixture      string
+		expectedHits []string
+	}{
+		// Bare hostname trusted on GitHub: closes #214 on the platform
+		// the bug was filed against.
+		{"clean_trusted_bare_hostname.yml", nil},
+		// Decoy in trailing echo on a different physical line of the
+		// same `run:` block must still fire.
+		{"violation_trusted_hostname_decoy_in_echo.yml", []string{"violation_trusted_hostname_decoy_in_echo/install"}},
+		// Decoy in inline `#` comment on the curl line must still fire.
+		{"violation_trusted_hostname_decoy_in_comment.yml", []string{"violation_trusted_hostname_decoy_in_comment/install"}},
+	}, cfg)
+}
+
+// TestIssue411_UnverifiedScripts_TrustedHttpPrefixedHost is a regression for
+// the over-eager filter that blocked real hostnames whose names start with
+// `http` (httpbin.org, httpie.io, http-server.*) from being trusted.
+func TestIssue411_UnverifiedScripts_TrustedHttpPrefixedHost(t *testing.T) {
+	cfg := map[string]any{
+		"unverifiedScripts": map[string]any{
+			"trustedUrls": []string{"httpbin.org"},
+		},
+	}
+	runGitHubFixtureCasesWithConfig(t, "ISSUE-411", []struct {
+		fixture      string
+		expectedHits []string
+	}{
+		{"clean_trusted_httpbin.yml", nil},
 	}, cfg)
 }
 
@@ -946,6 +993,12 @@ func TestIssue403_IncludesOutdated_PartialSemver(t *testing.T) {
 		{"1.2", "1.2.4", false},  // major.minor prefix, never outdated
 		{"1", "2.0.0", true},     // major changed — genuinely outdated
 		{"1.0.0", "1.2.3", true}, // full semver — outdated as before
+		// Numeric-prefix discriminator: a naive strings.HasPrefix would
+		// suppress this because "1.20.4" textually starts with "1.2",
+		// but @1.2 tracks the 1.2.x line which is behind 1.20.x. The
+		// positional split-on-"." compare correctly returns "2" != "20"
+		// and the finding fires.
+		{"1.2", "1.20.4", true},
 	}
 
 	for _, c := range cases {
@@ -2839,6 +2892,18 @@ func runGitHubFixtureCases(t *testing.T, code string, cases []struct {
 },
 ) {
 	t.Helper()
+	runGitHubFixtureCasesWithConfig(t, code, cases, nil)
+}
+
+// runGitHubFixtureCasesWithConfig is the same as runGitHubFixtureCases but
+// passes a control config map (input.config.*) to the engine. Used when a
+// fixture's expected behaviour depends on trustedUrls or similar fields.
+func runGitHubFixtureCasesWithConfig(t *testing.T, code string, cases []struct {
+	fixture      string
+	expectedHits []string
+}, cfg map[string]any,
+) {
+	t.Helper()
 	engine := opaengine.New()
 	if err := engine.LoadFromFS(policies.FS); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
@@ -2862,7 +2927,7 @@ func runGitHubFixtureCases(t *testing.T, code string, cases []struct {
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
-			findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+			findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
