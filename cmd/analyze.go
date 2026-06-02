@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"unicode/utf8"
 
@@ -112,6 +113,30 @@ Examples:
 	RunE: runAnalyze,
 }
 
+var envKeys = map[string]string{
+	"gitlab-url":     "PLUMBER_ANALYZE_GITLAB_URL",
+	"github-url":     "PLUMBER_ANALYZE_GITHUB_URL",
+	"project":        "PLUMBER_ANALYZE_PROJECT",
+	"provider":       "PLUMBER_ANALYZE_PROVIDER",
+	"branch":         "PLUMBER_ANALYZE_BRANCH",
+	"config":         "PLUMBER_ANALYZE_CONFIG",
+	"threshold":      "PLUMBER_ANALYZE_THRESHOLD",
+	"print":          "PLUMBER_ANALYZE_PRINT",
+	"output":         "PLUMBER_ANALYZE_OUTPUT",
+	"pbom":           "PLUMBER_ANALYZE_PBOM",
+	"pbom-cyclonedx": "PLUMBER_ANALYZE_PBOM_CYCLONEDX",
+	"sarif":          "PLUMBER_ANALYZE_SARIF",
+	"glsast":         "PLUMBER_ANALYZE_GLSAST",
+	"mr-comment":     "PLUMBER_ANALYZE_MR_COMMENT",
+	"badge":          "PLUMBER_ANALYZE_BADGE",
+	"score":          "PLUMBER_ANALYZE_SCORE",
+	"score-point":    "PLUMBER_ANALYZE_SCORE_POINT",
+	"controls":       "PLUMBER_ANALYZE_CONTROLS",
+	"skip-controls":  "PLUMBER_ANALYZE_SKIP_CONTROLS",
+	"fail-warnings":  "PLUMBER_ANALYZE_FAIL_WARNINGS",
+	"ci-config-path": "PLUMBER_ANALYZE_CI_CONFIG_PATH",
+}
+
 func init() {
 	rootCmd.AddCommand(analyzeCmd)
 
@@ -156,6 +181,12 @@ func init() {
 	analyzeCmd.Flags().StringVar(&skipControls, "skip-controls", "", "Skip listed controls (comma-separated)")
 	analyzeCmd.Flags().BoolVar(&failWarnings, "fail-warnings", false, "Fail on warnings: configuration warnings (exit 2) and could-not-verify warnings, e.g. a skipped known-CVE check (exit 3)")
 	analyzeCmd.Flags().StringVar(&ciConfigPath, "ci-config-path", "", "Override the CI configuration file path (default: auto-detected from GitLab project settings, usually .gitlab-ci.yml)")
+
+	for flag, envKey := range envKeys {
+		if f := analyzeCmd.Flags().Lookup(flag); f != nil {
+			f.Usage += " (env: " + envKey + ")"
+		}
+	}
 }
 
 // resolveProvider applies the provider-selection precedence and returns the
@@ -256,6 +287,40 @@ func loadConfigOrOffer(cfgFile string) (*configuration.PlumberConfig, string, []
 	return pc, path, warnings, nil
 }
 
+func envStringFallback(cmd *cobra.Command, flag, envKey string, dest *string) {
+	if !cmd.Flags().Changed(flag) {
+		if v := os.Getenv(envKey); v != "" {
+			*dest = v
+		}
+	}
+}
+
+func envBoolFallback(cmd *cobra.Command, flag, envKey string, dest *bool) error {
+	if !cmd.Flags().Changed(flag) {
+		if v := os.Getenv(envKey); v != "" {
+			b, err := strconv.ParseBool(v)
+			if err != nil {
+				return fmt.Errorf("invalid value for %s: %q: %w", envKey, v, err)
+			}
+			*dest = b
+		}
+	}
+	return nil
+}
+
+func envFloat64Fallback(cmd *cobra.Command, flag, envKey string, dest *float64) error {
+	if !cmd.Flags().Changed(flag) {
+		if v := os.Getenv(envKey); v != "" {
+			f, err := strconv.ParseFloat(v, 64)
+			if err != nil {
+				return fmt.Errorf("invalid value for %s: %q: %w", envKey, v, err)
+			}
+			*dest = f
+		}
+	}
+	return nil
+}
+
 func runAnalyze(cmd *cobra.Command, args []string) error {
 	// Set log level based on verbose flag
 	// Default: WarnLevel (quiet output, only show warnings/errors)
@@ -266,11 +331,40 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		logrus.SetLevel(logrus.WarnLevel)
 	}
 
+	// Apply environment variable fallbacks; CLI flags always take precedence.
+	envStringFallback(cmd, "gitlab-url", envKeys["gitlab-url"], &gitlabURL)
+	envStringFallback(cmd, "github-url", envKeys["github-url"], &githubURL)
+	envStringFallback(cmd, "project", envKeys["project"], &projectPath)
+	envStringFallback(cmd, "provider", envKeys["provider"], &providerFlag)
+	envStringFallback(cmd, "branch", envKeys["branch"], &defaultBranch)
+	envStringFallback(cmd, "config", envKeys["config"], &configFile)
+	envStringFallback(cmd, "output", envKeys["output"], &outputFile)
+	envStringFallback(cmd, "pbom", envKeys["pbom"], &pbomFile)
+	envStringFallback(cmd, "pbom-cyclonedx", envKeys["pbom-cyclonedx"], &pbomCycloneDXFile)
+	envStringFallback(cmd, "sarif", envKeys["sarif"], &sarifFile)
+	envStringFallback(cmd, "glsast", envKeys["glsast"], &glsastFile)
+	envStringFallback(cmd, "controls", envKeys["controls"], &controlsFilter)
+	envStringFallback(cmd, "skip-controls", envKeys["skip-controls"], &skipControls)
+	envStringFallback(cmd, "ci-config-path", envKeys["ci-config-path"], &ciConfigPath)
+	for _, apply := range []func() error{
+		func() error { return envFloat64Fallback(cmd, "threshold", envKeys["threshold"], &threshold) },
+		func() error { return envBoolFallback(cmd, "print", envKeys["print"], &printOutput) },
+		func() error { return envBoolFallback(cmd, "mr-comment", envKeys["mr-comment"], &mrComment) },
+		func() error { return envBoolFallback(cmd, "badge", envKeys["badge"], &badge) },
+		func() error { return envBoolFallback(cmd, "score", envKeys["score"], &showScore) },
+		func() error { return envBoolFallback(cmd, "score-point", envKeys["score-point"], &showScorePoint) },
+		func() error { return envBoolFallback(cmd, "fail-warnings", envKeys["fail-warnings"], &failWarnings) },
+	} {
+		if err := apply(); err != nil {
+			return err
+		}
+	}
+
 	// Detect git remote info (used for auto-detection AND local CI file matching)
-	gitlabURLFromFlag := cmd.Flags().Changed("gitlab-url")
-	githubURLFromFlag := cmd.Flags().Changed("github-url")
-	projectFromFlag := cmd.Flags().Changed("project")
-	branchFromFlag := cmd.Flags().Changed("branch")
+	gitlabURLFromFlag := cmd.Flags().Changed("gitlab-url") || gitlabURL != ""
+	githubURLFromFlag := cmd.Flags().Changed("github-url") || githubURL != ""
+	projectFromFlag := cmd.Flags().Changed("project") || projectPath != ""
+	branchExplicitlySet := cmd.Flags().Changed("branch") || defaultBranch != ""
 
 	if gitlabURLFromFlag && githubURLFromFlag {
 		return fmt.Errorf("--gitlab-url and --github-url are mutually exclusive; pass one to select the provider explicitly")
@@ -329,7 +423,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	if provider == "github" {
 		if projectFromFlag {
 			ref := ""
-			if branchFromFlag {
+			if branchExplicitlySet {
 				ref = defaultBranch
 			}
 			return runGitHubAnalyzeRemote(cmd, githubURL, projectPath, ref, controlsFilterList, skipControlsList)
@@ -631,8 +725,8 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 			if result.CIConfigSource == "local" {
 				// Using local CI files - don't update badge (user is testing locally)
 				skipReason = "using local CI files (testing mode)"
-			} else if !cmd.Flags().Changed("branch") {
-				// --branch not specified = analyzing default branch
+			} else if !branchExplicitlySet {
+				// no branch override (flag or env) = analyzing default branch
 				shouldUpdateBadge = true
 			} else if conf.Branch == result.DefaultBranch {
 				// --branch specified and matches default branch
