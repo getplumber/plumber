@@ -429,7 +429,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
-      - uses: getplumber/plumber@c52a5acff917ba5fe955fa1f61c3d68d9b37e9ad   # v0.3.33
+      - uses: getplumber/plumber@4b94d4d02f970b40a699c839bbcaa04b62845a9a   # v0.3.34
         with:
           threshold: 80
 ```
@@ -439,7 +439,7 @@ jobs:
 Scan a repo **without checking it out** (security-team audit) by setting `project`:
 
 ```yaml
-      - uses: getplumber/plumber@c52a5acff917ba5fe955fa1f61c3d68d9b37e9ad   # v0.3.33
+      - uses: getplumber/plumber@4b94d4d02f970b40a699c839bbcaa04b62845a9a   # v0.3.34
         with:
           project: some-org/some-repo
           github-token: ${{ secrets.AUDIT_TOKEN }}   # needs repo / Administration:read
@@ -450,7 +450,7 @@ Scan a repo **without checking it out** (security-team audit) by setting `projec
 
 | Input | Default | Description |
 |-------|---------|-------------|
-| `version` | `v0.3.34` | Plumber release to install. Defaults to a pinned tag; bump explicitly when upgrading. |
+| `version` | `v0.3.35` | Plumber release to install. Defaults to a pinned tag; bump explicitly when upgrading. |
 | `verify-attestation` | `true` | Verify the downloaded binary's build-provenance attestation (sigstore/SLSA) against the getplumber/plumber release workflow via the `gh` CLI. Anchors the binary to a trusted build regardless of the mutable release tag. Set `false` for air-gapped / GHES setups without attestation access. |
 | `github-token` | `${{ github.token }}` | API token (branch protection, advisory DB) and SARIF upload. `Administration:read` for full `branchMustBeProtected`. |
 | `project` | *(checkout)* | `owner/repo` to scan remotely. Default: scan the checked-out repo. |
