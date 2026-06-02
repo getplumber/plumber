@@ -1179,9 +1179,9 @@ Issue code: ISSUE-207.
 <details>
 <summary><b>8. Workflow must not use dangerous triggers</b></summary>
 
-Flags GitHub Actions trigger events that grant access to the **base** repository's secrets while being influenceable by an unprivileged caller. Combined with any user-content checkout, this becomes a direct exfiltration path (`pull_request_target` + `actions/checkout@... { ref: github.event.pull_request.head.sha }` is the textbook pattern). Use the standard `pull_request` trigger unless secrets are genuinely required.
+Flags GitHub Actions trigger events that grant access to the **base** repository's secrets while being influenceable by an unprivileged caller — combined with any user-content checkout, the trigger becomes a direct exfiltration path. The rule fires only on the exploitable combination (trigger + checkout of fork-controlled `ref:`) and abstains when a job-level `if:` restricts execution to same-repository pull requests.
 
-Detected events: `pull_request_target`, `workflow_run`, `issue_comment`, `pull_request_review`, `pull_request_review_comment`, `discussion_comment`, `discussion`, `gollum`, `fork`.
+Detected events: `workflow_run`, `issue_comment`, `pull_request_review`, `pull_request_review_comment`, `discussion_comment`, `discussion`, `gollum`, `fork`. The `pull_request_target` case is owned by `pullRequestTargetMustNotCheckoutHead` (ISSUE-804) below — same exploit class, dedicated rule.
 
 ```yaml
 github:
@@ -1191,6 +1191,22 @@ github:
 ```
 
 Issue code: ISSUE-802.
+
+</details>
+
+<details>
+<summary><b>8b. pull_request_target workflows must not check out the PR head</b></summary>
+
+Flags the precise vector behind the March 2025 tj-actions/changed-files compromise (CVE-2025-30066): a workflow triggered by `pull_request_target` that calls `actions/checkout` with a `ref:` pointing at the PR head (`github.event.pull_request.head.sha`, `github.head_ref`, `head.ref`). Base-repo secrets and fork-controlled code in the same run. The rule abstains when the job carries a same-repository `if:` guard.
+
+```yaml
+github:
+  controls:
+    pullRequestTargetMustNotCheckoutHead:
+      enabled: true
+```
+
+Issue code: ISSUE-804.
 
 </details>
 
@@ -1452,6 +1468,7 @@ Controls not selected are reported as **skipped** in the output. The `--controls
 | `workflowMustIncludeRequiredActions` | GitHub-only |
 | `workflowMustNotGrantPermissionsWriteAll` | GitHub-only |
 | `workflowMustNotInjectUserInputInScripts` | GitHub-only |
+| `pullRequestTargetMustNotCheckoutHead` | GitHub-only |
 | `workflowMustNotUseDangerousTriggers` | GitHub-only |
 | `workflowsMustDeclarePermissions` | GitHub-only |
 

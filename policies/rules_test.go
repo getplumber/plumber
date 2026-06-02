@@ -415,9 +415,13 @@ func TestIssue414_DangerousTriggers(t *testing.T) {
 		fixture      string
 		expectedHits []string
 	}{
+		// pull_request_target exploits are owned by ISSUE-804
+		// (pull-request-target-with-head-checkout). ISSUE-802 must
+		// stay silent on this fixture to avoid double-firing on the
+		// same job; ISSUE-804's own test asserts the fire.
 		{
 			fixture:      "violation_pull_request_target.yml",
-			expectedHits: []string{"violation_pull_request_target/preview"},
+			expectedHits: nil,
 		},
 		{
 			fixture:      "violation_workflow_run.yml",
