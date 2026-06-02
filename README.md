@@ -450,7 +450,7 @@ Scan a repo **without checking it out** (security-team audit) by setting `projec
 
 | Input | Default | Description |
 |-------|---------|-------------|
-| `version` | `v0.3.30` | Plumber release to install. Defaults to a pinned tag; bump explicitly when upgrading. |
+| `version` | `v0.3.31` | Plumber release to install. Defaults to a pinned tag; bump explicitly when upgrading. |
 | `verify-attestation` | `true` | Verify the downloaded binary's build-provenance attestation (sigstore/SLSA) against the getplumber/plumber release workflow via the `gh` CLI. Anchors the binary to a trusted build regardless of the mutable release tag. Set `false` for air-gapped / GHES setups without attestation access. |
 | `github-token` | `${{ github.token }}` | API token (branch protection, advisory DB) and SARIF upload. `Administration:read` for full `branchMustBeProtected`. |
 | `project` | *(checkout)* | `owner/repo` to scan remotely. Default: scan the checked-out repo. |
