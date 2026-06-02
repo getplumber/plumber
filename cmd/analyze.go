@@ -1297,6 +1297,19 @@ func outputText(result *control.AnalysisResult, pc *configuration.PlumberConfig,
 	findingsByControl := control.FindingsByControl(result.Findings)
 	entries := control.GitLabControls(pc)
 	control.MarkSkippedByFilter(entries, controlsFilterList, skipControlsList)
+	// Same gitleaks-abstain routing as the GitHub side: when the scan
+	// could not complete on an enabled control, flip the entry to
+	// SKIPPED with the collector's reason so the operator does not
+	// see a misleading 100% green.
+	if result.GitleaksAbstainReason != "" {
+		for i := range entries {
+			if entries[i].ControlName == "pipelineMustNotLeakSecretsInConfig" && !entries[i].Skipped {
+				entries[i].Skipped = true
+				entries[i].SkipReason = result.GitleaksAbstainReason
+				break
+			}
+		}
+	}
 	groups := make([]findingGroup, 0, len(entries))
 	for _, e := range entries {
 		findings := findingsByControl[e.ControlName]
@@ -1332,6 +1345,7 @@ func outputText(result *control.AnalysisResult, pc *configuration.PlumberConfig,
 			Title:      e.DisplayName,
 			Compliance: compliance,
 			Skipped:    e.Skipped,
+			SkipReason: e.SkipReason,
 			Stats:      buildGitLabControlStats(e.ControlName, result, pc, findings),
 			Findings:   items,
 		})

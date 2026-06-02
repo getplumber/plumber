@@ -52,6 +52,7 @@ reading the upstream docs.
 | [ISSUE-306](#issue-306--github-app-skip-revoke) | `github-app-skip-revoke` | high |
 | [ISSUE-307](#issue-307--artipacked) | `artipacked` | high |
 | [ISSUE-308](#issue-308--secrets-dynamic-index) | `secrets-dynamic-index` | low |
+| [ISSUE-309](#issue-309--leaked-secrets) | `leaked-secrets` | **critical** _(opt-in)_ |
 
 ### Triggers & composition — `4xx`
 
@@ -1082,6 +1083,48 @@ reviewability.
 
 ---
 
+## ISSUE-309 — `leaked-secrets`
+
+**Severity:** `critical` • **Control:** `pipelineMustNotLeakSecretsInConfig`
+
+A high-confidence secret pattern (Slack token, AWS access key, GCP
+service-account JSON, …) appears inside committed pipeline YAML.
+Maps to OWASP CICD-SEC-6 (Insufficient Credential Hygiene): once a
+secret is checked into the repo it is in every clone, every fork,
+every CI cache, and every old branch — rotation is the only fix.
+
+The check is opt-in and requires
+[gitleaks](https://github.com/gitleaks/gitleaks) on `PATH`. Plumber
+shells out to it, parses the JSON report, redacts each match to
+`first4***last4` before recording it on the IR, and emits one
+finding per match. The raw secret value never leaves the collector.
+
+```yaml
+# .github/workflows/release.yml
+jobs:
+  publish:
+    env:
+      SLACK_WEBHOOK: xoxb-EXAMPLE-EXAMPLE-redactedfortestingonly
+```
+
+Enable in `.plumber.yaml`:
+
+```yaml
+github:
+  controls:
+    pipelineMustNotLeakSecretsInConfig:
+      enabled: true
+      # Optional overrides:
+      # gitleaksPath: /opt/bin/gitleaks       # default: $PATH lookup
+      # gitleaksConfigPath: .gitleaks.toml    # default: gitleaks's built-ins
+```
+
+When the binary is missing, the control logs a warning and abstains
+(rather than failing the run) so a missing tool never blocks an
+unrelated analyze.
+
+---
+
 ## ISSUE-411 — `unverified-scripts`
 
 **Severity:** `high` • **Control:** `pipelineMustNotExecuteUnverifiedScripts`
@@ -1706,6 +1749,7 @@ and in `.plumber.yaml`) is declared in
 | ISSUE-214 | `workflowMustPinPackageInstalls` |
 | ISSUE-215 | `workflowMustNotInjectVarsInScripts` |
 | ISSUE-308 | `workflowMustNotIndexSecretsDynamically` |
+| ISSUE-309 | `pipelineMustNotLeakSecretsInConfig` _(opt-in; requires gitleaks)_ |
 | ISSUE-802 / 415 | `workflowMustNotUseDangerousTriggers`, `pullRequestTargetMustNotCheckoutHead` |
 | ISSUE-902 | `dependabotEcosystemsMustHaveCooldown` |
 | ISSUE-903 | `repositoriesMustConfigureDependencyUpdates` |

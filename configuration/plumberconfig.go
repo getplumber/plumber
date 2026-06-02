@@ -941,13 +941,14 @@ func (c *PlumberConfig) GetPipelineMustIncludeTemplateConfig() *RequiredTemplate
 	return c.ControlsFor("gitlab").PipelineMustIncludeTemplate
 }
 
-// GetPipelineMustNotLeakSecretsInConfigConfig returns the control configuration.
+// GetPipelineMustNotLeakSecretsInConfigConfig returns the control
+// configuration for the given provider ("gitlab" or "github").
 // Returns nil if not configured.
-func (c *PlumberConfig) GetPipelineMustNotLeakSecretsInConfigConfig() *SecretDetectionControlConfig {
+func (c *PlumberConfig) GetPipelineMustNotLeakSecretsInConfigConfig(provider string) *SecretDetectionControlConfig {
 	if c == nil {
 		return nil
 	}
-	return c.ControlsFor("gitlab").PipelineMustNotLeakSecretsInConfig
+	return c.ControlsFor(provider).PipelineMustNotLeakSecretsInConfig
 }
 
 // GetPipelineMustNotEnableDebugTraceConfig returns the control configuration

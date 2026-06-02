@@ -3792,3 +3792,84 @@ func TestIssue416_RequiredActionMissing(t *testing.T) {
 		}
 	})
 }
+
+
+// TestIssue309_LeakedSecrets covers the leaked_secrets rule. Detection is
+// done in the collector (collector/gitleaks_scan.go); the rego rule turns
+// each redacted GitleaksHit on the pipeline IR into an ISSUE-309 finding,
+// gated by input.config.pipelineMustNotLeakSecretsInConfig.
+func TestIssue309_LeakedSecrets(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFS(policies.FS); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+
+	pipelineWithHits := func() *ir.NormalizedPipeline {
+		return &ir.NormalizedPipeline{
+			Provider: ir.ProviderGitLab,
+			GitleaksHits: []ir.GitleaksHit{
+				{
+					RuleID:      "slack-bot-token",
+					Description: "Slack bot token",
+					Preview:     "xoxb***uvwx",
+					File:        "merged-gitlab-ci.yml",
+					Line:        42,
+				},
+			},
+		}
+	}
+	pipelineClean := func() *ir.NormalizedPipeline {
+		return &ir.NormalizedPipeline{Provider: ir.ProviderGitLab}
+	}
+	enabledCfg := map[string]any{
+		"pipelineMustNotLeakSecretsInConfig": map[string]any{"enabled": true},
+	}
+
+	cases := []struct {
+		name      string
+		pipeline  *ir.NormalizedPipeline
+		cfg       map[string]any
+		wantHits  int
+	}{
+		// Control enabled + hits on the IR -> finding fires (positive case).
+		{"enabled+hits", pipelineWithHits(), enabledCfg, 1},
+		// Control enabled + zero hits -> silent (negative case).
+		{"enabled+clean", pipelineClean(), enabledCfg, 0},
+		// Control disabled (config absent) + hits present -> silent
+		// (abstain case). Belts-and-braces: the collector itself also
+		// short-circuits, so in practice the IR carries no hits when the
+		// control is off.
+		{"disabled+hits", pipelineWithHits(), nil, 0},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			findings, err := engine.Evaluate(context.Background(), tc.pipeline, tc.cfg)
+			if err != nil {
+				t.Fatalf("evaluate: %v", err)
+			}
+			hits := 0
+			var sample string
+			for _, f := range findings {
+				if f.Code == "ISSUE-309" {
+					hits++
+					sample = f.Message
+				}
+			}
+			if hits != tc.wantHits {
+				t.Fatalf("expected %d ISSUE-309 findings, got %d", tc.wantHits, hits)
+			}
+			// Defence in depth: the redacted preview must never contain
+			// the raw test value that the collector would have replaced.
+			// (Our fixture preview is already "xoxb***uvwx".)
+			if tc.wantHits > 0 {
+				if !strings.Contains(sample, "xoxb***uvwx") {
+					t.Fatalf("expected message to carry redacted preview, got %q", sample)
+				}
+				if strings.Contains(sample, "1234567890123") {
+					t.Fatalf("message leaked raw secret characters: %q", sample)
+				}
+			}
+		})
+	}
+}

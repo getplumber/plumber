@@ -15,7 +15,13 @@ type ControlEntry struct {
 	DisplayName string
 	ControlName string
 	Skipped     bool
-	Compliance  float64
+	// SkipReason is the human-friendly explanation rendered next to
+	// the "(skipped)" header and in the Status: SKIPPED (…) line. Left
+	// empty for the default "disabled in configuration" case; callers
+	// that flip Skipped for a different reason (e.g. the gitleaks
+	// scan could not complete) set this so the operator sees why.
+	SkipReason string
+	Compliance float64
 }
 
 // GitLabControls returns the catalog of GitLab compliance controls
@@ -177,6 +183,11 @@ func GitHubControls(pc *configuration.PlumberConfig) []ControlEntry {
 		DisplayName: "Pipeline must not execute unverified scripts",
 		ControlName: "pipelineMustNotExecuteUnverifiedScripts",
 		Skipped:     c.PipelineMustNotExecuteUnverifiedScripts == nil || !c.PipelineMustNotExecuteUnverifiedScripts.IsEnabled(),
+	})
+	entries = append(entries, ControlEntry{
+		DisplayName: "Pipeline must not leak secrets in configuration",
+		ControlName: "pipelineMustNotLeakSecretsInConfig",
+		Skipped:     c.PipelineMustNotLeakSecretsInConfig == nil || !c.PipelineMustNotLeakSecretsInConfig.IsEnabled(),
 	})
 	entries = append(entries, ControlEntry{
 		DisplayName: "Reusable workflows must not inherit secrets",

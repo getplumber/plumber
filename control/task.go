@@ -85,7 +85,7 @@ func runRegoEngine(
 	originData *collector.GitlabPipelineOriginData,
 	imageData *collector.GitlabPipelineImageData,
 	protectionData *collector.GitlabProtectionAnalysisData,
-) []opaengine.Finding {
+) ([]opaengine.Finding, string) {
 	pipeline := collector.ToNormalizedPipeline(
 		conf.ProjectPath,
 		project.DefaultBranch,
@@ -94,7 +94,16 @@ func runRegoEngine(
 		imageData,
 		protectionData,
 	)
-	return evaluatePolicies(l, conf, "gitlab", pipeline)
+	// Optional gitleaks enrichment for pipelineMustNotLeakSecretsInConfig
+	// (ISSUE-309). The scanner abstains silently when the control is
+	// disabled or gitleaks is not installed; failures are logged at
+	// warn level and never fail the run. The second return carries the
+	// abstain reason (if any) so the caller can mark the control SKIPPED
+	// instead of letting the empty-hits default render as 100% green.
+	if err := collector.ScanGitleaksForGitlab(l, conf, originData, pipeline); err != nil {
+		l.WithError(err).Warn("gitleaks scan failed; ISSUE-309 will not fire")
+	}
+	return evaluatePolicies(l, conf, "gitlab", pipeline), pipeline.GitleaksAbstainReason
 }
 
 // evaluatePolicies loads the embedded Rego policies and evaluates them
@@ -158,6 +167,16 @@ func buildEngineConfig(controls *configuration.ControlsConfig) map[string]any {
 	if c := controls.PipelineMustNotEnableDebugTrace; c != nil && len(c.ForbiddenVariables) > 0 {
 		cfg["debugTrace"] = map[string]any{
 			"forbiddenVariables": c.ForbiddenVariables,
+		}
+	}
+
+	// pipelineMustNotLeakSecretsInConfig: the rego rule only needs to
+	// know the control is enabled (it gates on input.config presence);
+	// the actual detection lives in the collector and the hits are on
+	// pipeline.GitleaksHits.
+	if c := controls.PipelineMustNotLeakSecretsInConfig; c != nil && c.IsEnabled() {
+		cfg["pipelineMustNotLeakSecretsInConfig"] = map[string]any{
+			"enabled": true,
 		}
 	}
 
@@ -486,8 +505,7 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	// Rego/OPA rule engine evaluation — the single authoritative
 	// compliance path (the legacy Go controls were retired in
 	// docs/REFACTOR_MULTI_PROVIDER.md §8 Phase A).
-	result.Findings = runRegoEngine(l, conf, project, pipelineOriginData, pipelineImageData, protectionData)
-	result.Findings = append(result.Findings, runSecretDetection(l, conf, pipelineOriginData)...)
+	result.Findings, result.GitleaksAbstainReason = runRegoEngine(l, conf, project, pipelineOriginData, pipelineImageData, protectionData)
 	result.ProtectionData = protectionData
 
 	reportProgress(conf, analysisStepCount, analysisStepCount, "Analysis complete")
