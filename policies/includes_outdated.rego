@@ -16,6 +16,7 @@ deny contains finding if {
 	inc.ref != inc.current
 	not _ref_is_forbidden_version(inc.ref)
 	_is_semver_like(inc.ref)
+	not _ref_is_partial_semver_prefix(inc.ref, inc.current)
 	finding := {
 		"code":                  "ISSUE-403",
 		"severity":              "medium",
@@ -52,3 +53,20 @@ _ref_is_forbidden_version(ref) if {
 # component, optional minor/patch parts, and an optional pre-release
 # or build suffix.
 _is_semver_like(ref) if regex.match(`^v?\d+(\.\d+)*([-+].*)?$`, ref)
+
+# A partial semver ref (major-only "@1" or major.minor "@1.2") tracks
+# the latest release within that prefix in GitLab component semantics.
+# "@1" is always up to date when the latest is "1.x.y", so comparing it
+# to "1.2.4" would be a false positive. Strip the optional leading "v",
+# split on ".", and check that every segment of ref matches the
+# corresponding segment of current while current has more segments.
+_ref_is_partial_semver_prefix(ref, current) if {
+	ref_norm := regex.replace(ref, `^v`, "")
+	current_norm := regex.replace(current, `^v`, "")
+	ref_parts := split(ref_norm, ".")
+	current_parts := split(current_norm, ".")
+	count(ref_parts) < count(current_parts)
+	every i, part in ref_parts {
+		part == current_parts[i]
+	}
+}

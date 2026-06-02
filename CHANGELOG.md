@@ -1,3 +1,36 @@
+## [0.3.33](https://github.com/getplumber/plumber/compare/v0.3.32...v0.3.33) (2026-06-02)
+
+
+### ✨ Features
+
+* **controls:** ship pull-request-target-with-head-checkout (ISSUE-804) ([54e1162](https://github.com/getplumber/plumber/commit/54e11626c4bf5240d67ed4ef91a22629076ec016)), closes [#181](https://github.com/getplumber/plumber/issues/181)
+
+
+### 🐛 Bug Fixes
+
+* **controls:** Prevent duplicaiton with existing 802 issue for workflow ([a4a19a1](https://github.com/getplumber/plumber/commit/a4a19a1a3ff319999d7ae258f57fc35f73ff1c0f))
+
+## [0.3.32](https://github.com/getplumber/plumber/compare/v0.3.31...v0.3.32) (2026-06-02)
+
+## [0.3.31](https://github.com/getplumber/plumber/compare/v0.3.30...v0.3.31) (2026-06-02)
+
+## [0.3.30](https://github.com/getplumber/plumber/compare/v0.3.29...v0.3.30) (2026-06-02)
+
+## [0.3.29](https://github.com/getplumber/plumber/compare/v0.3.28...v0.3.29) (2026-06-01)
+
+
+### 🐛 Bug Fixes
+
+* **collector:** fold Docker Hub registry-host aliases to docker.io ([9df2679](https://github.com/getplumber/plumber/commit/9df26799f81349dfdce00dc5582f98b6063e2b87))
+
+## [0.3.28](https://github.com/getplumber/plumber/compare/v0.3.27...v0.3.28) (2026-06-01)
+
+
+### 🐛 Bug Fixes
+
+* **controls:** scope ISSUE-411 trustedUrls to the curl/wget fetch target ([3541e75](https://github.com/getplumber/plumber/commit/3541e75507e0c9803b11b31b2417b20d9594234d)), closes [#214](https://github.com/getplumber/plumber/issues/214)
+* **controls:** trustedUrls bare-hostname matching and partial semver false positives ([a7975cd](https://github.com/getplumber/plumber/commit/a7975cd7986fa28a0743ed6d8f2d3635b15f6cd0))
+
 ## [0.3.27](https://github.com/getplumber/plumber/compare/v0.3.26...v0.3.27) (2026-05-26)
 
 

@@ -429,7 +429,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
-      - uses: getplumber/plumber@5ffae3c0c0968875259829e80992863963b3c2d4   # v0.3.27
+      - uses: getplumber/plumber@3043d07fe0ad261fbd9f2e2491a69d7cadecb5c8   # v0.3.32
         with:
           threshold: 80
 ```
@@ -439,7 +439,7 @@ jobs:
 Scan a repo **without checking it out** (security-team audit) by setting `project`:
 
 ```yaml
-      - uses: getplumber/plumber@5ffae3c0c0968875259829e80992863963b3c2d4   # v0.3.27
+      - uses: getplumber/plumber@3043d07fe0ad261fbd9f2e2491a69d7cadecb5c8   # v0.3.32
         with:
           project: some-org/some-repo
           github-token: ${{ secrets.AUDIT_TOKEN }}   # needs repo / Administration:read
@@ -450,7 +450,7 @@ Scan a repo **without checking it out** (security-team audit) by setting `projec
 
 | Input | Default | Description |
 |-------|---------|-------------|
-| `version` | `v0.3.27` | Plumber release to install. Defaults to a pinned tag; bump explicitly when upgrading. |
+| `version` | `v0.3.33` | Plumber release to install. Defaults to a pinned tag; bump explicitly when upgrading. |
 | `verify-attestation` | `true` | Verify the downloaded binary's build-provenance attestation (sigstore/SLSA) against the getplumber/plumber release workflow via the `gh` CLI. Anchors the binary to a trusted build regardless of the mutable release tag. Set `false` for air-gapped / GHES setups without attestation access. |
 | `github-token` | `${{ github.token }}` | API token (branch protection, advisory DB) and SARIF upload. `Administration:read` for full `branchMustBeProtected`. |
 | `project` | *(checkout)* | `owner/repo` to scan remotely. Default: scan the checked-out repo. |
@@ -1179,9 +1179,9 @@ Issue code: ISSUE-207.
 <details>
 <summary><b>8. Workflow must not use dangerous triggers</b></summary>
 
-Flags GitHub Actions trigger events that grant access to the **base** repository's secrets while being influenceable by an unprivileged caller. Combined with any user-content checkout, this becomes a direct exfiltration path (`pull_request_target` + `actions/checkout@... { ref: github.event.pull_request.head.sha }` is the textbook pattern). Use the standard `pull_request` trigger unless secrets are genuinely required.
+Flags GitHub Actions trigger events that grant access to the **base** repository's secrets while being influenceable by an unprivileged caller — combined with any user-content checkout, the trigger becomes a direct exfiltration path. The rule fires only on the exploitable combination (trigger + checkout of fork-controlled `ref:`) and abstains when a job-level `if:` restricts execution to same-repository pull requests.
 
-Detected events: `pull_request_target`, `workflow_run`, `issue_comment`, `pull_request_review`, `pull_request_review_comment`, `discussion_comment`, `discussion`, `gollum`, `fork`.
+Detected events: `workflow_run`, `issue_comment`, `pull_request_review`, `pull_request_review_comment`, `discussion_comment`, `discussion`, `gollum`, `fork`. The `pull_request_target` case is owned by `pullRequestTargetMustNotCheckoutHead` (ISSUE-804) below — same exploit class, dedicated rule.
 
 ```yaml
 github:
@@ -1191,6 +1191,22 @@ github:
 ```
 
 Issue code: ISSUE-802.
+
+</details>
+
+<details>
+<summary><b>8b. pull_request_target workflows must not check out the PR head</b></summary>
+
+Flags the precise vector behind the March 2025 tj-actions/changed-files compromise (CVE-2025-30066): a workflow triggered by `pull_request_target` that calls `actions/checkout` with a `ref:` pointing at the PR head (`github.event.pull_request.head.sha`, `github.head_ref`, `head.ref`). Base-repo secrets and fork-controlled code in the same run. The rule abstains when the job carries a same-repository `if:` guard.
+
+```yaml
+github:
+  controls:
+    pullRequestTargetMustNotCheckoutHead:
+      enabled: true
+```
+
+Issue code: ISSUE-804.
 
 </details>
 
@@ -1355,7 +1371,7 @@ github:
       trustedUrls: []
 ```
 
-`trustedUrls` is host-precise: `https://example.com/*` exempts `example.com/install.sh` but NOT `evil.example.com/install.sh`. Issue code: ISSUE-411 (shared with the GitLab side).
+`trustedUrls` is host-precise: `https://example.com/*` exempts `example.com/install.sh` but NOT `evil.example.com/install.sh`. Patterns can be written with or without a scheme: `firebase.tools`, `firebase.tools/*`, and `https://firebase.tools` all match a `curl -sL firebase.tools | bash`. Trust is scoped to the `curl`/`wget` fetch target on the line, so a mention of a trusted host inside an `echo` string, a `#` comment, or a different line of the same `run:` block cannot grant trust to a curl that fetches an untrusted host. Issue code: ISSUE-411 (shared with the GitLab side).
 
 </details>
 
@@ -1452,6 +1468,7 @@ Controls not selected are reported as **skipped** in the output. The `--controls
 | `workflowMustIncludeRequiredActions` | GitHub-only |
 | `workflowMustNotGrantPermissionsWriteAll` | GitHub-only |
 | `workflowMustNotInjectUserInputInScripts` | GitHub-only |
+| `pullRequestTargetMustNotCheckoutHead` | GitHub-only |
 | `workflowMustNotUseDangerousTriggers` | GitHub-only |
 | `workflowsMustDeclarePermissions` | GitHub-only |
 

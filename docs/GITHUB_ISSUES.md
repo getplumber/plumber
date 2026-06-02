@@ -1206,12 +1206,17 @@ into `evil.example.com/...`.
 **Severity:** `critical` • **Control:** `workflowMustNotUseDangerousTriggers`
 
 A job runs under a trigger that combines attacker-controlled input with
-the base repository's secrets — `pull_request_target`, `workflow_run`,
-`issue_comment`, `pull_request_review`, `pull_request_review_comment`,
-`discussion`, `discussion_comment`, `gollum`, `fork` — **and checks out
-fork-controlled code** (an `actions/checkout` whose `ref:` is the PR or
-workflow_run head). Untrusted code then executes with the base repo's
-secrets and token — the March 2025 tj-actions compromise (CVE-2025-30066).
+the base repository's secrets — `workflow_run`, `issue_comment`,
+`pull_request_review`, `pull_request_review_comment`, `discussion`,
+`discussion_comment`, `gollum`, `fork` — **and checks out fork-controlled
+code** (an `actions/checkout` whose `ref:` is the PR or workflow_run
+head). Untrusted code then executes with the base repo's secrets and
+token — the same exploit class as the March 2025 tj-actions compromise
+(CVE-2025-30066).
+
+The `pull_request_target` case is covered by [ISSUE-804](#issue-804--pull-request-target-with-head-checkout)
+(`pullRequestTargetMustNotCheckoutHead`) — same exploit class, dedicated
+rule, no double-firing.
 
 Subscribing to such a trigger is **not** flagged on its own: metadata
 jobs — labelling, milestones, comments, notifications — legitimately
@@ -1220,17 +1225,18 @@ only on the exploitable combination, and abstains when a job-level `if:`
 restricts execution to same-repository pull requests.
 
 ```yaml
-# ❌ before — pull_request_target checks out the PR head
+# ❌ before — workflow_run checks out the PR head from a chained workflow
 on:
-  pull_request_target:
-    types: [opened, synchronize]
+  workflow_run:
+    workflows: ["lint"]
+    types: [completed]
 jobs:
   preview:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.workflow_run.head_sha }}
       - run: npm install && npm test
 ```
 
@@ -1238,17 +1244,17 @@ jobs:
 # ✅ after — same-repository guard: fork code never runs
 jobs:
   preview:
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.workflow_run.head_sha }}
       - run: npm install && npm test
 ```
 
-Alternative: run fork code under a plain `pull_request` trigger (no
-base-repo secrets), or drop the head checkout entirely.
+Alternative: drop the head checkout entirely and let the job operate
+only on the base repo's content.
 
 ---
 
@@ -1289,6 +1295,12 @@ jobs:
       - uses: actions/checkout@v4     # base repo, no ref: override
       - run: gh pr edit --add-label auto-preview
 ```
+
+A job-level `if:` that restricts the job to same-repository pull
+requests — `github.event.pull_request.head.repo.full_name ==
+github.repository`, or a `head.repo.fork` check — is recognised as a
+valid mitigation: fork-controlled code never runs, so a job carrying
+such a guard is not flagged.
 
 ---
 

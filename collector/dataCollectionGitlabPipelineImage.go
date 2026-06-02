@@ -17,6 +17,46 @@ const (
 	unknownRegistry = "unknown"
 )
 
+// dockerHubRegistryAliases are alternative hostnames that all resolve to
+// Docker Hub. Pipeline authors may write any of them, but the
+// image_authorized_sources policy does a literal glob match and performs no
+// host canonicalisation — so we fold them to the canonical dockerHubDomain
+// here, at parse time, so trustedUrls patterns written against docker.io/*
+// match regardless of which Hub hostname was used.
+var dockerHubRegistryAliases = map[string]string{
+	"index.docker.io":         dockerHubDomain,
+	"registry-1.docker.io":    dockerHubDomain,
+	"registry.hub.docker.com": dockerHubDomain,
+}
+
+// canonicalizeDockerHubRegistry maps any known Docker Hub registry-host alias
+// to the canonical "docker.io". Non-Hub hosts (and "", "unknown") pass through
+// unchanged.
+func canonicalizeDockerHubRegistry(host string) string {
+	if canon, ok := dockerHubRegistryAliases[host]; ok {
+		return canon
+	}
+	return host
+}
+
+// foldDockerHubAliasInName rewrites the leading registry-host segment of an
+// image name when that segment is a Docker Hub alias. GitHub Actions image
+// references are parsed without splitting out the registry (the host stays in
+// Name), so this operates on the name string rather than a separate registry
+// field. Names without a leading host segment (e.g. bare "alpine") are
+// returned unchanged.
+func foldDockerHubAliasInName(name string) string {
+	slash := strings.Index(name, "/")
+	if slash <= 0 {
+		return name
+	}
+	host := name[:slash]
+	if canon, ok := dockerHubRegistryAliases[host]; ok {
+		return canon + name[slash:]
+	}
+	return name
+}
+
 ////////////////////////////
 // DataCollection results //
 ////////////////////////////
@@ -560,7 +600,17 @@ func (i *GitlabPipelineImageInfo) handlePresenceOfVariables() {
 	i.Tag = ""
 }
 
+// parseImageLink parses the raw image reference into Registry/Name/Tag and
+// then folds any Docker Hub registry-host alias to the canonical docker.io.
+// Normalising once here (rather than at each of the ~19 registry-assignment
+// sites in parseImageReference/handlePresenceOfVariables) keeps the behaviour
+// consistent across every code path.
 func (i *GitlabPipelineImageInfo) parseImageLink(l *logrus.Entry) {
+	i.parseImageReference(l)
+	i.Registry = canonicalizeDockerHubRegistry(i.Registry)
+}
+
+func (i *GitlabPipelineImageInfo) parseImageReference(l *logrus.Entry) {
 	originalLink := i.Link
 
 	// Check if it contains any unresolved variables

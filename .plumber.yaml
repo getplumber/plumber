@@ -681,6 +681,17 @@ github:
       enabled: true
 
     # ===========================================
+    # pull_request_target must not check out PR head
+    # ===========================================
+    # Flags a workflow triggered by `pull_request_target` that checks
+    # out the pull-request head (github.event.pull_request.head.sha or
+    # github.head_ref). Base-repo secrets and fork-controlled code then
+    # run together, which is the tj-actions / CVE-2025-30066 vector.
+    # Keep fork code under a plain `pull_request` trigger instead.
+    pullRequestTargetMustNotCheckoutHead:
+      enabled: true
+
+    # ===========================================
     # Workflows must declare permissions
     # ===========================================
     # Workflows without an explicit `permissions:` block fall back to

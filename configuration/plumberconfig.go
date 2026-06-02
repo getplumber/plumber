@@ -66,6 +66,9 @@ var validControlSchema = map[string][]string{
 	"workflowMustNotUseDangerousTriggers": {
 		"enabled",
 	},
+	"pullRequestTargetMustNotCheckoutHead": {
+		"enabled",
+	},
 	"workflowsMustDeclarePermissions": {
 		"enabled",
 	},
@@ -242,6 +245,13 @@ type ControlsConfig struct {
 	// WorkflowMustNotUseDangerousTriggers control configuration (GitHub Actions only).
 	// Config-free; toggle via `enabled`.
 	WorkflowMustNotUseDangerousTriggers *EnabledOnlyControlConfig `yaml:"workflowMustNotUseDangerousTriggers,omitempty"`
+
+	// PullRequestTargetMustNotCheckoutHead control configuration (GitHub
+	// Actions only). Flags a workflow triggered by `pull_request_target`
+	// that checks out the PR head ref, putting base-repo secrets and
+	// fork-controlled code in the same run (tj-actions / CVE-2025-30066).
+	// Config-free; toggle via `enabled`.
+	PullRequestTargetMustNotCheckoutHead *EnabledOnlyControlConfig `yaml:"pullRequestTargetMustNotCheckoutHead,omitempty"`
 
 	// WorkflowsMustDeclarePermissions control configuration (GitHub Actions only).
 	// Config-free; toggle via `enabled`.

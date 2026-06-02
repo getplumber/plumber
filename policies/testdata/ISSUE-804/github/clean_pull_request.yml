@@ -1,0 +1,15 @@
+# Plain pull_request trigger — the workflow has no access to
+# base-repo secrets, so checking out the PR head is the normal, safe
+# pattern. ISSUE-804 is pull_request_target-specific. Expected: 0
+# findings.
+name: PR Build
+on: [pull_request]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - run: npm install && npm test

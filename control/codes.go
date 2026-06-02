@@ -123,7 +123,9 @@ const (
 	CodeDockerInDockerUsage ErrorCode = "ISSUE-412"
 	// ISSUE-413: CI/CD job uses Docker-in-Docker with insecure daemon configuration
 	CodeDockerInDockerInsecure ErrorCode = "ISSUE-413"
-	// ISSUE-802: Workflow subscribes to a dangerous trigger (pull_request_target, workflow_run)
+	// ISSUE-802: Job reaches a dangerous trigger (workflow_run, issue_comment,
+	// pull_request_review*, discussion*, gollum, fork) AND checks out fork
+	// content. pull_request_target is owned by ISSUE-804.
 	CodeDangerousTriggers ErrorCode = "ISSUE-802"
 	// ISSUE-804: pull_request_target workflow explicitly checks out the PR head (tj-actions pattern)
 	CodePullRequestTargetWithHeadCheckout ErrorCode = "ISSUE-804"
@@ -629,8 +631,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Code:        CodeDangerousTriggers,
 		Severity:    SeverityCritical,
 		Title:       "Dangerous workflow trigger",
-		Description: "A GitHub Actions job is reachable via a trigger that runs with the base repository's secrets while being influenceable by an unprivileged caller (`pull_request_target`, `workflow_run`). Combined with any form of user-content checkout or template injection this becomes a direct secret-exfiltration path — the pattern behind the March 2025 tj-actions/changed-files supply-chain compromise (CVE-2025-30066).",
-		Remediation: "Prefer the standard `pull_request` trigger unless access to base-repo secrets is strictly required. If `pull_request_target` is necessary, never check out fork content and never render github.event.* / github.head_ref into shell commands. For `workflow_run`, keep the job restricted to non-secret-bearing steps.",
+		Description: "A GitHub Actions job is reachable via a trigger that runs with the base repository's secrets while being influenceable by an unprivileged caller (`workflow_run`, `issue_comment`, `pull_request_review`, `pull_request_review_comment`, `discussion`, `discussion_comment`, `gollum`, `fork`) AND it checks out fork-controlled code. The `pull_request_target` case is owned by ISSUE-804 (pull-request-target-with-head-checkout). This is the same exploit class as the March 2025 tj-actions/changed-files supply-chain compromise (CVE-2025-30066).",
+		Remediation: "Prefer the standard `pull_request` trigger unless access to base-repo secrets is strictly required. If a secret-bearing trigger is necessary, never check out fork content and never render github.event.* / github.head_ref into shell commands. For `workflow_run`, keep the job restricted to non-secret-bearing steps.",
 		DocURL:      docsBaseURL + string(CodeDangerousTriggers),
 		ControlName: "workflowMustNotUseDangerousTriggers",
 	},

