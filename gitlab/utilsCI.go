@@ -232,12 +232,28 @@ func GetFullGitlabCI(project *ProjectInfo, ref, token, url string, conf *configu
 	return &gitlabConf, &mergedConf, &mergedResponse, confStr, mergedResponse.CiConfig.MergedYaml, nil
 }
 
-// unmarshalMultiDocGitlabCI decodes all YAML documents in data and merges them
-// into a single GitlabCIConf. This handles CI component template files that
-// start with a `spec:` block in the first document and define jobs after a
-// `---` separator in subsequent documents. With a plain yaml.Unmarshal only
-// the first document would be read, causing jobs in later documents to be
-// invisible to the hardcoded-job detector in the collector.
+// unmarshalMultiDocGitlabCI decodes all YAML documents in data and merges
+// them into a single GitlabCIConf. This handles CI component template files
+// that start with a `spec:` block in the first document and define jobs
+// after a `---` separator in subsequent documents. With a plain
+// yaml.Unmarshal only the first document would be read, causing jobs and
+// any top-level settings in later documents to be invisible to the
+// hardcoded-job detector and other downstream consumers.
+//
+// Merge contract:
+//   - GitlabJobs is the union across every document (a job defined in any
+//     document is visible to the detector). Later documents win on key
+//     collisions, mirroring how a user would expect a later override.
+//   - Every other GitlabCIConf field uses first-doc-wins: the first
+//     document that sets the field is the authoritative value, mirroring
+//     the typical `spec:` (doc 1) + real config (doc 2+) layout. Default
+//     is treated structurally — Default.Image is the only sub-field and
+//     is checked individually.
+//
+// All exported fields of GitlabCIConf are handled. When a field is added
+// to GitlabCIConf, extend the merge logic here too — the
+// TestUnmarshalMultiDocGitlabCI_AllFieldsCovered test fails fast if a
+// new field lands without a merge branch.
 func unmarshalMultiDocGitlabCI(data []byte) (GitlabCIConf, error) {
 	result := GitlabCIConf{}
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
@@ -250,8 +266,7 @@ func unmarshalMultiDocGitlabCI(data []byte) (GitlabCIConf, error) {
 		if err != nil {
 			return result, err
 		}
-		// Merge jobs from every document so that jobs defined after a `spec:`
-		// block are visible to the hardcoded-job detector.
+		// Jobs: union across documents.
 		if doc.GitlabJobs != nil {
 			if result.GitlabJobs == nil {
 				result.GitlabJobs = make(map[string]interface{})
@@ -260,7 +275,7 @@ func unmarshalMultiDocGitlabCI(data []byte) (GitlabCIConf, error) {
 				result.GitlabJobs[k] = v
 			}
 		}
-		// Take top-level fields from the first non-empty document that sets them.
+		// Everything else: first-doc-wins.
 		if result.Spec == nil && doc.Spec != nil {
 			result.Spec = doc.Spec
 		}
@@ -275,6 +290,38 @@ func unmarshalMultiDocGitlabCI(data []byte) (GitlabCIConf, error) {
 		}
 		if result.Workflow == nil && doc.Workflow != nil {
 			result.Workflow = doc.Workflow
+		}
+		if result.Image == nil && doc.Image != nil {
+			result.Image = doc.Image
+		}
+		if result.BeforeScript == nil && doc.BeforeScript != nil {
+			result.BeforeScript = doc.BeforeScript
+		}
+		if result.AfterScript == nil && doc.AfterScript != nil {
+			result.AfterScript = doc.AfterScript
+		}
+		if result.DefaultScript == nil && doc.DefaultScript != nil {
+			result.DefaultScript = doc.DefaultScript
+		}
+		if result.Cache == nil && doc.Cache != nil {
+			result.Cache = doc.Cache
+		}
+		// CIConfDefault is a struct (not interface{}). Its only field is
+		// Image, so the zero-value test is whether that nested field is
+		// still unset. Do NOT switch this to `result.Default ==
+		// CIConfDefault{}`: Image is an interface that can hold a map
+		// (image: {name:, entrypoint:}), and struct == on an interface
+		// holding a map panics at runtime.
+		//
+		// LIMITATION: this is sub-field-blind. The merge decision keys on
+		// Image alone, and TestUnmarshalMultiDocGitlabCI_AllFieldsCovered
+		// only checks that the top-level Default field is non-zero. When
+		// CIConfDefault grows to match GitLab's full `default:` block
+		// (services, cache, before_script, tags, retry, …), a doc that
+		// sets those but not Image would be dropped, and the tripwire
+		// would NOT catch it. Revisit both this branch and the test then.
+		if result.Default.Image == nil && doc.Default.Image != nil {
+			result.Default = doc.Default
 		}
 	}
 	return result, nil

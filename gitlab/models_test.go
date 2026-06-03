@@ -238,3 +238,131 @@ func jobKeys(m map[string]interface{}) []string {
 	}
 	return keys
 }
+
+// specSeparatedFullCI exercises every exported field of GitlabCIConf in a
+// multi-document layout. The first document carries `spec:` and a handful of
+// scalar settings; the second document carries the actual jobs plus a couple
+// of fields that legitimately belong in the user-authored half (so we can
+// confirm first-doc-wins keeps them out of the result when the first doc
+// already set them, and pick them up when the first doc did not).
+const specSeparatedFullCI = `
+spec:
+  inputs:
+    gitlab_token:
+      default: $GITLAB_TOKEN
+
+image: registry.gitlab.com/getplumber/plumber:latest
+stages:
+  - .pre
+  - build
+variables:
+  GLOBAL_A: doc1
+default:
+  image: docker.io/library/alpine:3.19
+workflow:
+  rules:
+    - if: $CI_PIPELINE_SOURCE
+before_script:
+  - echo "doc1 before"
+after_script:
+  - echo "doc1 after"
+script:
+  - echo "doc1 default-script"
+cache:
+  paths:
+    - .cache/
+
+---
+
+include:
+  - local: /jobs.yml
+plumber:
+  stage: .pre
+  script:
+    - /plumber analyze
+build:
+  stage: build
+  script:
+    - make build
+# These keys are repeated in doc2 with different values to assert the
+# first-doc-wins merge: doc1 values must survive.
+image: docker.io/library/python:3.12
+variables:
+  GLOBAL_A: doc2-overwrite
+  GLOBAL_B: doc2-add
+`
+
+// TestUnmarshalMultiDocGitlabCI_AllFieldsCovered asserts that every exported
+// field of GitlabCIConf participates in the multi-doc merge — both that it
+// lands when set, and that the merge contract documented on
+// unmarshalMultiDocGitlabCI (first-doc-wins for scalars, union for
+// GitlabJobs) actually holds. Acts as a tripwire: when a new field is
+// added to GitlabCIConf without a corresponding merge branch, this test
+// fails with a precise "field X is zero after merge" message, instead of
+// the silent drop bug we are fixing.
+func TestUnmarshalMultiDocGitlabCI_AllFieldsCovered(t *testing.T) {
+	conf, err := unmarshalMultiDocGitlabCI([]byte(specSeparatedFullCI))
+	if err != nil {
+		t.Fatalf("unmarshalMultiDocGitlabCI: %v", err)
+	}
+
+	// Every doc1 scalar must survive (first-doc-wins).
+	if conf.Spec == nil {
+		t.Error("Spec: lost across merge")
+	}
+	if conf.Image == nil {
+		t.Error("Image: doc1 value dropped (was the silent-drop bug)")
+	}
+	if !reflect.DeepEqual(conf.Stages, []string{".pre", "build"}) {
+		t.Errorf("Stages: doc1 value not preserved, got %v", conf.Stages)
+	}
+	if v, ok := conf.GlobalVariables["GLOBAL_A"].(string); !ok || v != "doc1" {
+		t.Errorf("GlobalVariables[GLOBAL_A]: expected doc1 (first-wins), got %v", conf.GlobalVariables["GLOBAL_A"])
+	}
+	if conf.Default.Image == nil {
+		t.Error("Default.Image: doc1 value dropped")
+	}
+	if conf.Workflow == nil {
+		t.Error("Workflow: doc1 value dropped")
+	}
+	if conf.BeforeScript == nil {
+		t.Error("BeforeScript: doc1 value dropped (was the silent-drop bug)")
+	}
+	if conf.AfterScript == nil {
+		t.Error("AfterScript: doc1 value dropped (was the silent-drop bug)")
+	}
+	if conf.DefaultScript == nil {
+		t.Error("DefaultScript: doc1 value dropped (was the silent-drop bug)")
+	}
+	if conf.Cache == nil {
+		t.Error("Cache: doc1 value dropped (was the silent-drop bug)")
+	}
+
+	// Doc2-only scalar (`include:`) must land via first-doc-wins.
+	if len(conf.Include) == 0 {
+		t.Error("Include: doc2 value not adopted")
+	}
+
+	// Jobs from doc2 must be visible.
+	if _, ok := conf.GitlabJobs["plumber"]; !ok {
+		t.Errorf("GitlabJobs missing 'plumber' from doc2, got keys: %v", jobKeys(conf.GitlabJobs))
+	}
+	if _, ok := conf.GitlabJobs["build"]; !ok {
+		t.Errorf("GitlabJobs missing 'build' from doc2, got keys: %v", jobKeys(conf.GitlabJobs))
+	}
+
+	// Reflection guard: every exported field on GitlabCIConf must be
+	// non-zero in the merged result. If anyone adds a new field to
+	// GitlabCIConf without a merge branch in unmarshalMultiDocGitlabCI,
+	// they need to also extend the fixture above so this check passes.
+	// Failing here is the explicit "you added a field, now wire the
+	// merge" signal.
+	v := reflect.ValueOf(conf)
+	for i := 0; i < v.NumField(); i++ {
+		f := v.Field(i)
+		name := v.Type().Field(i).Name
+		if f.IsZero() {
+			t.Errorf("GitlabCIConf.%s is zero after merge — field added without a merge branch in unmarshalMultiDocGitlabCI, or fixture specSeparatedFullCI missing this key", name)
+		}
+	}
+}
