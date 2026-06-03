@@ -76,7 +76,7 @@ jobs:
         run: cp .plumber.yaml internal/defaultconfig/default.yaml
 
       - name: golangci-lint
-        uses: golangci/golangci-lint-action@1e7e51e771db61008b38414a730f564565cf7c20 # v9.2.0
+        uses: golangci/golangci-lint-action@82606bf257cbaff209d206a39f5134f0cfbfd2ee # v9.2.1
         with:
           version: v2.10
 
@@ -96,6 +96,12 @@ jobs:
         run: cp .plumber.yaml internal/defaultconfig/default.yaml
 
       - name: Install and run govulncheck
+        # setup-go pins GOTOOLCHAIN=local, which makes `go` ignore the
+        # `toolchain` directive in go.mod. Override to auto so the pinned
+        # patched toolchain (go.mod) is downloaded/used and stdlib advisories
+        # fixed in that release are picked up.
+        env:
+          GOTOOLCHAIN: auto
         run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 
   grype:

@@ -1,0 +1,7 @@
+# clean: curl with a bare-hostname URL in trustedUrls must not fire ISSUE-411.
+# Regression for: trustedUrls only matched https?:// URLs; bare hostnames like
+# `curl -sL firebase.tools | bash` were incorrectly reported.
+install:
+  image: alpine:3.19
+  script:
+    - curl -sL firebase.tools | bash

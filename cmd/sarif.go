@@ -146,7 +146,7 @@ func sarifSecuritySeverity(sev string) string {
 // are enabled and which is always committed for a run to happen. When
 // fallbackURI is itself empty the result is emitted location-less (still
 // valid SARIF; only Code Scanning is that strict).
-func buildSARIF(findings []opaengine.Finding, fallbackURI string) sarifLog {
+func buildSARIF(findings []opaengine.Finding, fallbackURI, provider string) sarifLog {
 	rulesByID := map[string]sarifRule{}
 	results := make([]sarifResult, 0, len(findings))
 
@@ -174,10 +174,12 @@ func buildSARIF(findings []opaengine.Finding, fallbackURI string) sarifLog {
 				Properties:           map[string]any{"security-severity": sarifSecuritySeverity(severity)},
 			}
 			if info != nil {
-				rule.Name = info.Title
-				rule.ShortDescription = sarifText{Text: info.Title}
-				if info.Description != "" {
-					rule.FullDescription = &sarifText{Text: info.Description}
+				title := info.TitleFor(provider)
+				description := info.DescriptionFor(provider)
+				rule.Name = title
+				rule.ShortDescription = sarifText{Text: title}
+				if description != "" {
+					rule.FullDescription = &sarifText{Text: description}
 				}
 				if info.Remediation != "" {
 					rule.Help = &sarifText{Text: info.Remediation}
@@ -245,14 +247,15 @@ func buildSARIF(findings []opaengine.Finding, fallbackURI string) sarifLog {
 // writeSARIFToFile renders the analysis findings as SARIF 2.1.0 and writes
 // them to filePath. A clean run produces a valid empty-results document so
 // downstream Code Scanning clears any previously-reported alerts.
-func writeSARIFToFile(result *control.AnalysisResult, filePath string) error {
+func writeSARIFToFile(result *control.AnalysisResult, filePath, provider string) error {
 	// Anchor repo-level (file-less) findings to the effective config file so
 	// every result has a location that resolves to a committed file, which
 	// GitHub Code Scanning requires. configFile is the resolved --config path
 	// the run used (its own --config flag, default .plumber.yaml); it is
 	// always set and the file exists, since LoadPlumberConfig errors earlier
-	// otherwise.
-	data, err := json.MarshalIndent(buildSARIF(result.Findings, reportFilePath(configFile)), "", "  ")
+	// otherwise. provider routes per-provider Title/Description overrides
+	// from the codes registry into the rendered SARIF document.
+	data, err := json.MarshalIndent(buildSARIF(result.Findings, reportFilePath(configFile), provider), "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal sarif: %w", err)
 	}

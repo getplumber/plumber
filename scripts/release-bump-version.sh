@@ -15,8 +15,12 @@ v="v${ver}"
 sed -i.bak -E 's/^([[:space:]]*default: ")v[0-9]+\.[0-9]+\.[0-9]+(")/\1'"$v"'\2/' action.yml
 sed -i.bak -E 's/(release tag to install \(e\.g\. )v[0-9]+\.[0-9]+\.[0-9]+(\))/\1'"$v"'\2/' action.yml
 
-# README: the `version` input-table row in the GitHub Action section.
-sed -i.bak -E 's/(\| `version` \| `)v[0-9]+\.[0-9]+\.[0-9]+(`)/\1'"$v"'\2/' README.md
+# README:
+# - GitLab CI Component example uses `<version>` as a placeholder, with a
+#   link to the GitLab Catalog so users pick the version they want — not
+#   bumped here.
+# - GitHub Action `uses:` line is SHA-pinned and updated by
+#   release-pin-refs.sh after the build, not here.
 
-rm -f action.yml.bak README.md.bak
+rm -f action.yml.bak
 echo "release-bump-version: set version strings to ${v}"

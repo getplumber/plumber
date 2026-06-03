@@ -63,6 +63,15 @@ type AnalysisResult struct {
 	// per-branch protection details without re-running the collector.
 	// Nil on the GitLab path.
 	GitHubPipeline *ir.NormalizedPipeline `json:"-"`
+
+	// GitleaksAbstainReason mirrors the field of the same name on the
+	// normalized pipeline IR — populated on either provider path when
+	// pipelineMustNotLeakSecretsInConfig was enabled but the gitleaks
+	// scan could not run (binary unresolvable, scan failure, missing
+	// workflows dir, …). Read by the analyze renderer to route the
+	// control through the SKIPPED lane with this reason, instead of
+	// the misleading "100% green" the empty-hits default produced.
+	GitleaksAbstainReason string `json:"-"`
 }
 
 // GitHubAnalysisStats holds per-control aggregations computed by

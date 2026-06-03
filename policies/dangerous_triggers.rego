@@ -22,16 +22,17 @@
 # abstains when a job-level `if:` restricts execution to same-
 # repository (non-fork) pull requests.
 #
-# This is the March 2025 tj-actions/changed-files vector
-# (CVE-2025-30066). ISSUE-804 reports the same head-checkout pattern
-# specifically for pull_request_target; this rule generalises it to
-# the whole dangerous-trigger family.
+# This is the same exploit class as the March 2025 tj-actions/changed-files
+# vector (CVE-2025-30066). The pull_request_target case is owned by
+# ISSUE-804 (pull-request-target-with-head-checkout), so it is excluded
+# from the event set below to avoid double-firing on the same job.
+# ISSUE-802 covers the remaining eight trigger families.
 package dangerous_triggers
 
 import rego.v1
 
 dangerous_events := {
-	"pull_request_target",
+	# pull_request_target is intentionally omitted — see ISSUE-804.
 	"workflow_run",
 	"issue_comment",
 	"pull_request_review",

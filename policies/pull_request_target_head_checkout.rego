@@ -9,6 +9,10 @@
 # configuration where base-repo secrets AND fork-controlled code
 # coexist in the same run. The severity is critical and distinct so
 # an operator can prioritise it above the general trigger warning.
+#
+# A job-level `if:` that restricts execution to same-repository
+# (non-fork) pull requests neutralises the exploit — fork-controlled
+# code never runs — so a job carrying such a guard is not flagged.
 package pull_request_target_head_checkout
 
 import rego.v1
@@ -26,6 +30,7 @@ deny contains finding if {
 	some i, j
 	job := input.pipeline.jobs[i]
 	_under_pull_request_target(job)
+	not _has_fork_guard(job)
 	action := job.uses[j]
 	startswith(action.uses, "actions/checkout@")
 	ref := action.with.ref
@@ -48,4 +53,22 @@ _under_pull_request_target(job) if {
 _ref_points_at_pr_head(ref) if {
 	some p in fork_ref_patterns
 	regex.match(p, ref)
+}
+
+# fork_guard_patterns are `if:`-condition fragments that restrict a
+# job to same-repository (non-fork) pull requests. When any of the
+# job's conditions carries one, fork-controlled code never executes
+# under pull_request_target and the exploit does not apply.
+fork_guard_patterns := [
+	`head\.repo\.full_name\s*==\s*github\.repository`,
+	`github\.repository\s*==\s*[^=]*head\.repo\.full_name`,
+	`head\.repo\.fork\s*==\s*false`,
+	`head\.repo\.fork\s*!=\s*true`,
+	`!\s*github\.event\.pull_request\.head\.repo\.fork`,
+]
+
+_has_fork_guard(job) if {
+	some cond in job.conditions
+	some p in fork_guard_patterns
+	regex.match(p, cond)
 }

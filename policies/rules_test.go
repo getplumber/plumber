@@ -415,9 +415,13 @@ func TestIssue414_DangerousTriggers(t *testing.T) {
 		fixture      string
 		expectedHits []string
 	}{
+		// pull_request_target exploits are owned by ISSUE-804
+		// (pull-request-target-with-head-checkout). ISSUE-802 must
+		// stay silent on this fixture to avoid double-firing on the
+		// same job; ISSUE-804's own test asserts the fire.
 		{
 			fixture:      "violation_pull_request_target.yml",
-			expectedHits: []string{"violation_pull_request_target/preview"},
+			expectedHits: nil,
 		},
 		{
 			fixture:      "violation_workflow_run.yml",
@@ -856,6 +860,70 @@ func TestIssue411_UnverifiedScripts(t *testing.T) {
 	}, nil)
 }
 
+// TestIssue411_UnverifiedScripts_TrustedBareHostname is a regression test for
+// the bug where trustedUrls only matched https?:// URLs, so bare-hostname
+// commands like `curl -sL firebase.tools | bash` were never suppressed.
+func TestIssue411_UnverifiedScripts_TrustedBareHostname(t *testing.T) {
+	cfg := map[string]any{
+		"unverifiedScripts": map[string]any{
+			"trustedUrls": []string{"firebase.tools", "firebase.tools/*"},
+		},
+	}
+	runGitLabPolicyCases(t, "ISSUE-411", []policyCase{
+		// Bare hostname in trustedUrls — must not fire.
+		{"clean_trusted_bare_hostname.gitlab-ci.yml", nil},
+		// Untrusted URL still fires even when trustedUrls is set.
+		{"violation_pipe_to_shell.gitlab-ci.yml", []string{"install"}},
+		// Decoy bypass: trusted hostname mentioned in a trailing echo on
+		// the same line as a real curl|bash to an untrusted host must
+		// still fire. Trust scopes to the curl/wget target.
+		{"violation_trusted_hostname_decoy_in_echo.gitlab-ci.yml", []string{"install"}},
+	}, cfg)
+}
+
+// TestIssue411_UnverifiedScripts_TrustedBareHostname_GitHub is the GitHub-side
+// regression for issue #214 (originally filed against GitHub Actions): a
+// schemeless trustedUrls pattern must suppress curl|bash to that host, and
+// must not be defeated by a decoy mention of the trusted host in an echo
+// or `#` comment in the same `run:` block.
+func TestIssue411_UnverifiedScripts_TrustedBareHostname_GitHub(t *testing.T) {
+	cfg := map[string]any{
+		"unverifiedScripts": map[string]any{
+			"trustedUrls": []string{"firebase.tools", "firebase.tools/*"},
+		},
+	}
+	runGitHubFixtureCasesWithConfig(t, "ISSUE-411", []struct {
+		fixture      string
+		expectedHits []string
+	}{
+		// Bare hostname trusted on GitHub: closes #214 on the platform
+		// the bug was filed against.
+		{"clean_trusted_bare_hostname.yml", nil},
+		// Decoy in trailing echo on a different physical line of the
+		// same `run:` block must still fire.
+		{"violation_trusted_hostname_decoy_in_echo.yml", []string{"violation_trusted_hostname_decoy_in_echo/install"}},
+		// Decoy in inline `#` comment on the curl line must still fire.
+		{"violation_trusted_hostname_decoy_in_comment.yml", []string{"violation_trusted_hostname_decoy_in_comment/install"}},
+	}, cfg)
+}
+
+// TestIssue411_UnverifiedScripts_TrustedHttpPrefixedHost is a regression for
+// the over-eager filter that blocked real hostnames whose names start with
+// `http` (httpbin.org, httpie.io, http-server.*) from being trusted.
+func TestIssue411_UnverifiedScripts_TrustedHttpPrefixedHost(t *testing.T) {
+	cfg := map[string]any{
+		"unverifiedScripts": map[string]any{
+			"trustedUrls": []string{"httpbin.org"},
+		},
+	}
+	runGitHubFixtureCasesWithConfig(t, "ISSUE-411", []struct {
+		fixture      string
+		expectedHits []string
+	}{
+		{"clean_trusted_httpbin.yml", nil},
+	}, cfg)
+}
+
 func TestIssue411_UnverifiedScripts_GitHub(t *testing.T) {
 	runGitHubFixtureCases(t, "ISSUE-411", []struct {
 		fixture      string
@@ -906,6 +974,59 @@ func TestIssue403_IncludesOutdated(t *testing.T) {
 	}
 	if hits != 1 {
 		t.Fatalf("expected 1 ISSUE-403 finding, got %d", hits)
+	}
+}
+
+// TestIssue403_IncludesOutdated_PartialSemver is a regression test for the bug
+// where a partial semver ref like "@1" or "@1.2" was incorrectly reported as
+// outdated when the latest version was "1.2.4". In GitLab component semantics,
+// "@1" tracks the latest 1.x.x, so it is never out of date within that major.
+func TestIssue403_IncludesOutdated_PartialSemver(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFS(policies.FS); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+
+	cases := []struct {
+		ref     string
+		current string
+		wantHit bool
+	}{
+		{"1", "1.2.4", false},    // major-only prefix, never outdated
+		{"v1", "v1.2.4", false},  // v-prefixed major-only
+		{"1.2", "1.2.4", false},  // major.minor prefix, never outdated
+		{"1", "2.0.0", true},     // major changed — genuinely outdated
+		{"1.0.0", "1.2.3", true}, // full semver — outdated as before
+		// Numeric-prefix discriminator: a naive strings.HasPrefix would
+		// suppress this because "1.20.4" textually starts with "1.2",
+		// but @1.2 tracks the 1.2.x line which is behind 1.20.x. The
+		// positional split-on-"." compare correctly returns "2" != "20"
+		// and the finding fires.
+		{"1.2", "1.20.4", true},
+	}
+
+	for _, c := range cases {
+		t.Run(fmt.Sprintf("ref=%s/current=%s", c.ref, c.current), func(t *testing.T) {
+			pipeline := &ir.NormalizedPipeline{
+				Provider: ir.ProviderGitLab,
+				Includes: []ir.Include{
+					{Kind: "component", Source: "plumber/base", Ref: c.ref, Current: c.current},
+				},
+			}
+			findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+			if err != nil {
+				t.Fatalf("evaluate: %v", err)
+			}
+			got := false
+			for _, f := range findings {
+				if f.Code == "ISSUE-403" {
+					got = true
+				}
+			}
+			if got != c.wantHit {
+				t.Fatalf("ref=%s current=%s: wantHit=%v got=%v", c.ref, c.current, c.wantHit, got)
+			}
+		})
 	}
 }
 
@@ -2262,7 +2383,7 @@ func TestIssue301_OverprovisionedSecrets(t *testing.T) {
 			if err := os.MkdirAll(wfDir, 0o755); err != nil {
 				t.Fatal(err)
 			}
-			src := filepath.Join("testdata", "ISSUE-301", "github", tc.fixture)
+			src := filepath.Join("testdata", "ISSUE-309", "github", tc.fixture)
 			data, err := os.ReadFile(src)
 			if err != nil {
 				t.Fatalf("read fixture: %v", err)
@@ -2280,7 +2401,7 @@ func TestIssue301_OverprovisionedSecrets(t *testing.T) {
 			}
 			hits := make([]string, 0)
 			for _, f := range findings {
-				if f.Code != "ISSUE-301" {
+				if f.Code != "ISSUE-309" {
 					continue
 				}
 				hits = append(hits, f.Job)
@@ -2775,6 +2896,18 @@ func runGitHubFixtureCases(t *testing.T, code string, cases []struct {
 },
 ) {
 	t.Helper()
+	runGitHubFixtureCasesWithConfig(t, code, cases, nil)
+}
+
+// runGitHubFixtureCasesWithConfig is the same as runGitHubFixtureCases but
+// passes a control config map (input.config.*) to the engine. Used when a
+// fixture's expected behaviour depends on trustedUrls or similar fields.
+func runGitHubFixtureCasesWithConfig(t *testing.T, code string, cases []struct {
+	fixture      string
+	expectedHits []string
+}, cfg map[string]any,
+) {
+	t.Helper()
 	engine := opaengine.New()
 	if err := engine.LoadFromFS(policies.FS); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
@@ -2798,7 +2931,7 @@ func runGitHubFixtureCases(t *testing.T, code string, cases []struct {
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
-			findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+			findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -3019,7 +3152,10 @@ func TestIssue415_PullRequestTargetWithHeadCheckout(t *testing.T) {
 		expectedHits []string
 	}{
 		{"violation_head_sha.yml", []string{"violation_head_sha/preview"}},
+		{"violation_head_ref.yml", []string{"violation_head_ref/preview"}},
 		{"clean_no_ref.yml", nil},
+		{"clean_pull_request.yml", nil},
+		{"clean_fork_guard.yml", nil},
 	}
 	runGitHubFixtureCases(t, "ISSUE-804", cases)
 }
@@ -3655,4 +3791,85 @@ func TestIssue416_RequiredActionMissing(t *testing.T) {
 			}
 		}
 	})
+}
+
+
+// TestIssue301_LeakedSecrets covers the leaked_secrets rule. Detection is
+// done in the collector (collector/gitleaks_scan.go); the rego rule turns
+// each redacted GitleaksHit on the pipeline IR into an ISSUE-301 finding,
+// gated by input.config.pipelineMustNotLeakSecretsInConfig.
+func TestIssue301_LeakedSecrets(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFS(policies.FS); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+
+	pipelineWithHits := func() *ir.NormalizedPipeline {
+		return &ir.NormalizedPipeline{
+			Provider: ir.ProviderGitLab,
+			GitleaksHits: []ir.GitleaksHit{
+				{
+					RuleID:      "slack-bot-token",
+					Description: "Slack bot token",
+					Preview:     "xoxb***uvwx",
+					File:        "merged-gitlab-ci.yml",
+					Line:        42,
+				},
+			},
+		}
+	}
+	pipelineClean := func() *ir.NormalizedPipeline {
+		return &ir.NormalizedPipeline{Provider: ir.ProviderGitLab}
+	}
+	enabledCfg := map[string]any{
+		"pipelineMustNotLeakSecretsInConfig": map[string]any{"enabled": true},
+	}
+
+	cases := []struct {
+		name      string
+		pipeline  *ir.NormalizedPipeline
+		cfg       map[string]any
+		wantHits  int
+	}{
+		// Control enabled + hits on the IR -> finding fires (positive case).
+		{"enabled+hits", pipelineWithHits(), enabledCfg, 1},
+		// Control enabled + zero hits -> silent (negative case).
+		{"enabled+clean", pipelineClean(), enabledCfg, 0},
+		// Control disabled (config absent) + hits present -> silent
+		// (abstain case). Belts-and-braces: the collector itself also
+		// short-circuits, so in practice the IR carries no hits when the
+		// control is off.
+		{"disabled+hits", pipelineWithHits(), nil, 0},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			findings, err := engine.Evaluate(context.Background(), tc.pipeline, tc.cfg)
+			if err != nil {
+				t.Fatalf("evaluate: %v", err)
+			}
+			hits := 0
+			var sample string
+			for _, f := range findings {
+				if f.Code == "ISSUE-301" {
+					hits++
+					sample = f.Message
+				}
+			}
+			if hits != tc.wantHits {
+				t.Fatalf("expected %d ISSUE-301 findings, got %d", tc.wantHits, hits)
+			}
+			// Defence in depth: the redacted preview must never contain
+			// the raw test value that the collector would have replaced.
+			// (Our fixture preview is already "xoxb***uvwx".)
+			if tc.wantHits > 0 {
+				if !strings.Contains(sample, "xoxb***uvwx") {
+					t.Fatalf("expected message to carry redacted preview, got %q", sample)
+				}
+				if strings.Contains(sample, "1234567890123") {
+					t.Fatalf("message leaked raw secret characters: %q", sample)
+				}
+			}
+		})
+	}
 }

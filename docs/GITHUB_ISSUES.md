@@ -44,7 +44,7 @@ reading the upstream docs.
 
 | Code | Name | Severity |
 | :--- | :--- | :--- |
-| [ISSUE-301](#issue-301--overprovisioned-secrets) | `overprovisioned-secrets` | **critical** |
+| [ISSUE-301](#issue-301--leaked-secrets) | `leaked-secrets` | **critical** _(opt-in)_ |
 | [ISSUE-302](#issue-302--secrets-inherit) | `secrets-inherit` | high |
 | [ISSUE-303](#issue-303--unredacted-secrets) | `unredacted-secrets` | high |
 | [ISSUE-801](#issue-304--undocumented-permissions) | `undocumented-permissions` | medium |
@@ -52,6 +52,7 @@ reading the upstream docs.
 | [ISSUE-306](#issue-306--github-app-skip-revoke) | `github-app-skip-revoke` | high |
 | [ISSUE-307](#issue-307--artipacked) | `artipacked` | high |
 | [ISSUE-308](#issue-308--secrets-dynamic-index) | `secrets-dynamic-index` | low |
+| [ISSUE-309](#issue-309--overprovisioned-secrets) | `overprovisioned-secrets` | **critical** |
 
 ### Triggers & composition — `4xx`
 
@@ -830,7 +831,7 @@ are flagged:
 
 ---
 
-## ISSUE-301 — `overprovisioned-secrets`
+## ISSUE-309 — `overprovisioned-secrets`
 
 **Severity:** `critical` • **Control:** `workflowMustNotExportEntireSecretsContext`
 
@@ -1082,6 +1083,48 @@ reviewability.
 
 ---
 
+## ISSUE-301 — `leaked-secrets`
+
+**Severity:** `critical` • **Control:** `pipelineMustNotLeakSecretsInConfig`
+
+A high-confidence secret pattern (Slack token, AWS access key, GCP
+service-account JSON, …) appears inside committed pipeline YAML.
+Maps to OWASP CICD-SEC-6 (Insufficient Credential Hygiene): once a
+secret is checked into the repo it is in every clone, every fork,
+every CI cache, and every old branch — rotation is the only fix.
+
+The check is opt-in and requires
+[gitleaks](https://github.com/gitleaks/gitleaks) on `PATH`. Plumber
+shells out to it, parses the JSON report, redacts each match to
+`first4***last4` before recording it on the IR, and emits one
+finding per match. The raw secret value never leaves the collector.
+
+```yaml
+# .github/workflows/release.yml
+jobs:
+  publish:
+    env:
+      SLACK_WEBHOOK: xoxb-EXAMPLE-EXAMPLE-redactedfortestingonly
+```
+
+Enable in `.plumber.yaml`:
+
+```yaml
+github:
+  controls:
+    pipelineMustNotLeakSecretsInConfig:
+      enabled: true
+      # Optional overrides:
+      # gitleaksPath: /opt/bin/gitleaks       # default: $PATH lookup
+      # gitleaksConfigPath: .gitleaks.toml    # default: gitleaks's built-ins
+```
+
+When the binary is missing, the control logs a warning and abstains
+(rather than failing the run) so a missing tool never blocks an
+unrelated analyze.
+
+---
+
 ## ISSUE-411 — `unverified-scripts`
 
 **Severity:** `high` • **Control:** `pipelineMustNotExecuteUnverifiedScripts`
@@ -1206,12 +1249,17 @@ into `evil.example.com/...`.
 **Severity:** `critical` • **Control:** `workflowMustNotUseDangerousTriggers`
 
 A job runs under a trigger that combines attacker-controlled input with
-the base repository's secrets — `pull_request_target`, `workflow_run`,
-`issue_comment`, `pull_request_review`, `pull_request_review_comment`,
-`discussion`, `discussion_comment`, `gollum`, `fork` — **and checks out
-fork-controlled code** (an `actions/checkout` whose `ref:` is the PR or
-workflow_run head). Untrusted code then executes with the base repo's
-secrets and token — the March 2025 tj-actions compromise (CVE-2025-30066).
+the base repository's secrets — `workflow_run`, `issue_comment`,
+`pull_request_review`, `pull_request_review_comment`, `discussion`,
+`discussion_comment`, `gollum`, `fork` — **and checks out fork-controlled
+code** (an `actions/checkout` whose `ref:` is the PR or workflow_run
+head). Untrusted code then executes with the base repo's secrets and
+token — the same exploit class as the March 2025 tj-actions compromise
+(CVE-2025-30066).
+
+The `pull_request_target` case is covered by [ISSUE-804](#issue-804--pull-request-target-with-head-checkout)
+(`pullRequestTargetMustNotCheckoutHead`) — same exploit class, dedicated
+rule, no double-firing.
 
 Subscribing to such a trigger is **not** flagged on its own: metadata
 jobs — labelling, milestones, comments, notifications — legitimately
@@ -1220,17 +1268,18 @@ only on the exploitable combination, and abstains when a job-level `if:`
 restricts execution to same-repository pull requests.
 
 ```yaml
-# ❌ before — pull_request_target checks out the PR head
+# ❌ before — workflow_run checks out the PR head from a chained workflow
 on:
-  pull_request_target:
-    types: [opened, synchronize]
+  workflow_run:
+    workflows: ["lint"]
+    types: [completed]
 jobs:
   preview:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.workflow_run.head_sha }}
       - run: npm install && npm test
 ```
 
@@ -1238,17 +1287,17 @@ jobs:
 # ✅ after — same-repository guard: fork code never runs
 jobs:
   preview:
-    if: github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
+          ref: ${{ github.event.workflow_run.head_sha }}
       - run: npm install && npm test
 ```
 
-Alternative: run fork code under a plain `pull_request` trigger (no
-base-repo secrets), or drop the head checkout entirely.
+Alternative: drop the head checkout entirely and let the job operate
+only on the base repo's content.
 
 ---
 
@@ -1289,6 +1338,12 @@ jobs:
       - uses: actions/checkout@v4     # base repo, no ref: override
       - run: gh pr edit --add-label auto-preview
 ```
+
+A job-level `if:` that restricts the job to same-repository pull
+requests — `github.event.pull_request.head.repo.full_name ==
+github.repository`, or a `head.repo.fork` check — is recognised as a
+valid mitigation: fork-controlled code never runs, so a job carrying
+such a guard is not flagged.
 
 ---
 
@@ -1694,6 +1749,8 @@ and in `.plumber.yaml`) is declared in
 | ISSUE-214 | `workflowMustPinPackageInstalls` |
 | ISSUE-215 | `workflowMustNotInjectVarsInScripts` |
 | ISSUE-308 | `workflowMustNotIndexSecretsDynamically` |
+| ISSUE-301 | `pipelineMustNotLeakSecretsInConfig` _(opt-in; requires gitleaks)_ |
+| ISSUE-309 | `workflowMustNotExportEntireSecretsContext` |
 | ISSUE-802 / 415 | `workflowMustNotUseDangerousTriggers`, `pullRequestTargetMustNotCheckoutHead` |
 | ISSUE-902 | `dependabotEcosystemsMustHaveCooldown` |
 | ISSUE-903 | `repositoriesMustConfigureDependencyUpdates` |

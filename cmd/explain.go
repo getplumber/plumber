@@ -87,13 +87,67 @@ func runExplainAll() error {
 
 func printIssueDetail(info *control.ErrorCodeInfo) {
 	fmt.Printf("%s: %s\n", info.Code, info.Title)
+	// Surface provider-specific title variants when the code has them.
+	// Codes without overrides (the common case) get nothing extra.
+	for _, p := range providersWithTitleOverride(info) {
+		fmt.Printf("           (%s: %s)\n", providerDisplay(p), info.TitleByProvider[p])
+	}
 	fmt.Printf("Control:     %s\n", info.ControlName)
 	fmt.Println()
 	fmt.Printf("Description:\n  %s\n", wrapText(info.Description, 74, "  "))
+	// Mirror the title variants for the description: only render the
+	// override block for codes that carry one, and only show providers
+	// whose copy actually differs from the default.
+	for _, p := range providersWithDescriptionOverride(info) {
+		fmt.Println()
+		fmt.Printf("  %s:\n  %s\n", providerDisplay(p), wrapText(info.DescriptionByProvider[p], 74, "  "))
+	}
 	fmt.Println()
 	fmt.Printf("Remediation:\n  %s\n", wrapText(info.Remediation, 74, "  "))
 	fmt.Println()
 	fmt.Printf("Documentation: %s\n", info.DocURL)
+}
+
+// providersWithTitleOverride returns the providers (in stable order) for
+// which info.TitleByProvider holds a non-empty value that differs from
+// info.Title. Used by printIssueDetail to surface per-provider variants
+// only when they exist and only when they actually differ.
+func providersWithTitleOverride(info *control.ErrorCodeInfo) []string {
+	var out []string
+	for _, p := range []string{"gitlab", "github"} {
+		v, ok := info.TitleByProvider[p]
+		if ok && v != "" && v != info.Title {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// providersWithDescriptionOverride mirrors providersWithTitleOverride
+// against the Description / DescriptionByProvider fields.
+func providersWithDescriptionOverride(info *control.ErrorCodeInfo) []string {
+	var out []string
+	for _, p := range []string{"gitlab", "github"} {
+		v, ok := info.DescriptionByProvider[p]
+		if ok && v != "" && v != info.Description {
+			out = append(out, p)
+		}
+	}
+	return out
+}
+
+// providerDisplay maps the internal provider key to its proper-cased
+// display form. Centralised so callers don't litter explain.go with
+// inline strings.Title (deprecated) or manual switches.
+func providerDisplay(provider string) string {
+	switch provider {
+	case "gitlab":
+		return "GitLab"
+	case "github":
+		return "GitHub"
+	default:
+		return provider
+	}
 }
 
 // wrapText wraps text to the given width with the specified indent for continuation lines.

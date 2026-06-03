@@ -14,7 +14,7 @@ func TestBuildSARIF_ShapeAndSeverityMapping(t *testing.T) {
 		{Code: "ISSUE-501", Severity: "critical", Message: "branch not protected"}, // repo-level, no file
 	}
 
-	doc := buildSARIF(findings, ".plumber.yaml")
+	doc := buildSARIF(findings, ".plumber.yaml", "gitlab")
 
 	// Must serialize to valid JSON.
 	if _, err := json.Marshal(doc); err != nil {
@@ -101,14 +101,14 @@ func TestBuildSARIF_AllCodedFindingsBecomeResults(t *testing.T) {
 		{Code: "", Severity: "high", Message: "skipped"},
 		{Code: "ISSUE-203", Severity: "critical", Message: "b"},
 	}
-	doc := buildSARIF(findings, ".plumber.yaml")
+	doc := buildSARIF(findings, ".plumber.yaml", "gitlab")
 	if len(doc.Runs[0].Results) != 2 {
 		t.Fatalf("results = %d, want 2 (empty code omitted)", len(doc.Runs[0].Results))
 	}
 }
 
 func TestBuildSARIF_CleanRunIsValidEmpty(t *testing.T) {
-	doc := buildSARIF(nil, ".plumber.yaml")
+	doc := buildSARIF(nil, ".plumber.yaml", "gitlab")
 	if doc.Version != "2.1.0" || len(doc.Runs) != 1 {
 		t.Fatalf("clean SARIF malformed: %+v", doc)
 	}

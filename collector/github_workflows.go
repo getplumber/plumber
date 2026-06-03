@@ -856,6 +856,11 @@ func parseGitHubContainer(v any) (ir.Image, bool) {
 }
 
 func splitImageRef(ref string) ir.Image {
+	// Fold Docker Hub registry-host aliases (registry.hub.docker.com,
+	// index.docker.io, registry-1.docker.io) to docker.io so trustedUrls
+	// patterns match regardless of which Hub hostname was used. GitHub refs
+	// keep the registry host inside Name, so we normalise the name string.
+	ref = foldDockerHubAliasInName(ref)
 	// Digest form takes precedence: "alpine@sha256:..."
 	if at := strings.Index(ref, "@"); at > 0 {
 		return ir.Image{Name: ref[:at], Digest: ref[at+1:]}

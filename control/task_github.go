@@ -2,6 +2,7 @@ package control
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 
 	"github.com/getplumber/plumber/collector"
@@ -174,16 +175,27 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 	if defaultBranch == "" {
 		defaultBranch = pipeline.DefaultBranch
 	}
+	// Optional gitleaks enrichment for pipelineMustNotLeakSecretsInConfig
+	// (ISSUE-301). The scanner abstains silently when the control is
+	// disabled or gitleaks is not installed. Runs only on the local-
+	// clone path where we have on-disk files; the remote path has no
+	// equivalent (workflow contents are fetched into the IR, not
+	// materialised on disk, so gitleaks has nothing to scan).
+	if conf.GitRepoRoot != "" {
+		workflowsDir := filepath.Join(conf.GitRepoRoot, ".github", "workflows")
+		_ = collector.ScanGitleaksForGitHub(l, conf, workflowsDir, ".github/workflows", pipeline)
+	}
 	result := &AnalysisResult{
-		ProjectPath:    conf.ProjectPath,
-		DefaultBranch:  defaultBranch,
-		AnalyzeBranch:  conf.Branch,
-		CIConfigSource: "local",
-		CiValid:        len(pipeline.Jobs) > 0,
-		CiMissing:      len(pipeline.Jobs) == 0,
-		Findings:       evaluatePolicies(l, conf, "github", pipeline),
-		GitHubStats:    AggregateGitHubStats(pipeline, conf.PlumberConfig),
-		GitHubPipeline: pipeline,
+		ProjectPath:           conf.ProjectPath,
+		DefaultBranch:         defaultBranch,
+		AnalyzeBranch:         conf.Branch,
+		CIConfigSource:        "local",
+		CiValid:               len(pipeline.Jobs) > 0,
+		CiMissing:             len(pipeline.Jobs) == 0,
+		Findings:              evaluatePolicies(l, conf, "github", pipeline),
+		GitHubStats:           AggregateGitHubStats(pipeline, conf.PlumberConfig),
+		GitHubPipeline:        pipeline,
+		GitleaksAbstainReason: pipeline.GitleaksAbstainReason,
 	}
 	// Resolve the local clone's HEAD SHA so source links in the report
 	// point at the exact commit being analysed instead of a mutable

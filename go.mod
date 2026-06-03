@@ -2,9 +2,11 @@ module github.com/getplumber/plumber
 
 go 1.25.0
 
+toolchain go1.26.4
+
 require (
 	github.com/AlecAivazis/survey/v2 v2.3.7
-	github.com/IGLOU-EU/go-wildcard/v2 v2.1.0
+	github.com/IGLOU-EU/go-wildcard/v2 v2.1.1
 	github.com/charmbracelet/lipgloss v1.1.1-0.20250319133953-166f707985bc
 	github.com/cli/go-gh/v2 v2.13.0
 	github.com/google/uuid v1.6.0

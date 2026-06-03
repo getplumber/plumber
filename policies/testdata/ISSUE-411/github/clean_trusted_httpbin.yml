@@ -1,0 +1,12 @@
+name: install
+on: push
+jobs:
+  install:
+    runs-on: ubuntu-24.04
+    steps:
+      # Regression test for the http-prefix filter bug: hostnames whose
+      # name starts with `http` (httpbin.org, httpie.io, http-server.*)
+      # must still be trustable via trustedUrls.
+      - name: install
+        run: |
+          curl -sL httpbin.org | bash

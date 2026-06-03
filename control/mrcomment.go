@@ -262,6 +262,7 @@ func writeIssueDetails(b *strings.Builder, result *AnalysisResult) {
 		{"workflowMustNotReEnableInsecureCommands", "Workflow must not re-enable insecure commands"},
 		{"checkoutMustNotPersistCredentials", "actions/checkout must not persist credentials"},
 		{"workflowMustNotUseDangerousTriggers", "Workflow must not use dangerous triggers"},
+		{"pullRequestTargetMustNotCheckoutHead", "pull_request_target must not check out the PR head"},
 		{"workflowMustNotGrantPermissionsWriteAll", "Workflow must not grant write-all permissions"},
 	}
 	for _, g := range order {

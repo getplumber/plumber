@@ -1,3 +1,89 @@
+## [0.3.42](https://github.com/getplumber/plumber/compare/v0.3.41...v0.3.42) (2026-06-03)
+
+
+### 🐛 Bug Fixes
+
+* **controls:** Correct bug mixing up 301 and 309 ([2ef64fe](https://github.com/getplumber/plumber/commit/2ef64fe210be8e14e9787b0d30a343e8d383e9ab))
+
+## [0.3.41](https://github.com/getplumber/plumber/compare/v0.3.40...v0.3.41) (2026-06-03)
+
+
+### 🐛 Bug Fixes
+
+* **ci:** Update toolchain in ci ([3a4e209](https://github.com/getplumber/plumber/commit/3a4e2099568246cf499ac3cd4a2ced15b55ea3a4))
+
+## [0.3.40](https://github.com/getplumber/plumber/compare/v0.3.39...v0.3.40) (2026-06-03)
+
+
+### 🐛 Bug Fixes
+
+* **ci:** Update toolchain ([bd5205c](https://github.com/getplumber/plumber/commit/bd5205c1508d488d44d80ef5bb029f46d1b34f30))
+
+## [0.3.39](https://github.com/getplumber/plumber/compare/v0.3.38...v0.3.39) (2026-06-03)
+
+
+### ✨ Features
+
+* **controls:** add pipeline secret detection via gitleaks (ISSUE-309) ([f902934](https://github.com/getplumber/plumber/commit/f90293451e6b0a03b07e6a3db1c7b1b574ea689f))
+
+
+### 🐛 Bug Fixes
+
+* **control:** Fixed and tested implementation for gitleaks ([d8170d4](https://github.com/getplumber/plumber/commit/d8170d4682f0943c59a4bf992f57ecd41658a31b))
+
+## [0.3.38](https://github.com/getplumber/plumber/compare/v0.3.37...v0.3.38) (2026-06-02)
+
+
+### ✨ Features
+
+* **docs:** Fix typos ([251bc47](https://github.com/getplumber/plumber/commit/251bc47d6ae12fbc8f652aab4fb49f60969df91d))
+
+## [0.3.37](https://github.com/getplumber/plumber/compare/v0.3.36...v0.3.37) (2026-06-02)
+
+
+### ✨ Features
+
+* **docs:** Simplify doc ([48859f1](https://github.com/getplumber/plumber/commit/48859f19afe18a4c24ecca9197945750b1d769a4))
+
+## [0.3.36](https://github.com/getplumber/plumber/compare/v0.3.35...v0.3.36) (2026-06-02)
+
+## [0.3.35](https://github.com/getplumber/plumber/compare/v0.3.34...v0.3.35) (2026-06-02)
+
+## [0.3.34](https://github.com/getplumber/plumber/compare/v0.3.33...v0.3.34) (2026-06-02)
+
+## [0.3.33](https://github.com/getplumber/plumber/compare/v0.3.32...v0.3.33) (2026-06-02)
+
+
+### ✨ Features
+
+* **controls:** ship pull-request-target-with-head-checkout (ISSUE-804) ([54e1162](https://github.com/getplumber/plumber/commit/54e11626c4bf5240d67ed4ef91a22629076ec016)), closes [#181](https://github.com/getplumber/plumber/issues/181)
+
+
+### 🐛 Bug Fixes
+
+* **controls:** Prevent duplicaiton with existing 802 issue for workflow ([a4a19a1](https://github.com/getplumber/plumber/commit/a4a19a1a3ff319999d7ae258f57fc35f73ff1c0f))
+
+## [0.3.32](https://github.com/getplumber/plumber/compare/v0.3.31...v0.3.32) (2026-06-02)
+
+## [0.3.31](https://github.com/getplumber/plumber/compare/v0.3.30...v0.3.31) (2026-06-02)
+
+## [0.3.30](https://github.com/getplumber/plumber/compare/v0.3.29...v0.3.30) (2026-06-02)
+
+## [0.3.29](https://github.com/getplumber/plumber/compare/v0.3.28...v0.3.29) (2026-06-01)
+
+
+### 🐛 Bug Fixes
+
+* **collector:** fold Docker Hub registry-host aliases to docker.io ([9df2679](https://github.com/getplumber/plumber/commit/9df26799f81349dfdce00dc5582f98b6063e2b87))
+
+## [0.3.28](https://github.com/getplumber/plumber/compare/v0.3.27...v0.3.28) (2026-06-01)
+
+
+### 🐛 Bug Fixes
+
+* **controls:** scope ISSUE-411 trustedUrls to the curl/wget fetch target ([3541e75](https://github.com/getplumber/plumber/commit/3541e75507e0c9803b11b31b2417b20d9594234d)), closes [#214](https://github.com/getplumber/plumber/issues/214)
+* **controls:** trustedUrls bare-hostname matching and partial semver false positives ([a7975cd](https://github.com/getplumber/plumber/commit/a7975cd7986fa28a0743ed6d8f2d3635b15f6cd0))
+
 ## [0.3.27](https://github.com/getplumber/plumber/compare/v0.3.26...v0.3.27) (2026-05-26)
 
 

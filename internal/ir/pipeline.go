@@ -63,7 +63,48 @@ type NormalizedPipeline struct {
 	// base-image extracted so policies can check pinning state.
 	Dockerfiles []Dockerfile `json:"dockerfiles,omitempty"`
 
+	// GitleaksHits lists redacted matches reported by gitleaks against
+	// the resolved pipeline configuration (GitLab) or workflow files
+	// (GitHub). The raw secret value is never stored — only a redacted
+	// preview, rule id, line number and a logical source file. Empty
+	// when the pipelineMustNotLeakSecretsInConfig control is disabled,
+	// gitleaks is not installed, or no matches are found.
+	GitleaksHits []GitleaksHit `json:"gitleaksHits,omitempty"`
+
+	// GitleaksAbstainReason is non-empty when the gitleaks scan was
+	// supposed to run (control enabled) but could not complete —
+	// binary unresolvable, exec failure, timeout. The renderer routes
+	// this through the normal "skipped" lane so the operator sees an
+	// explicit "could not scan" instead of a misleading 100% green.
+	// Empty when the scan ran (with or without hits) or when the
+	// control is disabled in config.
+	GitleaksAbstainReason string `json:"gitleaksAbstainReason,omitempty"`
+
 	Raw map[string]any `json:"raw,omitempty"`
+}
+
+// GitleaksHit is a single redacted finding produced by the gitleaks
+// scan. The Secret field from gitleaks's JSON output is NEVER stored:
+// the collector replaces it with Preview (first few + last few chars
+// with "***" between) before constructing the IR entry. This means
+// the rego layer and downstream output formats only ever see the
+// redacted form, even if a user dumps the IR with --output.
+type GitleaksHit struct {
+	// RuleID is the gitleaks rule that matched (e.g. "github-pat",
+	// "aws-access-token", "private-key").
+	RuleID string `json:"ruleId"`
+	// Description is the human-friendly explanation from gitleaks's
+	// rule catalogue (e.g. "GitHub Personal Access Token").
+	Description string `json:"description,omitempty"`
+	// Preview is the redacted form of the matched secret: first 4 and
+	// last 4 characters, separated by "***", or "***" only for matches
+	// shorter than 8 characters.
+	Preview string `json:"preview"`
+	// File is the logical name of the scanned source (e.g.
+	// "merged-gitlab-ci.yml" or ".github/workflows/release.yml").
+	File string `json:"file,omitempty"`
+	// Line is the 1-based line number where the match starts.
+	Line int `json:"line,omitempty"`
 }
 
 // Dockerfile captures the result of parsing a single Dockerfile's

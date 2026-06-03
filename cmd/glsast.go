@@ -118,7 +118,7 @@ func glsastID(f opaengine.Finding) string {
 }
 
 // buildGLSAST converts the flat finding list into a GitLab SAST report.
-func buildGLSAST(findings []opaengine.Finding) glsastReport {
+func buildGLSAST(findings []opaengine.Finding, provider string) glsastReport {
 	now := time.Now().UTC().Format("2006-01-02T15:04:05")
 	toolVersion := strings.TrimPrefix(Version, "v")
 	if toolVersion == "" {
@@ -159,10 +159,11 @@ func buildGLSAST(findings []opaengine.Finding) glsastReport {
 			v.Links = append(v.Links, glsastLink{Name: "Source", URL: f.URL})
 		}
 		if info := control.LookupCode(control.ErrorCode(f.Code)); info != nil {
-			v.Name = info.Title
-			v.Description = info.Description
+			title := info.TitleFor(provider)
+			v.Name = title
+			v.Description = info.DescriptionFor(provider)
 			v.Solution = info.Remediation
-			v.Identifiers[0].Name = "Plumber " + f.Code + ": " + info.Title
+			v.Identifiers[0].Name = "Plumber " + f.Code + ": " + title
 			v.Identifiers[0].URL = info.DocURL
 		}
 		// GitLab's Vulnerability Report UI does not render the deprecated
@@ -197,8 +198,8 @@ func buildGLSAST(findings []opaengine.Finding) glsastReport {
 // writeGLSASTToFile renders the analysis findings as a GitLab SAST report
 // and writes them to filePath. A clean run writes an empty vulnerabilities
 // array so GitLab clears any previously-reported findings.
-func writeGLSASTToFile(result *control.AnalysisResult, filePath string) error {
-	data, err := json.MarshalIndent(buildGLSAST(result.Findings), "", "  ")
+func writeGLSASTToFile(result *control.AnalysisResult, filePath, provider string) error {
+	data, err := json.MarshalIndent(buildGLSAST(result.Findings, provider), "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal gitlab sast report: %w", err)
 	}

@@ -66,6 +66,9 @@ var validControlSchema = map[string][]string{
 	"workflowMustNotUseDangerousTriggers": {
 		"enabled",
 	},
+	"pullRequestTargetMustNotCheckoutHead": {
+		"enabled",
+	},
 	"workflowsMustDeclarePermissions": {
 		"enabled",
 	},
@@ -83,6 +86,9 @@ var validControlSchema = map[string][]string{
 	},
 	"workflowMustIncludeRequiredActions": {
 		"enabled", "required", "requiredGroups",
+	},
+	"pipelineMustNotLeakSecretsInConfig": {
+		"enabled", "gitleaksPath", "gitleaksConfigPath",
 	},
 }
 
@@ -217,6 +223,9 @@ type ControlsConfig struct {
 	// PipelineMustNotEnableDebugTrace control configuration
 	PipelineMustNotEnableDebugTrace *DebugTraceControlConfig `yaml:"pipelineMustNotEnableDebugTrace,omitempty"`
 
+	// PipelineMustNotLeakSecretsInConfig control configuration
+	PipelineMustNotLeakSecretsInConfig *SecretDetectionControlConfig `yaml:"pipelineMustNotLeakSecretsInConfig,omitempty"`
+
 	// PipelineMustNotUseUnsafeVariableExpansion control configuration
 	PipelineMustNotUseUnsafeVariableExpansion *VariableInjectionControlConfig `yaml:"pipelineMustNotUseUnsafeVariableExpansion,omitempty"`
 
@@ -242,6 +251,13 @@ type ControlsConfig struct {
 	// WorkflowMustNotUseDangerousTriggers control configuration (GitHub Actions only).
 	// Config-free; toggle via `enabled`.
 	WorkflowMustNotUseDangerousTriggers *EnabledOnlyControlConfig `yaml:"workflowMustNotUseDangerousTriggers,omitempty"`
+
+	// PullRequestTargetMustNotCheckoutHead control configuration (GitHub
+	// Actions only). Flags a workflow triggered by `pull_request_target`
+	// that checks out the PR head ref, putting base-repo secrets and
+	// fork-controlled code in the same run (tj-actions / CVE-2025-30066).
+	// Config-free; toggle via `enabled`.
+	PullRequestTargetMustNotCheckoutHead *EnabledOnlyControlConfig `yaml:"pullRequestTargetMustNotCheckoutHead,omitempty"`
 
 	// WorkflowsMustDeclarePermissions control configuration (GitHub Actions only).
 	// Config-free; toggle via `enabled`.
@@ -511,6 +527,26 @@ type DebugTraceControlConfig struct {
 	// ForbiddenVariables is a list of CI/CD variable names that must not be set to "true"
 	// Defaults: CI_DEBUG_TRACE, CI_DEBUG_SERVICES
 	ForbiddenVariables []string `yaml:"forbiddenVariables,omitempty"`
+}
+
+// SecretDetectionControlConfig configuration for the pipeline secret detection control
+type SecretDetectionControlConfig struct {
+	// Enabled controls whether this check runs
+	Enabled *bool `yaml:"enabled,omitempty"`
+
+	// GitleaksPath is the path to the gitleaks binary; defaults to "gitleaks" (PATH lookup)
+	GitleaksPath string `yaml:"gitleaksPath,omitempty"`
+
+	// GitleaksConfigPath is an optional path to a custom gitleaks config file
+	GitleaksConfigPath string `yaml:"gitleaksConfigPath,omitempty"`
+}
+
+// IsEnabled reports whether the control is enabled
+func (c *SecretDetectionControlConfig) IsEnabled() bool {
+	if c == nil || c.Enabled == nil {
+		return false
+	}
+	return *c.Enabled
 }
 
 // VariableInjectionControlConfig configuration for the unsafe variable expansion control
@@ -903,6 +939,16 @@ func (c *PlumberConfig) GetPipelineMustIncludeTemplateConfig() *RequiredTemplate
 		return nil
 	}
 	return c.ControlsFor("gitlab").PipelineMustIncludeTemplate
+}
+
+// GetPipelineMustNotLeakSecretsInConfigConfig returns the control
+// configuration for the given provider ("gitlab" or "github").
+// Returns nil if not configured.
+func (c *PlumberConfig) GetPipelineMustNotLeakSecretsInConfigConfig(provider string) *SecretDetectionControlConfig {
+	if c == nil {
+		return nil
+	}
+	return c.ControlsFor(provider).PipelineMustNotLeakSecretsInConfig
 }
 
 // GetPipelineMustNotEnableDebugTraceConfig returns the control configuration

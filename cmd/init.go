@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
@@ -34,18 +35,20 @@ const (
 	compScripts   = "Detect unverified script execution (curl|bash, base64|bash, |sh, …)"
 	compJobVars   = "Detect sensitive variables overridden in pipeline YAML"
 	compDinD      = "Detect Docker-in-Docker (dind) usage"
+	compLeaks     = "Scan pipeline YAML for hardcoded secrets (requires `gitleaks` on PATH)"
 
 	// GitHub-applicable composition checks (new). The cross-provider ones
 	// (security jobs, DinD) reuse compSecurity / compDinD above.
-	compActionPin           = "Require third-party actions pinned by commit SHA"
-	compDangerousTriggers   = "Flag dangerous workflow triggers (pull_request_target, workflow_run, …)"
-	compDeclarePermissions  = "Require workflows to declare an explicit permissions: block"
-	compReusableSecrets     = "Forbid reusable-workflow calls using secrets: inherit"
-	compTemplateInjection   = "Detect script-injection sinks (${{ github.event.* }} → run:)"
-	compWriteAllPerms       = "Forbid permissions: write-all in workflows"
-	compArchivedActions     = "Flag third-party actions from archived repositories"
-	compKnownCVEs           = "Flag third-party actions with known CVEs (GitHub Advisory DB)"
-	compDebugTraceGitHub    = "Flag Actions debug logging (ACTIONS_STEP_DEBUG / ACTIONS_RUNNER_DEBUG)"
+	compActionPin          = "Require third-party actions pinned by commit SHA"
+	compDangerousTriggers  = "Flag dangerous workflow triggers (pull_request_target, workflow_run, …)"
+	compPRTargetHead       = "Forbid pull_request_target workflows that check out the PR head"
+	compDeclarePermissions = "Require workflows to declare an explicit permissions: block"
+	compReusableSecrets    = "Forbid reusable-workflow calls using secrets: inherit"
+	compTemplateInjection  = "Detect script-injection sinks (${{ github.event.* }} → run:)"
+	compWriteAllPerms      = "Forbid permissions: write-all in workflows"
+	compArchivedActions    = "Flag third-party actions from archived repositories"
+	compKnownCVEs          = "Flag third-party actions with known CVEs (GitHub Advisory DB)"
+	compDebugTraceGitHub   = "Flag Actions debug logging (ACTIONS_STEP_DEBUG / ACTIONS_RUNNER_DEBUG)"
 )
 
 var (
@@ -690,7 +693,7 @@ func compositionOptionsForProviders(providers []string) []string {
 	if hasGitLab {
 		out = append(out, compHardcoded, compUpToDate, compForbidden)
 	}
-	out = append(out, compSecurity, compDinD)
+	out = append(out, compSecurity, compDinD, compLeaks)
 	if hasGitLab {
 		out = append(out, compScripts, compJobVars)
 	}
@@ -698,6 +701,7 @@ func compositionOptionsForProviders(providers []string) []string {
 		out = append(out,
 			compActionPin,
 			compDangerousTriggers,
+			compPRTargetHead,
 			compDeclarePermissions,
 			compReusableSecrets,
 			compTemplateInjection,
@@ -1101,6 +1105,23 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 			}
 		}
 
+		// Cross-provider: hardcoded-secret scan via gitleaks. Writes to
+		// whichever provider section is in scope. Path/config-path
+		// fields stay empty so the user picks them up from .plumber.yaml
+		// only if they need to override; the collector resolves
+		// "gitleaks" off PATH when those are blank.
+		if compSelected(st, compLeaks) {
+			block := &configuration.SecretDetectionControlConfig{
+				Enabled: boolPtrInit(true),
+			}
+			if gitlabSection != nil {
+				gitlabSection.Controls.PipelineMustNotLeakSecretsInConfig = block
+			}
+			if githubSection != nil {
+				githubSection.Controls.PipelineMustNotLeakSecretsInConfig = block
+			}
+		}
+
 		// Cross-provider: Docker-in-Docker.
 		if compSelected(st, compDinD) {
 			block := &configuration.DockerInDockerControlConfig{
@@ -1129,6 +1150,9 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 			}
 			if compSelected(st, compDangerousTriggers) {
 				githubSection.Controls.WorkflowMustNotUseDangerousTriggers = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
+			}
+			if compSelected(st, compPRTargetHead) {
+				githubSection.Controls.PullRequestTargetMustNotCheckoutHead = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
 			}
 			if compSelected(st, compDeclarePermissions) {
 				githubSection.Controls.WorkflowsMustDeclarePermissions = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
@@ -1246,7 +1270,7 @@ func starterPlumberConfig() *configuration.PlumberConfig {
 		TrustedURLsText:        strings.Join(defaultTrustedURLs(), "\n"),
 		CompositionChoices: []string{
 			compHardcoded, compUpToDate, compForbidden, compSecurity, compScripts, compJobVars, compDinD,
-			compActionPin, compDangerousTriggers, compDeclarePermissions, compReusableSecrets, compTemplateInjection,
+			compActionPin, compDangerousTriggers, compPRTargetHead, compDeclarePermissions, compReusableSecrets, compTemplateInjection,
 			compWriteAllPerms, compArchivedActions, compKnownCVEs, compDebugTraceGitHub,
 		},
 		ActionPinTrustedOwnersMultiline:        strings.Join(defaultGitHubTrustedActionOwners(), "\n"),
@@ -1280,6 +1304,27 @@ func starterPlumberConfig() *configuration.PlumberConfig {
 	return st.toPlumberConfig()
 }
 
+// injectGitleaksHints surfaces the optional gitleaksPath /
+// gitleaksConfigPath knobs as commented YAML keys under any
+// pipelineMustNotLeakSecretsInConfig block the wizard emitted. The
+// wizard intentionally does not prompt for them — the defaults
+// ($PATH lookup, gitleaks's built-in rule catalogue) suit nearly
+// every user — but a commented stub lets an operator discover the
+// overrides without reading the docs. yaml.v2 emits a stable
+// 2-space indentation for nested keys, so a literal match on the
+// canonical "pipelineMustNot…:\n      enabled: true\n" pair is
+// stable across runs.
+func injectGitleaksHints(b []byte) []byte {
+	const (
+		needle = "pipelineMustNotLeakSecretsInConfig:\n      enabled: true\n"
+		hint   = "      # Optional. Defaults to looking up `gitleaks` on $PATH.\n" +
+			"      # gitleaksPath: /usr/local/bin/gitleaks\n" +
+			"      # Optional. Defaults to gitleaks's built-in rule catalogue.\n" +
+			"      # gitleaksConfigPath: .gitleaks.toml\n"
+	)
+	return bytes.ReplaceAll(b, []byte(needle), []byte(needle+hint))
+}
+
 // writeInitConfig writes validated YAML with a provenance header. If promptIfExists is true
 // and the path exists without --force, an interactive overwrite prompt may be shown.
 func writeInitConfig(cfg *configuration.PlumberConfig, path string, force, promptIfExists bool, generatedBy string) error {
@@ -1311,6 +1356,7 @@ func writeInitConfig(cfg *configuration.PlumberConfig, path string, force, promp
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
 	}
+	out = injectGitleaksHints(out)
 	header := "# Plumber configuration (https://github.com/getplumber/plumber)\n" +
 		"# Generated by: " + generatedBy + "\n\n"
 	content := append([]byte(header), out...)

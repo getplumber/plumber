@@ -15,7 +15,13 @@ type ControlEntry struct {
 	DisplayName string
 	ControlName string
 	Skipped     bool
-	Compliance  float64
+	// SkipReason is the human-friendly explanation rendered next to
+	// the "(skipped)" header and in the Status: SKIPPED (…) line. Left
+	// empty for the default "disabled in configuration" case; callers
+	// that flip Skipped for a different reason (e.g. the gitleaks
+	// scan could not complete) set this so the operator sees why.
+	SkipReason string
+	Compliance float64
 }
 
 // GitLabControls returns the catalog of GitLab compliance controls
@@ -112,6 +118,11 @@ func GitLabControls(pc *configuration.PlumberConfig) []ControlEntry {
 		Skipped:     c.PipelineMustNotExecuteUnverifiedScripts == nil || !c.PipelineMustNotExecuteUnverifiedScripts.IsEnabled(),
 	})
 	entries = append(entries, ControlEntry{
+		DisplayName: "Pipeline must not leak secrets in configuration",
+		ControlName: "pipelineMustNotLeakSecretsInConfig",
+		Skipped:     c.PipelineMustNotLeakSecretsInConfig == nil || !c.PipelineMustNotLeakSecretsInConfig.IsEnabled(),
+	})
+	entries = append(entries, ControlEntry{
 		DisplayName: "Pipeline must not override job variables",
 		ControlName: "pipelineMustNotOverrideJobVariables",
 		Skipped:     c.PipelineMustNotOverrideJobVariables == nil || !c.PipelineMustNotOverrideJobVariables.IsEnabled(),
@@ -174,6 +185,11 @@ func GitHubControls(pc *configuration.PlumberConfig) []ControlEntry {
 		Skipped:     c.PipelineMustNotExecuteUnverifiedScripts == nil || !c.PipelineMustNotExecuteUnverifiedScripts.IsEnabled(),
 	})
 	entries = append(entries, ControlEntry{
+		DisplayName: "Workflow must not leak secrets in configuration",
+		ControlName: "pipelineMustNotLeakSecretsInConfig",
+		Skipped:     c.PipelineMustNotLeakSecretsInConfig == nil || !c.PipelineMustNotLeakSecretsInConfig.IsEnabled(),
+	})
+	entries = append(entries, ControlEntry{
 		DisplayName: "Reusable workflows must not inherit secrets",
 		ControlName: "reusableWorkflowsMustNotInheritSecrets",
 		Skipped:     c.ReusableWorkflowsMustNotInheritSecrets == nil || !c.ReusableWorkflowsMustNotInheritSecrets.IsEnabled(),
@@ -187,6 +203,11 @@ func GitHubControls(pc *configuration.PlumberConfig) []ControlEntry {
 		DisplayName: "Workflows must not use dangerous triggers",
 		ControlName: "workflowMustNotUseDangerousTriggers",
 		Skipped:     c.WorkflowMustNotUseDangerousTriggers == nil || !c.WorkflowMustNotUseDangerousTriggers.IsEnabled(),
+	})
+	entries = append(entries, ControlEntry{
+		DisplayName: "pull_request_target workflows must not check out the PR head",
+		ControlName: "pullRequestTargetMustNotCheckoutHead",
+		Skipped:     c.PullRequestTargetMustNotCheckoutHead == nil || !c.PullRequestTargetMustNotCheckoutHead.IsEnabled(),
 	})
 	entries = append(entries, ControlEntry{
 		DisplayName: "Workflows must declare permissions",
@@ -313,6 +334,9 @@ func DisabledControlNames(c *configuration.ControlsConfig) map[string]bool {
 	}
 	if cfg := c.WorkflowMustNotUseDangerousTriggers; cfg == nil || !cfg.IsEnabled() {
 		out["workflowMustNotUseDangerousTriggers"] = true
+	}
+	if cfg := c.PullRequestTargetMustNotCheckoutHead; cfg == nil || !cfg.IsEnabled() {
+		out["pullRequestTargetMustNotCheckoutHead"] = true
 	}
 	if cfg := c.WorkflowsMustDeclarePermissions; cfg == nil || !cfg.IsEnabled() {
 		out["workflowsMustDeclarePermissions"] = true

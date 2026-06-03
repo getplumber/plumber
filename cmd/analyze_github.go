@@ -310,14 +310,14 @@ func presentGitHubResult(result *control.AnalysisResult, conf *configuration.Con
 	}
 
 	if sarifFile != "" {
-		if err := writeSARIFToFile(result, sarifFile); err != nil {
+		if err := writeSARIFToFile(result, sarifFile, "github"); err != nil {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "SARIF written to: %s\n", sarifFile)
 	}
 
 	if glsastFile != "" {
-		if err := writeGLSASTToFile(result, glsastFile); err != nil {
+		if err := writeGLSASTToFile(result, glsastFile, "github"); err != nil {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "GitLab SAST report written to: %s\n", glsastFile)
@@ -489,6 +489,20 @@ func printGitHubFindings(result *control.AnalysisResult, conf *configuration.Con
 	findingsByControl := control.FindingsByControl(result.Findings)
 	entries := control.GitHubControls(pc)
 	control.MarkSkippedByFilter(entries, conf.ControlsFilter, conf.SkipControlsFilter)
+	// gitleaks may have been configured-enabled but unable to run
+	// (binary missing on a sealed CI host, custom path misresolved,
+	// scan timeout). The collector signals that on the pipeline IR;
+	// route it through the normal "skipped" lane so the summary row
+	// goes to "-" / SKIPPED rather than a misleading 100% green.
+	if result.GitleaksAbstainReason != "" {
+		for i := range entries {
+			if entries[i].ControlName == "pipelineMustNotLeakSecretsInConfig" && !entries[i].Skipped {
+				entries[i].Skipped = true
+				entries[i].SkipReason = result.GitleaksAbstainReason
+				break
+			}
+		}
+	}
 	groups := make([]findingGroup, 0, len(entries))
 	summaries := make([]controlSummary, 0, len(entries))
 	for _, e := range entries {
@@ -522,7 +536,8 @@ func printGitHubFindings(result *control.AnalysisResult, conf *configuration.Con
 			Title:      e.DisplayName,
 			Compliance: comp,
 			Skipped:    e.Skipped,
-			Stats:      buildGitHubControlStats(e.ControlName, result.GitHubStats),
+			SkipReason: e.SkipReason,
+			Stats:      buildGitHubControlStats(e.ControlName, result.GitHubStats, findings),
 			Findings:   items,
 		})
 	}

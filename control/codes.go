@@ -81,8 +81,11 @@ const (
 
 // Issue codes for secret and credential handling controls (3xx)
 const (
-	// ISSUE-301: Workflow exfiltrates the entire secrets context via toJson(secrets)
-	CodeOverprovisionedSecrets ErrorCode = "ISSUE-301"
+	// ISSUE-301: Pipeline configuration contains hardcoded secrets detected by gitleaks.
+	// Reconciled with the existing downstream mapping (jobs platform), which has
+	// recorded "Secret leak in pipeline configuration" under ISSUE-301 since
+	// before the gitleaks rule was implemented in the CLI.
+	CodePipelineLeaksSecrets ErrorCode = "ISSUE-301"
 	// ISSUE-302: Reusable workflow called with `secrets: inherit`
 	CodeSecretsInherit ErrorCode = "ISSUE-302"
 	// ISSUE-303: Secret dereferenced via fromJSON bypasses log redaction
@@ -97,6 +100,10 @@ const (
 	CodeArtipacked ErrorCode = "ISSUE-307"
 	// ISSUE-308: Workflow reads a secret via a dynamic index (secrets[expr])
 	CodeSecretsDynamicIndex ErrorCode = "ISSUE-308"
+	// ISSUE-309: Workflow exfiltrates the entire secrets context via toJson(secrets).
+	// Moved from ISSUE-301 in the 301/309 swap so the leaked-secrets rule could
+	// take the slot already used by the downstream jobs platform.
+	CodeOverprovisionedSecrets ErrorCode = "ISSUE-309"
 )
 
 // Issue codes for pipeline composition controls (4xx)
@@ -123,7 +130,9 @@ const (
 	CodeDockerInDockerUsage ErrorCode = "ISSUE-412"
 	// ISSUE-413: CI/CD job uses Docker-in-Docker with insecure daemon configuration
 	CodeDockerInDockerInsecure ErrorCode = "ISSUE-413"
-	// ISSUE-802: Workflow subscribes to a dangerous trigger (pull_request_target, workflow_run)
+	// ISSUE-802: Job reaches a dangerous trigger (workflow_run, issue_comment,
+	// pull_request_review*, discussion*, gollum, fork) AND checks out fork
+	// content. pull_request_target is owned by ISSUE-804.
 	CodeDangerousTriggers ErrorCode = "ISSUE-802"
 	// ISSUE-804: pull_request_target workflow explicitly checks out the PR head (tj-actions pattern)
 	CodePullRequestTargetWithHeadCheckout ErrorCode = "ISSUE-804"
@@ -171,9 +180,13 @@ type ErrorCodeInfo struct {
 	Code ErrorCode `json:"code"`
 	// Severity reflects potential impact (see documentation); used for Plumber Score.
 	Severity IssueSeverity `json:"severity"`
-	// Title is a short human-readable title.
+	// Title is a short human-readable title used by SARIF / GLSAST / JSON
+	// renderers when no provider-specific override is set. Acts as the
+	// default; the catalog DisplayName covers the terminal renderer's
+	// per-provider naming separately.
 	Title string `json:"title"`
-	// Description explains what the issue is.
+	// Description explains what the issue is. Same fallback semantics as
+	// Title: rendered as-is when no provider override is set.
 	Description string `json:"description"`
 	// Remediation provides guidance on how to fix the issue.
 	Remediation string `json:"remediation"`
@@ -181,6 +194,34 @@ type ErrorCodeInfo struct {
 	DocURL string `json:"docUrl"`
 	// ControlName is the .plumber.yaml control key this code belongs to.
 	ControlName string `json:"controlName"`
+
+	// TitleByProvider lets cross-provider controls render different titles
+	// in SARIF / JSON / GLSAST depending on which provider produced the
+	// finding (mirrors the per-provider DisplayName already supported by
+	// the catalog). Keyed by "gitlab" / "github". An empty map (the common
+	// case) means TitleFor() falls back to Title for every provider.
+	TitleByProvider map[string]string `json:"titleByProvider,omitempty"`
+	// DescriptionByProvider works the same way for the longer description.
+	DescriptionByProvider map[string]string `json:"descriptionByProvider,omitempty"`
+}
+
+// TitleFor returns the title to render for a finding emitted under the
+// given provider ("gitlab" / "github"). Falls back to Title if no
+// override is registered for the provider, so codes that don't need
+// per-provider divergence stay a single Title declaration.
+func (i ErrorCodeInfo) TitleFor(provider string) string {
+	if override, ok := i.TitleByProvider[provider]; ok && override != "" {
+		return override
+	}
+	return i.Title
+}
+
+// DescriptionFor mirrors TitleFor for the description.
+func (i ErrorCodeInfo) DescriptionFor(provider string) string {
+	if override, ok := i.DescriptionByProvider[provider]; ok && override != "" {
+		return override
+	}
+	return i.Description
 }
 
 // errorCodeRegistry maps issue codes to their metadata.
@@ -580,6 +621,27 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		DocURL:      docsBaseURL + string(CodeUndocumentedPermissions),
 		ControlName: "workflowsMustDeclarePermissions",
 	},
+	CodePipelineLeaksSecrets: {
+		Code:        CodePipelineLeaksSecrets,
+		Severity:    SeverityCritical,
+		Title:       "Secret leak in pipeline configuration",
+		Description: "The resolved pipeline configuration contains a pattern that matches a hardcoded secret (API token, private key, password, or other credential) embedded directly in the YAML. Secrets committed to pipeline configuration are exposed to everyone with read access to the repository, appear in version history, and are forwarded to every runner that executes the pipeline.",
+		Remediation: "Remove the hardcoded value and store it as a masked, protected CI/CD variable. Reference it in the pipeline as `$MY_SECRET` rather than embedding the value directly.",
+		DocURL:      docsBaseURL + string(CodePipelineLeaksSecrets),
+		ControlName: "pipelineMustNotLeakSecretsInConfig",
+		// Per-provider overrides for SARIF / JSON / GLSAST output. The
+		// terminal renderer already gets per-provider naming via the
+		// catalog DisplayName. The GitLab default above mirrors the
+		// downstream jobs-platform mapping; the GitHub override mirrors
+		// the workflow-flavoured naming used in the rest of the GitHub
+		// catalog entries.
+		TitleByProvider: map[string]string{
+			"github": "Secret leak in workflow configuration",
+		},
+		DescriptionByProvider: map[string]string{
+			"github": "A file under `.github/workflows/` contains a pattern that matches a hardcoded secret (API token, private key, password, or other credential) embedded directly in the YAML. Workflows committed to a repository are exposed to every collaborator, every fork, and the entire commit history, and are forwarded to every runner that executes the workflow.",
+		},
+	},
 	CodeSecretsDynamicIndex: {
 		Code:        CodeSecretsDynamicIndex,
 		Severity:    SeverityLow,
@@ -629,8 +691,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Code:        CodeDangerousTriggers,
 		Severity:    SeverityCritical,
 		Title:       "Dangerous workflow trigger",
-		Description: "A GitHub Actions job is reachable via a trigger that runs with the base repository's secrets while being influenceable by an unprivileged caller (`pull_request_target`, `workflow_run`). Combined with any form of user-content checkout or template injection this becomes a direct secret-exfiltration path — the pattern behind the March 2025 tj-actions/changed-files supply-chain compromise (CVE-2025-30066).",
-		Remediation: "Prefer the standard `pull_request` trigger unless access to base-repo secrets is strictly required. If `pull_request_target` is necessary, never check out fork content and never render github.event.* / github.head_ref into shell commands. For `workflow_run`, keep the job restricted to non-secret-bearing steps.",
+		Description: "A GitHub Actions job is reachable via a trigger that runs with the base repository's secrets while being influenceable by an unprivileged caller (`workflow_run`, `issue_comment`, `pull_request_review`, `pull_request_review_comment`, `discussion`, `discussion_comment`, `gollum`, `fork`) AND it checks out fork-controlled code. The `pull_request_target` case is owned by ISSUE-804 (pull-request-target-with-head-checkout). This is the same exploit class as the March 2025 tj-actions/changed-files supply-chain compromise (CVE-2025-30066).",
+		Remediation: "Prefer the standard `pull_request` trigger unless access to base-repo secrets is strictly required. If a secret-bearing trigger is necessary, never check out fork content and never render github.event.* / github.head_ref into shell commands. For `workflow_run`, keep the job restricted to non-secret-bearing steps.",
 		DocURL:      docsBaseURL + string(CodeDangerousTriggers),
 		ControlName: "workflowMustNotUseDangerousTriggers",
 	},

@@ -44,6 +44,10 @@ type findingGroup struct {
 	Title      string
 	Compliance float64
 	Skipped    bool
+	// SkipReason overrides the default "disabled in configuration"
+	// string printed under a skipped header. Empty → renderer uses
+	// the default; non-empty → the renderer prints "(<reason>)".
+	SkipReason string
 	Stats      []statLine
 	Findings   []detailedFinding
 }
@@ -61,7 +65,11 @@ func renderFindingGroups(groups []findingGroup) {
 		}
 		printControlHeader(g.Title, g.Compliance, g.Skipped)
 		if g.Skipped {
-			fmt.Printf("  %sStatus: SKIPPED (disabled in configuration)%s\n\n", colorDim, colorReset)
+			reason := g.SkipReason
+			if reason == "" {
+				reason = "disabled in configuration"
+			}
+			fmt.Printf("  %sStatus: SKIPPED (%s)%s\n\n", colorDim, reason, colorReset)
 			continue
 		}
 		for _, s := range g.Stats {
@@ -216,7 +224,7 @@ func sortBranchProtectionFindingsForDisplay(findings []opaengine.Finding) {
 // computed by control.AggregateGitHubStats. Mirrors the GitLab
 // equivalent — same Label/Value shape rendered identically by
 // renderFindingGroups.
-func buildGitHubControlStats(controlName string, stats *control.GitHubAnalysisStats) []statLine {
+func buildGitHubControlStats(controlName string, stats *control.GitHubAnalysisStats, findings []opaengine.Finding) []statLine {
 	if stats == nil {
 		return nil
 	}
@@ -304,6 +312,24 @@ func buildGitHubControlStats(controlName string, stats *control.GitHubAnalysisSt
 		return []statLine{
 			{"Variables Checked", fmt.Sprintf("%d", stats.VariableBindingsTotal)},
 			{"Forbidden Found", fmt.Sprintf("%d", stats.DebugTraceFound)},
+		}
+	case "pipelineMustNotLeakSecretsInConfig":
+		// Mirrors the GitLab side: count hits and distinct gitleaks
+		// rules from findings. GitHubAnalysisStats doesn't carry these
+		// counters (the rule reads pipeline.gitleaksHits directly), so
+		// the per-control findings list is the only source. Returning
+		// stats here also ensures the section renders even with zero
+		// hits — otherwise an enabled-but-clean run produced no body
+		// block, which read as "the control didn't run".
+		uniqueRules := map[string]struct{}{}
+		for _, f := range findings {
+			if v, ok := f.Data["ruleId"].(string); ok && v != "" {
+				uniqueRules[v] = struct{}{}
+			}
+		}
+		return []statLine{
+			{"Hits Found", fmt.Sprintf("%d", len(findings))},
+			{"Distinct Rules Matched", fmt.Sprintf("%d", len(uniqueRules))},
 		}
 	case "branchMustBeProtected":
 		unprotectedMatched := stats.BranchesMatched - stats.BranchesProtected
@@ -493,6 +519,22 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 			{"Jobs Checked", fmt.Sprintf("%d", jobTotal)},
 			{"Script Lines Checked", fmt.Sprintf("%d", _countScriptLines(result))},
 			{"Unverified Scripts", fmt.Sprintf("%d", findingsCount)},
+		}
+	case "pipelineMustNotLeakSecretsInConfig":
+		// One scanned input (the merged GitLab pipeline). Hits are
+		// already enumerated below as findings — adding a denominator
+		// here would just be "Hits Found: N" duplicated above the
+		// finding list. Return a single stat that's not redundant: the
+		// count of unique secret patterns matched.
+		uniqueRules := map[string]struct{}{}
+		for _, f := range findings {
+			if v, ok := f.Data["ruleId"].(string); ok && v != "" {
+				uniqueRules[v] = struct{}{}
+			}
+		}
+		return []statLine{
+			{"Hits Found", fmt.Sprintf("%d", findingsCount)},
+			{"Distinct Rules Matched", fmt.Sprintf("%d", len(uniqueRules))},
 		}
 	case "securityJobsMustNotBeWeakened":
 		// Stable's "Security Jobs Found" counts how many of the merged

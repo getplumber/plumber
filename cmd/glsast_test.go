@@ -15,7 +15,7 @@ func TestBuildGLSAST_SchemaRequiredFields(t *testing.T) {
 		{Code: "ISSUE-501", Severity: "critical", Message: "branch not protected"}, // no file
 	}
 
-	rep := buildGLSAST(findings)
+	rep := buildGLSAST(findings, "gitlab")
 
 	if _, err := json.Marshal(rep); err != nil {
 		t.Fatalf("report does not marshal: %v", err)
@@ -85,7 +85,7 @@ func TestBuildGLSAST_DescriptionIncludesFindingMessage(t *testing.T) {
 	msg := `job "gitleaks" uses image from untrusted source: docker.io/zricethezav/gitleaks:v8.15.0`
 	rep := buildGLSAST([]opaengine.Finding{
 		{Code: code, Severity: "high", Message: msg, File: ".gitlab-ci.yml", Line: 56},
-	})
+	}, "gitlab")
 	if len(rep.Vulnerabilities) != 1 {
 		t.Fatalf("vulnerabilities = %d, want 1", len(rep.Vulnerabilities))
 	}
@@ -104,7 +104,7 @@ func TestBuildGLSAST_DescriptionFallsBackToMessage(t *testing.T) {
 	msg := "some specific detail"
 	rep := buildGLSAST([]opaengine.Finding{
 		{Code: "ISSUE-UNKNOWN", Severity: "low", Message: msg, File: ".gitlab-ci.yml", Line: 1},
-	})
+	}, "gitlab")
 	if len(rep.Vulnerabilities) != 1 {
 		t.Fatalf("vulnerabilities = %d, want 1", len(rep.Vulnerabilities))
 	}
@@ -118,7 +118,7 @@ func TestBuildGLSAST_LocationAlwaysPresent(t *testing.T) {
 	// file must still serialize a location object (an empty {} is valid).
 	rep := buildGLSAST([]opaengine.Finding{
 		{Code: "ISSUE-501", Severity: "critical", Message: "no file"},
-	})
+	}, "gitlab")
 	b, err := json.Marshal(rep.Vulnerabilities[0])
 	if err != nil {
 		t.Fatalf("marshal: %v", err)

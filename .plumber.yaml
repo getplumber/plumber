@@ -484,6 +484,19 @@ gitlab:
       # Supports wildcards (e.g., https://internal-artifacts.example.com/*).
       trustedUrls: []
       # - https://internal-artifacts.example.com/*
+    # ── Pipeline must not leak secrets in configuration ─────────────
+    #
+    # Runs gitleaks against the resolved pipeline YAML to detect hardcoded
+    # secrets (API tokens, private keys, passwords) committed directly in
+    # the CI configuration. Requires gitleaks to be installed and available
+    # on PATH (or configured via gitleaksPath).
+    pipelineMustNotLeakSecretsInConfig:
+      # Set to true to enable this control (requires gitleaks)
+      enabled: false
+      # Path to the gitleaks binary. Defaults to "gitleaks" (PATH lookup).
+      # gitleaksPath: /usr/local/bin/gitleaks
+      # Optional path to a custom gitleaks configuration file.
+      # gitleaksConfigPath: /path/to/gitleaks.toml
     # ── Pipeline must not use Docker-in-Docker ──────────────────────
     #
     # Detects CI/CD jobs that use Docker-in-Docker (dind) services.
@@ -509,6 +522,22 @@ gitlab:
 # ============================================================================
 github:
   controls:
+    # ── Pipeline must not leak secrets in configuration ─────────────
+    #
+    # Runs gitleaks against every workflow file under
+    # .github/workflows/ to detect hardcoded secrets (API tokens,
+    # private keys, passwords) committed directly into the YAML.
+    # Requires gitleaks to be installed and available on PATH (or
+    # configured via gitleaksPath). Disabled by default because
+    # gitleaks is an external dependency.
+    pipelineMustNotLeakSecretsInConfig:
+      # Set to true to enable this control (requires gitleaks)
+      enabled: false
+      # Path to the gitleaks binary. Defaults to "gitleaks" (PATH lookup).
+      # gitleaksPath: /usr/local/bin/gitleaks
+      # Optional path to a custom gitleaks configuration file.
+      # gitleaksConfigPath: /path/to/gitleaks.toml
+
     # ===========================================
     # Actions must be pinned by commit SHA
     # ===========================================
@@ -678,6 +707,17 @@ github:
     # Use the standard `pull_request` trigger unless secrets are
     # required.
     workflowMustNotUseDangerousTriggers:
+      enabled: true
+
+    # ===========================================
+    # pull_request_target must not check out PR head
+    # ===========================================
+    # Flags a workflow triggered by `pull_request_target` that checks
+    # out the pull-request head (github.event.pull_request.head.sha or
+    # github.head_ref). Base-repo secrets and fork-controlled code then
+    # run together, which is the tj-actions / CVE-2025-30066 vector.
+    # Keep fork code under a plain `pull_request` trigger instead.
+    pullRequestTargetMustNotCheckoutHead:
       enabled: true
 
     # ===========================================

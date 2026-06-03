@@ -6,7 +6,7 @@
 # sees a payload that is trivially shell-injectable under privileged
 # triggers (`pull_request_target`, `workflow_run`).
 #
-# Mirror of ISSUE-301 (overprovisioned-secrets) applied to the
+# Mirror of ISSUE-309 (overprovisioned-secrets) applied to the
 # github context. Severity is high rather than critical: the
 # github context does not carry long-lived tokens like `secrets`
 # does, but it can still be weaponised into shell injection.

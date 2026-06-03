@@ -31,7 +31,7 @@ deny contains finding if {
 	job := input.pipeline.jobs[i]
 	_job_dumps_secrets(job)
 	finding := {
-		"code":     "ISSUE-301",
+		"code":     "ISSUE-309",
 		"severity": "critical",
 		"message":  sprintf("job %q exports the entire secrets context via toJson(secrets) — pass secrets by name instead", [job.name]),
 		"job":      job.name,
