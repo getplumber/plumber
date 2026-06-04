@@ -1,3 +1,25 @@
+## [0.3.49](https://github.com/getplumber/plumber/compare/v0.3.48...v0.3.49) (2026-06-04)
+
+## [0.3.48](https://github.com/getplumber/plumber/compare/v0.3.47...v0.3.48) (2026-06-04)
+
+## [0.3.47](https://github.com/getplumber/plumber/compare/v0.3.46...v0.3.47) (2026-06-04)
+
+
+### 🐛 Bug Fixes
+
+* **docker:** Update docker image ([3b7bcfd](https://github.com/getplumber/plumber/commit/3b7bcfd7309b2118bce0f7b37e89d4b21def25c1))
+
+## [0.3.46](https://github.com/getplumber/plumber/compare/v0.3.45...v0.3.46) (2026-06-04)
+
+## [0.3.45](https://github.com/getplumber/plumber/compare/v0.3.44...v0.3.45) (2026-06-04)
+
+
+### 🐛 Bug Fixes
+
+* **component:** space separated inputs are now supported ([d1c90c7](https://github.com/getplumber/plumber/commit/d1c90c7121ef3e0a3ca1ad13c6b01589b69eef3f))
+
+## [0.3.44](https://github.com/getplumber/plumber/compare/v0.3.43...v0.3.44) (2026-06-04)
+
 ## [0.3.43](https://github.com/getplumber/plumber/compare/v0.3.42...v0.3.43) (2026-06-03)
 
 
