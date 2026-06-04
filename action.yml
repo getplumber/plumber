@@ -8,8 +8,8 @@ branding:
 
 inputs:
   version:
-    description: "Plumber release tag to install (e.g. v0.3.43). Downloaded from GitHub Releases and verified against checksums.txt and SLSA attestation"
-    default: "v0.3.43"
+    description: "Plumber release tag to install (e.g. v0.3.44). Downloaded from GitHub Releases and verified against checksums.txt and SLSA attestation"
+    default: "v0.3.44"
   verify-attestation:
     description: "Verify the downloaded binary's build-provenance attestation (sigstore/SLSA) against the getplumber/plumber release workflow, using the gh CLI. This anchors the binary to a trusted build regardless of the mutable release tag. Disable for air-gapped or GHES setups without attestation access."
     default: "true"
