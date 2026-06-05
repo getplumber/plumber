@@ -135,6 +135,7 @@ var envKeys = map[string]string{
 	"skip-controls":  "PLUMBER_ANALYZE_SKIP_CONTROLS",
 	"fail-warnings":  "PLUMBER_ANALYZE_FAIL_WARNINGS",
 	"ci-config-path": "PLUMBER_ANALYZE_CI_CONFIG_PATH",
+	"verbose":        "PLUMBER_ANALYZE_VERBOSE",
 }
 
 func init() {
@@ -228,6 +229,18 @@ func printProviderDetection(provider, reason string) {
 // spot (via the wizard or the default template) and then reloads it so the
 // calling analyze command can continue uninterrupted.
 func loadConfigOrOffer(cfgFile string) (*configuration.PlumberConfig, string, []string, error) {
+	if cfgFile == "" {
+		if _, err := os.Stat(".plumber.yaml"); err == nil {
+		    // Use local config if available
+			cfgFile = ".plumber.yaml"
+		} else if _, err := os.Stat("/.plumber.yaml"); err == nil {
+		    // Fallback to global config is available
+			cfgFile = "/.plumber.yaml"
+		} else {
+		    // Back to local configuration to suggest interactive
+			cfgFile = ".plumber.yaml"
+		}
+	}
 	pc, path, warnings, err := configuration.LoadPlumberConfig(cfgFile)
 	if err == nil {
 		return pc, path, warnings, nil
@@ -322,10 +335,12 @@ func envFloat64Fallback(cmd *cobra.Command, flag, envKey string, dest *float64) 
 }
 
 func runAnalyze(cmd *cobra.Command, args []string) error {
-	// Set log level based on verbose flag
+	// Set log level based on verbose flag or env var
 	// Default: WarnLevel (quiet output, only show warnings/errors)
 	// Verbose: DebugLevel (show all logs for troubleshooting)
-	if verbose {
+	if err := envBoolFallback(cmd, "verbose", envKeys["verbose"], &verbose); err != nil {
+		return err
+	} else if verbose {
 		logrus.SetLevel(logrus.DebugLevel)
 	} else {
 		logrus.SetLevel(logrus.WarnLevel)

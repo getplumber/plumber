@@ -27,7 +27,7 @@ spec:
     # Default conf can be found at https://gitlab.com/getplumber/plumber/-/blob/main/.plumber.yaml
     # Priority: 1) config_file input (if set), 2) .plumber.yaml in repo (if exists), 3) default config
     config_file:
-      description: Path to your .plumber.yaml config file (relative to repo root). If not set, uses .plumber.yaml from repo if present, otherwise uses default config.
+      description: Path to Plumber config file (relative to repo root). If not set, local `.plumber.yaml` if present, then global config `/.plumber.yaml` if present, then default plumber config.
       default: ""
 
     # Compliance configuration
@@ -145,55 +145,28 @@ spec:
   variables:
     # Use intermediate variable to avoid self-reference when default is $GITLAB_TOKEN
     PLUMBER_TOKEN: $[[ inputs.gitlab_token ]]
+    GITLAB_TOKEN: $PLUMBER_TOKEN
+    PLUMBER_ANALYZE_CONFIG: $[[ inputs.config_file ]]
+    PLUMBER_ANALYZE_GITLAB_URL: $[[ inputs.server_url ]]
+    PLUMBER_ANALYZE_PROJECT: $[[ inputs.project_path ]]
+    PLUMBER_ANALYZE_BRANCH: $[[ inputs.branch ]]
+    PLUMBER_ANALYZE_THRESHOLD: $[[ inputs.threshold ]]
+    PLUMBER_ANALYZE_PRINT: $[[ inputs.print_output ]]
+    PLUMBER_ANALYZE_OUTPUT: $[[ inputs.output_file ]]
+    PLUMBER_ANALYZE_PBOM: $[[ inputs.pbom_file ]]
+    PLUMBER_ANALYZE_PBOM_CYCLONEDX: $[[ inputs.pbom_cyclonedx_file ]]
+    PLUMBER_ANALYZE_GLSAST: $[[ inputs.glsast_file ]]
+    PLUMBER_ANALYZE_MR_COMMENT: $[[ inputs.mr_comment ]]
+    PLUMBER_ANALYZE_BADGE: $[[ inputs.badge ]]
+    PLUMBER_ANALYZE_SCORE: $[[ inputs.score ]]
+    PLUMBER_ANALYZE_SCORE_POINT: $[[ inputs.score_point ]]
+    PLUMBER_ANALYZE_CONTROLS: $[[ inputs.controls ]]
+    PLUMBER_ANALYZE_SKIP_CONTROLS: $[[ inputs.skip_controls ]]
+    PLUMBER_ANALYZE_FAIL_WARNINGS: $[[ inputs.fail_warnings ]]
+    PLUMBER_ANALYZE_CI_CONFIG_PATH: $[[ inputs.ci_config_path ]]
+    PLUMBER_ANALYZE_VERBOSE: $[[ inputs.verbose ]]
   script:
-    - |
-      # Export as GITLAB_TOKEN for the CLI
-      export GITLAB_TOKEN="$PLUMBER_TOKEN"
-      
-      # Determine config file path
-      # Priority: 1) config_file input (if set), 2) .plumber.yaml in repo (if exists), 3) default config
-      CONFIG_PATH=""
-      if [ -n "$[[ inputs.config_file ]]" ]; then
-        # User provided a custom config path (relative to repo root)
-        CONFIG_PATH="$CI_PROJECT_DIR/$[[ inputs.config_file ]]"
-        echo "Using custom config: $CONFIG_PATH"
-      elif [ -f "$CI_PROJECT_DIR/.plumber.yaml" ]; then
-        # User has .plumber.yaml in their repo
-        CONFIG_PATH="$CI_PROJECT_DIR/.plumber.yaml"
-        echo "Using repo config: $CONFIG_PATH"
-      else
-        # Use default config embedded in the container
-        CONFIG_PATH="/.plumber.yaml"
-        echo "Using default config: $CONFIG_PATH"
-      fi
-
-      set --
-
-      # flags with value
-      [ -n "$[[ inputs.output_file ]]" ] && set -- "$@" --output "$[[ inputs.output_file ]]"
-      [ -n "$[[ inputs.pbom_file ]]" ] && set -- "$@" --pbom "$[[ inputs.pbom_file ]]"
-      [ -n "$[[ inputs.pbom_cyclonedx_file ]]" ] && set -- "$@" --pbom-cyclonedx "$[[ inputs.pbom_cyclonedx_file ]]"
-      [ -n "$[[ inputs.glsast_file ]]" ] && set -- "$@" --glsast "$[[ inputs.glsast_file ]]"
-      [ -n "$[[ inputs.controls ]]" ] && set -- "$@" --controls "$[[ inputs.controls ]]"
-      [ -n "$[[ inputs.skip_controls ]]" ] && set -- "$@" --skip-controls "$[[ inputs.skip_controls ]]"
-
-      # boolean flags
-      [ "$[[ inputs.verbose ]]" = "true" ] && set -- "$@" --verbose
-      [ "$[[ inputs.mr_comment ]]" = "true" ] && set -- "$@" --mr-comment
-      [ "$[[ inputs.badge ]]" = "true" ] && set -- "$@" --badge
-      [ "$[[ inputs.score ]]" = "true" ] && set -- "$@" --score
-      [ "$[[ inputs.score_point ]]" = "true" ] && set -- "$@" --score-point
-      [ "$[[ inputs.fail_warnings ]]" = "true" ] && set -- "$@" --fail-warnings
-
-      /plumber analyze \
-        --gitlab-url "$[[ inputs.server_url ]]" \
-        --project "$[[ inputs.project_path ]]" \
-        --branch "$[[ inputs.branch ]]" \
-        --config "$CONFIG_PATH" \
-        --threshold "$[[ inputs.threshold ]]" \
-        --print="$[[ inputs.print_output ]]" \
-        --ci-config-path "$[[ inputs.ci_config_path ]]" \
-        "$@"
+    - plumber analyze
   artifacts:
     paths:
       - $[[ inputs.output_file ]]
