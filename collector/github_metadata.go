@@ -1,15 +1,20 @@
 package collector
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"net/http"
 	"os"
 	"regexp"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/cli/go-gh/v2/pkg/api"
 	version "github.com/hashicorp/go-version"
+	"github.com/sirupsen/logrus"
 )
 
 // EnvDisableGitHubAPI, when set to a truthy value, forces the
@@ -17,6 +22,15 @@ import (
 // state. Set to "1" by the test suite to keep unit tests offline
 // and fast; production code does not read this variable.
 const EnvDisableGitHubAPI = "PLUMBER_DISABLE_GITHUB_API"
+
+// EnvMetadataToken, when set, supplies the token the metadata client uses
+// to resolve third-party action versions. It takes precedence over the
+// go-gh default chain (gh auth, GH_TOKEN, GITHUB_TOKEN) and is the
+// supported way to resolve actions hosted in an org that gates the Actions
+// GITHUB_TOKEN behind an IP allow list (ISSUE-228); it also carries the
+// 5,000/hr user rate limit rather than the 60/hr anonymous fallback. A
+// token with public-repository read is sufficient.
+const EnvMetadataToken = "PLUMBER_METADATA_TOKEN"
 
 // GitHubMetadata is the facts the API-backed policies need to know
 // about a single `owner/repo@ref` action reference.
@@ -63,7 +77,13 @@ type GitHubMetadata struct {
 // run rather than a crash.
 type GitHubMetadataClient struct {
 	rest *api.RESTClient
-	mu   sync.Mutex
+	// apiBaseURL is the REST base used for unauthenticated fallback reads
+	// (e.g. https://api.github.com). When an authenticated read of a public
+	// action repo is blocked by the owner org's IP allow list (403), the
+	// tags fetch retries anonymously against this base, which the allow
+	// list does not gate (confirmed on a runner, ISSUE-228).
+	apiBaseURL string
+	mu         sync.Mutex
 	// repoCache maps "owner/repo" to archived state; populated lazily.
 	repoCache map[string]repoCacheEntry
 	// refCache maps "owner/repo@ref" to the resolved metadata.
@@ -79,6 +99,12 @@ type GitHubMetadataClient struct {
 	sha2tagCache map[string]map[string]string
 	disabled     bool
 	disableCause error
+	// degraded accumulates one message per action ref whose known-CVE
+	// check could not be completed because the pinned commit could not be
+	// resolved to a version (tag list unavailable). degradedSeen dedupes
+	// by "owner/repo@ref" so a ref used in many jobs warns once.
+	degraded     []string
+	degradedSeen map[string]struct{}
 }
 
 // advisoryInfo is one vulnerability entry from the GitHub Advisory
@@ -116,6 +142,7 @@ func NewGitHubMetadataClient() *GitHubMetadataClient {
 // instance.
 func NewGitHubMetadataClientForHost(host string) *GitHubMetadataClient {
 	c := &GitHubMetadataClient{
+		apiBaseURL:    apiBaseURLForHost(host),
 		repoCache:     map[string]repoCacheEntry{},
 		refCache:      map[string]GitHubMetadata{},
 		latestCache:   map[string]string{},
@@ -126,12 +153,23 @@ func NewGitHubMetadataClientForHost(host string) *GitHubMetadataClient {
 		c.disabled = true
 		return c
 	}
+	// Credential precedence (ISSUE-228):
+	//   1. PLUMBER_METADATA_TOKEN, when supplied, wins. It resolves action
+	//      versions from orgs that gate the Actions GITHUB_TOKEN behind an IP
+	//      allow list, at the 5,000/hr user limit.
+	//   2. otherwise the go-gh default chain (gh auth, GH_TOKEN, GITHUB_TOKEN).
+	// Either way a 403 on a public action repo still falls back to an
+	// anonymous read (see fetchAllTags), so a no-token run keeps working.
 	var rest *api.RESTClient
 	var err error
-	if host == "" {
+	opts, token := metadataClientOptions(host)
+	switch {
+	case token != "":
+		rest, err = api.NewRESTClient(opts)
+	case host == "":
 		rest, err = api.DefaultRESTClient()
-	} else {
-		rest, err = api.NewRESTClient(api.ClientOptions{Host: host})
+	default:
+		rest, err = api.NewRESTClient(opts)
 	}
 	if err != nil {
 		c.disabled = true
@@ -140,6 +178,22 @@ func NewGitHubMetadataClientForHost(host string) *GitHubMetadataClient {
 	}
 	c.rest = rest
 	return c
+}
+
+// metadataClientOptions resolves the REST client options for the metadata
+// client. When EnvMetadataToken is set its (trimmed) value is returned as
+// both the AuthToken on opts and the second return value, signalling the
+// caller to use it in preference to the go-gh default chain. token is empty
+// otherwise. A non-empty host targets a GitHub Enterprise Server instance.
+func metadataClientOptions(host string) (opts api.ClientOptions, token string) {
+	token = strings.TrimSpace(os.Getenv(EnvMetadataToken))
+	if token != "" {
+		opts.AuthToken = token
+	}
+	if host != "" {
+		opts.Host = host
+	}
+	return opts, token
 }
 
 // Available reports whether the client has a usable gh auth token.
@@ -220,10 +274,12 @@ func (c *GitHubMetadataClient) resolveUncached(owner, repo, ref string) GitHubMe
 // filtering uses a semver comparison against every vulnerability
 // entry the advisory declares for this package.
 //
-// When the ref cannot be resolved to a comparable version (unknown
-// tag, commit SHA that does not point at a release), the filter
-// degrades to "keep advisories that reference this package at
-// all" — better a false positive than a silent miss on a real CVE.
+// When a commit SHA cannot be resolved to a comparable version
+// (the repo's tag list is unavailable, or the SHA is not a tagged
+// release), the filter abstains rather than reporting every advisory:
+// it cannot prove the pin sits in an affected range, and crying wolf
+// on SHA-pinned actions is the ISSUE-228 false positive. A mutable
+// branch ref keeps the conservative match — see _refCoveredByRange.
 //
 // A moving major / major.minor tag (`v4`, `v4.1`) is matched against
 // the whole version span it can float across, not against its floor —
@@ -234,6 +290,13 @@ func (c *GitHubMetadataClient) advisoriesForRef(owner, repo, ref string) []strin
 		return nil
 	}
 	refVersion := c.resolveRefToVersion(owner, repo, ref)
+	if refVersion == nil && _isCommitSha(ref) {
+		// Advisories exist for this repo but we could not resolve the
+		// pinned commit to a version, so the range filter abstains below
+		// (see _refCoveredByRange). Record it so the degraded check is
+		// surfaced rather than silently passing (ISSUE-228).
+		c.recordDegraded(owner, repo, ref)
+	}
 	out := []string{}
 	seen := map[string]struct{}{}
 	for _, a := range infos {
@@ -248,6 +311,39 @@ func (c *GitHubMetadataClient) advisoriesForRef(owner, repo, ref string) []strin
 			seen[a.GhsaID] = struct{}{}
 		}
 	}
+	return out
+}
+
+// recordDegraded notes that the known-CVE check for owner/repo@ref could
+// not be completed because the pinned commit did not resolve to a version.
+// Deduped by ref so a heavily-reused action warns only once.
+func (c *GitHubMetadataClient) recordDegraded(owner, repo, ref string) {
+	key := owner + "/" + repo + "@" + ref
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.degradedSeen == nil {
+		c.degradedSeen = map[string]struct{}{}
+	}
+	if _, dup := c.degradedSeen[key]; dup {
+		return
+	}
+	c.degradedSeen[key] = struct{}{}
+	c.degraded = append(c.degraded, fmt.Sprintf(
+		"%s: tag list unavailable, could not resolve the pinned commit to a version, so the known-CVE check was skipped for this action",
+		key,
+	))
+}
+
+// DegradedChecks returns the accumulated "could not verify" messages, one
+// per action ref whose known-CVE check was skipped. Returns nil when none.
+func (c *GitHubMetadataClient) DegradedChecks() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.degraded) == 0 {
+		return nil
+	}
+	out := make([]string, len(c.degraded))
+	copy(out, c.degraded)
 	return out
 }
 
@@ -299,9 +395,10 @@ func (c *GitHubMetadataClient) advisoriesForRepo(owner, repo string) []advisoryI
 // resolveRefToVersion turns the ref string into a comparable semver
 // value: a 40-char commit SHA is looked up in the repo's tag list and
 // the matching tag is parsed; any other ref is parsed directly as a
-// tag. Returns nil when the version cannot be determined — callers
-// then fall back to "flag everything" so a genuine CVE does not slip
-// past because Plumber could not match the SHA to a release.
+// tag. Returns nil when the version cannot be determined; for a commit
+// SHA the caller then abstains rather than matching every advisory, so
+// an unresolvable SHA pin is not reported as vulnerable to everything
+// (see _refCoveredByRange and ISSUE-228).
 //
 // The SHA branch is tried first on purpose: hashicorp/go-version
 // parses a hex SHA that begins with a digit as a semver value
@@ -368,13 +465,27 @@ func _partialTagBounds(ref string) (floor, ceil *version.Version, ok bool) {
 // across is vulnerable.
 //
 // Exact tags (`v4.1.0`) and SHA-resolved versions use a plain single-
-// version check; an unresolvable ref (refVersion nil) is kept
-// conservatively — better a false positive than a silent miss.
+// version check. An unresolvable commit SHA (refVersion nil) abstains
+// rather than matching every advisory (ISSUE-228); an unresolvable
+// mutable branch ref keeps the conservative match.
 func _refCoveredByRange(ref string, refVersion *version.Version, rangeExpr string) bool {
 	if floor, ceil, ok := _partialTagBounds(ref); ok {
 		return _versionInRange(floor, rangeExpr) && _versionInRange(ceil, rangeExpr)
 	}
-	return refVersion == nil || _versionInRange(refVersion, rangeExpr)
+	if refVersion == nil {
+		// A commit SHA we could not resolve to a release version: the
+		// repo's tag list was unavailable (org IP allow list 403, rate
+		// limit, network error) or the SHA is not a tagged release. We
+		// cannot prove the pinned commit falls inside the advisory's
+		// affected range, so do NOT flag it. Reporting every advisory for
+		// an unresolved SHA is the ISSUE-228 false positive that scores a
+		// SHA-pinned action A locally (tags resolve, out-of-range pin
+		// dropped) and E in CI (fetch blocked, version unknown, every
+		// advisory matches). A mutable ref we cannot version (branch pin)
+		// keeps the conservative match, since it floats across versions.
+		return !_isCommitSha(ref)
+	}
+	return _versionInRange(refVersion, rangeExpr)
 }
 
 // resolveCommitToTag returns the release tag pointing at the given
@@ -400,20 +511,56 @@ func (c *GitHubMetadataClient) resolveCommitToTag(owner, repo, sha string) strin
 // exact release tag (`v4.3.0`) — the most specific tag wins, so the
 // advisory range filter compares against the real pinned version
 // rather than the alias.
+// tagRef is one entry from the GitHub `/tags` listing: a tag name and the
+// commit it points at.
+type tagRef struct {
+	Name   string `json:"name"`
+	Commit struct {
+		Sha string `json:"sha"`
+	} `json:"commit"`
+}
+
 func (c *GitHubMetadataClient) fetchAllTags(owner, repo string) map[string]string {
 	out := map[string]string{}
 	if c.rest == nil {
 		return out
 	}
+	anonymous := false // flips to true once the authenticated read is blocked
 	for page := 1; page <= 20; page++ { // hard cap 2000 tags
-		var resp []struct {
-			Name   string `json:"name"`
-			Commit struct {
-				Sha string `json:"sha"`
-			} `json:"commit"`
+		resp, blocked, err := c.fetchTagsPage(owner, repo, page, anonymous)
+		if blocked {
+			// The authenticated action token hit the owner org's IP allow
+			// list. Action repos are public and an anonymous read is not
+			// gated by the allow list (confirmed on a runner, ISSUE-228),
+			// so retry this page and the rest of them without auth.
+			anonymous = true
+			var anonErr error
+			resp, _, anonErr = c.fetchTagsPage(owner, repo, page, true)
+			if anonErr != nil {
+				err = fmt.Errorf("authenticated read blocked by the org IP allow list (403); the anonymous retry also failed: %w", anonErr)
+			} else {
+				err = nil
+				// The normal authenticated read was blocked but the
+				// anonymous retry resolved it. Surface this at warn level
+				// (visible without --verbose) so the fallback is on the
+				// record: the version was resolved anonymously, not by the
+				// usual token read. Fires once per repo, since `anonymous`
+				// is now set for the remaining pages.
+				logrus.WithField("context", "collector").
+					Warnf("authenticated tags read for %s/%s was blocked by the org IP allow list (403); resolved it with an anonymous retry instead", owner, repo)
+			}
 		}
-		path := fmt.Sprintf("repos/%s/%s/tags?per_page=100&page=%d", owner, repo, page)
-		if err := c.rest.Get(path, &resp); err != nil || len(resp) == 0 {
+		if err != nil {
+			// A tag fetch that fails even anonymously (allow list with no
+			// public route, rate limit, network) means SHA-pinned refs for
+			// this repo cannot be resolved to a version; the advisory filter
+			// then abstains rather than emitting false-positive CVEs (see
+			// _refCoveredByRange and ISSUE-228). Warn so it stays visible.
+			logrus.WithField("context", "collector").
+				Warnf("could not fetch tags for %s/%s on page %d; advisory version checks for SHA-pinned refs will be skipped: %v", owner, repo, page, err)
+			break
+		}
+		if len(resp) == 0 {
 			break
 		}
 		for _, t := range resp {
@@ -431,6 +578,72 @@ func (c *GitHubMetadataClient) fetchAllTags(owner, repo string) map[string]strin
 		}
 	}
 	return out
+}
+
+// fetchTagsPage reads one page of a repo's tags. With anonymous=false it
+// uses the authenticated client and returns blocked=true (and no error)
+// when the owner org's IP allow list answers 403, signalling the caller to
+// retry anonymously. With anonymous=true it reads without auth.
+func (c *GitHubMetadataClient) fetchTagsPage(owner, repo string, page int, anonymous bool) (tags []tagRef, blocked bool, err error) {
+	if anonymous {
+		t, _, e := c.anonGetTagsPage(owner, repo, page)
+		return t, false, e
+	}
+	path := fmt.Sprintf("repos/%s/%s/tags?per_page=100&page=%d", owner, repo, page)
+	var resp []tagRef
+	if e := c.rest.Get(path, &resp); e != nil {
+		var httpErr *api.HTTPError
+		if errors.As(e, &httpErr) && httpErr.StatusCode == http.StatusForbidden {
+			return nil, true, nil
+		}
+		return nil, false, e
+	}
+	return resp, false, nil
+}
+
+// anonGetTagsPage reads one page of a repo's tags without authentication,
+// against apiBaseURL. It is the fallback when the authenticated read is
+// blocked by an org IP allow list: public repos are world-readable and the
+// allow list does not gate anonymous reads (confirmed on a runner,
+// ISSUE-228). Subject to GitHub's 60/hour-per-IP unauthenticated limit, so
+// any failure here propagates and the caller abstains. On non-github.com
+// hosts the base URL is best effort; a wrong URL simply fails and abstains.
+func (c *GitHubMetadataClient) anonGetTagsPage(owner, repo string, page int) ([]tagRef, int, error) {
+	reqURL := fmt.Sprintf("%s/repos/%s/%s/tags?per_page=100&page=%d", c.apiBaseURL, owner, repo, page)
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
+	if err != nil {
+		return nil, 0, err
+	}
+	req.Header.Set("Accept", "application/vnd.github+json")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		return nil, 0, err
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if resp.StatusCode != http.StatusOK {
+		return nil, resp.StatusCode, fmt.Errorf("anonymous tags read returned HTTP %d", resp.StatusCode)
+	}
+	var tags []tagRef
+	if err := json.NewDecoder(resp.Body).Decode(&tags); err != nil {
+		return nil, resp.StatusCode, err
+	}
+	return tags, resp.StatusCode, nil
+}
+
+// apiBaseURLForHost returns the REST base used for unauthenticated fallback
+// reads. An empty host means github.com; any other host (GHES) is used as
+// given, best effort.
+func apiBaseURLForHost(host string) string {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return "https://api.github.com"
+	}
+	if !strings.Contains(host, "://") {
+		host = "https://" + host
+	}
+	return strings.TrimRight(host, "/")
 }
 
 // _moreSpecificTag returns whichever of two tag names that point at the

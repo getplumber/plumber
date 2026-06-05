@@ -16,6 +16,9 @@ inputs:
   github-token:
     description: "Token for the GitHub API (branch protection, advisory DB) and SARIF upload. Needs Administration:read for full branchMustBeProtected, and the job needs security-events:write to upload SARIF."
     default: ${{ github.token }}
+  metadata-token:
+    description: "Optional token (public-repo read is enough) used only to resolve third-party action versions for the known-CVE check. Set it when an action is hosted in an org with an IP allow list that blocks the runner's GITHUB_TOKEN; it also raises the API rate limit. Default: none, Plumber falls back to an anonymous read and, if that fails too, skips the version check rather than guessing."
+    default: ""
   project:
     description: "owner/repo to scan remotely (upstream-fetch, no checkout needed). Default: scan the checked-out repository."
     default: ""
@@ -38,7 +41,7 @@ inputs:
     description: "Show the Plumber letter score, points and breakdown."
     default: "true"
   fail-warnings:
-    description: "Treat configuration warnings (unknown keys) as errors."
+    description: "Fail the run on warnings: unknown configuration keys (exit 2) and 'could not verify' checks such as a skipped known-CVE lookup when an action version cannot be resolved (exit 3). soft-fail does not mask exit 3."
     default: "false"
   soft-fail:
     description: "Do not fail the job when compliance is below the threshold. Findings are still produced and uploaded. Runtime errors still fail."
@@ -149,6 +152,7 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ inputs.github-token }}
+        PLUMBER_METADATA_TOKEN: ${{ inputs.metadata-token }}
         IN_PROJECT: ${{ inputs.project }}
         IN_GITHUB_URL: ${{ inputs.github-url }}
         IN_THRESHOLD: ${{ inputs.threshold }}
@@ -205,6 +209,7 @@ runs:
         IN_THRESHOLD: ${{ inputs.threshold }}
         COMPLIANCE: ${{ steps.run.outputs.compliance }}
         PASSED: ${{ steps.run.outputs.passed }}
+        EXIT_CODE: ${{ steps.run.outputs.exit_code }}
       run: |
         set -uo pipefail
         {
@@ -212,6 +217,10 @@ runs:
           echo ""
           if [ -n "${COMPLIANCE:-}" ]; then
             status="❌ failed"; [ "${PASSED:-}" = "true" ] && status="✅ passed"
+            # A degraded run (exit 3: --fail-warnings + a check that could not be
+            # verified) can still be at/above threshold, so PASSED is "true".
+            # Surface it here instead of printing a bare green.
+            [ "${EXIT_CODE:-0}" = "3" ] && status="⚠️ could not fully verify (exit 3)"
             echo "**Compliance:** ${COMPLIANCE}% (threshold ${IN_THRESHOLD}%): ${status}"
           else
             echo "_Plumber ran; see the job log for the full report._"
@@ -259,17 +268,32 @@ runs:
       run: |
         set -uo pipefail
         code="${EXIT_CODE:-2}"
-        if [ "$code" = "0" ]; then
-          exit 0
-        fi
-        if [ "$code" = "2" ]; then
-          echo "::error::Plumber failed to run (exit 2). See the analyze step log."
-          exit 1
-        fi
-        # exit 1 == compliance below threshold
-        if [ "$SOFT_FAIL" = "true" ]; then
-          echo "::warning::Compliance is below the threshold, but soft-fail is enabled."
-          exit 0
-        fi
-        echo "::error::Compliance is below the configured threshold."
-        exit 1
+        case "$code" in
+          0)
+            exit 0
+            ;;
+          2)
+            echo "::error::Plumber failed to run (exit 2: usage, configuration, or runtime error). See the analyze step log."
+            exit 1
+            ;;
+          3)
+            # --fail-warnings is on and at least one check could not be
+            # verified (e.g. an action version that could not be resolved).
+            # Distinct from a compliance failure; soft-fail does not mask it.
+            echo "::error::Plumber could not verify one or more checks and fail-warnings is enabled (exit 3). See the 'Could not verify' warnings in the analyze step log."
+            exit 1
+            ;;
+          1)
+            # Compliance below threshold.
+            if [ "$SOFT_FAIL" = "true" ]; then
+              echo "::warning::Compliance is below the threshold, but soft-fail is enabled."
+              exit 0
+            fi
+            echo "::error::Compliance is below the configured threshold."
+            exit 1
+            ;;
+          *)
+            echo "::error::Plumber exited with unexpected code ${code}. See the analyze step log."
+            exit 1
+            ;;
+        esac

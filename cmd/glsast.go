@@ -35,12 +35,22 @@ type glsastReport struct {
 }
 
 type glsastScan struct {
-	Scanner   glsastScanner `json:"scanner"`
-	Analyzer  glsastScanner `json:"analyzer"`
-	Type      string        `json:"type"`
-	StartTime string        `json:"start_time"`
-	EndTime   string        `json:"end_time"`
-	Status    string        `json:"status"`
+	Scanner   glsastScanner   `json:"scanner"`
+	Analyzer  glsastScanner   `json:"analyzer"`
+	Type      string          `json:"type"`
+	StartTime string          `json:"start_time"`
+	EndTime   string          `json:"end_time"`
+	Status    string          `json:"status"`
+	Messages  []glsastMessage `json:"messages,omitempty"`
+}
+
+// glsastMessage carries a scan-level note (not a vulnerability) through the
+// GitLab schema's scan.messages array. Used for "could not verify"
+// warnings so a degraded check shows in the pipeline output instead of
+// passing silently (ISSUE-228). level is one of info|warn|fatal.
+type glsastMessage struct {
+	Level string `json:"level"`
+	Value string `json:"value"`
 }
 
 type glsastScanner struct {
@@ -199,7 +209,11 @@ func buildGLSAST(findings []opaengine.Finding, provider string) glsastReport {
 // and writes them to filePath. A clean run writes an empty vulnerabilities
 // array so GitLab clears any previously-reported findings.
 func writeGLSASTToFile(result *control.AnalysisResult, filePath, provider string) error {
-	data, err := json.MarshalIndent(buildGLSAST(result.Findings, provider), "", "  ")
+	report := buildGLSAST(result.Findings, provider)
+	for _, w := range result.Warnings {
+		report.Scan.Messages = append(report.Scan.Messages, glsastMessage{Level: "warn", Value: w})
+	}
+	data, err := json.MarshalIndent(report, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal gitlab sast report: %w", err)
 	}

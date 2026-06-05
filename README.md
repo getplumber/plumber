@@ -113,6 +113,8 @@ export GH_TOKEN=ghp_xxxx
 
 GitHub local scans can run without a token for workflow-content checks. A token enables repo-level and action-metadata checks.
 
+If a workflow uses an action hosted in an org with an IP allow list (which blocks the runner's `GITHUB_TOKEN`), set `PLUMBER_METADATA_TOKEN` to a token with public-repository read so Plumber can still resolve that action's version for the known-CVE check. Without it, Plumber falls back to an anonymous read and, if that is rate-limited too, skips the version check rather than guessing.
+
 ### Run
 
 Current repo:
@@ -179,6 +181,13 @@ jobs:
     steps:
       - uses: actions/checkout@v6
       - uses: getplumber/plumber@1e15c4a702fb2bff00992cc2171aafdf50909b87 # v0.3.50
+```
+
+To resolve action versions hosted in an org with an IP allow list, pass a public-repo-read token via the `metadata-token` input (kept in a secret):
+
+```yaml
+        with:
+          metadata-token: ${{ secrets.PLUMBER_METADATA_TOKEN }}
 ```
 
 Full guide (SARIF upload, Code Scanning, action inputs): [getplumber.io/docs/cli/github#github-action](https://getplumber.io/docs/cli/github#github-action)
@@ -289,8 +298,8 @@ More details:
 |---|---|
 | `0` | Compliance is greater than or equal to `--threshold` |
 | `1` | Compliance is below `--threshold` |
-| `2` | Invalid usage or configuration |
-| `3` | Runtime, provider, auth, or network failure |
+| `2` | Invalid usage, configuration, or a runtime / provider / auth / network failure |
+| `3` | A check could not be verified and `--fail-warnings` is set (e.g. an action version that could not be resolved) |
 
 ## Self-Hosted GitLab
 

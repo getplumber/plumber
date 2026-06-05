@@ -1,10 +1,21 @@
 package collector
 
 import (
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"strings"
 	"testing"
 
+	"github.com/cli/go-gh/v2/pkg/api"
 	version "github.com/hashicorp/go-version"
 )
+
+// roundTripFunc adapts a function into an http.RoundTripper so tests can
+// stub the authenticated REST transport.
+type roundTripFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(r *http.Request) (*http.Response, error) { return f(r) }
 
 // Test_versionInRange locks the ISSUE-703 range-filter semantics.
 // The scenario comes from a real-world false positive: the codeql-
@@ -130,6 +141,18 @@ func Test_refCoveredByRange(t *testing.T) {
 		// Exact pins / resolved SHAs — single-version check, unchanged.
 		{"v4.1.0", ">= 4.0.0, < 4.1.3", "4.1.0", true},  // exact in-range pin still fires
 		{"v4.3.0", ">= 4.0.0, < 4.1.3", "4.3.0", false}, // exact out-of-range stays silent
+		// Unresolved commit SHA (ver "" -> refVersion nil): the tag list
+		// was unavailable (org IP allow list 403, rate limit, network) or
+		// the SHA is not a release commit. We cannot prove the pin sits in
+		// the affected range, so stay silent — matching every advisory for
+		// an unresolved SHA is the ISSUE-228 local-vs-CI false positive.
+		{"3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c", ">= 4.0.0, < 4.1.3", "", false}, // unresolved SHA -> abstain
+		{"3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c", "<= 99.0.0", "", false},         // even a wide range -> abstain
+		// A resolved SHA still gets the normal single-version check.
+		{"3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c", ">= 4.0.0, < 4.1.3", "4.1.0", true},  // resolved in range -> flag
+		{"3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c", ">= 4.0.0, < 4.1.3", "8.0.1", false}, // resolved out of range -> silent
+		// A mutable branch ref we cannot version keeps the conservative match.
+		{"main", "<= 99.0.0", "", true},
 	}
 	for _, c := range cases {
 		var rv *version.Version
@@ -140,5 +163,157 @@ func Test_refCoveredByRange(t *testing.T) {
 		if got != c.want {
 			t.Errorf("_refCoveredByRange(%q, %q) = %v, want %v", c.ref, c.rng, got, c.want)
 		}
+	}
+}
+
+// Test_advisoriesForRef_unresolvedSHA is the ISSUE-228 regression. When a
+// SHA-pinned action cannot be resolved to a release version — because the
+// repo's tag list is unavailable (org IP allow list 403, rate limit,
+// network error) or the SHA is not a tagged release — the advisory filter
+// must NOT report every advisory for the repo. Reporting them is what makes
+// a SHA-pinned action score A locally and E in GitHub Actions: locally the
+// tag list resolves and the out-of-range pin is dropped; in CI the fetch
+// fails, the version is unknown, and every advisory matches.
+func Test_advisoriesForRef_unresolvedSHA(t *testing.T) {
+	const repoKey = "aquasecurity/trivy-action"
+	const sha = "1234567890abcdef1234567890abcdef12345678"
+
+	newClient := func() *GitHubMetadataClient {
+		c := NewGitHubMetadataClient()
+		// Inject a known advisory so advisoriesForRepo does not hit the API.
+		c.advisoryCache[repoKey] = []advisoryInfo{
+			{GhsaID: "GHSA-aaaa-bbbb-cccc", VulnerableRange: "< 0.35.0"},
+		}
+		return c
+	}
+
+	// Tag list unavailable (empty map cached, as a failed fetch leaves it):
+	// the SHA resolves to no version -> abstain, not match-all, AND the
+	// degraded check is recorded so it can be surfaced (not silent).
+	c := newClient()
+	c.sha2tagCache[repoKey] = map[string]string{}
+	if got := c.advisoriesForRef("aquasecurity", "trivy-action", sha); len(got) != 0 {
+		t.Errorf("unresolved SHA: advisoriesForRef = %v, want none (abstain)", got)
+	}
+	if d := c.DegradedChecks(); len(d) != 1 {
+		t.Errorf("unresolved SHA: DegradedChecks = %v, want exactly 1 entry", d)
+	}
+
+	// SHA resolves to an out-of-range version -> silent, and NOT degraded
+	// (we verified the version, it just isn't affected).
+	c = newClient()
+	c.sha2tagCache[repoKey] = map[string]string{sha: "0.37.0"}
+	if got := c.advisoriesForRef("aquasecurity", "trivy-action", sha); len(got) != 0 {
+		t.Errorf("out-of-range SHA: advisoriesForRef = %v, want none", got)
+	}
+	if d := c.DegradedChecks(); len(d) != 0 {
+		t.Errorf("out-of-range SHA: DegradedChecks = %v, want none (version resolved)", d)
+	}
+
+	// SHA resolves to an in-range version -> the advisory fires, not degraded.
+	c = newClient()
+	c.sha2tagCache[repoKey] = map[string]string{sha: "0.34.0"}
+	got := c.advisoriesForRef("aquasecurity", "trivy-action", sha)
+	if len(got) != 1 || got[0] != "GHSA-aaaa-bbbb-cccc" {
+		t.Errorf("in-range SHA: advisoriesForRef = %v, want [GHSA-aaaa-bbbb-cccc]", got)
+	}
+	if d := c.DegradedChecks(); len(d) != 0 {
+		t.Errorf("in-range SHA: DegradedChecks = %v, want none (version resolved)", d)
+	}
+}
+
+func Test_apiBaseURLForHost(t *testing.T) {
+	cases := []struct{ host, want string }{
+		{"", "https://api.github.com"},
+		{"   ", "https://api.github.com"},
+		{"ghes.example.com", "https://ghes.example.com"},
+		{"ghes.example.com/", "https://ghes.example.com"},
+		{"https://ghes.example.com/api/v3", "https://ghes.example.com/api/v3"},
+	}
+	for _, c := range cases {
+		if got := apiBaseURLForHost(c.host); got != c.want {
+			t.Errorf("apiBaseURLForHost(%q) = %q, want %q", c.host, got, c.want)
+		}
+	}
+}
+
+// Test_metadataClientOptions covers the ISSUE-228 credential precedence:
+// PLUMBER_METADATA_TOKEN, when set, becomes the REST client's AuthToken and
+// takes priority over the go-gh default chain; otherwise no token is
+// returned. host, when non-empty, targets a GHES instance either way.
+func Test_metadataClientOptions(t *testing.T) {
+	t.Setenv(EnvMetadataToken, "")
+	if opts, token := metadataClientOptions(""); token != "" || opts.AuthToken != "" || opts.Host != "" {
+		t.Fatalf("no token, github.com: got token=%q auth=%q host=%q, want all empty", token, opts.AuthToken, opts.Host)
+	}
+	if opts, token := metadataClientOptions("ghes.example.com"); token != "" || opts.AuthToken != "" || opts.Host != "ghes.example.com" {
+		t.Fatalf("no token, GHES: got token=%q auth=%q host=%q, want host-only", token, opts.AuthToken, opts.Host)
+	}
+
+	t.Setenv(EnvMetadataToken, "  ghp_metadata  ")
+	if opts, token := metadataClientOptions(""); token != "ghp_metadata" || opts.AuthToken != "ghp_metadata" || opts.Host != "" {
+		t.Fatalf("token, github.com: got token=%q auth=%q host=%q, want trimmed token as auth", token, opts.AuthToken, opts.Host)
+	}
+	if opts, token := metadataClientOptions("ghes.example.com"); token != "ghp_metadata" || opts.AuthToken != "ghp_metadata" || opts.Host != "ghes.example.com" {
+		t.Fatalf("token, GHES: got token=%q auth=%q host=%q, want token+host", token, opts.AuthToken, opts.Host)
+	}
+}
+
+// Test_NewClient_withMetadataToken_constructs verifies the real constructor
+// builds a usable REST client from PLUMBER_METADATA_TOKEN with an empty host
+// (go-gh defaults the host to api.github.com), so the token path does not
+// silently degrade. No network call is made; only construction is checked.
+func Test_NewClient_withMetadataToken_constructs(t *testing.T) {
+	t.Setenv(EnvDisableGitHubAPI, "") // undo the suite's offline default
+	t.Setenv(EnvMetadataToken, "ghp_metadata")
+	c := NewGitHubMetadataClient()
+	if !c.Available() {
+		t.Fatalf("client should be available with a metadata token set; disableCause=%v", c.disableCause)
+	}
+	if c.rest == nil {
+		t.Fatal("rest client should be constructed from the metadata token")
+	}
+}
+
+// Test_fetchAllTags_anonymousFallbackOn403 is the ISSUE-228 Problem 2
+// regression: when the authenticated tags read is blocked by the owner
+// org's IP allow list (403), Plumber retries anonymously (public repos are
+// not gated for anonymous reads) and resolves the version instead of
+// abstaining. The authenticated transport always 403s; the anonymous base
+// URL points at a test server that serves the tags only when no auth header
+// is present.
+func Test_fetchAllTags_anonymousFallbackOn403(t *testing.T) {
+	const sha = "abcdef0000000000000000000000000000000000"
+	anon := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Header.Get("Authorization") != "" {
+			w.WriteHeader(http.StatusForbidden)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `[{"name":"v1.2.3","commit":{"sha":"`+sha+`"}}]`)
+	}))
+	defer anon.Close()
+
+	c := NewGitHubMetadataClient()
+	c.apiBaseURL = anon.URL
+	rest, err := api.NewRESTClient(api.ClientOptions{
+		AuthToken: "x",
+		Transport: roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			return &http.Response{
+				StatusCode: http.StatusForbidden,
+				Body:       io.NopCloser(strings.NewReader(`{"message":"org has an IP allow list enabled"}`)),
+				Header:     make(http.Header),
+				Request:    r,
+			}, nil
+		}),
+	})
+	if err != nil {
+		t.Fatalf("new rest client: %v", err)
+	}
+	c.rest = rest
+
+	tags := c.fetchAllTags("aquasecurity", "trivy-action")
+	if tags[sha] != "v1.2.3" {
+		t.Fatalf("anonymous fallback did not resolve the SHA: got %v, want %s -> v1.2.3", tags, sha)
 	}
 }

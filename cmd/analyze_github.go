@@ -323,6 +323,15 @@ func presentGitHubResult(result *control.AnalysisResult, conf *configuration.Con
 		fmt.Fprintf(os.Stderr, "GitLab SAST report written to: %s\n", glsastFile)
 	}
 
+	// A degraded check ("could not verify") fails the run only when the
+	// user opts in with --fail-warnings, and at exit 3 (runtime/data
+	// condition) rather than the compliance exit code. Checked before the
+	// threshold gate so a strict run surfaces "we could not fully verify"
+	// even when the measured compliance would otherwise pass.
+	if failWarnings && len(result.Warnings) > 0 {
+		return &DegradedError{Count: len(result.Warnings)}
+	}
+
 	// Check compliance against threshold (mirrors the GitLab path). The
 	// threshold is the gate, not the mere presence of findings, so a run
 	// above the configured threshold passes even with some findings.
@@ -542,6 +551,7 @@ func printGitHubFindings(result *control.AnalysisResult, conf *configuration.Con
 		})
 	}
 	renderFindingGroups(groups)
+	renderWarnings(result.Warnings)
 
 	if len(result.Findings) == 0 {
 		fmt.Printf("  %s\n\n", styleSuccess.Render("✓ No findings. All policies pass."))

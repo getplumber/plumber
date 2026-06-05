@@ -297,6 +297,11 @@ func enrichActionsWithAPIMetadata(pipeline *ir.NormalizedPipeline, apiHost strin
 			action.Metadata = amd
 		}
 	}
+	// Surface any action whose known-CVE check could not be completed
+	// (pinned commit unresolvable, tag list blocked) so the renderer and
+	// output writers can show a "could not verify" warning instead of a
+	// silent pass (ISSUE-228).
+	pipeline.AdvisoryWarnings = client.DegradedChecks()
 }
 
 // ownerRepoFromUses extracts "owner/repo" from a uses: value,

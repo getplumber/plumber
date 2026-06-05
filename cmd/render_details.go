@@ -52,6 +52,26 @@ type findingGroup struct {
 	Findings   []detailedFinding
 }
 
+// renderWarnings prints the run's non-fatal "could not verify" messages,
+// e.g. a known-CVE check skipped because an action's pinned commit could
+// not be resolved to a version. Surfacing them keeps a degraded check
+// visible instead of letting it pass silently (ISSUE-228). No-op when
+// there are none.
+func renderWarnings(warnings []string) {
+	if len(warnings) == 0 {
+		return
+	}
+	fmt.Println()
+	fmt.Printf("  %s⚠ Could not verify %d item(s):%s\n", colorYellow, len(warnings), colorReset)
+	for _, w := range warnings {
+		fmt.Printf("    %s•%s %s\n", colorYellow, colorReset, w)
+	}
+	// When a version stays unresolved (the authenticated read was blocked and
+	// the anonymous fallback did not succeed), a user-supplied token resolves
+	// it. Point there rather than leaving the user with a dead end (ISSUE-228).
+	fmt.Printf("    %s↳ if an action above is in an org with an IP allow list, set PLUMBER_METADATA_TOKEN (a token with public-repo read) to resolve its version; see the README \"GitHub Action\" section.%s\n", colorYellow, colorReset)
+}
+
 // renderFindingGroups prints each group in the canonical Plumber
 // format used across providers: horizontal separator header with the
 // rule title and compliance (or "skipped"), the stat lines, and an

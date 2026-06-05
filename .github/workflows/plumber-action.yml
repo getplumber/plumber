@@ -50,7 +50,8 @@ jobs:
             --sarif plumber.sarif \
             --output plumber-report.json \
             --score-point \
-            --threshold 100
+            --threshold 100 \
+            --fail-warnings
 
       - name: Upload SARIF to Code Scanning
         if: ${{ always() && hashFiles('plumber.sarif') != '' }}
@@ -58,8 +59,22 @@ jobs:
         with:
           sarif_file: plumber.sarif
 
+      # Save the raw reports as a downloadable artifact so the JSON / SARIF
+      # outputs (including the "could not verify" warnings) can be inspected
+      # after the run, not just in the Security tab. always() so they upload
+      # even when --fail-warnings fails the job.
+      - name: Upload Plumber reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: plumber-reports
+          path: |
+            plumber.sarif
+            plumber-report.json
+          if-no-files-found: warn
+
       - name: Enforce compliance threshold
         if: ${{ always() && steps.analyze.outcome == 'failure' }}
         run: |
-          echo "::error::Plumber found compliance issues below the threshold. See the analyze step log and the Security tab."
+          echo "::error::Plumber failed: compliance below threshold, or a check could not be verified with --fail-warnings (exit 3). See the analyze step log and the Security tab."
           exit 1

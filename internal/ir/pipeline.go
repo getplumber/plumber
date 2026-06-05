@@ -80,6 +80,15 @@ type NormalizedPipeline struct {
 	// control is disabled in config.
 	GitleaksAbstainReason string `json:"gitleaksAbstainReason,omitempty"`
 
+	// AdvisoryWarnings collects one human-readable line per action whose
+	// known-CVE check could not be completed because the pinned commit
+	// could not be resolved to a version (the action repo's tag list was
+	// unavailable — org IP allow list, rate limit, network). The renderer
+	// and the JSON/SARIF/GLSAST writers surface these as "could not
+	// verify" warnings so a degraded check is visible instead of silently
+	// passing. Empty when every action resolved or no action was degraded.
+	AdvisoryWarnings []string `json:"advisoryWarnings,omitempty"`
+
 	Raw map[string]any `json:"raw,omitempty"`
 }
 

@@ -80,7 +80,9 @@ Optional flags:
   --score-point      Same as --score plus full points breakdown in stdout and MR comment (optional; wins if both set)
   --controls         Run only listed controls (comma-separated)
   --skip-controls    Skip listed controls (comma-separated)
-  --fail-warnings    Treat configuration warnings as errors (exit 2)
+  --fail-warnings    Fail on warnings: configuration warnings (exit 2) and
+                     could-not-verify warnings such as a skipped known-CVE
+                     check (exit 3)
   --ci-config-path   Override the CI configuration file path (default: auto-detected from GitLab project settings, usually .gitlab-ci.yml)
 
 Exit codes:
@@ -146,7 +148,7 @@ func init() {
 	analyzeCmd.Flags().BoolVar(&showScorePoint, "score-point", false, "Like --score plus full points breakdown in stdout and MR comment; overrides --score when both are set")
 	analyzeCmd.Flags().StringVar(&controlsFilter, "controls", "", "Run only listed controls (comma-separated)")
 	analyzeCmd.Flags().StringVar(&skipControls, "skip-controls", "", "Skip listed controls (comma-separated)")
-	analyzeCmd.Flags().BoolVar(&failWarnings, "fail-warnings", false, "Treat configuration warnings as errors (exit 2)")
+	analyzeCmd.Flags().BoolVar(&failWarnings, "fail-warnings", false, "Fail on warnings: configuration warnings (exit 2) and could-not-verify warnings, e.g. a skipped known-CVE check (exit 3)")
 	analyzeCmd.Flags().StringVar(&ciConfigPath, "ci-config-path", "", "Override the CI configuration file path (default: auto-detected from GitLab project settings, usually .gitlab-ci.yml)")
 }
 
@@ -624,6 +626,12 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// A degraded check ("could not verify") fails the run only under
+	// --fail-warnings, at exit 3, checked before the threshold gate.
+	if failWarnings && len(result.Warnings) > 0 {
+		return &DegradedError{Count: len(result.Warnings)}
+	}
+
 	// Check compliance against threshold
 	if compliance < threshold {
 		return &ComplianceError{Compliance: compliance, Threshold: threshold}
@@ -806,6 +814,7 @@ var analysisJSONLegacyKeyHead = []string{
 	"ciConfigSource", "ciValid", "ciMissing", "ciErrors",
 	"pipelineOriginMetrics", "pipelineImageMetrics",
 	"compliance", "threshold", "passed", "plumberScore",
+	"warnings",
 }
 
 func legacyAnalysisJSONKeyOrder(m map[string]any) []string {
@@ -1351,6 +1360,7 @@ func outputText(result *control.AnalysisResult, pc *configuration.PlumberConfig,
 		})
 	}
 	renderFindingGroups(groups)
+	renderWarnings(result.Warnings)
 
 	// Summary Section
 	printSectionHeader("Summary")

@@ -50,8 +50,25 @@ type sarifLog struct {
 }
 
 type sarifRun struct {
-	Tool    sarifTool     `json:"tool"`
-	Results []sarifResult `json:"results"`
+	Tool        sarifTool         `json:"tool"`
+	Results     []sarifResult     `json:"results"`
+	Invocations []sarifInvocation `json:"invocations,omitempty"`
+}
+
+// sarifInvocation carries tool-level (not finding-level) messages. We use
+// it for "could not verify" warnings — e.g. a known-CVE check skipped
+// because an action's pinned commit could not be resolved to a version —
+// so a degraded check is visible in Code Scanning instead of passing
+// silently (ISSUE-228). executionSuccessful stays true: the run completed,
+// some data was just unavailable.
+type sarifInvocation struct {
+	ExecutionSuccessful        bool                `json:"executionSuccessful"`
+	ToolExecutionNotifications []sarifNotification `json:"toolExecutionNotifications,omitempty"`
+}
+
+type sarifNotification struct {
+	Level   string    `json:"level"`
+	Message sarifText `json:"message"`
 }
 
 type sarifTool struct {
@@ -255,7 +272,18 @@ func writeSARIFToFile(result *control.AnalysisResult, filePath, provider string)
 	// always set and the file exists, since LoadPlumberConfig errors earlier
 	// otherwise. provider routes per-provider Title/Description overrides
 	// from the codes registry into the rendered SARIF document.
-	data, err := json.MarshalIndent(buildSARIF(result.Findings, reportFilePath(configFile), provider), "", "  ")
+	log := buildSARIF(result.Findings, reportFilePath(configFile), provider)
+	if len(result.Warnings) > 0 && len(log.Runs) > 0 {
+		notifs := make([]sarifNotification, 0, len(result.Warnings))
+		for _, w := range result.Warnings {
+			notifs = append(notifs, sarifNotification{Level: "warning", Message: sarifText{Text: w}})
+		}
+		log.Runs[0].Invocations = []sarifInvocation{{
+			ExecutionSuccessful:        true,
+			ToolExecutionNotifications: notifs,
+		}}
+	}
+	data, err := json.MarshalIndent(log, "", "  ")
 	if err != nil {
 		return fmt.Errorf("marshal sarif: %w", err)
 	}
