@@ -1,0 +1,38 @@
+# TEMPORARY — reproduction for issue #228.
+#
+# aquasecurity/trivy-action is pinned to the v0.36.0 commit, which is NOT
+# affected by any published advisory (GHSA-69fq is < 0.35.0, GHSA-9p44 is
+# 0.31.0-0.34.0). When Plumber can read the repo's tags it resolves the SHA
+# to v0.36.0 and stays silent.
+#
+# From a GitHub-hosted runner the action token cannot list aquasecurity's
+# tags (the org has an IP allow list, so the request 403s). Plumber then
+# cannot resolve the SHA to a version and, on current main, falls back to
+# matching every advisory for the repo, producing a false-positive critical
+# ISSUE-703. With --threshold 100 that fails the Plumber compliance job.
+#
+# Trigger is workflow_dispatch only, so this job never runs on its own; it
+# exists purely so Plumber's self-scan reads the trivy-action reference.
+# Delete once #228 is reproduced and the fix is verified.
+name: Trivy scan (repro 228)
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    name: Trivy filesystem scan
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6.0.3
+        with:
+          persist-credentials: false
+      - uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
