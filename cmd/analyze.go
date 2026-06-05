@@ -159,7 +159,7 @@ func init() {
 	analyzeCmd.Flags().StringVar(&providerFlag, "provider", "", "Force provider: 'github' or 'gitlab' (overrides auto-detection; host still auto-detected)")
 
 	// Optional flags with defaults
-	analyzeCmd.Flags().StringVar(&configFile, "config", ".plumber.yaml", "Path to .plumber.yaml config file")
+	analyzeCmd.Flags().StringVar(&configFile, "config", "", "Path to Plumber config file (default to `.plumber.yaml` if exists, `/.plumber.yaml` otherwise)")
 	analyzeCmd.Flags().Float64Var(&threshold, "threshold", 100, "Minimum compliance percentage to pass, 0-100")
 	analyzeCmd.Flags().StringVar(&defaultBranch, "branch", "", "Branch to analyze (defaults to project's default branch)")
 	analyzeCmd.Flags().BoolVar(&printOutput, "print", true, "Print text output to stdout")
