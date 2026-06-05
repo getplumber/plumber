@@ -1,0 +1,60 @@
+# TEMPORARY — investigation for issue #228, Problem 2.
+#
+# From a GitHub-hosted runner, read the tags of aquasecurity/trivy-action
+# (an org that has an IP allow list) two ways, to settle whether an
+# anonymous read bypasses the allow list that blocks the action token.
+# No secret needed: it uses the built-in GITHUB_TOKEN and one auth-less
+# request. actions/checkout is read anonymously as a control (no allow
+# list), so we can tell an allow-list block apart from a generic failure.
+#
+# This is the decisive experiment for the Problem 2 fix: if the anonymous
+# read returns 200 from the runner, an anonymous-retry fallback in the
+# metadata client resolves the version even in CI. Delete once resolved.
+name: Allow-list probe (228 P2)
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  probe:
+    name: Probe tag reads from a runner
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Read tags with the action token, then anonymously
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          AQUA="https://api.github.com/repos/aquasecurity/trivy-action/tags?per_page=1"
+          CTRL="https://api.github.com/repos/actions/checkout/tags?per_page=1"
+
+          echo "=== aquasecurity/trivy-action (org has an IP allow list) ==="
+          auth=$(curl -s -o /tmp/a.json -w '%{http_code}' \
+            -H "Authorization: Bearer $GH_TOKEN" \
+            -H 'Accept: application/vnd.github+json' "$AQUA")
+          echo "action token (GITHUB_TOKEN): HTTP $auth"
+          [ "$auth" != 200 ] && echo "  body: $(head -c 300 /tmp/a.json)"
+          anon=$(curl -s -o /tmp/b.json -w '%{http_code}' \
+            -H 'Accept: application/vnd.github+json' "$AQUA")
+          echo "anonymous (no auth):         HTTP $anon"
+          [ "$anon" != 200 ] && echo "  body: $(head -c 300 /tmp/b.json)"
+
+          echo
+          echo "=== actions/checkout (control, no allow list) ==="
+          ctrl=$(curl -s -o /tmp/c.json -w '%{http_code}' \
+            -H 'Accept: application/vnd.github+json' "$CTRL")
+          echo "anonymous (no auth):         HTTP $ctrl"
+
+          echo
+          echo "=== conclusion ==="
+          echo "aquasecurity: action token=$auth  anonymous=$anon   |   control anonymous=$ctrl"
+          if [ "$anon" = 200 ]; then
+            echo "RESULT: anonymous read WORKS from the runner -> the anonymous-retry fix is viable."
+          elif [ "$ctrl" = 200 ]; then
+            echo "RESULT: anonymous blocked for aquasecurity ($anon) but fine for the control -> it is the allow list; we need the harder path."
+          else
+            echo "RESULT: anonymous failed for the control too ($ctrl) -> a runner/method issue, not conclusive; investigate."
+          fi
