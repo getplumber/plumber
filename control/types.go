@@ -72,6 +72,14 @@ type AnalysisResult struct {
 	// control through the SKIPPED lane with this reason, instead of
 	// the misleading "100% green" the empty-hits default produced.
 	GitleaksAbstainReason string `json:"-"`
+
+	// Warnings holds non-fatal "could not verify" messages from the run,
+	// e.g. a known-CVE check skipped because an action's pinned commit
+	// could not be resolved to a version (tag list blocked by an org IP
+	// allow list, rate limit, or network). Surfaced in the terminal,
+	// JSON, SARIF and GLSAST output, and gated by --fail-warnings (exit
+	// 3) so a degraded check is visible instead of silently passing.
+	Warnings []string `json:"warnings,omitempty"`
 }
 
 // GitHubAnalysisStats holds per-control aggregations computed by

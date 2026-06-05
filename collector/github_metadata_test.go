@@ -130,6 +130,18 @@ func Test_refCoveredByRange(t *testing.T) {
 		// Exact pins / resolved SHAs — single-version check, unchanged.
 		{"v4.1.0", ">= 4.0.0, < 4.1.3", "4.1.0", true},  // exact in-range pin still fires
 		{"v4.3.0", ">= 4.0.0, < 4.1.3", "4.3.0", false}, // exact out-of-range stays silent
+		// Unresolved commit SHA (ver "" -> refVersion nil): the tag list
+		// was unavailable (org IP allow list 403, rate limit, network) or
+		// the SHA is not a release commit. We cannot prove the pin sits in
+		// the affected range, so stay silent — matching every advisory for
+		// an unresolved SHA is the ISSUE-228 local-vs-CI false positive.
+		{"3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c", ">= 4.0.0, < 4.1.3", "", false}, // unresolved SHA -> abstain
+		{"3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c", "<= 99.0.0", "", false},         // even a wide range -> abstain
+		// A resolved SHA still gets the normal single-version check.
+		{"3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c", ">= 4.0.0, < 4.1.3", "4.1.0", true},  // resolved in range -> flag
+		{"3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c", ">= 4.0.0, < 4.1.3", "8.0.1", false}, // resolved out of range -> silent
+		// A mutable branch ref we cannot version keeps the conservative match.
+		{"main", "<= 99.0.0", "", true},
 	}
 	for _, c := range cases {
 		var rv *version.Version
@@ -140,5 +152,61 @@ func Test_refCoveredByRange(t *testing.T) {
 		if got != c.want {
 			t.Errorf("_refCoveredByRange(%q, %q) = %v, want %v", c.ref, c.rng, got, c.want)
 		}
+	}
+}
+
+// Test_advisoriesForRef_unresolvedSHA is the ISSUE-228 regression. When a
+// SHA-pinned action cannot be resolved to a release version — because the
+// repo's tag list is unavailable (org IP allow list 403, rate limit,
+// network error) or the SHA is not a tagged release — the advisory filter
+// must NOT report every advisory for the repo. Reporting them is what makes
+// a SHA-pinned action score A locally and E in GitHub Actions: locally the
+// tag list resolves and the out-of-range pin is dropped; in CI the fetch
+// fails, the version is unknown, and every advisory matches.
+func Test_advisoriesForRef_unresolvedSHA(t *testing.T) {
+	const repoKey = "aquasecurity/trivy-action"
+	const sha = "1234567890abcdef1234567890abcdef12345678"
+
+	newClient := func() *GitHubMetadataClient {
+		c := NewGitHubMetadataClient()
+		// Inject a known advisory so advisoriesForRepo does not hit the API.
+		c.advisoryCache[repoKey] = []advisoryInfo{
+			{GhsaID: "GHSA-aaaa-bbbb-cccc", VulnerableRange: "< 0.35.0"},
+		}
+		return c
+	}
+
+	// Tag list unavailable (empty map cached, as a failed fetch leaves it):
+	// the SHA resolves to no version -> abstain, not match-all, AND the
+	// degraded check is recorded so it can be surfaced (not silent).
+	c := newClient()
+	c.sha2tagCache[repoKey] = map[string]string{}
+	if got := c.advisoriesForRef("aquasecurity", "trivy-action", sha); len(got) != 0 {
+		t.Errorf("unresolved SHA: advisoriesForRef = %v, want none (abstain)", got)
+	}
+	if d := c.DegradedChecks(); len(d) != 1 {
+		t.Errorf("unresolved SHA: DegradedChecks = %v, want exactly 1 entry", d)
+	}
+
+	// SHA resolves to an out-of-range version -> silent, and NOT degraded
+	// (we verified the version, it just isn't affected).
+	c = newClient()
+	c.sha2tagCache[repoKey] = map[string]string{sha: "0.37.0"}
+	if got := c.advisoriesForRef("aquasecurity", "trivy-action", sha); len(got) != 0 {
+		t.Errorf("out-of-range SHA: advisoriesForRef = %v, want none", got)
+	}
+	if d := c.DegradedChecks(); len(d) != 0 {
+		t.Errorf("out-of-range SHA: DegradedChecks = %v, want none (version resolved)", d)
+	}
+
+	// SHA resolves to an in-range version -> the advisory fires, not degraded.
+	c = newClient()
+	c.sha2tagCache[repoKey] = map[string]string{sha: "0.34.0"}
+	got := c.advisoriesForRef("aquasecurity", "trivy-action", sha)
+	if len(got) != 1 || got[0] != "GHSA-aaaa-bbbb-cccc" {
+		t.Errorf("in-range SHA: advisoriesForRef = %v, want [GHSA-aaaa-bbbb-cccc]", got)
+	}
+	if d := c.DegradedChecks(); len(d) != 0 {
+		t.Errorf("in-range SHA: DegradedChecks = %v, want none (version resolved)", d)
 	}
 }

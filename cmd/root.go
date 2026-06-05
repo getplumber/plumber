@@ -50,8 +50,12 @@ func Execute() {
 
 	if err != nil {
 		var complianceErr *ComplianceError
-		if errors.As(err, &complianceErr) {
+		var degradedErr *DegradedError
+		switch {
+		case errors.As(err, &complianceErr):
 			os.Exit(1)
+		case errors.As(err, &degradedErr):
+			os.Exit(3)
 		}
 		os.Exit(2)
 	}

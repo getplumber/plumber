@@ -10,6 +10,7 @@ import (
 
 	"github.com/cli/go-gh/v2/pkg/api"
 	version "github.com/hashicorp/go-version"
+	"github.com/sirupsen/logrus"
 )
 
 // EnvDisableGitHubAPI, when set to a truthy value, forces the
@@ -79,6 +80,12 @@ type GitHubMetadataClient struct {
 	sha2tagCache map[string]map[string]string
 	disabled     bool
 	disableCause error
+	// degraded accumulates one message per action ref whose known-CVE
+	// check could not be completed because the pinned commit could not be
+	// resolved to a version (tag list unavailable). degradedSeen dedupes
+	// by "owner/repo@ref" so a ref used in many jobs warns once.
+	degraded     []string
+	degradedSeen map[string]struct{}
 }
 
 // advisoryInfo is one vulnerability entry from the GitHub Advisory
@@ -220,10 +227,12 @@ func (c *GitHubMetadataClient) resolveUncached(owner, repo, ref string) GitHubMe
 // filtering uses a semver comparison against every vulnerability
 // entry the advisory declares for this package.
 //
-// When the ref cannot be resolved to a comparable version (unknown
-// tag, commit SHA that does not point at a release), the filter
-// degrades to "keep advisories that reference this package at
-// all" — better a false positive than a silent miss on a real CVE.
+// When a commit SHA cannot be resolved to a comparable version
+// (the repo's tag list is unavailable, or the SHA is not a tagged
+// release), the filter abstains rather than reporting every advisory:
+// it cannot prove the pin sits in an affected range, and crying wolf
+// on SHA-pinned actions is the ISSUE-228 false positive. A mutable
+// branch ref keeps the conservative match — see _refCoveredByRange.
 //
 // A moving major / major.minor tag (`v4`, `v4.1`) is matched against
 // the whole version span it can float across, not against its floor —
@@ -234,6 +243,13 @@ func (c *GitHubMetadataClient) advisoriesForRef(owner, repo, ref string) []strin
 		return nil
 	}
 	refVersion := c.resolveRefToVersion(owner, repo, ref)
+	if refVersion == nil && _isCommitSha(ref) {
+		// Advisories exist for this repo but we could not resolve the
+		// pinned commit to a version, so the range filter abstains below
+		// (see _refCoveredByRange). Record it so the degraded check is
+		// surfaced rather than silently passing (ISSUE-228).
+		c.recordDegraded(owner, repo, ref)
+	}
 	out := []string{}
 	seen := map[string]struct{}{}
 	for _, a := range infos {
@@ -248,6 +264,39 @@ func (c *GitHubMetadataClient) advisoriesForRef(owner, repo, ref string) []strin
 			seen[a.GhsaID] = struct{}{}
 		}
 	}
+	return out
+}
+
+// recordDegraded notes that the known-CVE check for owner/repo@ref could
+// not be completed because the pinned commit did not resolve to a version.
+// Deduped by ref so a heavily-reused action warns only once.
+func (c *GitHubMetadataClient) recordDegraded(owner, repo, ref string) {
+	key := owner + "/" + repo + "@" + ref
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.degradedSeen == nil {
+		c.degradedSeen = map[string]struct{}{}
+	}
+	if _, dup := c.degradedSeen[key]; dup {
+		return
+	}
+	c.degradedSeen[key] = struct{}{}
+	c.degraded = append(c.degraded, fmt.Sprintf(
+		"%s: tag list unavailable, could not resolve the pinned commit to a version, so the known-CVE check was skipped for this action",
+		key,
+	))
+}
+
+// DegradedChecks returns the accumulated "could not verify" messages, one
+// per action ref whose known-CVE check was skipped. Returns nil when none.
+func (c *GitHubMetadataClient) DegradedChecks() []string {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if len(c.degraded) == 0 {
+		return nil
+	}
+	out := make([]string, len(c.degraded))
+	copy(out, c.degraded)
 	return out
 }
 
@@ -299,9 +348,10 @@ func (c *GitHubMetadataClient) advisoriesForRepo(owner, repo string) []advisoryI
 // resolveRefToVersion turns the ref string into a comparable semver
 // value: a 40-char commit SHA is looked up in the repo's tag list and
 // the matching tag is parsed; any other ref is parsed directly as a
-// tag. Returns nil when the version cannot be determined — callers
-// then fall back to "flag everything" so a genuine CVE does not slip
-// past because Plumber could not match the SHA to a release.
+// tag. Returns nil when the version cannot be determined; for a commit
+// SHA the caller then abstains rather than matching every advisory, so
+// an unresolvable SHA pin is not reported as vulnerable to everything
+// (see _refCoveredByRange and ISSUE-228).
 //
 // The SHA branch is tried first on purpose: hashicorp/go-version
 // parses a hex SHA that begins with a digit as a semver value
@@ -368,13 +418,27 @@ func _partialTagBounds(ref string) (floor, ceil *version.Version, ok bool) {
 // across is vulnerable.
 //
 // Exact tags (`v4.1.0`) and SHA-resolved versions use a plain single-
-// version check; an unresolvable ref (refVersion nil) is kept
-// conservatively — better a false positive than a silent miss.
+// version check. An unresolvable commit SHA (refVersion nil) abstains
+// rather than matching every advisory (ISSUE-228); an unresolvable
+// mutable branch ref keeps the conservative match.
 func _refCoveredByRange(ref string, refVersion *version.Version, rangeExpr string) bool {
 	if floor, ceil, ok := _partialTagBounds(ref); ok {
 		return _versionInRange(floor, rangeExpr) && _versionInRange(ceil, rangeExpr)
 	}
-	return refVersion == nil || _versionInRange(refVersion, rangeExpr)
+	if refVersion == nil {
+		// A commit SHA we could not resolve to a release version: the
+		// repo's tag list was unavailable (org IP allow list 403, rate
+		// limit, network error) or the SHA is not a tagged release. We
+		// cannot prove the pinned commit falls inside the advisory's
+		// affected range, so do NOT flag it. Reporting every advisory for
+		// an unresolved SHA is the ISSUE-228 false positive that scores a
+		// SHA-pinned action A locally (tags resolve, out-of-range pin
+		// dropped) and E in CI (fetch blocked, version unknown, every
+		// advisory matches). A mutable ref we cannot version (branch pin)
+		// keeps the conservative match, since it floats across versions.
+		return !_isCommitSha(ref)
+	}
+	return _versionInRange(refVersion, rangeExpr)
 }
 
 // resolveCommitToTag returns the release tag pointing at the given
@@ -413,7 +477,18 @@ func (c *GitHubMetadataClient) fetchAllTags(owner, repo string) map[string]strin
 			} `json:"commit"`
 		}
 		path := fmt.Sprintf("repos/%s/%s/tags?per_page=100&page=%d", owner, repo, page)
-		if err := c.rest.Get(path, &resp); err != nil || len(resp) == 0 {
+		if err := c.rest.Get(path, &resp); err != nil {
+			// Surface the failure instead of swallowing it. A failed tag
+			// fetch (org IP allow list 403, rate limit, network) means
+			// SHA-pinned refs for this repo cannot be resolved to a
+			// version; the advisory filter then abstains rather than
+			// emitting false-positive CVEs (see _refCoveredByRange and
+			// ISSUE-228). Warn so the degraded result is visible.
+			logrus.WithField("context", "collector").
+				Warnf("could not fetch tags for %s/%s on page %d; advisory version checks for SHA-pinned refs will be skipped: %v", owner, repo, page, err)
+			break
+		}
+		if len(resp) == 0 {
 			break
 		}
 		for _, t := range resp {

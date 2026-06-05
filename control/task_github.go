@@ -196,6 +196,7 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 		GitHubStats:           AggregateGitHubStats(pipeline, conf.PlumberConfig),
 		GitHubPipeline:        pipeline,
 		GitleaksAbstainReason: pipeline.GitleaksAbstainReason,
+		Warnings:              pipeline.AdvisoryWarnings,
 	}
 	// Resolve the local clone's HEAD SHA so source links in the report
 	// point at the exact commit being analysed instead of a mutable
@@ -297,6 +298,7 @@ func RunGitHubAnalysisRemote(conf *configuration.Configuration, owner, repo, ref
 		Findings:       evaluatePolicies(l, conf, "github", pipeline),
 		GitHubStats:    AggregateGitHubStats(pipeline, conf.PlumberConfig),
 		GitHubPipeline: pipeline,
+		Warnings:       pipeline.AdvisoryWarnings,
 	}
 	ApplyGitHubFindingCounts(result.GitHubStats, result.Findings)
 	if conf.ProgressFunc != nil {
