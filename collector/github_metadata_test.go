@@ -151,8 +151,12 @@ func Test_refCoveredByRange(t *testing.T) {
 		// A resolved SHA still gets the normal single-version check.
 		{"3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c", ">= 4.0.0, < 4.1.3", "4.1.0", true},  // resolved in range -> flag
 		{"3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c", ">= 4.0.0, < 4.1.3", "8.0.1", false}, // resolved out of range -> silent
-		// A mutable branch ref we cannot version keeps the conservative match.
-		{"main", "<= 99.0.0", "", true},
+		// A mutable ref we cannot resolve to a version abstains: it usually
+		// points at the latest, patched release. "Not pinned" is ISSUE-701's
+		// job. This is the harden-runner `@rc` over-match (step-security scan).
+		{"main", "<= 99.0.0", "", false},
+		{"rc", "<= 99.0.0", "", false},
+		{"latest", "< 2.10.2", "", false},
 	}
 	for _, c := range cases {
 		var rv *version.Version
@@ -219,6 +223,36 @@ func Test_advisoriesForRef_unresolvedSHA(t *testing.T) {
 	}
 	if d := c.DegradedChecks(); len(d) != 0 {
 		t.Errorf("in-range SHA: DegradedChecks = %v, want none (version resolved)", d)
+	}
+}
+
+// Test_advisoriesForRef_movingTag is the harden-runner `@rc` regression
+// (validated against step-security/harden-runner). A mutable non-numeric
+// tag names no fixed version, so the CVE check cannot place it in any
+// advisory range: it must abstain and emit zero advisories, not match
+// every advisory the repo carries. Unlike an unresolvable SHA it is NOT
+// recorded as degraded — an unpinned ref is ISSUE-701's concern, not a
+// "could not verify" warning. Before the fix `@rc` matched all 5
+// harden-runner advisories even though `rc` points past every fix.
+func Test_advisoriesForRef_movingTag(t *testing.T) {
+	const repoKey = "step-security/harden-runner"
+	newClient := func() *GitHubMetadataClient {
+		c := NewGitHubMetadataClient()
+		c.advisoryCache[repoKey] = []advisoryInfo{
+			{GhsaID: "GHSA-g85v-wf27-67xc", VulnerableRange: "< 2.10.2"},
+			{GhsaID: "GHSA-mxr3-8whj-j74r", VulnerableRange: ">= 0.12.0, < 2.12.0"},
+		}
+		return c
+	}
+
+	for _, ref := range []string{"rc", "main", "latest"} {
+		c := newClient()
+		if got := c.advisoriesForRef("step-security", "harden-runner", ref); len(got) != 0 {
+			t.Errorf("@%s: advisoriesForRef = %v, want none (abstain)", ref, got)
+		}
+		if d := c.DegradedChecks(); len(d) != 0 {
+			t.Errorf("@%s: DegradedChecks = %v, want none (ISSUE-701 owns unpinned refs)", ref, d)
+		}
 	}
 }
 

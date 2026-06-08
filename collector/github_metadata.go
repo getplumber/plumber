@@ -279,7 +279,9 @@ func (c *GitHubMetadataClient) resolveUncached(owner, repo, ref string) GitHubMe
 // release), the filter abstains rather than reporting every advisory:
 // it cannot prove the pin sits in an affected range, and crying wolf
 // on SHA-pinned actions is the ISSUE-228 false positive. A mutable
-// branch ref keeps the conservative match — see _refCoveredByRange.
+// non-numeric tag / branch (`rc`, `main`) abstains for the same reason:
+// it names no fixed version (see _refCoveredByRange). Whether a ref is
+// pinned at all is ISSUE-701's job.
 //
 // A moving major / major.minor tag (`v4`, `v4.1`) is matched against
 // the whole version span it can float across, not against its floor —
@@ -465,25 +467,29 @@ func _partialTagBounds(ref string) (floor, ceil *version.Version, ok bool) {
 // across is vulnerable.
 //
 // Exact tags (`v4.1.0`) and SHA-resolved versions use a plain single-
-// version check. An unresolvable commit SHA (refVersion nil) abstains
-// rather than matching every advisory (ISSUE-228); an unresolvable
-// mutable branch ref keeps the conservative match.
+// version check. Any ref we cannot resolve to a concrete version — an
+// unresolvable commit SHA, or a mutable non-numeric tag / branch
+// (`rc`, `main`) — abstains rather than matching every advisory, since
+// it cannot be placed in a range (ISSUE-228, and the harden-runner
+// `@rc` over-match). Whether a ref is pinned is ISSUE-701's concern.
 func _refCoveredByRange(ref string, refVersion *version.Version, rangeExpr string) bool {
 	if floor, ceil, ok := _partialTagBounds(ref); ok {
 		return _versionInRange(floor, rangeExpr) && _versionInRange(ceil, rangeExpr)
 	}
 	if refVersion == nil {
-		// A commit SHA we could not resolve to a release version: the
-		// repo's tag list was unavailable (org IP allow list 403, rate
-		// limit, network error) or the SHA is not a tagged release. We
-		// cannot prove the pinned commit falls inside the advisory's
-		// affected range, so do NOT flag it. Reporting every advisory for
-		// an unresolved SHA is the ISSUE-228 false positive that scores a
-		// SHA-pinned action A locally (tags resolve, out-of-range pin
-		// dropped) and E in CI (fetch blocked, version unknown, every
-		// advisory matches). A mutable ref we cannot version (branch pin)
-		// keeps the conservative match, since it floats across versions.
-		return !_isCommitSha(ref)
+		// The ref could not be resolved to a concrete release version:
+		// either a commit SHA whose tag list was unavailable (org IP
+		// allow list 403, rate limit, network) or which is not a tagged
+		// release, or a mutable non-numeric tag / branch (`rc`, `latest`,
+		// `main`) that names no fixed version. Either way we cannot place
+		// it in the advisory's affected range, so do NOT flag it. Matching
+		// every advisory for an unresolved ref is the ISSUE-228 false
+		// positive (a SHA-pinned action scoring A locally and E in CI);
+		// the same over-match hits mutable tags such as `rc`, which
+		// usually point at the latest, patched release (validated on
+		// step-security/harden-runner@rc). That a ref is not pinned is
+		// ISSUE-701's concern, not the CVE check's.
+		return false
 	}
 	return _versionInRange(refVersion, rangeExpr)
 }
