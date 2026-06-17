@@ -582,8 +582,13 @@ github:
       # Allowlist of trusted action sources. Each entry is either an
       # exact `owner/repo` or an `owner/*` wildcard for a whole org.
       trustedGithubActions:
-        - jdx/mise-action
-        # - mycompany/*
+        - docker/setup-qemu-action
+        - docker/setup-buildx-action
+        - docker/login-action
+        - docker/metadata-action
+        - docker/build-push-action
+        - ossf/scorecard-action
+        - anchore/scan-action
 
     # ===========================================
     # Container images must not use forbidden tags
