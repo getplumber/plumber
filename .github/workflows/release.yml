@@ -176,9 +176,13 @@ jobs:
       # are passed via an env var and a --notes-file (never interpolated
       # into the script body) so arbitrary commit text in the release
       # notes cannot inject shell commands.
+      # GH_REPO gives the gh CLI the repository context. This job does not
+      # check out the repo (it only consumes downloaded artifacts), so
+      # without GH_REPO gh would fail with "not a git repository".
       - name: Create release with assets
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
           VERSION: ${{ needs.release.outputs.new_release_version }}
           NOTES: ${{ needs.release.outputs.new_release_notes }}
         run: |
