@@ -1,10 +1,3 @@
-## [0.3.62](https://github.com/getplumber/plumber/compare/v0.3.61...v0.3.62) (2026-06-17)
-
-
-### ✨ Features
-
-* **control:** add githubActionMustComeFromAuthorizedSources (ISSUE-713) ([74d60c6](https://github.com/getplumber/plumber/commit/74d60c64f8ffe1ff8103d419489cde736202ec34)), closes [#253](https://github.com/getplumber/plumber/issues/253)
-
 ## [0.3.61](https://github.com/getplumber/plumber/compare/v0.3.60...v0.3.61) (2026-06-17)
 
 
