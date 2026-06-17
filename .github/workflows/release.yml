@@ -16,7 +16,7 @@ jobs:
     outputs:
       new_release_published: ${{ steps.semantic.outputs.new_release_published }}
       new_release_version: ${{ steps.semantic.outputs.new_release_version }}
-      new_release_notes: ${{ steps.semantic.outputs.new_release_notes }}
+      new_release_notes: ${{ steps.notes.outputs.new_release_notes }}
     steps:
       - name: Generate GitHub App token
         id: app-token
@@ -37,18 +37,53 @@ jobs:
         with:
           node-version: 20
 
+      # Run semantic-release directly instead of the third-party
+      # cycjimmy/semantic-release-action wrapper. Top-level packages are
+      # pinned to exact, immutable npm versions (npm versions are
+      # immutable once published and npm verifies each tarball's registry
+      # integrity hash on install). A hardcoded checksum is not practical
+      # here: semantic-release pulls a large transitive dependency tree
+      # and this Go repo carries no package-lock.json to anchor it.
+      #
+      # Every plugin referenced by .releaserc.json is installed explicitly,
+      # including the commit-analyzer / release-notes-generator that ship
+      # as semantic-release dependencies — so plugin resolution never
+      # depends on transitive hoisting. Versions match semantic-release
+      # 23.1.1's declared ranges (commit-analyzer ^12, notes-generator ^13).
+      - name: Install semantic-release
+        run: |
+          npm install -g \
+            semantic-release@23.1.1 \
+            @semantic-release/commit-analyzer@12.0.0 \
+            @semantic-release/release-notes-generator@13.0.0 \
+            @semantic-release/changelog@6.0.3 \
+            @semantic-release/exec@6.0.3 \
+            @semantic-release/git@10.0.1 \
+            conventional-changelog-conventionalcommits@7.0.2
+
+      # The release-detection outputs (new_release_published,
+      # new_release_version) are written by the @semantic-release/exec
+      # successCmd in .releaserc.json — it runs only on a published
+      # release — replacing the outputs the wrapper action used to set.
       - name: Semantic Release
         id: semantic
-        uses: cycjimmy/semantic-release-action@b12c8f6015dc215fe37bc154d4ad456dd3833c90 # v6.0.0
-        with:
-          semantic_version: 23.1.1
-          extra_plugins: |
-            @semantic-release/changelog@6.0.3
-            @semantic-release/exec@6.0.3
-            @semantic-release/git@10.0.1
-            conventional-changelog-conventionalcommits@7.0.2
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: semantic-release
+
+      # Release notes are extracted from the top section of CHANGELOG.md
+      # (semantic-release/changelog wrote it during this same job) rather
+      # than passed through the exec template, which cannot carry the
+      # multi-line, special-char notes safely.
+      - name: Expose release notes
+        id: notes
+        if: steps.semantic.outputs.new_release_published == 'true'
+        run: |
+          {
+            echo "new_release_notes<<__PLUMBER_NOTES_EOF__"
+            awk '/^## \[/{n++} n==1' CHANGELOG.md
+            echo "__PLUMBER_NOTES_EOF__"
+          } >> "$GITHUB_OUTPUT"
 
   binaries:
     name: Build Binaries
@@ -136,16 +171,22 @@ jobs:
       - name: Copy attestation bundle to dist
         run: cp "${{ steps.attest.outputs.bundle-path }}" dist/provenance.intoto.jsonl
 
+      # Create the GitHub release with the official, pre-installed gh CLI
+      # instead of the third-party softprops/action-gh-release. The notes
+      # are passed via an env var and a --notes-file (never interpolated
+      # into the script body) so arbitrary commit text in the release
+      # notes cannot inject shell commands.
       - name: Create release with assets
-        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda # v3.0.0
-        with:
-          tag_name: v${{ needs.release.outputs.new_release_version }}
-          name: v${{ needs.release.outputs.new_release_version }}
-          body: ${{ needs.release.outputs.new_release_notes }}
-          files: |
-            dist/plumber-*
-            dist/checksums.txt
-            dist/provenance.intoto.jsonl
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.release.outputs.new_release_version }}
+          NOTES: ${{ needs.release.outputs.new_release_notes }}
+        run: |
+          printf '%s' "$NOTES" > release-notes.md
+          gh release create "v${VERSION}" \
+            --title "v${VERSION}" \
+            --notes-file release-notes.md \
+            dist/plumber-* dist/checksums.txt dist/provenance.intoto.jsonl
 
   docker:
     name: Build & Push Docker Image

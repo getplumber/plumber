@@ -541,7 +541,11 @@ func buildAuthorizedActionSourcesBlock(c legacyCommon, result *control.AnalysisR
 	return map[string]any{
 		"issues": projectFindings(_sortedFindings(findings), "job"),
 		"metrics": map[string]any{
-			"actionRefsTotal":        s.ActionRefsTotal,
+			// ISSUE-713 evaluates every ref, including the pin-exempt
+			// actions/* and github/* owners, so the denominator must
+			// include ActionRefsExempt — matching the terminal stats
+			// (buildGitHubControlStats) so the two views never disagree.
+			"actionRefsTotal":        s.ActionRefsTotal + s.ActionRefsExempt,
 			"actionRefsUnauthorized": len(findings),
 		},
 		"compliance": c.Compliance,

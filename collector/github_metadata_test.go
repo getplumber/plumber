@@ -351,3 +351,16 @@ func Test_fetchAllTags_anonymousFallbackOn403(t *testing.T) {
 		t.Fatalf("anonymous fallback did not resolve the SHA: got %v, want %s -> v1.2.3", tags, sha)
 	}
 }
+
+// Test_isZeroMetadata_stargazers guards the ISSUE-713 minimumStars path:
+// a resolved star count must keep the metadata even when the ref itself
+// could not be resolved, otherwise enrichment drops it and a popular
+// action is wrongly reported as unauthorized.
+func Test_isZeroMetadata_stargazers(t *testing.T) {
+	if isZeroMetadata(GitHubMetadata{StargazersCount: 1500}) {
+		t.Error("metadata with a non-zero star count must not be treated as zero")
+	}
+	if !isZeroMetadata(GitHubMetadata{}) {
+		t.Error("fully zero metadata must be treated as zero")
+	}
+}

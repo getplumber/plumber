@@ -47,7 +47,8 @@
     [
       "@semantic-release/exec",
       {
-        "prepareCmd": "bash scripts/release-bump-version.sh ${nextRelease.version}"
+        "prepareCmd": "bash scripts/release-bump-version.sh ${nextRelease.version}",
+        "successCmd": "bash scripts/release-set-outputs.sh ${nextRelease.version}"
       }
     ],
     [

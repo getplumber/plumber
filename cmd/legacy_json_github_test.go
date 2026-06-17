@@ -84,7 +84,7 @@ func TestAuthorizedActionSourcesJSONBlock(t *testing.T) {
 	}}
 	result := &control.AnalysisResult{
 		CiValid:     true,
-		GitHubStats: &control.GitHubAnalysisStats{ActionRefsTotal: 4},
+		GitHubStats: &control.GitHubAnalysisStats{ActionRefsTotal: 4, ActionRefsExempt: 2},
 	}
 
 	name, block := buildLegacyResultGitHub(entry, result, nil, findings)
@@ -111,6 +111,11 @@ func TestAuthorizedActionSourcesJSONBlock(t *testing.T) {
 	metrics := m["metrics"].(map[string]any)
 	if metrics["actionRefsUnauthorized"] != 1 {
 		t.Errorf("actionRefsUnauthorized = %v, want 1", metrics["actionRefsUnauthorized"])
+	}
+	// Denominator must include pin-exempt refs (actions/*, github/*),
+	// which ISSUE-713 still evaluates — matching the terminal stats.
+	if metrics["actionRefsTotal"] != 6 {
+		t.Errorf("actionRefsTotal = %v, want 6 (ActionRefsTotal 4 + ActionRefsExempt 2)", metrics["actionRefsTotal"])
 	}
 	if m["compliance"] != 0.0 {
 		t.Errorf("compliance with a finding = %v, want 0", m["compliance"])

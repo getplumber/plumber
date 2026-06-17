@@ -885,6 +885,12 @@ func isZeroMetadata(meta GitHubMetadata) bool {
 	if len(meta.Advisories) > 0 {
 		return false
 	}
+	// A resolved star count is meaningful even when the ref itself could
+	// not be resolved — the authorized-sources control (ISSUE-713) reads
+	// it for the minimumStars threshold, so keep the metadata.
+	if meta.StargazersCount > 0 {
+		return false
+	}
 	return true
 }
 
