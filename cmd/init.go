@@ -41,6 +41,7 @@ const (
 	// GitHub-applicable composition checks (new). The cross-provider ones
 	// (security jobs, DinD) reuse compSecurity / compDinD above.
 	compActionPin          = "Require third-party actions pinned by commit SHA"
+	compAuthorizedActions  = "Restrict third-party actions to authorized sources"
 	compDangerousTriggers  = "Flag dangerous workflow triggers (pull_request_target, workflow_run, …)"
 	compPRTargetHead       = "Forbid pull_request_target workflows that check out the PR head"
 	compDeclarePermissions = "Require workflows to declare an explicit permissions: block"
@@ -718,6 +719,7 @@ func compositionOptionsForProviders(providers []string) []string {
 	if hasGitHub {
 		out = append(out,
 			compActionPin,
+			compAuthorizedActions,
 			compDangerousTriggers,
 			compPRTargetHead,
 			compDeclarePermissions,
@@ -1166,6 +1168,17 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 					TrustedOwners: owners,
 				}
 			}
+			if compSelected(st, compAuthorizedActions) {
+				// Ship with the secure defaults: trust GitHub-official
+				// owners and the repo's own org; the user fills in
+				// trustedGithubActions / minimumStars in the generated
+				// file as needed.
+				githubSection.Controls.GithubActionMustComeFromAuthorizedSources = &configuration.ActionAuthorizedSourcesControlConfig{
+					Enabled:                    boolPtrInit(true),
+					TrustGithubOfficialActions: boolPtrInit(true),
+					TrustSameOrgActions:        boolPtrInit(true),
+				}
+			}
 			if compSelected(st, compDangerousTriggers) {
 				githubSection.Controls.WorkflowMustNotUseDangerousTriggers = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
 			}
@@ -1288,7 +1301,7 @@ func starterPlumberConfig() *configuration.PlumberConfig {
 		TrustedURLsText:        strings.Join(defaultTrustedURLs(), "\n"),
 		CompositionChoices: []string{
 			compHardcoded, compUpToDate, compForbidden, compSecurity, compScripts, compJobVars, compDinD,
-			compActionPin, compDangerousTriggers, compPRTargetHead, compDeclarePermissions, compReusableSecrets, compTemplateInjection,
+			compActionPin, compAuthorizedActions, compDangerousTriggers, compPRTargetHead, compDeclarePermissions, compReusableSecrets, compTemplateInjection,
 			compWriteAllPerms, compArchivedActions, compKnownCVEs, compDebugTraceGitHub,
 		},
 		ActionPinTrustedOwnersMultiline:        strings.Join(defaultGitHubTrustedActionOwners(), "\n"),

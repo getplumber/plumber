@@ -165,6 +165,11 @@ func GitHubControls(pc *configuration.PlumberConfig) []ControlEntry {
 		Skipped:     c.ActionsMustBePinnedByCommitSha == nil || !c.ActionsMustBePinnedByCommitSha.IsEnabled(),
 	})
 	entries = append(entries, ControlEntry{
+		DisplayName: "Actions must come from authorized sources",
+		ControlName: "githubActionMustComeFromAuthorizedSources",
+		Skipped:     c.GithubActionMustComeFromAuthorizedSources == nil || !c.GithubActionMustComeFromAuthorizedSources.IsEnabled(),
+	})
+	entries = append(entries, ControlEntry{
 		DisplayName: "Branch must be protected",
 		ControlName: "branchMustBeProtected",
 		Skipped:     c.BranchMustBeProtected == nil || !c.BranchMustBeProtected.IsEnabled(),
@@ -328,6 +333,9 @@ func DisabledControlNames(c *configuration.ControlsConfig) map[string]bool {
 	}
 	if cfg := c.ActionsMustBePinnedByCommitSha; cfg == nil || !cfg.IsEnabled() {
 		out["actionsMustBePinnedByCommitSha"] = true
+	}
+	if cfg := c.GithubActionMustComeFromAuthorizedSources; cfg == nil || !cfg.IsEnabled() {
+		out["githubActionMustComeFromAuthorizedSources"] = true
 	}
 	if cfg := c.WorkflowMustNotInjectUserInputInScripts; cfg == nil || !cfg.IsEnabled() {
 		out["workflowMustNotInjectUserInputInScripts"] = true

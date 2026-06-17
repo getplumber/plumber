@@ -61,6 +61,7 @@ type GitHubMetadata struct {
 	LatestReleaseSha string
 	RefIsAmbiguous   bool
 	Advisories       []string
+	StargazersCount  int
 }
 
 // GitHubMetadataClient resolves `owner/repo@ref` references against
@@ -117,6 +118,7 @@ type advisoryInfo struct {
 
 type repoCacheEntry struct {
 	archived bool
+	stars    int
 	fetched  bool
 	err      error
 }
@@ -232,7 +234,9 @@ func (c *GitHubMetadataClient) Resolve(ownerRepoRef string) GitHubMetadata {
 
 func (c *GitHubMetadataClient) resolveUncached(owner, repo, ref string) GitHubMetadata {
 	m := GitHubMetadata{}
-	m.RepoArchived = c.isRepoArchived(owner, repo)
+	info := c.repoInfo(owner, repo)
+	m.RepoArchived = info.archived
+	m.StargazersCount = info.stars
 	m.LatestTag = c.latestReleaseTag(owner, repo)
 	if m.LatestTag != "" {
 		if sha, ok := c.resolveTag(owner, repo, m.LatestTag); ok {
@@ -702,26 +706,33 @@ func _versionInRange(v *version.Version, rangeExpr string) bool {
 	return constraints.Check(v)
 }
 
-func (c *GitHubMetadataClient) isRepoArchived(owner, repo string) bool {
+// repoInfo fetches and caches the repository object once per
+// owner/repo. The archived flag and the stargazer count both come
+// from the same `GET repos/{owner}/{repo}` response, so callers that
+// need either share a single API round-trip.
+func (c *GitHubMetadataClient) repoInfo(owner, repo string) repoCacheEntry {
+	key := owner + "/" + repo
 	c.mu.Lock()
-	cached, ok := c.repoCache[owner+"/"+repo]
+	cached, ok := c.repoCache[key]
 	c.mu.Unlock()
 	if ok && cached.fetched {
-		return cached.archived
+		return cached
 	}
 	var resp struct {
-		Archived bool `json:"archived"`
+		Archived        bool `json:"archived"`
+		StargazersCount int  `json:"stargazers_count"`
 	}
 	entry := repoCacheEntry{fetched: true}
 	if err := c.rest.Get(fmt.Sprintf("repos/%s/%s", owner, repo), &resp); err != nil {
 		entry.err = err
 	} else {
 		entry.archived = resp.Archived
+		entry.stars = resp.StargazersCount
 	}
 	c.mu.Lock()
-	c.repoCache[owner+"/"+repo] = entry
+	c.repoCache[key] = entry
 	c.mu.Unlock()
-	return entry.archived
+	return entry
 }
 
 // latestReleaseTag returns the highest semver tag across a repo's

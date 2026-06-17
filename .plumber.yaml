@@ -560,6 +560,32 @@ github:
         - github
 
     # ===========================================
+    # Actions must come from authorized sources
+    # ===========================================
+    # Restrict which `uses:` action sources are allowed. Every third-
+    # party action runs with the caller workflow's token and secrets, so
+    # limiting actions to vetted owners shrinks the supply-chain surface.
+    githubActionMustComeFromAuthorizedSources:
+      enabled: true
+      # Trust the first-party GitHub-owned actions (actions/*, github/*)
+      # that any workflow already executes implicitly. Defaults to true.
+      trustGithubOfficialActions: true
+      # Trust actions whose owner is the same org/user as the scanned
+      # repository — an org's own actions are inside its trust boundary.
+      # Defaults to true.
+      trustSameOrgActions: true
+      # When > 0, also trust any action whose upstream repository has at
+      # least this many GitHub stars. Catches rename/re-creation squats
+      # where a once-trusted name is re-registered with no history.
+      # Requires GitHub API access; 0 disables the star check.
+      minimumStars: 0
+      # Allowlist of trusted action sources. Each entry is either an
+      # exact `owner/repo` or an `owner/*` wildcard for a whole org.
+      trustedGithubActions:
+        - jdx/mise-action
+        # - mycompany/*
+
+    # ===========================================
     # Container images must not use forbidden tags
     # ===========================================
     # Same control as GitLab; values are GitHub-side. Pinning by digest

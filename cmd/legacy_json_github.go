@@ -32,6 +32,8 @@ func buildLegacyResultGitHub(e control.ControlEntry, result *control.AnalysisRes
 	switch e.ControlName {
 	case "actionsMustBePinnedByCommitSha":
 		return "actionPinningResult", buildActionPinningBlock(common, result, findings)
+	case "githubActionMustComeFromAuthorizedSources":
+		return "authorizedActionSourcesResult", buildAuthorizedActionSourcesBlock(common, result, findings)
 	case "containerImageMustNotUseForbiddenTags":
 		return "imageForbiddenTagsResult", buildImageForbiddenTagsBlockGitHub(common, result, pc, findings)
 	case "branchMustBeProtected":
@@ -519,6 +521,28 @@ func buildExcessivePermissionsBlock(c legacyCommon, result *control.AnalysisResu
 		"metrics": map[string]any{
 			"jobsTotal":        s.JobsTotal,
 			"jobsWithWriteAll": len(findings),
+		},
+		"compliance": c.Compliance,
+		"version":    "0.1.0",
+		"ciValid":    c.CiValid,
+		"ciMissing":  c.CiMissing,
+		"skipped":    c.Skipped,
+	}
+}
+
+// buildAuthorizedActionSourcesBlock — ISSUE-713. Denominator is the
+// number of action refs scanned (same denominator the action-pinning /
+// archived blocks use); numerator is the finding count, one per (job,
+// unauthorized-action) pair, including job-level reusable-workflow
+// calls. Each issue carries the offending `uses` value via the finding
+// Data so dashboards can list the exact unauthorized sources.
+func buildAuthorizedActionSourcesBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	s := statsOf(result)
+	return map[string]any{
+		"issues": projectFindings(_sortedFindings(findings), "job"),
+		"metrics": map[string]any{
+			"actionRefsTotal":        s.ActionRefsTotal,
+			"actionRefsUnauthorized": len(findings),
 		},
 		"compliance": c.Compliance,
 		"version":    "0.1.0",

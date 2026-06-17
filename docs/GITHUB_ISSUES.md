@@ -14,6 +14,7 @@ reading the upstream docs.
 | [ISSUE-102](#issue-102--image-mutable-tag) | `image-mutable-tag` | high |
 | [ISSUE-103](#issue-103--image-not-pinned-by-digest) | `image-not-pinned-by-digest` | high |
 | [ISSUE-701](#issue-104--action-unpinned) | `action-unpinned` | high |
+| [ISSUE-713](#issue-713--action-authorized-sources) | `action-authorized-sources` | high |
 | [ISSUE-704](#issue-105--container-hardcoded-credentials) | `container-hardcoded-credentials` | **critical** |
 | [ISSUE-705](#issue-106--cache-poisoning) | `cache-poisoning` | high |
 | [ISSUE-706](#issue-107--dockerfile-unpinned-base) | `dockerfile-unpinned-base` | medium |
@@ -279,6 +280,65 @@ FROM alpine:3.20@sha256:b7d40c02c23be0ca99da3a0e5e8bd2f0a0a2b3a0e5e8bd2f0a0a2b3a
 prints the digest for the tag you just pulled. Automate refresh
 with Dependabot (`package-ecosystem: docker`) or Renovate
 (`pinDigests: true`) so the pin stays current.
+
+---
+
+## ISSUE-713 — `action-authorized-sources`
+
+**Severity:** `high` • **Control:** `githubActionMustComeFromAuthorizedSources`
+
+A workflow references an action whose source is not authorized. Every
+third-party action runs inside the caller workflow with its token and
+secrets, so an unvetted owner is a direct supply-chain entry point —
+the vector behind the tj-actions/changed-files compromise
+(CVE-2025-30066). Restricting actions to a vetted set shrinks that
+surface.
+
+An action is **trusted** when any of these hold:
+
+- `trustGithubOfficialActions` (default `true`) covers `actions/*` and
+  `github/*`, the first-party owners every workflow already trusts.
+- `trustSameOrgActions` (default `true`) covers actions whose owner is
+  the same org/user as the scanned repository — an org's own actions are
+  inside its trust boundary. Owner match is case-insensitive; it abstains
+  when the scanned repo's owner is unknown.
+- its `owner/repo` matches an entry in `trustedGithubActions` — either
+  an exact `owner/repo` or an `owner/*` whole-org wildcard.
+- `minimumStars` is set and the action's upstream repository has at
+  least that many stars. This catches the rename/re-creation squat
+  where a once-trusted name is re-registered with no history. It needs
+  GitHub API access; when the star count cannot be resolved the
+  reference falls back to the allowlist rather than being flagged on
+  missing data.
+
+Local actions (`./…`) and docker-image refs (`docker://…`) are always
+exempt. Job-level reusable-workflow calls are checked too, but only
+against the official-owner and allowlist rules (they carry no star
+metadata).
+
+```yaml
+# ❌ before — action from an unvetted third-party owner
+- uses: random-dev/handy-action@v1
+```
+
+```yaml
+# ✅ after — official, allowlisted, or popular enough to trust
+- uses: actions/checkout@v4
+- uses: mycompany/internal-action@v2   # via trustedGithubActions: [mycompany/*]
+```
+
+**Config.**
+
+```yaml
+githubActionMustComeFromAuthorizedSources:
+  enabled: true
+  trustGithubOfficialActions: true
+  trustSameOrgActions: true
+  minimumStars: 0
+  trustedGithubActions:
+    - mycompany/*
+    - jdx/mise-action
+```
 
 ---
 
@@ -1745,6 +1805,7 @@ and in `.plumber.yaml`) is declared in
 | :--- | :--- |
 | ISSUE-102 / 103 | `containerImageMustNotUseForbiddenTags` |
 | ISSUE-701 | `actionsMustBePinnedByCommitSha` |
+| ISSUE-713 | `githubActionMustComeFromAuthorizedSources` _(`minimumStars` requires the GitHub API)_ |
 | ISSUE-706 | `dockerfilesMustPinBaseImageByDigest` |
 | ISSUE-712 | `releaseWorkflowsMustSignArtefacts` |
 | ISSUE-710 | `actionRefsMustNotCollide` |

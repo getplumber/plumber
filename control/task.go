@@ -276,6 +276,32 @@ func buildEngineConfig(controls *configuration.ControlsConfig) map[string]any {
 		cfg["actionsMustBePinnedByCommitSha"] = entry
 	}
 
+	if c := controls.GithubActionMustComeFromAuthorizedSources; c != nil && c.IsEnabled() {
+		// trustGithubOfficialActions defaults to true: the first-party
+		// actions/* and github/* owners are inside any workflow's
+		// implicit trust boundary, so trust them unless explicitly
+		// opted out.
+		trustOfficial := true
+		if c.TrustGithubOfficialActions != nil {
+			trustOfficial = *c.TrustGithubOfficialActions
+		}
+		// trustSameOrgActions also defaults to true: an org's own actions
+		// (same owner as the scanned repo) are inside its trust boundary.
+		trustSameOrg := true
+		if c.TrustSameOrgActions != nil {
+			trustSameOrg = *c.TrustSameOrgActions
+		}
+		entry := map[string]any{
+			"trustGithubOfficialActions": trustOfficial,
+			"trustSameOrgActions":        trustSameOrg,
+			"minimumStars":               c.MinimumStars,
+		}
+		if len(c.TrustedGithubActions) > 0 {
+			entry["trustedGithubActions"] = c.TrustedGithubActions
+		}
+		cfg["githubActionMustComeFromAuthorizedSources"] = entry
+	}
+
 	if c := controls.WorkflowMustIncludeRequiredActions; c != nil && c.IsEnabled() {
 		if groups, err := c.GetResolvedRequiredGroups(); err == nil && len(groups) > 0 {
 			cfg["workflowMustIncludeRequiredActions"] = map[string]any{

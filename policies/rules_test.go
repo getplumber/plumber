@@ -3484,6 +3484,228 @@ func TestIssue108_ActionArchivedRepo(t *testing.T) {
 	})
 }
 
+// TestIssue713_ActionAuthorizedSources exercises the authorized-sources
+// supply-chain rule across its trust paths: GitHub-official owners, an
+// exact/wildcard allowlist, and a minimum-stars floor — plus the
+// negative cases (unauthorized owner fires) and the abstain cases
+// (local/docker refs, missing config, missing star metadata).
+func TestIssue713_ActionAuthorizedSources(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFS(policies.FS); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+
+	// hits713 evaluates a single-job pipeline and returns the set of
+	// `uses` values flagged by ISSUE-713.
+	hits713 := func(t *testing.T, cfg map[string]any, actions []ir.Action, reusable string) []string {
+		t.Helper()
+		job := ir.Job{Name: "build", Uses: actions, ReusableWorkflowUses: reusable}
+		pipeline := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{job}}
+		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		var out []string
+		for _, f := range findings {
+			if f.Code != "ISSUE-713" {
+				continue
+			}
+			if uses, ok := f.Data["uses"].(string); ok {
+				out = append(out, uses)
+			}
+		}
+		sort.Strings(out)
+		return out
+	}
+
+	// Default-shaped config: official trusted, an exact and a wildcard
+	// allowlist entry, no star floor.
+	allowlistCfg := map[string]any{
+		"githubActionMustComeFromAuthorizedSources": map[string]any{
+			"trustGithubOfficialActions": true,
+			"minimumStars":               0,
+			"trustedGithubActions":       []any{"mycompany/*", "jdx/mise-action"},
+		},
+	}
+
+	t.Run("official and allowlisted actions stay silent", func(t *testing.T) {
+		got := hits713(t, allowlistCfg, []ir.Action{
+			{Uses: "actions/checkout@v4"},
+			{Uses: "github/codeql-action@v3"},
+			{Uses: "mycompany/internal-action@v1"},
+			{Uses: "mycompany/another/path@abc123"}, // composite ref under wildcard
+			{Uses: "jdx/mise-action@v2"},
+		}, "")
+		if len(got) != 0 {
+			t.Fatalf("expected no findings, got %v", got)
+		}
+	})
+
+	t.Run("unauthorized owner fires", func(t *testing.T) {
+		got := hits713(t, allowlistCfg, []ir.Action{
+			{Uses: "actions/checkout@v4"},   // trusted (official)
+			{Uses: "random/evil-action@v1"}, // not trusted
+			{Uses: "jdx/other-action@v1"},   // jdx exact entry is mise-action only
+		}, "")
+		want := []string{"jdx/other-action@v1", "random/evil-action@v1"}
+		if !stringSlicesEqual(got, want) {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+	})
+
+	t.Run("official trust can be disabled", func(t *testing.T) {
+		cfg := map[string]any{
+			"githubActionMustComeFromAuthorizedSources": map[string]any{
+				"trustGithubOfficialActions": false,
+				"minimumStars":               0,
+				"trustedGithubActions":       []any{"mycompany/*"},
+			},
+		}
+		got := hits713(t, cfg, []ir.Action{{Uses: "actions/checkout@v4"}}, "")
+		want := []string{"actions/checkout@v4"}
+		if !stringSlicesEqual(got, want) {
+			t.Fatalf("expected official action flagged when trust off, got %v", got)
+		}
+	})
+
+	t.Run("minimum stars trusts popular, flags low-star, abstains on unknown", func(t *testing.T) {
+		cfg := map[string]any{
+			"githubActionMustComeFromAuthorizedSources": map[string]any{
+				"trustGithubOfficialActions": true,
+				"minimumStars":               100,
+				"trustedGithubActions":       []any{},
+			},
+		}
+		got := hits713(t, cfg, []ir.Action{
+			// 5000 stars is over the floor → trusted.
+			{Uses: "popular/action@v1", Metadata: &ir.ActionMetadata{StargazersCount: 5000}},
+			// 3 stars is below the floor → flagged.
+			{Uses: "tiny/action@v1", Metadata: &ir.ActionMetadata{StargazersCount: 3}},
+			// No metadata → no star data; falls back to the allowlist,
+			// which it is not in → flagged (for unauthorized source).
+			{Uses: "unknown/action@v1"},
+		}, "")
+		// popular is trusted by stars; tiny is below the floor; unknown
+		// has no star data and is in no allowlist, so it is flagged for
+		// being from an unauthorized source (NOT for missing stars).
+		want := []string{"tiny/action@v1", "unknown/action@v1"}
+		if !stringSlicesEqual(got, want) {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+	})
+
+	t.Run("local and docker refs are exempt", func(t *testing.T) {
+		got := hits713(t, allowlistCfg, []ir.Action{
+			{Uses: "./.github/actions/local"},
+			{Uses: "docker://gcr.io/distroless/static@sha256:abc"},
+		}, "")
+		if len(got) != 0 {
+			t.Fatalf("expected local/docker refs exempt, got %v", got)
+		}
+	})
+
+	t.Run("reusable workflow from unauthorized source fires", func(t *testing.T) {
+		got := hits713(t, allowlistCfg, nil, "random/repo/.github/workflows/ci.yml@v1")
+		want := []string{"random/repo/.github/workflows/ci.yml@v1"}
+		if !stringSlicesEqual(got, want) {
+			t.Fatalf("expected reusable workflow flagged, got %v", got)
+		}
+	})
+
+	t.Run("reusable workflow under wildcard stays silent", func(t *testing.T) {
+		got := hits713(t, allowlistCfg, nil, "mycompany/repo/.github/workflows/ci.yml@v1")
+		if len(got) != 0 {
+			t.Fatalf("expected allowlisted reusable workflow silent, got %v", got)
+		}
+	})
+
+	t.Run("no config means the control is silent", func(t *testing.T) {
+		got := hits713(t, nil, []ir.Action{{Uses: "random/evil-action@v1"}}, "")
+		if len(got) != 0 {
+			t.Fatalf("expected silence without config, got %v", got)
+		}
+	})
+
+	// hits713Repo is hits713 with a scanned-repo projectPath, for the
+	// same-org trust path.
+	hits713Repo := func(t *testing.T, cfg map[string]any, projectPath string, actions []ir.Action) []string {
+		t.Helper()
+		pipeline := &ir.NormalizedPipeline{
+			Provider:    ir.ProviderGitHub,
+			ProjectPath: projectPath,
+			Jobs:        []ir.Job{{Name: "build", Uses: actions}},
+		}
+		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		var out []string
+		for _, f := range findings {
+			if f.Code != "ISSUE-713" {
+				continue
+			}
+			if uses, ok := f.Data["uses"].(string); ok {
+				out = append(out, uses)
+			}
+		}
+		sort.Strings(out)
+		return out
+	}
+
+	// Default config: official trusted, same-org trusted (default), no
+	// allowlist, no star floor.
+	defaultCfg := map[string]any{
+		"githubActionMustComeFromAuthorizedSources": map[string]any{
+			"trustGithubOfficialActions": true,
+			"minimumStars":               0,
+		},
+	}
+
+	t.Run("same-org actions trusted by default, other orgs flagged", func(t *testing.T) {
+		got := hits713Repo(t, defaultCfg, "myorg/myrepo", []ir.Action{
+			{Uses: "myorg/internal-action@v1"}, // same org → trusted
+			{Uses: "myorg/tools/setup@abc123"}, // same org, composite → trusted
+			{Uses: "other-org/some-action@v1"}, // different org → flagged
+		})
+		want := []string{"other-org/some-action@v1"}
+		if !stringSlicesEqual(got, want) {
+			t.Fatalf("expected %v, got %v", want, got)
+		}
+	})
+
+	t.Run("same-org match is case-insensitive", func(t *testing.T) {
+		got := hits713Repo(t, defaultCfg, "MyOrg/repo", []ir.Action{
+			{Uses: "myorg/action@v1"},
+		})
+		if len(got) != 0 {
+			t.Fatalf("expected case-insensitive same-org trust, got %v", got)
+		}
+	})
+
+	t.Run("same-org trust can be disabled", func(t *testing.T) {
+		cfg := map[string]any{
+			"githubActionMustComeFromAuthorizedSources": map[string]any{
+				"trustGithubOfficialActions": true,
+				"trustSameOrgActions":        false,
+				"minimumStars":               0,
+			},
+		}
+		got := hits713Repo(t, cfg, "myorg/myrepo", []ir.Action{{Uses: "myorg/internal-action@v1"}})
+		want := []string{"myorg/internal-action@v1"}
+		if !stringSlicesEqual(got, want) {
+			t.Fatalf("expected same-org flagged when trust off, got %v", got)
+		}
+	})
+
+	t.Run("same-org abstains when projectPath is unknown", func(t *testing.T) {
+		got := hits713Repo(t, defaultCfg, "", []ir.Action{{Uses: "myorg/internal-action@v1"}})
+		want := []string{"myorg/internal-action@v1"}
+		if !stringSlicesEqual(got, want) {
+			t.Fatalf("expected flagged with no projectPath, got %v", got)
+		}
+	})
+}
+
 // TestIssue115_SuperfluousAction flags peter-evans/create-pull-request
 // and similar third-party wrappers.
 func TestIssue115_SuperfluousAction(t *testing.T) {

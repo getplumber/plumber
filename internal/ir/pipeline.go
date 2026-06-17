@@ -300,6 +300,12 @@ type ActionMetadata struct {
 	CommentTagSha    string   `json:"commentTagSha,omitempty"`
 	RefIsAmbiguous   bool     `json:"refIsAmbiguous,omitempty"`
 	Advisories       []string `json:"advisories,omitempty"`
+	// StargazersCount is the action repository's star count, resolved
+	// from the GitHub API at collect time. Consumed by the authorized-
+	// sources control (ISSUE-713) to enforce a minimum-stars trust
+	// threshold. Zero when enrichment did not run or the repo was
+	// unreachable — policies must abstain rather than flag on absence.
+	StargazersCount int `json:"stargazersCount,omitempty"`
 }
 
 // Image references a container image (job image, service, step base).

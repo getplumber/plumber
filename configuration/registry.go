@@ -61,6 +61,7 @@ var controlsMeta = map[string]ControlMeta{
 	"dependabotMustNotAllowInsecureExternalCodeExecution": {Providers: []string{ProviderGitHub}},
 	"deployJobsMustUseEnvironmentGate":                    {Providers: []string{ProviderGitHub}},
 	"dockerfilesMustPinBaseImageByDigest":                 {Providers: []string{ProviderGitHub}},
+	"githubActionMustComeFromAuthorizedSources":           {Providers: []string{ProviderGitHub}},
 	"githubAppTokensMustBeRevokedOnExit":                  {Providers: []string{ProviderGitHub}},
 	"publishWorkflowsMustUseOidcTrustedPublishing":        {Providers: []string{ProviderGitHub}},
 	"pullRequestTargetMustNotCheckoutHead":                {Providers: []string{ProviderGitHub}},
@@ -190,6 +191,7 @@ var actionMetadataConsumers = []string{
 	"actionsMustNotBeArchived",
 	"actionsMustNotCarryKnownCVEs",
 	"actionsMustNotDuplicateRunnerBuiltins",
+	"githubActionMustComeFromAuthorizedSources",
 }
 
 // ProviderNeedsActionMetadata reports whether at least one control

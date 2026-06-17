@@ -285,6 +285,7 @@ func enrichActionsWithAPIMetadata(pipeline *ir.NormalizedPipeline, apiHost strin
 				LatestReleaseSha: meta.LatestReleaseSha,
 				RefIsAmbiguous:   meta.RefIsAmbiguous,
 				Advisories:       meta.Advisories,
+				StargazersCount:  meta.StargazersCount,
 			}
 			if action.Comment != "" {
 				amd.CommentVersion = extractVersionFromComment(action.Comment)

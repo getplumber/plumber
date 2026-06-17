@@ -306,6 +306,21 @@ func buildGitHubControlStats(controlName string, stats *control.GitHubAnalysisSt
 			{"Not Pinned By SHA", fmt.Sprintf("%d", stats.ActionRefsUnpinned)},
 			{"Trusted-Owner Exempt", fmt.Sprintf("%d", stats.ActionRefsExempt)},
 		}
+	case "githubActionMustComeFromAuthorizedSources":
+		// findings is the per-control list (one per unauthorized ref,
+		// including job-level reusable-workflow calls). Authorized =
+		// total in-scope refs minus the flagged ones.
+		total := stats.ActionRefsTotal + stats.ActionRefsExempt
+		unauthorized := len(findings)
+		authorized := total - unauthorized
+		if authorized < 0 {
+			authorized = 0
+		}
+		return []statLine{
+			{"Total Action Refs", fmt.Sprintf("%d", total)},
+			{"Authorized", fmt.Sprintf("%d", authorized)},
+			{"Unauthorized", fmt.Sprintf("%d", unauthorized)},
+		}
 	case "securityJobsMustNotBeWeakened":
 		return []statLine{
 			{"Security Jobs Found", fmt.Sprintf("%d", stats.SecurityJobsTotal)},

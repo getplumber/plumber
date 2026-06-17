@@ -324,6 +324,7 @@ func TestValidControlNames(t *testing.T) {
 		"branchMustBeProtected",
 		"containerImageMustComeFromAuthorizedSources",
 		"containerImageMustNotUseForbiddenTags",
+		"githubActionMustComeFromAuthorizedSources",
 		"includesMustBeUpToDate",
 		"includesMustNotUseForbiddenVersions",
 		"pipelineMustIncludeComponent",
