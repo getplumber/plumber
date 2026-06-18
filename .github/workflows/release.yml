@@ -65,11 +65,35 @@ jobs:
       # new_release_version) are written by the @semantic-release/exec
       # successCmd in .releaserc.json — it runs only on a published
       # release — replacing the outputs the wrapper action used to set.
-      - name: Semantic Release
+      # ONE-OFF (reverted immediately after this release): v0.3.63 is
+      # permanently reserved by tag immutability, so semantic-release — which
+      # would compute 0.3.63 as the next patch from 0.3.62 — can never tag it.
+      # Force-tag v0.3.64 on the current main commit instead; every downstream
+      # job (binaries, attestation, docker, release, homebrew, pin-refs) runs
+      # unchanged, so the release keeps full SLSA provenance. The next normal
+      # release sees v0.3.64 and resumes automatically.
+      - name: Force release 0.3.64
         id: semantic
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: semantic-release
+        run: |
+          set -euo pipefail
+          VERSION=0.3.64
+          REMOTE="https://x-access-token:${GITHUB_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          # Idempotent: if v0.3.64 was already tagged by an earlier run of this
+          # one-off step, skip with new_release_published=false so the job stays
+          # green and the downstream publish jobs (gated on 'true') are skipped.
+          # This keeps any main push before release.yml is reverted from failing
+          # on a duplicate-tag error.
+          if git ls-remote --exit-code --tags "$REMOTE" "refs/tags/v${VERSION}" >/dev/null 2>&1; then
+            echo "Tag v${VERSION} already exists; skipping."
+            echo "new_release_published=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git tag "v${VERSION}"
+          git push "$REMOTE" "refs/tags/v${VERSION}"
+          echo "new_release_published=true" >> "$GITHUB_OUTPUT"
+          echo "new_release_version=${VERSION}" >> "$GITHUB_OUTPUT"
 
       # Release notes are extracted from the top section of CHANGELOG.md
       # (semantic-release/changelog wrote it during this same job) rather

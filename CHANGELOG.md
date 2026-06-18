@@ -1,4 +1,4 @@
-## [0.3.63](https://github.com/getplumber/plumber/compare/v0.3.62...v0.3.63) (2026-06-18)
+## [0.3.64](https://github.com/getplumber/plumber/compare/v0.3.62...v0.3.64) (2026-06-18)
 
 
 ### ✨ Features
