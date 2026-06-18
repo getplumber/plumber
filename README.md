@@ -8,6 +8,8 @@
 </p>
 
 <p align="center">
+  <a href="https://getplumber.io"><img src="https://img.shields.io/badge/Plumber%20Score-A-3fb950?style=for-the-badge&labelColor=2b2d42" alt="Plumber Score A"></a>
+  &nbsp;&nbsp;
   <a href="https://securityscorecards.dev/viewer/?uri=github.com/getplumber/plumber"><img src="https://img.shields.io/ossf-scorecard/github.com/getplumber/plumber?label=OpenSSF%20Scorecard&style=for-the-badge&labelColor=2b2d42&color=4a90d9" alt="OpenSSF Scorecard"></a>
   &nbsp;&nbsp;
   <a href="https://slsa.dev/spec/v1.0/levels#build-l3"><img src="https://img.shields.io/badge/SLSA-Level%203-4a90d9?style=for-the-badge&logo=slsa&logoColor=white&labelColor=2b2d42" alt="SLSA 3"></a>
