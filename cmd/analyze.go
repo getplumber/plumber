@@ -231,13 +231,13 @@ func printProviderDetection(provider, reason string) {
 func loadConfigOrOffer(cfgFile string) (*configuration.PlumberConfig, string, []string, error) {
 	if cfgFile == "" {
 		if _, err := os.Stat(".plumber.yaml"); err == nil {
-		    // Use local config if available
+			// Use local config if available
 			cfgFile = ".plumber.yaml"
 		} else if _, err := os.Stat("/.plumber.yaml"); err == nil {
-		    // Fallback to global config is available
+			// Fallback to global config is available
 			cfgFile = "/.plumber.yaml"
 		} else {
-		    // Back to local configuration to suggest interactive
+			// Back to local configuration to suggest interactive
 			cfgFile = ".plumber.yaml"
 		}
 	}
