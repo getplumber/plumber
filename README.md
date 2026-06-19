@@ -182,7 +182,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
-      - uses: getplumber/plumber@033066363b2882cc2f37240748cf54e97a9c56d0 # v0.3.64
+      - uses: getplumber/plumber@06f51ac657abc8364fa4ecde600eff6ab4a7315f # v0.3.67
 ```
 
 To resolve action versions hosted in an org with an IP allow list, pass a public-repo-read token via the `metadata-token` input (kept in a secret):
