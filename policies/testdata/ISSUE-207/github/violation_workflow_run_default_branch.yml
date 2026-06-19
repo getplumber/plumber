@@ -1,0 +1,15 @@
+# On a workflow_run trigger, github.event.workflow_run.head_repository
+# is the head (fork) repository for a fork-PR run, so its
+# default_branch is attacker-controlled. Must still be flagged (#230).
+# Expected: 1 finding on bad.
+name: Fork default-branch via workflow_run
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+jobs:
+  bad:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "${{ github.event.workflow_run.head_repository.default_branch }}"

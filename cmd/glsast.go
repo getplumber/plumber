@@ -210,6 +210,15 @@ func buildGLSAST(findings []opaengine.Finding, provider string) glsastReport {
 // array so GitLab clears any previously-reported findings.
 func writeGLSASTToFile(result *control.AnalysisResult, filePath, provider string) error {
 	report := buildGLSAST(result.Findings, provider)
+	// On a data-collection-degraded run mark the scan failed (#220), so the
+	// GitLab Security Dashboard treats this partial report as a failed scan
+	// rather than ingesting its empty/partial findings as authoritative.
+	if result.DataCollectionDegraded {
+		report.Scan.Status = "failure"
+		for _, r := range result.DegradedReasons {
+			report.Scan.Messages = append(report.Scan.Messages, glsastMessage{Level: "warn", Value: "data collection incomplete: " + r})
+		}
+	}
 	for _, w := range result.Warnings {
 		report.Scan.Messages = append(report.Scan.Messages, glsastMessage{Level: "warn", Value: w})
 	}

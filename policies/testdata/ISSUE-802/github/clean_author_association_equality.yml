@@ -1,0 +1,18 @@
+# issue_comment job that checks out the PR head, guarded by equality
+# checks against trusted associations (the `== 'OWNER' || == 'MEMBER'`
+# allowlist form). Untrusted commenters cannot pass, so it is safe.
+# Expected: 0 findings (#235).
+name: Comment handler equality
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  handler:
+    if: github.event.comment.author_association == 'OWNER' || github.event.comment.author_association == 'MEMBER'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - run: echo "handle"

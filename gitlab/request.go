@@ -408,7 +408,100 @@ func GetGitlabInstanceVariables(token string, instanceUrl string, conf *configur
 	return variables, nil
 }
 
-// GetGitlabCIComponentResources fetches all CI component resources from GitLab
+// GetGitlabCIComponentResource fetches a SINGLE CI/CD catalog resource by its
+// project full path, with its released versions and their components. It is the
+// targeted replacement for the instance-wide GetGitlabCIComponentResources
+// enumeration: on a large catalog (gitlab.com has ~800 resources) that broad
+// query returns a multi-megabyte payload that exceeds the HTTP timeout, gets
+// cancelled, and silently disables outdated-include detection (#156). This
+// per-component lookup returns in well under a second and is complete (no
+// pagination roulette). Returns (nil, nil) when no catalog resource exists at
+// fullPath — e.g. a component published only as git tags, or a plain project
+// include — so the caller can fall back to the tags API.
+func GetGitlabCIComponentResource(fullPath string, token string, instanceUrl string, conf *configuration.Configuration) (*CICatalogResource, error) {
+	l := logrus.WithFields(logrus.Fields{
+		"action":      "GetGitlabCIComponentResource",
+		"instanceUrl": instanceUrl,
+		"fullPath":    fullPath,
+	})
+
+	const query = `query getCIComponentResource($fullPath: ID!) {
+		ciCatalogResource(fullPath: $fullPath) {
+			id
+			name
+			fullPath
+			webPath
+			versions(first: 50) {
+				nodes {
+					name
+					components {
+						nodes { id name includePath }
+					}
+				}
+			}
+		}
+	}`
+
+	client := GetGraphQLClient(instanceUrl, conf)
+	req := graphql.NewRequest(query)
+	req.Var("fullPath", fullPath)
+	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))
+
+	var resp struct {
+		CICatalogResource *struct {
+			ID       string `json:"id"`
+			Name     string `json:"name"`
+			FullPath string `json:"fullPath"`
+			WebPath  string `json:"webPath"`
+			Versions struct {
+				Nodes []struct {
+					Name       string `json:"name"`
+					Components struct {
+						Nodes []struct {
+							ID          string `json:"id"`
+							Name        string `json:"name"`
+							IncludePath string `json:"includePath"`
+						} `json:"nodes"`
+					} `json:"components"`
+				} `json:"nodes"`
+			} `json:"versions"`
+		} `json:"ciCatalogResource"`
+	}
+
+	if err := client.Run(context.Background(), req, &resp); err != nil {
+		l.WithError(err).Debug("ciCatalogResource query failed")
+		return nil, err
+	}
+	if resp.CICatalogResource == nil {
+		return nil, nil
+	}
+
+	n := resp.CICatalogResource
+	res := &CICatalogResource{
+		ID:       n.ID,
+		Name:     n.Name,
+		FullPath: n.FullPath,
+		WebPath:  n.WebPath,
+		Versions: make([]CICatalogResourceVersion, 0, len(n.Versions.Nodes)),
+	}
+	for _, vNode := range n.Versions.Nodes {
+		version := CICatalogResourceVersion{
+			Name:       vNode.Name,
+			Components: make([]CIComponent, 0, len(vNode.Components.Nodes)),
+		}
+		for _, cNode := range vNode.Components.Nodes {
+			version.Components = append(version.Components, CIComponent{ID: cNode.ID, Name: cNode.Name, IncludePath: cNode.IncludePath})
+		}
+		res.Versions = append(res.Versions, version)
+	}
+	return res, nil
+}
+
+// GetGitlabCIComponentResources fetches all CI component resources from GitLab.
+//
+// Deprecated: this instance-wide enumeration is too heavy on large catalogs and
+// is no longer used for version resolution (see GetGitlabCIComponentResource
+// and #156). Kept for any external callers.
 func GetGitlabCIComponentResources(isGroup bool, token string, instanceUrl string, conf *configuration.Configuration) ([]CICatalogResource, error) {
 	l := logrus.WithFields(logrus.Fields{
 		"action":      "GetGitlabCIComponentResources",

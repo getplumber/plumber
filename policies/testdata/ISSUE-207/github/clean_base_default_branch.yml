@@ -1,0 +1,15 @@
+# github.event.repository.default_branch is the BASE repository's
+# default branch, set by a repo admin — not attacker-controlled, so it
+# cannot carry an injection payload. A hardened pull_request_target
+# guard that compares against it must not be flagged (#230). Expected:
+# 0 findings.
+name: Base default-branch guard
+on: pull_request_target
+
+jobs:
+  safe:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          DEFAULT_REF="${{ github.event.repository.default_branch }}"
+          echo "default is $DEFAULT_REF"

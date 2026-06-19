@@ -61,6 +61,7 @@ var controlsMeta = map[string]ControlMeta{
 	"dependabotMustNotAllowInsecureExternalCodeExecution": {Providers: []string{ProviderGitHub}},
 	"deployJobsMustUseEnvironmentGate":                    {Providers: []string{ProviderGitHub}},
 	"dockerfilesMustPinBaseImageByDigest":                 {Providers: []string{ProviderGitHub}},
+	"githubActionMustComeFromAuthorizedSources":           {Providers: []string{ProviderGitHub}},
 	"githubAppTokensMustBeRevokedOnExit":                  {Providers: []string{ProviderGitHub}},
 	"publishWorkflowsMustUseOidcTrustedPublishing":        {Providers: []string{ProviderGitHub}},
 	"pullRequestTargetMustNotCheckoutHead":                {Providers: []string{ProviderGitHub}},
@@ -163,9 +164,9 @@ var benchedControls = map[string]map[string]struct{}{
 		// findings on GitLab — they're only benched on GitHub.
 		"includesMustBeUpToDate":                      {},
 		"includesMustNotUseForbiddenVersions":         {},
-		"pipelineMustIncludeComponent":            {},
-		"pipelineMustIncludeTemplate":             {},
-		"pipelineMustNotIncludeHardcodedJobs":     {},
+		"pipelineMustIncludeComponent":                {},
+		"pipelineMustIncludeTemplate":                 {},
+		"pipelineMustNotIncludeHardcodedJobs":         {},
 		"pipelineMustNotOverrideJobVariables":         {},
 		"pipelineMustNotUseUnsafeVariableExpansion":   {},
 		"containerImageMustComeFromAuthorizedSources": {},
@@ -190,6 +191,7 @@ var actionMetadataConsumers = []string{
 	"actionsMustNotBeArchived",
 	"actionsMustNotCarryKnownCVEs",
 	"actionsMustNotDuplicateRunnerBuiltins",
+	"githubActionMustComeFromAuthorizedSources",
 }
 
 // ProviderNeedsActionMetadata reports whether at least one control

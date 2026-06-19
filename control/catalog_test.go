@@ -91,9 +91,9 @@ func TestFilterFindingsByEnabledControls_noConfigKeepsAll(t *testing.T) {
 
 func TestFilterFindingsByEnabledControls_appliesIncludeOnlyAndSkip(t *testing.T) {
 	findings := []opaengine.Finding{
-		{Code: string(CodeImageNotPinnedByDigest), Severity: "high"},   // containerImageMustNotUseForbiddenTags
-		{Code: string(CodeBranchUnprotected), Severity: "critical"},    // branchMustBeProtected
-		{Code: string(CodeDockerInDockerUsage), Severity: "high"},      // pipelineMustNotUseDockerInDocker
+		{Code: string(CodeImageNotPinnedByDigest), Severity: "high"}, // containerImageMustNotUseForbiddenTags
+		{Code: string(CodeBranchUnprotected), Severity: "critical"},  // branchMustBeProtected
+		{Code: string(CodeDockerInDockerUsage), Severity: "high"},    // pipelineMustNotUseDockerInDocker
 	}
 
 	// include-only: only branchMustBeProtected survives.

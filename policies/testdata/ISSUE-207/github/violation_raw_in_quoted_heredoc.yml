@@ -1,0 +1,15 @@
+# A quoted heredoc alone is NOT safe (#229): a raw expression (no toJSON)
+# is substituted by GitHub before the shell runs, so a payload with a
+# newline + the EOF delimiter breaks out of the heredoc. Must fire.
+# Expected: 1 finding on bad.
+name: Raw expression in a quoted heredoc
+on: pull_request_target
+
+jobs:
+  bad:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          cat <<"EOF"
+          ${{ github.event.pull_request.title }}
+          EOF

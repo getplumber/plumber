@@ -1,13 +1,21 @@
 package control
 
 import (
-	"github.com/getplumber/plumber/collector"
+	"github.com/getplumber/plumber/gitlab"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	"github.com/getplumber/plumber/internal/ir"
 	"github.com/sirupsen/logrus"
 )
 
 var l = logrus.WithField("context", "control")
+
+// StatLine is a single labelled metric rendered above a control's findings
+// block in the terminal output. Label is the display name; Value is a
+// pre-formatted string (plain int, percentage, …).
+type StatLine struct {
+	Label string
+	Value string
+}
 
 // AnalysisResult holds the complete result of a pipeline analysis
 type AnalysisResult struct {
@@ -28,8 +36,8 @@ type AnalysisResult struct {
 	// CI configuration status
 	CiValid        bool     `json:"ciValid"`
 	CiMissing      bool     `json:"ciMissing"`
-	CiErrors       []string `json:"ciErrors,omitempty"`  // Specific CI config errors from GitLab
-	CIConfigSource string   `json:"ciConfigSource"`      // "local" or "remote"
+	CiErrors       []string `json:"ciErrors,omitempty"` // Specific CI config errors from GitLab
+	CIConfigSource string   `json:"ciConfigSource"`     // "local" or "remote"
 
 	// Pipeline origin data
 	PipelineOriginMetrics *PipelineOriginMetricsSummary `json:"pipelineOriginMetrics,omitempty"`
@@ -38,16 +46,15 @@ type AnalysisResult struct {
 	PipelineImageMetrics *PipelineImageMetricsSummary `json:"pipelineImageMetrics,omitempty"`
 
 	// Findings from the Rego/OPA rule engine. Single source of truth
-	// for compliance results since all legacy Go controls were retired
-	// (see docs/REFACTOR_MULTI_PROVIDER.md §8 Phase A).
+	// for compliance results since all legacy Go controls were retired.
 	Findings []opaengine.Finding `json:"findings,omitempty"`
 
 	// Raw collected data (not included in JSON output, used for PBOM generation
 	// and for the per-control aggregated stats block printed under each
 	// control header in the terminal output).
-	PipelineImageData  *collector.GitlabPipelineImageData    `json:"-"`
-	PipelineOriginData *collector.GitlabPipelineOriginData   `json:"-"`
-	ProtectionData     *collector.GitlabProtectionAnalysisData `json:"-"`
+	PipelineImageData  *gitlab.GitlabPipelineImageData      `json:"-"`
+	PipelineOriginData *gitlab.GitlabPipelineOriginData     `json:"-"`
+	ProtectionData     *gitlab.GitlabProtectionAnalysisData `json:"-"`
 
 	// GitHubStats holds per-control denominators computed from the
 	// GitHub IR after a GitHub analysis. Used by the GitHub renderer
@@ -60,7 +67,7 @@ type AnalysisResult struct {
 	// GitHubPipeline is the normalized IR produced by the GitHub
 	// collector, retained on the result so legacy JSON / PBOM /
 	// CycloneDX builders can read images, action references, and
-	// per-branch protection details without re-running the collector.
+	// per-branch protection details without re-running the gitlab.
 	// Nil on the GitLab path.
 	GitHubPipeline *ir.NormalizedPipeline `json:"-"`
 
@@ -80,6 +87,23 @@ type AnalysisResult struct {
 	// JSON, SARIF and GLSAST output, and gated by --fail-warnings (exit
 	// 3) so a degraded check is visible instead of silently passing.
 	Warnings []string `json:"warnings,omitempty"`
+
+	// DataCollectionDegraded is set when a collection or enrichment step
+	// failed mid-run, so the analysis ran on incomplete data: a GitLab
+	// merged-CI fetch that timed out (empty pipeline), or a GitHub run
+	// where some workflow files or the branch-protection fetch could not
+	// be retrieved. When true the renderer withholds the letter-score
+	// banner and marks the un-collected controls "not evaluated" instead
+	// of presenting missing data as 100% compliant (#220). Distinct from
+	// CiMissing, which is the legitimate "this project has no CI config"
+	// state and is not degraded.
+	DataCollectionDegraded bool `json:"dataCollectionDegraded,omitempty"`
+
+	// DegradedReasons lists the human-readable collection/enrichment
+	// failures behind DataCollectionDegraded (e.g. "3 workflow file(s)
+	// could not be fetched", "branch protection could not be fetched").
+	// Surfaced as a caveat in the terminal. Empty when not degraded.
+	DegradedReasons []string `json:"degradedReasons,omitempty"`
 }
 
 // GitHubAnalysisStats holds per-control aggregations computed by
@@ -90,9 +114,9 @@ type AnalysisResult struct {
 // does not walk the IR again.
 type GitHubAnalysisStats struct {
 	// Actions pinning (ISSUE-701).
-	ActionRefsTotal     int
-	ActionRefsUnpinned  int
-	ActionRefsExempt    int
+	ActionRefsTotal    int
+	ActionRefsUnpinned int
+	ActionRefsExempt   int
 
 	// Actions supply-chain (ISSUE-702, ISSUE-703). Counted across
 	// every `uses:` entry that has API metadata, regardless of the
@@ -103,9 +127,9 @@ type GitHubAnalysisStats struct {
 	ActionRefsVulnerable int
 
 	// Container images (ISSUE-102 / ISSUE-103).
-	ImagesTotal           int
-	ImagesPinnedByDigest  int
-	ImagesUsingForbidden  int
+	ImagesTotal          int
+	ImagesPinnedByDigest int
+	ImagesUsingForbidden int
 
 	// Docker-in-Docker (ISSUE-412 / ISSUE-413).
 	JobsTotal              int
@@ -141,9 +165,9 @@ type GitHubAnalysisStats struct {
 	UnverifiedScriptsFound int
 
 	// Workflows + properties (ISSUE-802, ISSUE-801).
-	WorkflowsTotal               int
+	WorkflowsTotal                int
 	WorkflowsWithDangerousTrigger int
-	WorkflowsMissingPermissions  int
+	WorkflowsMissingPermissions   int
 
 	// Branch protection (ISSUE-501 / ISSUE-505).
 	BranchesTotal     int

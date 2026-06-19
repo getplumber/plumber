@@ -9,6 +9,8 @@ import (
 const (
 	// PlumberBadgeName is the name used for Plumber project badges
 	PlumberBadgeName = "Plumber"
+	// UnableToGetGitlabClient is the error message for when a Gitlab client cannot be created
+	UnableToGetGitlabClient = "Unable to get a Gitlab client"
 )
 
 // ListProjectBadges retrieves all badges for a project
@@ -20,7 +22,7 @@ func ListProjectBadges(projectID int, token string, instanceURL string, conf *co
 
 	glab, err := GetNewGitlabClient(token, instanceURL, conf)
 	if err != nil {
-		l.WithError(err).Error("Unable to get a Gitlab client")
+		l.WithError(err).Error()
 		return nil, err
 	}
 
@@ -44,7 +46,7 @@ func CreateProjectBadge(projectID int, name, imageURL, linkURL, token, instanceU
 
 	glab, err := GetNewGitlabClient(token, instanceURL, conf)
 	if err != nil {
-		l.WithError(err).Error("Unable to get a Gitlab client")
+		l.WithError(err).Error(UnableToGetGitlabClient)
 		return nil, err
 	}
 
@@ -73,7 +75,7 @@ func UpdateProjectBadge(projectID int, badgeID int, name, imageURL, linkURL, tok
 
 	glab, err := GetNewGitlabClient(token, instanceURL, conf)
 	if err != nil {
-		l.WithError(err).Error("Unable to get a Gitlab client")
+		l.WithError(err).Error(UnableToGetGitlabClient)
 		return nil, err
 	}
 

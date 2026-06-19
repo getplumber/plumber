@@ -24,26 +24,6 @@ type ControlEntry struct {
 	Compliance float64
 }
 
-// GitLabControls returns the catalog of GitLab compliance controls
-// in their canonical display order. Every known GitLab control is
-// returned so the compliance table and the legacy JSON `*Result`
-// blocks render every row a v0.2.x user expects:
-//
-//   - Absent from `gitlab.controls.*` → `Skipped: true`. v0.2.x's
-//     legacy control wrappers (`control/controlGitlab*.go` at tag
-//     v0.2.22) uniformly set `p.Enabled = false` and short-circuit
-//     `Run()` with `result.Skipped = true` when the per-control
-//     section is missing from `.plumber.yaml`. The Rego port follows
-//     the same contract: findings for absent controls are dropped by
-//     FilterFindingsByEnabledControls so the row stays at 100% and
-//     the score ignores them.
-//   - Present with `enabled: true` → `Skipped: false`, runs.
-//   - Present with `enabled: false` (or an empty entry — IsEnabled
-//     returns false when the toggle is unset on a non-nil cfg) →
-//     `Skipped: true`.
-//
-// The caller typically fills in the findings-derived compliance by
-// looking up FindingsByControl.
 func GitLabControls(pc *configuration.PlumberConfig) []ControlEntry {
 	if pc == nil {
 		return nil
@@ -165,6 +145,11 @@ func GitHubControls(pc *configuration.PlumberConfig) []ControlEntry {
 		Skipped:     c.ActionsMustBePinnedByCommitSha == nil || !c.ActionsMustBePinnedByCommitSha.IsEnabled(),
 	})
 	entries = append(entries, ControlEntry{
+		DisplayName: "Actions must come from authorized sources",
+		ControlName: "githubActionMustComeFromAuthorizedSources",
+		Skipped:     c.GithubActionMustComeFromAuthorizedSources == nil || !c.GithubActionMustComeFromAuthorizedSources.IsEnabled(),
+	})
+	entries = append(entries, ControlEntry{
 		DisplayName: "Branch must be protected",
 		ControlName: "branchMustBeProtected",
 		Skipped:     c.BranchMustBeProtected == nil || !c.BranchMustBeProtected.IsEnabled(),
@@ -279,6 +264,10 @@ func isSecurityJobsWeakenedSkipped(cfg *configuration.SecurityJobsWeakenedContro
 // isSecurityJobsWeakenedSkipped. Pass the right provider's
 // ControlsConfig (use pc.ControlsFor("gitlab") or
 // pc.ControlsFor("github")).
+// DisabledControlNames returns the set of control names that are disabled
+// (nil or enabled:false) in the given ControlsConfig. It derives the list
+// from the same spec tables used by GitLabControls/GitHubControls so the
+// two sources of truth stay in sync automatically.
 func DisabledControlNames(c *configuration.ControlsConfig) map[string]bool {
 	out := map[string]bool{}
 	if c == nil {
@@ -328,6 +317,9 @@ func DisabledControlNames(c *configuration.ControlsConfig) map[string]bool {
 	}
 	if cfg := c.ActionsMustBePinnedByCommitSha; cfg == nil || !cfg.IsEnabled() {
 		out["actionsMustBePinnedByCommitSha"] = true
+	}
+	if cfg := c.GithubActionMustComeFromAuthorizedSources; cfg == nil || !cfg.IsEnabled() {
+		out["githubActionMustComeFromAuthorizedSources"] = true
 	}
 	if cfg := c.WorkflowMustNotInjectUserInputInScripts; cfg == nil || !cfg.IsEnabled() {
 		out["workflowMustNotInjectUserInputInScripts"] = true
@@ -396,7 +388,7 @@ func FilterFindingsByEnabledControls(findings []opaengine.Finding, provider stri
 // ControlPassesFilter applies the --controls / --skip-controls semantics
 // for one control name. When includeOnly is non-empty, only listed
 // controls pass; skip removes controls from the survivor set. The two
-// flags are mutually exclusive at the CLI level (cmd/analyze.go), but
+// flags are mutually exclusive at the CLI level (cmd/analyze_gitlab.go), but
 // this helper handles either or both for callers that don't enforce
 // that.
 func ControlPassesFilter(name string, includeOnly, skip []string) bool {
@@ -437,6 +429,16 @@ func MarkSkippedByFilter(entries []ControlEntry, includeOnly, skip []string) {
 			entries[i].Skipped = true
 		}
 	}
+}
+
+// GitHubControlCompliance returns the binary compliance percentage for a
+// single GitHub control: 100 when no findings, 0 otherwise. The stats
+// parameter is reserved for future per-control percentage overrides.
+func GitHubControlCompliance(_ string, _ *GitHubAnalysisStats, findings int) float64 {
+	if findings > 0 {
+		return 0
+	}
+	return 100
 }
 
 // ApplyFindings fills in Compliance for each catalog entry based on

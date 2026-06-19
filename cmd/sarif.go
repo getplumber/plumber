@@ -56,11 +56,13 @@ type sarifRun struct {
 }
 
 // sarifInvocation carries tool-level (not finding-level) messages. We use
-// it for "could not verify" warnings — e.g. a known-CVE check skipped
-// because an action's pinned commit could not be resolved to a version —
-// so a degraded check is visible in Code Scanning instead of passing
-// silently (ISSUE-228). executionSuccessful stays true: the run completed,
-// some data was just unavailable.
+// it two ways. For "could not verify" warnings (a known-CVE check skipped
+// because an action's pinned commit could not be resolved to a version,
+// ISSUE-228) executionSuccessful stays true: the run completed, some data
+// was just unavailable. For a data-collection-degraded run (#220) we set
+// executionSuccessful=false and emit error-level notifications, so a Code
+// Scanning ingester treats the upload as a failed run and does not clear
+// previously-reported alerts off this partial report.
 type sarifInvocation struct {
 	ExecutionSuccessful        bool                `json:"executionSuccessful"`
 	ToolExecutionNotifications []sarifNotification `json:"toolExecutionNotifications,omitempty"`
@@ -163,6 +165,7 @@ func sarifSecuritySeverity(sev string) string {
 // are enabled and which is always committed for a run to happen. When
 // fallbackURI is itself empty the result is emitted location-less (still
 // valid SARIF; only Code Scanning is that strict).
+
 func buildSARIF(findings []opaengine.Finding, fallbackURI, provider string) sarifLog {
 	rulesByID := map[string]sarifRule{}
 	results := make([]sarifResult, 0, len(findings))
@@ -273,15 +276,22 @@ func writeSARIFToFile(result *control.AnalysisResult, filePath, provider string)
 	// otherwise. provider routes per-provider Title/Description overrides
 	// from the codes registry into the rendered SARIF document.
 	log := buildSARIF(result.Findings, reportFilePath(configFile), provider)
-	if len(result.Warnings) > 0 && len(log.Runs) > 0 {
-		notifs := make([]sarifNotification, 0, len(result.Warnings))
+	if len(log.Runs) > 0 {
+		notifs := make([]sarifNotification, 0, len(result.DegradedReasons)+len(result.Warnings))
+		// Error-level notifications for incomplete collection (#220), so the
+		// run reads as failed; warning-level for could-not-verify (#228).
+		for _, r := range result.DegradedReasons {
+			notifs = append(notifs, sarifNotification{Level: "error", Message: sarifText{Text: "data collection incomplete: " + r}})
+		}
 		for _, w := range result.Warnings {
 			notifs = append(notifs, sarifNotification{Level: "warning", Message: sarifText{Text: w}})
 		}
-		log.Runs[0].Invocations = []sarifInvocation{{
-			ExecutionSuccessful:        true,
-			ToolExecutionNotifications: notifs,
-		}}
+		if len(notifs) > 0 || result.DataCollectionDegraded {
+			log.Runs[0].Invocations = []sarifInvocation{{
+				ExecutionSuccessful:        !result.DataCollectionDegraded,
+				ToolExecutionNotifications: notifs,
+			}}
+		}
 	}
 	data, err := json.MarshalIndent(log, "", "  ")
 	if err != nil {

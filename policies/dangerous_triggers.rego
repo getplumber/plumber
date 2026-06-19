@@ -54,27 +54,44 @@ untrusted_ref_patterns := [
 	`github\.event\.workflow_run\.head_branch`,
 ]
 
-# `if:`-condition fragments that restrict a job to same-repository
-# (non-fork) pull requests, which neutralises the exploit.
-fork_guard_patterns := [
+# `if:`-condition fragments that neutralise the exploit by restricting
+# WHO or WHAT can reach the job. Three families:
+#   1. same-repository (non-fork) pull-request guards — fork code never runs.
+#   2. workflow_run gated to an upstream PUSH event — the run head is then a
+#      trusted base-repo commit, not fork-controlled (#235).
+#   3. a trusted author_association ALLOWLIST on the comment / review / issue
+#      family (OWNER / MEMBER / COLLABORATOR), via equality or
+#      contains(fromJSON(...)). A negated check (`!= 'OWNER'`) is a denylist,
+#      not an allowlist, and must NOT match here (#235).
+guard_patterns := [
+	# 1. same-repo / non-fork pull-request guards
 	`head\.repo\.full_name\s*==\s*github\.repository`,
 	`github\.repository\s*==\s*[^=]*head\.repo\.full_name`,
 	`head\.repo\.fork\s*==\s*false`,
 	`head\.repo\.fork\s*!=\s*true`,
 	`!\s*github\.event\.pull_request\.head\.repo\.fork`,
+	# 2. workflow_run restricted to a trusted upstream push
+	`github\.event\.workflow_run\.event\s*==\s*['"]push['"]`,
+	# 3. trusted author_association allowlist. The `==` requirement keeps a
+	#    `!=` denylist from matching; the contains() form lists trusted roles.
+	`author_association\s*==\s*['"](OWNER|MEMBER|COLLABORATOR)['"]`,
+	`contains\(.*(OWNER|MEMBER|COLLABORATOR).*author_association`,
 ]
 
 deny contains finding if {
-	some i, j
+	some i
 	job := input.pipeline.jobs[i]
-	trigger := job.triggers[j]
-	dangerous_events[trigger]
 	_checks_out_untrusted_code(job)
-	not _has_fork_guard(job)
+	not _has_guard(job)
+	# The risk is a per-job property. Collect every dangerous trigger that
+	# reaches this job and emit ONE finding listing them, rather than one
+	# duplicate finding per trigger on the same line (#235).
+	triggers := sort([t | some t in job.triggers; dangerous_events[t]])
+	count(triggers) > 0
 	finding := {
 		"code":     "ISSUE-802",
 		"severity": "critical",
-		"message":  sprintf("job %q runs under the dangerous trigger %q and checks out fork-controlled code — untrusted code executes with the base repo's secrets (CVE-2025-30066 pattern)", [job.name, trigger]),
+		"message":  sprintf("job %q runs under dangerous trigger(s) %s and checks out fork-controlled code — untrusted code executes with the base repo's secrets (CVE-2025-30066 pattern)", [job.name, concat(", ", triggers)]),
 		"job":      job.name,
 	}
 }
@@ -90,8 +107,8 @@ _checks_out_untrusted_code(job) if {
 	regex.match(p, ref)
 }
 
-_has_fork_guard(job) if {
+_has_guard(job) if {
 	some cond in job.conditions
-	some p in fork_guard_patterns
+	some p in guard_patterns
 	regex.match(p, cond)
 }

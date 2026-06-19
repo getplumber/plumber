@@ -1,0 +1,19 @@
+# issue_comment job that checks out the PR head with an `if:` that only
+# NEGATES one association (`!= 'OWNER'`). That is a denylist, not a
+# trusted-author allowlist — untrusted commenters still pass it — so the
+# job stays exploitable. The guard recogniser must NOT be fooled by the
+# mere presence of `author_association`. Expected: 1 finding on handler (#235).
+name: Comment handler negation
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  handler:
+    if: github.event.comment.author_association != 'OWNER'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - run: echo "handle"

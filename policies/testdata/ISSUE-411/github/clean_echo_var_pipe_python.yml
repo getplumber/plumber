@@ -1,0 +1,18 @@
+# Regression for issue #236 (electron/electron pgo-generation.yml):
+# a leading echo/printf piping in-workflow data (a variable, the
+# `needs` context) into an interpreter is local data, not a remote
+# fetch — the generic `| <shell>` catch-all must NOT fire.
+# Expected hits: 0.
+name: pgo
+on: push
+jobs:
+  evaluate:
+    runs-on: ubuntu-24.04
+    env:
+      NEEDS_CONTEXT: ${{ toJSON(needs) }}
+    steps:
+      - run: echo "$NEEDS_CONTEXT" | python3 -c 'import json, sys; print(json.load(sys.stdin)["build"]["result"])'
+  printf_variant:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: printf '%s' "$RELEASE_NOTES" | ruby -e 'puts STDIN.read.length'

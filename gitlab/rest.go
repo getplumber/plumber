@@ -1,6 +1,7 @@
 package gitlab
 
 import (
+	"net/http"
 	"strconv"
 	"strings"
 
@@ -189,6 +190,36 @@ func FetchProjectBranches(projectID int, token string, APIURL string, conf *conf
 
 	l.WithField("branchCount", len(allBranches)).Debug("Fetched branches")
 	return allBranches, nil
+}
+
+// BranchExists reports whether the given branch (or tag/ref) exists in the
+// project. A 404 from the API means it does not exist and is returned as
+// (false, nil); any other failure (auth, network) is a real error. Used to
+// tell a non-existent --branch apart from a branch that simply has no
+// .gitlab-ci.yml, so the former fails loudly instead of rendering a
+// confusing limited report (#222).
+func BranchExists(projectID int, branch string, token string, APIURL string, conf *configuration.Configuration) (bool, error) {
+	l := logger.WithFields(logrus.Fields{
+		"action":    "BranchExists",
+		"projectID": projectID,
+		"branch":    branch,
+	})
+
+	glab, err := GetNewGitlabClient(token, APIURL, conf)
+	if err != nil {
+		l.WithError(err).Error("Unable to get a Gitlab client")
+		return false, err
+	}
+
+	_, resp, err := glab.Branches.GetBranch(projectID, branch)
+	if err != nil {
+		if resp != nil && resp.StatusCode == http.StatusNotFound {
+			return false, nil
+		}
+		l.WithError(err).Error("Failed to check whether branch exists")
+		return false, err
+	}
+	return true, nil
 }
 
 // FetchBranchProtections retrieves branch protection settings for a project

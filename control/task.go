@@ -6,7 +6,6 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/getplumber/plumber/collector"
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/gitlab"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
@@ -82,11 +81,11 @@ func runRegoEngine(
 	l *logrus.Entry,
 	conf *configuration.Configuration,
 	project *gitlab.Project,
-	originData *collector.GitlabPipelineOriginData,
-	imageData *collector.GitlabPipelineImageData,
-	protectionData *collector.GitlabProtectionAnalysisData,
+	originData *gitlab.GitlabPipelineOriginData,
+	imageData *gitlab.GitlabPipelineImageData,
+	protectionData *gitlab.GitlabProtectionAnalysisData,
 ) ([]opaengine.Finding, string) {
-	pipeline := collector.ToNormalizedPipeline(
+	pipeline := gitlab.ToNormalizedPipeline(
 		conf.ProjectPath,
 		project.DefaultBranch,
 		project.CiConfPath,
@@ -100,7 +99,7 @@ func runRegoEngine(
 	// warn level and never fail the run. The second return carries the
 	// abstain reason (if any) so the caller can mark the control SKIPPED
 	// instead of letting the empty-hits default render as 100% green.
-	if err := collector.ScanGitleaksForGitlab(l, conf, originData, pipeline); err != nil {
+	if err := gitlab.ScanGitleaksForGitlab(l, conf, originData, pipeline); err != nil {
 		l.WithError(err).Warn("gitleaks scan failed; ISSUE-301 will not fire")
 	}
 	return evaluatePolicies(l, conf, "gitlab", pipeline), pipeline.GitleaksAbstainReason
@@ -241,7 +240,7 @@ func buildEngineConfig(controls *configuration.ControlsConfig) map[string]any {
 			trustOfficial = *c.TrustDockerHubOfficialImages
 		}
 		cfg["imageAuthorizedSources"] = map[string]any{
-			"trustedUrls":           c.TrustedUrls,
+			"trustedUrls":            c.TrustedUrls,
 			"trustDockerHubOfficial": trustOfficial,
 		}
 	}
@@ -274,6 +273,32 @@ func buildEngineConfig(controls *configuration.ControlsConfig) map[string]any {
 			entry["trustedOwners"] = c.TrustedOwners
 		}
 		cfg["actionsMustBePinnedByCommitSha"] = entry
+	}
+
+	if c := controls.GithubActionMustComeFromAuthorizedSources; c != nil && c.IsEnabled() {
+		// trustGithubOfficialActions defaults to true: the first-party
+		// actions/* and github/* owners are inside any workflow's
+		// implicit trust boundary, so trust them unless explicitly
+		// opted out.
+		trustOfficial := true
+		if c.TrustGithubOfficialActions != nil {
+			trustOfficial = *c.TrustGithubOfficialActions
+		}
+		// trustSameOrgActions also defaults to true: an org's own actions
+		// (same owner as the scanned repo) are inside its trust boundary.
+		trustSameOrg := true
+		if c.TrustSameOrgActions != nil {
+			trustSameOrg = *c.TrustSameOrgActions
+		}
+		entry := map[string]any{
+			"trustGithubOfficialActions": trustOfficial,
+			"trustSameOrgActions":        trustSameOrg,
+			"minimumStars":               c.MinimumStars,
+		}
+		if len(c.TrustedGithubActions) > 0 {
+			entry["trustedGithubActions"] = c.TrustedGithubActions
+		}
+		cfg["githubActionMustComeFromAuthorizedSources"] = entry
 	}
 
 	if c := controls.WorkflowMustIncludeRequiredActions; c != nil && c.IsEnabled() {
@@ -324,6 +349,15 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	l.Info("Fetching project information from GitLab")
 	project, err := gitlab.FetchProjectDetails(conf.ProjectPath, conf.GitlabToken, conf.GitlabURL, conf)
 	if err != nil {
+		// A network/timeout failure here is incomplete data, not a bad
+		// project: degrade (exit 3, honest) instead of hard-failing (exit 2).
+		// A definitive answer (404 not-found, auth) still hard-fails (#220).
+		if isNetworkError(err) {
+			l.WithError(err).Warn("Project information fetch failed (network); reporting incomplete data")
+			markDegraded(result, "project information could not be fetched (network or timeout)")
+			result.CiValid = false
+			return result, nil
+		}
 		l.WithError(err).Error("Failed to fetch project from GitLab")
 		result.CiValid = false
 		result.CiMissing = true
@@ -421,9 +455,17 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	// 1. Run Pipeline Origin data collection
 	reportProgress(conf, 2, analysisStepCount, "Collecting pipeline origins")
 	l.Info("Running Pipeline Origin data collection")
-	originDC := &collector.GitlabPipelineOriginDataCollection{}
+	originDC := &gitlab.GitlabPipelineOriginDataCollection{}
 	pipelineOriginData, pipelineOriginMetrics, err := originDC.Run(projectInfo, conf.GitlabToken, conf)
 	if err != nil {
+		// Network/timeout → degrade (exit 3); a definitive error still hard-
+		// fails (exit 2). Same gate as project resolution above (#220).
+		if isNetworkError(err) {
+			l.WithError(err).Warn("Pipeline Origin data collection failed (network); reporting incomplete data")
+			markDegraded(result, "pipeline configuration could not be fetched (network or timeout)")
+			result.CiValid = false
+			return result, nil
+		}
 		l.WithError(err).Error("Pipeline Origin data collection failed")
 		result.CiValid = false
 		result.CiMissing = true
@@ -433,9 +475,26 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	result.CiValid = pipelineOriginData.CiValid
 	result.CiMissing = pipelineOriginData.CiMissing
 
+	// An include that failed to resolve drops its jobs from the merged
+	// pipeline, so the analysis ran on a partial config. Flag degraded (the
+	// run still evaluates what it has, like a GitHub partial) so the score is
+	// withheld rather than scored against an incomplete pipeline (#220).
+	if n := len(pipelineOriginData.IncludesFailed); n > 0 {
+		markDegraded(result, fmt.Sprintf("%d include(s) could not be resolved; their jobs were not analysed", n))
+	}
+
 	// Capture CI config errors for output
 	if len(pipelineOriginData.CiErrors) > 0 {
 		result.CiErrors = pipelineOriginData.CiErrors
+		// A fetch-level error (GraphQL timeout, rate-limit, lost network)
+		// leaves us with no pipeline data, so every control would score a
+		// vacuous 100%. Flag the run degraded so the renderer withholds the
+		// letter score and marks the controls "not evaluated" (#220). A
+		// syntactically invalid but successfully fetched config (the
+		// MergedResponse branch below) is a real user-fixable finding, not a
+		// degraded collection, so it does not set the flag.
+		result.DataCollectionDegraded = true
+		result.DegradedReasons = append(result.DegradedReasons, pipelineOriginData.CiErrors...)
 	} else if pipelineOriginData.MergedResponse != nil && len(pipelineOriginData.MergedResponse.CiConfig.Errors) > 0 {
 		result.CiErrors = pipelineOriginData.MergedResponse.CiConfig.Errors
 	}
@@ -467,9 +526,18 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	// 2. Run Pipeline Image data collection
 	reportProgress(conf, 3, analysisStepCount, "Collecting pipeline images")
 	l.Info("Running Pipeline Image data collection")
-	imageDC := &collector.GitlabPipelineImageDataCollection{}
+	imageDC := &gitlab.GitlabPipelineImageDataCollection{}
 	pipelineImageData, pipelineImageMetrics, err := imageDC.Run(projectInfo, conf.GitlabToken, conf, pipelineOriginData)
 	if err != nil {
+		// Network/timeout during image/variable collection → degrade (exit 3)
+		// instead of the raw exit-2 hard fail this used to produce, matching
+		// the origin path. A definitive error still hard-fails (#220).
+		if isNetworkError(err) {
+			l.WithError(err).Warn("Pipeline Image data collection failed (network); reporting incomplete data")
+			markDegraded(result, "pipeline image/variable data could not be fetched (network or timeout)")
+			result.CiValid = false
+			return result, nil
+		}
 		l.WithError(err).Error("Pipeline Image data collection failed")
 		return result, err
 	}
@@ -488,13 +556,20 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	// Fetch branch-protection metadata when the user configured the
 	// corresponding control — the Rego policy needs the protection
 	// settings to check every branch against the declared bar.
-	var protectionData *collector.GitlabProtectionAnalysisData
+	var protectionData *gitlab.GitlabProtectionAnalysisData
 	if shouldRunControl(controlBranchMustBeProtected, conf) {
 		if cfg := conf.PlumberConfig.GetBranchMustBeProtectedConfig(); cfg != nil && cfg.IsEnabled() {
 			reportProgress(conf, 9, analysisStepCount, "Checking branch protection")
-			protectionDC := &collector.GitlabProtectionDataCollection{}
+			protectionDC := &gitlab.GitlabProtectionDataCollection{}
 			pData, _, pErr := protectionDC.Run(projectInfo, conf.GitlabToken, conf)
 			if pErr != nil {
+				// A network failure here leaves branchMustBeProtected with zero
+				// branches → a vacuous 100% green. Flag degraded so that control's
+				// pass is not trusted (mirrors the GitHub branch path, #220). A
+				// non-network failure stays a soft warn as before.
+				if isNetworkError(pErr) {
+					markDegraded(result, "branch protection could not be fetched (network or timeout)")
+				}
 				l.WithError(pErr).Warn("Protection data collection failed; branch policies will see no branches")
 			} else {
 				protectionData = pData

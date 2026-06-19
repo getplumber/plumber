@@ -4,7 +4,6 @@ import (
 	"sort"
 	"strings"
 
-	"github.com/getplumber/plumber/collector"
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
 	"github.com/getplumber/plumber/gitlab"
@@ -203,7 +202,7 @@ func _sortedFindings(findings []opaengine.Finding) []opaengine.Finding {
 // _branchProtectionEntryForName returns the first GitLab protection rule
 // whose pattern matches the branch name, consistent with the
 // protectionByBranch indexing in buildBranchProtectionBlock.
-func _branchProtectionEntryForName(data *collector.GitlabProtectionAnalysisData, branchName string) *gitlab.BranchProtection {
+func _branchProtectionEntryForName(data *gitlab.GitlabProtectionAnalysisData, branchName string) *gitlab.BranchProtection {
 	if data == nil || branchName == "" {
 		return nil
 	}
@@ -290,7 +289,7 @@ func enrichBranchProtection505IssueMaps(issues []map[string]any, result *control
 	}
 }
 
-func _originByIncludeSource(data *collector.GitlabPipelineOriginData, source string) *collector.GitlabPipelineOriginDataFull {
+func _originByIncludeSource(data *gitlab.GitlabPipelineOriginData, source string) *gitlab.GitlabPipelineOriginDataFull {
 	if data == nil || source == "" {
 		return nil
 	}

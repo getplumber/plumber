@@ -3,7 +3,6 @@ package cmd
 import (
 	"testing"
 
-	"github.com/getplumber/plumber/collector"
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
 	"github.com/getplumber/plumber/gitlab"
@@ -27,7 +26,7 @@ func TestEnrichBranchProtection505IssueMaps_LegacyDisplays(t *testing.T) {
 		},
 	}
 	result := &control.AnalysisResult{
-		ProtectionData: &collector.GitlabProtectionAnalysisData{
+		ProtectionData: &gitlab.GitlabProtectionAnalysisData{
 			BranchProtections: []gitlab.BranchProtection{
 				{
 					ProtectionPattern:         "main",
@@ -40,10 +39,10 @@ func TestEnrichBranchProtection505IssueMaps_LegacyDisplays(t *testing.T) {
 		},
 	}
 	issues := []map[string]any{{
-		"code":   string(control.CodeBranchNonCompliant),
-		"docUrl": "x",
+		"code":       string(control.CodeBranchNonCompliant),
+		"docUrl":     "x",
 		"branchName": "main",
-		"job":    "main",
+		"job":        "main",
 	}}
 	enrichBranchProtection505IssueMaps(issues, result, pc)
 	iss := issues[0]
@@ -69,10 +68,10 @@ func boolPtr(b bool) *bool { return &b }
 func TestEnrichForbiddenVersion404IssueMaps_OriginFields(t *testing.T) {
 	t.Parallel()
 	result := &control.AnalysisResult{
-		PipelineOriginData: &collector.GitlabPipelineOriginData{
-			Origins: []collector.GitlabPipelineOriginDataFull{
+		PipelineOriginData: &gitlab.GitlabPipelineOriginData{
+			Origins: []gitlab.GitlabPipelineOriginDataFull{
 				{
-					GitlabPipelineOriginDataGeneric: collector.GitlabPipelineOriginDataGeneric{
+					GitlabPipelineOriginDataGeneric: gitlab.GitlabPipelineOriginDataGeneric{
 						OriginType: "project",
 						GitlabIncludeOrigin: gitlab.IncludeOriginWithoutRef{
 							Location: "file@1.0.0",
@@ -81,9 +80,9 @@ func TestEnrichForbiddenVersion404IssueMaps_OriginFields(t *testing.T) {
 						},
 						OriginHash: 99,
 					},
-					GitlabPipelineOriginDataProjectSpecific: collector.GitlabPipelineOriginDataProjectSpecific{
-						Version:  "1.0.0",
-						Nested:   true,
+					GitlabPipelineOriginDataProjectSpecific: gitlab.GitlabPipelineOriginDataProjectSpecific{
+						Version: "1.0.0",
+						Nested:  true,
 					},
 				},
 			},

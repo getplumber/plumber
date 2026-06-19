@@ -124,7 +124,7 @@ func TestComputePlumberScore_lowCapped(t *testing.T) {
 // Demonstrates that distinct types at the same severity stack linearly until each hits its cap.
 func TestComputePlumberScore_twoMediumCodes(t *testing.T) {
 	r := ComputePlumberScore(map[ErrorCode]int{
-		CodeJobHardcoded:           1,
+		CodeJobHardcoded:            1,
 		CodeUnsafeVariableExpansion: 1,
 	})
 	if math.Abs(r.RawPoints-88.0) > 1e-9 {

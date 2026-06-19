@@ -127,9 +127,9 @@ So with malus, `finalPoints = 30` maps to **E** (because 30 < 31).
 
 ## Breakdown output (`--score-point`)
 
-With `plumber analyze --score-point`, the CLI prints a **points breakdown** table with one row per issue code (`Code | Severity | Count | Weight | Cap | Loss`), then base 100, total loss, raw points, malus line (if any), final points, and letter score. That table is the same math as this document.
+By default the CLI prints the **summary banner** (badge, final points, bar, severity counts, malus line). With `plumber analyze --score-point`, it also prints a **points breakdown** table with one row per issue code (`Code | Severity | Count | Weight | Cap | Loss`), then base 100, total loss, raw points, malus line (if any), final points, and letter score. That table is the same math as this document.
 
-With `--score` only, you still get the **summary banner** (badge, final points, bar, severity counts, malus line) but not the full breakdown table.
+The legacy `--score` flag is deprecated and has no effect now that the score is shown by default. It is still accepted so existing invocations do not break.
 
 ---
 
@@ -137,9 +137,10 @@ With `--score` only, you still get the **summary banner** (badge, final points, 
 
 | Surface | When |
 |---------|------|
-| `plumber analyze --output …` JSON | `plumberScore` object when `--score` or `--score-point` is set |
+| Terminal banner | By default |
+| `plumber analyze --output …` JSON | `plumberScore` object, by default |
 | PBOM / CycloneDX | Same fields and CycloneDX properties (see [PBOM.md](PBOM.md)) |
-| Merge request comment | Short block with `--score`; full points list with `--score-point` |
+| Merge request comment | Short block by default; full points list with `--score-point` |
 
 ---
 

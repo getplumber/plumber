@@ -1,0 +1,19 @@
+# workflow_run job that checks out the run head, but a job-level `if:`
+# restricts execution to upstream PUSH events. A push head is a trusted
+# commit on the base repo, not fork-controlled, so the job is safe.
+# Expected: 0 findings (#235).
+name: After CI push only
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+jobs:
+  post:
+    if: github.event.workflow_run.event == 'push'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - run: echo "post-run"

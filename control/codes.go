@@ -49,6 +49,8 @@ const (
 	CodeDockerfileUnpinnedBase ErrorCode = "ISSUE-706"
 	// ISSUE-712: Release / publish workflow produces unsigned artefacts
 	CodeReleaseWorkflowUnsigned ErrorCode = "ISSUE-712"
+	// ISSUE-713: Third-party GitHub Action comes from an unauthorized source
+	CodeActionUnauthorizedSource ErrorCode = "ISSUE-713"
 )
 
 // Issue codes for CI/CD variable controls (2xx)
@@ -280,6 +282,15 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Replace the action with a maintained fork (audit the fork's owner first) or with an equivalent step implemented inline. If the behaviour is trivial, inlining the shell logic avoids the supply-chain dependency entirely.",
 		DocURL:      docsBaseURL + string(CodeActionArchivedRepo),
 		ControlName: "actionsMustNotBeArchived",
+	},
+	CodeActionUnauthorizedSource: {
+		Code:        CodeActionUnauthorizedSource,
+		Severity:    SeverityHigh,
+		Title:       "Action comes from an unauthorized source",
+		Description: "A GitHub Actions workflow references an action whose source is not authorized. Every third-party action runs with the caller workflow's token and secrets, so an unvetted owner is a direct supply-chain entry point — the vector behind the tj-actions/changed-files compromise (CVE-2025-30066), where an attacker also exploited repository rename/re-creation to squat a once-trusted name. Restricting actions to GitHub-official owners, an explicit org allowlist, and a minimum-popularity floor shrinks that attack surface to vetted sources.",
+		Remediation: "Use an action from an authorized source. Configure the allowlist in .plumber.yaml under githubActionMustComeFromAuthorizedSources: keep trustGithubOfficialActions on for actions/* and github/*, add trusted owners or actions to trustedGithubActions (exact `owner/repo` or `owner/*`), and optionally set minimumStars to require a popularity threshold. Vendoring the action into a local `./.github/actions/…` directory removes the external dependency entirely.",
+		DocURL:      docsBaseURL + string(CodeActionUnauthorizedSource),
+		ControlName: "githubActionMustComeFromAuthorizedSources",
 	},
 	CodeImpostorCommit: {
 		Code:        CodeImpostorCommit,

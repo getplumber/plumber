@@ -55,7 +55,6 @@ func AggregateGitHubStats(pipeline *ir.NormalizedPipeline, pc *configuration.Plu
 	// WorkflowName + the dangerous-trigger / permissions presence is
 	// a workflow-level property.
 	workflowsSeen := map[string]struct{}{}
-	workflowsWithDangerousTrigger := map[string]struct{}{}
 	workflowsWithPermissions := map[string]struct{}{}
 
 	for i := range pipeline.Jobs {
@@ -68,9 +67,6 @@ func AggregateGitHubStats(pipeline *ir.NormalizedPipeline, pc *configuration.Plu
 		}
 		if wf != "" {
 			workflowsSeen[wf] = struct{}{}
-			if hasDangerousTrigger(job.Triggers) {
-				workflowsWithDangerousTrigger[wf] = struct{}{}
-			}
 			if job.Permissions != nil {
 				workflowsWithPermissions[wf] = struct{}{}
 			}
@@ -189,7 +185,9 @@ func AggregateGitHubStats(pipeline *ir.NormalizedPipeline, pc *configuration.Plu
 	_ = pinnedByDigestRequired
 
 	stats.WorkflowsTotal = len(workflowsSeen)
-	stats.WorkflowsWithDangerousTrigger = len(workflowsWithDangerousTrigger)
+	// WorkflowsWithDangerousTrigger is set from the emitted ISSUE-802
+	// findings in ApplyGitHubFindingCounts, not from a structural scan
+	// here — the rule's fork-guard logic lives in Rego (#235 follow-up).
 	stats.WorkflowsMissingPermissions = stats.WorkflowsTotal - len(workflowsWithPermissions)
 	if stats.WorkflowsMissingPermissions < 0 {
 		stats.WorkflowsMissingPermissions = 0
@@ -238,11 +236,35 @@ func ApplyGitHubFindingCounts(stats *GitHubAnalysisStats, findings []opaengine.F
 	if stats == nil {
 		return
 	}
+	dangerousWorkflows := map[string]struct{}{}
 	for _, f := range findings {
-		if f.Code == string(CodeUnverifiedScriptExecution) {
+		switch f.Code {
+		case string(CodeUnverifiedScriptExecution):
 			stats.UnverifiedScriptsFound++
+		case string(CodeDangerousTriggers):
+			dangerousWorkflows[dangerousTriggerWorkflowKey(f)] = struct{}{}
 		}
 	}
+	// The dangerous-trigger metric is the count of distinct workflows the
+	// ISSUE-802 rule actually flagged — not a structural scan of trigger
+	// names. The rule's fork-guard recognition (push-event / author-
+	// association guards) lives in Rego, so a guarded workflow emits no
+	// finding and must not inflate this metric (#235 follow-up).
+	stats.WorkflowsWithDangerousTrigger = len(dangerousWorkflows)
+}
+
+// dangerousTriggerWorkflowKey returns a stable per-workflow key for an
+// ISSUE-802 finding: the workflow file when known, else the workflow
+// prefix of the "<workflow>/<job>" name. Per-job findings in the same
+// workflow collapse to one entry.
+func dangerousTriggerWorkflowKey(f opaengine.Finding) string {
+	if f.File != "" {
+		return f.File
+	}
+	if i := strings.IndexByte(f.Job, '/'); i >= 0 {
+		return f.Job[:i]
+	}
+	return f.Job
 }
 
 // branchMatchesPattern is a tiny matcher that mirrors the rego
@@ -279,14 +301,6 @@ var defaultSecurityJobPatterns = []string{
 // shaRefRegex matches a 40-character lowercase hex SHA at the end of
 // an action ref ("owner/repo@<sha>").
 var shaRefRegex = regexp.MustCompile(`@[0-9a-f]{40}$`)
-
-// dangerousTriggers are the GitHub Actions event names that grant
-// access to base-repo secrets while being influenceable by an
-// unprivileged caller. Mirrors policies/dangerous_triggers.rego.
-var dangerousTriggers = map[string]struct{}{
-	"pull_request_target": {},
-	"workflow_run":        {},
-}
 
 func ownerOf(ref string) string {
 	if i := strings.IndexByte(ref, '/'); i > 0 {
@@ -371,15 +385,6 @@ func jobIsWeakened(job *ir.Job) bool {
 	}
 	for _, rule := range job.Rules {
 		if w, ok := rule["when"].(string); ok && (w == "never" || w == "manual") {
-			return true
-		}
-	}
-	return false
-}
-
-func hasDangerousTrigger(triggers []string) bool {
-	for _, t := range triggers {
-		if _, ok := dangerousTriggers[t]; ok {
 			return true
 		}
 	}

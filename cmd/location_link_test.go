@@ -227,10 +227,10 @@ func TestGitHubWebURL_DerivesFromAPIHost(t *testing.T) {
 	t.Setenv("GITHUB_SERVER_URL", "")
 
 	cases := map[string]string{
-		"":                               "https://github.com",
-		"github.com":                     "https://github.com",
-		"ghes.example.com":               "https://ghes.example.com",
-		"ghes.example.com/api/v3":        "https://ghes.example.com",
+		"":                                "https://github.com",
+		"github.com":                      "https://github.com",
+		"ghes.example.com":                "https://ghes.example.com",
+		"ghes.example.com/api/v3":         "https://ghes.example.com",
 		"https://ghes.example.com/api/v3": "https://ghes.example.com",
 	}
 	for in, want := range cases {
