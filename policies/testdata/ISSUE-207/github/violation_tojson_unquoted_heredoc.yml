@@ -1,0 +1,13 @@
+# An UNQUOTED heredoc (<<EOF) still performs shell expansion, so $() in a
+# toJSON'd value executes. Must fire. Expected: 1 finding on bad.
+name: toJSON in an unquoted heredoc
+on: pull_request_target
+
+jobs:
+  bad:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          cat <<EOF
+          ${{ toJSON(github.event.pull_request.body) }}
+          EOF

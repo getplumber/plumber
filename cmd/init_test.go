@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"os"
 	"sort"
 	"strings"
 	"testing"
@@ -422,6 +423,31 @@ func TestProvidersFromWizardLabels(t *testing.T) {
 	}
 }
 
+// TestProvidersFromProviderChoice guards the issue #256 fix: the single
+// provider select must scope to exactly the chosen provider (picking
+// GitHub must NOT leave GitLab in scope); "Both" is the explicit opt-in.
+func TestProvidersFromProviderChoice(t *testing.T) {
+	cases := []struct {
+		choice string
+		want   []string
+	}{
+		{provGitLab, []string{"gitlab"}},
+		{provGitHub, []string{"github"}},
+		{provBoth, []string{"gitlab", "github"}},
+	}
+	for _, c := range cases {
+		got := providersFromProviderChoice(c.choice)
+		if len(got) != len(c.want) {
+			t.Fatalf("%q: got %v, want %v", c.choice, got, c.want)
+		}
+		for i := range c.want {
+			if got[i] != c.want[i] {
+				t.Fatalf("%q: got %v, want %v", c.choice, got, c.want)
+			}
+		}
+	}
+}
+
 func TestWizardCategoriesForProviders(t *testing.T) {
 	gitlab := wizardCategoriesForProviders([]string{"gitlab"})
 	hasCatVariables := false
@@ -438,6 +464,70 @@ func TestWizardCategoriesForProviders(t *testing.T) {
 		if c == catVariables {
 			t.Fatal("github-only run should NOT include catVariables (controls are benched)")
 		}
+	}
+}
+
+func TestHasCategory(t *testing.T) {
+	st := &initWizardState{Categories: []string{catImages, catAccess}}
+	if !st.hasCategory(catImages) {
+		t.Fatal("hasCategory: expected true for catImages")
+	}
+	if st.hasCategory(catComposition) {
+		t.Fatal("hasCategory: expected false for catComposition")
+	}
+	if st.hasCategory("") {
+		t.Fatal("hasCategory: expected false for empty string")
+	}
+}
+
+func TestHasProvider(t *testing.T) {
+	st := &initWizardState{Providers: []string{"gitlab"}}
+	if !hasProvider(st, "gitlab") {
+		t.Fatal("hasProvider: expected true for gitlab")
+	}
+	if hasProvider(st, "github") {
+		t.Fatal("hasProvider: expected false for github")
+	}
+}
+
+func TestCompSelected(t *testing.T) {
+	st := &initWizardState{CompositionChoices: []string{compSecurity, compDinD}}
+	if !compSelected(st, compSecurity) {
+		t.Fatal("compSelected: expected true for compSecurity")
+	}
+	if compSelected(st, compActionPin) {
+		t.Fatal("compSelected: expected false for compActionPin")
+	}
+}
+
+func TestCheckInitOverwrite_FileDoesNotExist(t *testing.T) {
+	path := t.TempDir() + "/nonexistent.yaml"
+	if err := checkInitOverwrite(path, false, false); err != nil {
+		t.Fatalf("expected nil for non-existent file, got: %v", err)
+	}
+}
+
+func TestCheckInitOverwrite_ForceAlwaysPasses(t *testing.T) {
+	path := t.TempDir() + "/existing.yaml"
+	if err := os.WriteFile(path, []byte("v: 1"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := checkInitOverwrite(path, true, false); err != nil {
+		t.Fatalf("force=true: expected nil, got: %v", err)
+	}
+}
+
+func TestCheckInitOverwrite_ExistsNoForceNoPrompt(t *testing.T) {
+	path := t.TempDir() + "/existing.yaml"
+	if err := os.WriteFile(path, []byte("v: 1"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	err := checkInitOverwrite(path, false, false)
+	if err == nil {
+		t.Fatal("expected error when file exists and no force/prompt")
+	}
+	if !strings.Contains(err.Error(), "already exists") {
+		t.Errorf("unexpected error message: %v", err)
 	}
 }
 

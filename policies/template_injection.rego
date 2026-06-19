@@ -39,7 +39,15 @@ unsafe_patterns := [
 	`\${{[^}]*github\.head_ref\b`,
 	`\${{[^}]*github\.event\.[^}]*\.head\.(ref|label)\b`,
 	`\${{[^}]*github\.event\.[^}]*head_branch\b`,
-	`\${{[^}]*github\.event\.[^}]*default_branch\b`,
+	# default_branch is attacker-controlled ONLY on the fork ("head")
+	# repository: pull_request.head.repo.default_branch (an attacker can
+	# rename their fork's default branch) and the workflow_run
+	# head_repository form. The BASE repo's github.event.repository.
+	# default_branch is admin metadata and must NOT be flagged (#230).
+	# RE2 has no negative lookahead, so we require the fork qualifier
+	# instead of excluding the base path.
+	`\${{[^}]*github\.event\.[^}]*head\.repo\.default_branch\b`,
+	`\${{[^}]*github\.event\.[^}]*head_repository\.default_branch\b`,
 	# Commit messages.
 	`\${{[^}]*github\.event\.[^}]*\.message\b`,
 	# Repository metadata an attacker sets on their fork.
@@ -51,15 +59,75 @@ unsafe_patterns := [
 ]
 
 deny contains finding if {
-	some i, j, k
+	some i, j
 	job := input.pipeline.jobs[i]
 	script := job.scripts[j]
-	pattern := unsafe_patterns[k]
-	regex.match(pattern, script)
+	lines := split(script, "\n")
+	some li
+	line := lines[li]
+	_matches_unsafe(line)
+	not _safe_sink(lines, li, line)
 	finding := {
 		"code":     "ISSUE-207",
 		"severity": "critical",
 		"message":  sprintf("job %q interpolates a user-controlled template expression into an inline script (template-injection risk)", [job.name]),
 		"job":      job.name,
 	}
+}
+
+_matches_unsafe(line) if {
+	some k
+	regex.match(unsafe_patterns[k], line)
+}
+
+# A matched expression is a safe sink (#229) only when it is BOTH wrapped
+# in toJSON(...) AND sits inside a quoted heredoc body. Neither condition
+# alone is sufficient:
+#   - toJSON inside `echo "..."` still runs $()/backticks: the shell
+#     evaluates them inside double quotes and toJSON does not escape `$`.
+#   - a raw expression inside a quoted heredoc is substituted by GitHub
+#     before the shell runs, so a payload carrying a newline + the
+#     delimiter can break out of the heredoc.
+# toJSON escapes the newline (no breakout) and the quoted heredoc
+# (<<"EOF" / <<'EOF') disables all expansion, so together they are safe.
+# Reading the value as data (jq, json.load) is a separate safe sink not
+# special-cased here; bind through env: and dereference "$VAR" instead.
+_safe_sink(lines, li, line) if {
+	_tojson_wrapped(line)
+	_inside_quoted_heredoc(lines, li)
+}
+
+_tojson_wrapped(line) if {
+	regex.match(`(?i)\$\{\{[^}]*\btojson\s*\(`, line)
+}
+
+# Line li is inside a quoted heredoc when an earlier line opens one
+# (<<"WORD" / <<'WORD', optionally <<-) and a later line closes it with
+# WORD on its own line, with no earlier close of that same opener between
+# the opener and li. An UNQUOTED opener (<<WORD) is deliberately ignored —
+# it still expands $(), so it is not a safe sink.
+_inside_quoted_heredoc(lines, li) if {
+	some open
+	open < li
+	word := _heredoc_open_word(lines[open])
+	some close
+	close > li
+	_heredoc_close(lines[close], word)
+	not _closed_between(lines, word, open, li)
+}
+
+_heredoc_open_word(l) := word if {
+	m := regex.find_all_string_submatch_n(`<<-?\s*["'](\w+)["']`, l, 1)
+	word := m[0][1]
+}
+
+_heredoc_close(l, word) if {
+	regex.match(sprintf(`^\s*%s\s*$`, [word]), l)
+}
+
+_closed_between(lines, word, open, li) if {
+	some c
+	c > open
+	c < li
+	_heredoc_close(lines[c], word)
 }

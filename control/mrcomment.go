@@ -264,6 +264,7 @@ func writeIssueDetails(b *strings.Builder, result *AnalysisResult) {
 		{"workflowMustNotUseDangerousTriggers", "Workflow must not use dangerous triggers"},
 		{"pullRequestTargetMustNotCheckoutHead", "pull_request_target must not check out the PR head"},
 		{"workflowMustNotGrantPermissionsWriteAll", "Workflow must not grant write-all permissions"},
+		{"githubActionMustComeFromAuthorizedSources", "Actions must come from authorized sources"},
 	}
 	for _, g := range order {
 		findings := findingsByControl[g.controlName]

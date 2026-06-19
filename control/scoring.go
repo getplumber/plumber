@@ -66,10 +66,9 @@ type PlumberScoreResult struct {
 // forEachIssueCode invokes fn for every issue code emitted by the
 // Rego/OPA rule engine. The legacy Go controls still populate their
 // per-control *Result fields in AnalysisResult for JSON backwards
-// compatibility (Phase A.2 of the refactor), but scoring and
-// aggregation read from the Rego Findings list — the single source
-// of truth now that all 19 codes are ported. See
-// docs/REFACTOR_MULTI_PROVIDER.md §8 Phase A.
+// compatibility, but scoring and aggregation read from the Rego
+// Findings list — the single source of truth now that all 19 codes
+// are ported.
 func forEachIssueCode(result *AnalysisResult, fn func(ErrorCode)) {
 	if result == nil {
 		return

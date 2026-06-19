@@ -8,6 +8,8 @@
 </p>
 
 <p align="center">
+  <a href="https://getplumber.io"><img src="https://img.shields.io/badge/Plumber%20Score-A-3fb950?style=for-the-badge&labelColor=2b2d42" alt="Plumber Score A"></a>
+  &nbsp;&nbsp;
   <a href="https://securityscorecards.dev/viewer/?uri=github.com/getplumber/plumber"><img src="https://img.shields.io/ossf-scorecard/github.com/getplumber/plumber?label=OpenSSF%20Scorecard&style=for-the-badge&labelColor=2b2d42&color=4a90d9" alt="OpenSSF Scorecard"></a>
   &nbsp;&nbsp;
   <a href="https://slsa.dev/spec/v1.0/levels#build-l3"><img src="https://img.shields.io/badge/SLSA-Level%203-4a90d9?style=for-the-badge&logo=slsa&logoColor=white&labelColor=2b2d42" alt="SLSA 3"></a>
@@ -180,7 +182,7 @@ jobs:
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v6
-      - uses: getplumber/plumber@415dc5de65b1707168a8b58b3b59727aa8a30657 # v0.3.51
+      - uses: getplumber/plumber@033066363b2882cc2f37240748cf54e97a9c56d0 # v0.3.64
 ```
 
 To resolve action versions hosted in an org with an IP allow list, pass a public-repo-read token via the `metadata-token` input (kept in a secret):

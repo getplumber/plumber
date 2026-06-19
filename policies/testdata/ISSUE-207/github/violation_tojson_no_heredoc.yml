@@ -1,0 +1,11 @@
+# toJSON alone is NOT safe (#229): inside double quotes the shell still
+# evaluates $() and backticks, and toJSON does not escape `$`. Must fire.
+# Expected: 1 finding on bad.
+name: toJSON without a heredoc
+on: pull_request_target
+
+jobs:
+  bad:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "${{ toJSON(github.event.pull_request.body) }}"

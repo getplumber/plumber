@@ -40,10 +40,10 @@ func (s *StringOrSlice) UnmarshalYAML(unmarshal func(interface{}) error) error {
 // GitLab CI accepts both forms:
 //   - include: "https://..."              (scalar string)
 //   - include:                            (sequence)
-//       - "https://..."
-//       - remote: "https://..."
-//       - project: foo
-//         file: bar.yml
+//   - "https://..."
+//   - remote: "https://..."
+//   - project: foo
+//     file: bar.yml
 //
 // When GitLab serializes the merged CI configuration it may normalize a
 // single-item array into a scalar, which the plain []interface{} field cannot

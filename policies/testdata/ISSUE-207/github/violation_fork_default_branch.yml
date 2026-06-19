@@ -1,0 +1,13 @@
+# github.event.pull_request.head.repo.default_branch is the FORK's
+# default branch — an attacker can rename their fork's default branch
+# to an injection payload, and under pull_request_target it executes
+# with the base repo's token. Must still be flagged (#230). Expected:
+# 1 finding on bad.
+name: Fork default-branch injection
+on: pull_request_target
+
+jobs:
+  bad:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "head default is ${{ github.event.pull_request.head.repo.default_branch }}"

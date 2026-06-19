@@ -89,7 +89,7 @@ type ContainerImage struct {
 // pipeline. On GitHub, the analogue of GitLab's "include" types are:
 //   - "action"           — third-party `uses: owner/repo@ref` step
 //   - "reusableWorkflow" — `uses:` at the job level pointing at a
-//                           reusable-workflow file
+//     reusable-workflow file
 type Include struct {
 	// Type of include: "component", "project", "local", "remote",
 	// "template" (GitLab) or "action", "reusableWorkflow" (GitHub).

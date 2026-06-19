@@ -32,6 +32,8 @@ func buildLegacyResultGitHub(e control.ControlEntry, result *control.AnalysisRes
 	switch e.ControlName {
 	case "actionsMustBePinnedByCommitSha":
 		return "actionPinningResult", buildActionPinningBlock(common, result, findings)
+	case "githubActionMustComeFromAuthorizedSources":
+		return "authorizedActionSourcesResult", buildAuthorizedActionSourcesBlock(common, result, findings)
 	case "containerImageMustNotUseForbiddenTags":
 		return "imageForbiddenTagsResult", buildImageForbiddenTagsBlockGitHub(common, result, pc, findings)
 	case "branchMustBeProtected":
@@ -46,6 +48,8 @@ func buildLegacyResultGitHub(e control.ControlEntry, result *control.AnalysisRes
 		return "templateInjectionResult", buildTemplateInjectionBlock(common, result, findings)
 	case "workflowMustNotUseDangerousTriggers":
 		return "dangerousTriggersResult", buildDangerousTriggersBlock(common, result, findings)
+	case "pullRequestTargetMustNotCheckoutHead":
+		return "pullRequestTargetHeadCheckoutResult", buildPullRequestTargetHeadCheckoutBlock(common, result, findings)
 	case "workflowsMustDeclarePermissions":
 		return "permissionsResult", buildPermissionsBlock(common, result, findings)
 	case "workflowMustIncludeRequiredActions":
@@ -336,8 +340,8 @@ func buildTemplateInjectionBlock(c legacyCommon, result *control.AnalysisResult,
 	return map[string]any{
 		"issues": projectFindings(findings, "jobName"),
 		"metrics": map[string]any{
-			"workflowsScanned":     s.WorkflowsTotal,
-			"scriptLinesChecked":   s.ScriptLinesTotal,
+			"workflowsScanned":        s.WorkflowsTotal,
+			"scriptLinesChecked":      s.ScriptLinesTotal,
 			"templateInjectionsFound": len(findings),
 		},
 		"compliance": c.Compliance,
@@ -358,6 +362,29 @@ func buildDangerousTriggersBlock(c legacyCommon, result *control.AnalysisResult,
 		"metrics": map[string]any{
 			"workflowsScanned":              s.WorkflowsTotal,
 			"workflowsWithDangerousTrigger": s.WorkflowsWithDangerousTrigger,
+		},
+		"compliance": c.Compliance,
+		"version":    "0.1.0",
+		"ciValid":    c.CiValid,
+		"ciMissing":  c.CiMissing,
+		"skipped":    c.Skipped,
+	}
+}
+
+// buildPullRequestTargetHeadCheckoutBlock — ISSUE-804. The exploitable
+// pull_request_target + PR-head-checkout combination (tj-actions /
+// CVE-2025-30066). Mirrors dangerousTriggersResult so dashboards get the
+// same issue/metric shape; the issues[] carry the file/job/line the
+// terminal already shows but the JSON previously dropped (only a
+// plumberScore.codeLosses line remained). Findings are per-job; the
+// metric counts the flagged (job, checkout) pairs.
+func buildPullRequestTargetHeadCheckoutBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	s := statsOf(result)
+	return map[string]any{
+		"issues": projectFindings(_sortedFindings(findings), "jobName"),
+		"metrics": map[string]any{
+			"workflowsScanned":           s.WorkflowsTotal,
+			"headCheckoutsUnderPrTarget": len(findings),
 		},
 		"compliance": c.Compliance,
 		"version":    "0.1.0",
@@ -440,10 +467,10 @@ func _resolveRequiredActionGroups(groups [][]string, result *control.AnalysisRes
 			satisfied++
 		}
 		out = append(out, map[string]any{
-			"required":     group,
-			"present":      present,
-			"missing":      missing,
-			"satisfied":    allPresent,
+			"required":  group,
+			"present":   present,
+			"missing":   missing,
+			"satisfied": allPresent,
 		})
 	}
 	return out, satisfied
@@ -494,6 +521,32 @@ func buildExcessivePermissionsBlock(c legacyCommon, result *control.AnalysisResu
 		"metrics": map[string]any{
 			"jobsTotal":        s.JobsTotal,
 			"jobsWithWriteAll": len(findings),
+		},
+		"compliance": c.Compliance,
+		"version":    "0.1.0",
+		"ciValid":    c.CiValid,
+		"ciMissing":  c.CiMissing,
+		"skipped":    c.Skipped,
+	}
+}
+
+// buildAuthorizedActionSourcesBlock — ISSUE-713. Denominator is the
+// number of action refs scanned (same denominator the action-pinning /
+// archived blocks use); numerator is the finding count, one per (job,
+// unauthorized-action) pair, including job-level reusable-workflow
+// calls. Each issue carries the offending `uses` value via the finding
+// Data so dashboards can list the exact unauthorized sources.
+func buildAuthorizedActionSourcesBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	s := statsOf(result)
+	return map[string]any{
+		"issues": projectFindings(_sortedFindings(findings), "job"),
+		"metrics": map[string]any{
+			// ISSUE-713 evaluates every ref, including the pin-exempt
+			// actions/* and github/* owners, so the denominator must
+			// include ActionRefsExempt — matching the terminal stats
+			// (buildGitHubControlStats) so the two views never disagree.
+			"actionRefsTotal":        s.ActionRefsTotal + s.ActionRefsExempt,
+			"actionRefsUnauthorized": len(findings),
 		},
 		"compliance": c.Compliance,
 		"version":    "0.1.0",

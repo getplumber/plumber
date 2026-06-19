@@ -6,21 +6,26 @@ import (
 	"slices"
 	"strings"
 
-	"github.com/getplumber/plumber/collector"
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
+	"github.com/getplumber/plumber/gitlab"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	"github.com/getplumber/plumber/internal/ir"
 	"github.com/getplumber/plumber/utils"
 )
 
-// statLine is a single labelled metric rendered above the findings
-// listing of a findingGroup. Values are free-form strings so each
-// converter can format numbers however it needs (plain int, percent…).
-type statLine struct {
-	Label string
-	Value string
-}
+const (
+	statTotalImages        = "Total Images"
+	statJobsChecked        = "Jobs Checked"
+	statScriptLinesChecked = "Script Lines Checked"
+	statRequirementGroups  = "Requirement Groups"
+	statSatisfiedGroups    = "Satisfied Groups"
+	statActionRefsChecked  = "Action Refs Checked"
+	statVariablesChecked   = "Variables Checked"
+)
+
+// statLine is an alias for control.StatLine used within the cmd package.
+type statLine = control.StatLine
 
 // detailedFinding is the unified shape used to render per-rule detail
 // listings, independent of the original source. Message is printed
@@ -70,6 +75,41 @@ func renderWarnings(warnings []string) {
 	// the anonymous fallback did not succeed), a user-supplied token resolves
 	// it. Point there rather than leaving the user with a dead end (ISSUE-228).
 	fmt.Printf("    %s↳ if an action above is in an org with an IP allow list, set PLUMBER_METADATA_TOKEN (a token with public-repo read) to resolve its version; see the README \"GitHub Action\" section.%s\n", colorYellow, colorReset)
+}
+
+// renderDegradedCaveat prints an up-front warning that the run scored
+// against incomplete data because one or more collection/enrichment
+// steps failed (#220). Without it a partial GitHub run looks identical
+// to a clean one. No-op when there are no reasons.
+func renderDegradedCaveat(reasons []string) {
+	if len(reasons) == 0 {
+		return
+	}
+	fmt.Printf("  %s⚠ Data collection was incomplete — results may be partial:%s\n", colorYellow, colorReset)
+	for _, r := range reasons {
+		fmt.Printf("    %s•%s %s\n", colorYellow, colorReset, r)
+	}
+	fmt.Printf("    %s↳ controls with un-collected data are marked \"not evaluated\"; the letter score is withheld until the run completes cleanly.%s\n\n", colorDim, colorReset)
+}
+
+// filterGroupsForDegraded drops every group that has no findings when the
+// run is data-collection-degraded, leaving only the real findings (#220).
+// A control that showed "100% compliant" over partial data is untrustworthy
+// (the un-collected inputs could hold violations), so its green stat block
+// is suppressed; a control that found a violation keeps it, because a
+// finding on partial data is still real. Returns the input unchanged when
+// not degraded.
+func filterGroupsForDegraded(groups []findingGroup, degraded bool) []findingGroup {
+	if !degraded {
+		return groups
+	}
+	kept := make([]findingGroup, 0, len(groups))
+	for _, g := range groups {
+		if len(g.Findings) > 0 {
+			kept = append(kept, g)
+		}
+	}
+	return kept
 }
 
 // renderFindingGroups prints each group in the canonical Plumber
@@ -255,10 +295,10 @@ func buildGitHubControlStats(controlName string, stats *control.GitHubAnalysisSt
 			notPinned = 0
 		}
 		return []statLine{
-			{"Total Images", fmt.Sprintf("%d", stats.ImagesTotal)},
-			{"Pinned By Digest", fmt.Sprintf("%d", stats.ImagesPinnedByDigest)},
-			{"Not Pinned By Digest", fmt.Sprintf("%d", notPinned)},
-			{"Using Forbidden Tags", fmt.Sprintf("%d", stats.ImagesUsingForbidden)},
+			{Label: statTotalImages, Value: fmt.Sprintf("%d", stats.ImagesTotal)},
+			{Label: "Pinned By Digest", Value: fmt.Sprintf("%d", stats.ImagesPinnedByDigest)},
+			{Label: "Not Pinned By Digest", Value: fmt.Sprintf("%d", notPinned)},
+			{Label: "Using Forbidden Tags", Value: fmt.Sprintf("%d", stats.ImagesUsingForbidden)},
 		}
 	case "actionsMustBePinnedByCommitSha":
 		pinned := stats.ActionRefsTotal - stats.ActionRefsUnpinned
@@ -266,42 +306,57 @@ func buildGitHubControlStats(controlName string, stats *control.GitHubAnalysisSt
 			pinned = 0
 		}
 		return []statLine{
-			{"Total Action Refs", fmt.Sprintf("%d", stats.ActionRefsTotal+stats.ActionRefsExempt)},
-			{"Pinned By SHA", fmt.Sprintf("%d", pinned)},
-			{"Not Pinned By SHA", fmt.Sprintf("%d", stats.ActionRefsUnpinned)},
-			{"Trusted-Owner Exempt", fmt.Sprintf("%d", stats.ActionRefsExempt)},
+			{Label: "Total Action Refs", Value: fmt.Sprintf("%d", stats.ActionRefsTotal+stats.ActionRefsExempt)},
+			{Label: "Pinned By SHA", Value: fmt.Sprintf("%d", pinned)},
+			{Label: "Not Pinned By SHA", Value: fmt.Sprintf("%d", stats.ActionRefsUnpinned)},
+			{Label: "Trusted-Owner Exempt", Value: fmt.Sprintf("%d", stats.ActionRefsExempt)},
+		}
+	case "githubActionMustComeFromAuthorizedSources":
+		// findings is the per-control list (one per unauthorized ref,
+		// including job-level reusable-workflow calls). Authorized =
+		// total in-scope refs minus the flagged ones.
+		total := stats.ActionRefsTotal + stats.ActionRefsExempt
+		unauthorized := len(findings)
+		authorized := total - unauthorized
+		if authorized < 0 {
+			authorized = 0
+		}
+		return []statLine{
+			{Label: "Total Action Refs", Value: fmt.Sprintf("%d", total)},
+			{Label: "Authorized", Value: fmt.Sprintf("%d", authorized)},
+			{Label: "Unauthorized", Value: fmt.Sprintf("%d", unauthorized)},
 		}
 	case "securityJobsMustNotBeWeakened":
 		return []statLine{
-			{"Security Jobs Found", fmt.Sprintf("%d", stats.SecurityJobsTotal)},
-			{"Weakened Jobs", fmt.Sprintf("%d", stats.SecurityJobsWeakened)},
+			{Label: "Security Jobs Found", Value: fmt.Sprintf("%d", stats.SecurityJobsTotal)},
+			{Label: "Weakened Jobs", Value: fmt.Sprintf("%d", stats.SecurityJobsWeakened)},
 		}
 	case "pipelineMustNotUseDockerInDocker":
 		return []statLine{
-			{"Jobs Checked", fmt.Sprintf("%d", stats.JobsTotal)},
-			{"DinD Services Found", fmt.Sprintf("%d", stats.JobsWithDinD)},
-			{"Insecure Daemon Config", fmt.Sprintf("%d", stats.JobsWithInsecureDaemon)},
+			{Label: statJobsChecked, Value: fmt.Sprintf("%d", stats.JobsTotal)},
+			{Label: "DinD Services Found", Value: fmt.Sprintf("%d", stats.JobsWithDinD)},
+			{Label: "Insecure Daemon Config", Value: fmt.Sprintf("%d", stats.JobsWithInsecureDaemon)},
 		}
 	case "pipelineMustNotExecuteUnverifiedScripts":
 		return []statLine{
-			{"Jobs Checked", fmt.Sprintf("%d", stats.JobsTotal)},
-			{"Script Lines Checked", fmt.Sprintf("%d", stats.ScriptLinesTotal)},
-			{"Unverified Scripts", fmt.Sprintf("%d", stats.UnverifiedScriptsFound)},
+			{Label: statJobsChecked, Value: fmt.Sprintf("%d", stats.JobsTotal)},
+			{Label: statScriptLinesChecked, Value: fmt.Sprintf("%d", stats.ScriptLinesTotal)},
+			{Label: "Unverified Scripts", Value: fmt.Sprintf("%d", stats.UnverifiedScriptsFound)},
 		}
 	case "reusableWorkflowsMustNotInheritSecrets":
 		return []statLine{
-			{"Reusable Workflow Calls", fmt.Sprintf("%d", stats.ReusableCalls)},
-			{"With secrets: inherit", fmt.Sprintf("%d", stats.ReusableCallsSecretsInherit)},
+			{Label: "Reusable Workflow Calls", Value: fmt.Sprintf("%d", stats.ReusableCalls)},
+			{Label: "With secrets: inherit", Value: fmt.Sprintf("%d", stats.ReusableCallsSecretsInherit)},
 		}
 	case "workflowMustNotInjectUserInputInScripts":
 		return []statLine{
-			{"Workflows Scanned", fmt.Sprintf("%d", stats.WorkflowsTotal)},
-			{"Script Lines Checked", fmt.Sprintf("%d", stats.ScriptLinesTotal)},
+			{Label: "Workflows Scanned", Value: fmt.Sprintf("%d", stats.WorkflowsTotal)},
+			{Label: statScriptLinesChecked, Value: fmt.Sprintf("%d", stats.ScriptLinesTotal)},
 		}
 	case "workflowMustNotUseDangerousTriggers":
 		return []statLine{
-			{"Workflows Scanned", fmt.Sprintf("%d", stats.WorkflowsTotal)},
-			{"Using Dangerous Triggers", fmt.Sprintf("%d", stats.WorkflowsWithDangerousTrigger)},
+			{Label: "Workflows Scanned", Value: fmt.Sprintf("%d", stats.WorkflowsTotal)},
+			{Label: "Using Dangerous Triggers", Value: fmt.Sprintf("%d", stats.WorkflowsWithDangerousTrigger)},
 		}
 	case "workflowsMustDeclarePermissions":
 		withPerms := stats.WorkflowsTotal - stats.WorkflowsMissingPermissions
@@ -309,29 +364,29 @@ func buildGitHubControlStats(controlName string, stats *control.GitHubAnalysisSt
 			withPerms = 0
 		}
 		return []statLine{
-			{"Total Workflows", fmt.Sprintf("%d", stats.WorkflowsTotal)},
-			{"With permissions block", fmt.Sprintf("%d", withPerms)},
-			{"Missing permissions block", fmt.Sprintf("%d", stats.WorkflowsMissingPermissions)},
+			{Label: "Total Workflows", Value: fmt.Sprintf("%d", stats.WorkflowsTotal)},
+			{Label: "With permissions block", Value: fmt.Sprintf("%d", withPerms)},
+			{Label: "Missing permissions block", Value: fmt.Sprintf("%d", stats.WorkflowsMissingPermissions)},
 		}
 	case "workflowMustNotGrantPermissionsWriteAll":
 		return []statLine{
-			{"Jobs Checked", fmt.Sprintf("%d", stats.JobsTotal)},
-			{"Jobs With write-all", fmt.Sprintf("%d", stats.JobsWithWriteAll)},
+			{Label: statJobsChecked, Value: fmt.Sprintf("%d", stats.JobsTotal)},
+			{Label: "Jobs With write-all", Value: fmt.Sprintf("%d", stats.JobsWithWriteAll)},
 		}
 	case "actionsMustNotBeArchived":
 		return []statLine{
-			{"Action Refs Checked", fmt.Sprintf("%d", stats.ActionRefsTotal+stats.ActionRefsExempt)},
-			{"Archived Refs Found", fmt.Sprintf("%d", stats.ActionRefsArchived)},
+			{Label: statActionRefsChecked, Value: fmt.Sprintf("%d", stats.ActionRefsTotal+stats.ActionRefsExempt)},
+			{Label: "Archived Refs Found", Value: fmt.Sprintf("%d", stats.ActionRefsArchived)},
 		}
 	case "actionsMustNotCarryKnownCVEs":
 		return []statLine{
-			{"Action Refs Checked", fmt.Sprintf("%d", stats.ActionRefsTotal+stats.ActionRefsExempt)},
-			{"Refs With Advisories", fmt.Sprintf("%d", stats.ActionRefsVulnerable)},
+			{Label: statActionRefsChecked, Value: fmt.Sprintf("%d", stats.ActionRefsTotal+stats.ActionRefsExempt)},
+			{Label: "Refs With Advisories", Value: fmt.Sprintf("%d", stats.ActionRefsVulnerable)},
 		}
 	case "pipelineMustNotEnableDebugTrace":
 		return []statLine{
-			{"Variables Checked", fmt.Sprintf("%d", stats.VariableBindingsTotal)},
-			{"Forbidden Found", fmt.Sprintf("%d", stats.DebugTraceFound)},
+			{Label: statVariablesChecked, Value: fmt.Sprintf("%d", stats.VariableBindingsTotal)},
+			{Label: "Forbidden Found", Value: fmt.Sprintf("%d", stats.DebugTraceFound)},
 		}
 	case "pipelineMustNotLeakSecretsInConfig":
 		// Mirrors the GitLab side: count hits and distinct gitleaks
@@ -348,8 +403,8 @@ func buildGitHubControlStats(controlName string, stats *control.GitHubAnalysisSt
 			}
 		}
 		return []statLine{
-			{"Hits Found", fmt.Sprintf("%d", len(findings))},
-			{"Distinct Rules Matched", fmt.Sprintf("%d", len(uniqueRules))},
+			{Label: "Hits Found", Value: fmt.Sprintf("%d", len(findings))},
+			{Label: "Distinct Rules Matched", Value: fmt.Sprintf("%d", len(uniqueRules))},
 		}
 	case "branchMustBeProtected":
 		unprotectedMatched := stats.BranchesMatched - stats.BranchesProtected
@@ -357,10 +412,10 @@ func buildGitHubControlStats(controlName string, stats *control.GitHubAnalysisSt
 			unprotectedMatched = 0
 		}
 		lines := []statLine{
-			{"Total Branches", fmt.Sprintf("%d", stats.BranchesTotal)},
-			{"Branches to Protect", fmt.Sprintf("%d", stats.BranchesMatched)},
-			{"Protected", fmt.Sprintf("%d", stats.BranchesProtected)},
-			{"Unprotected (matched)", fmt.Sprintf("%d", unprotectedMatched)},
+			{Label: "Total Branches", Value: fmt.Sprintf("%d", stats.BranchesTotal)},
+			{Label: "Branches to Protect", Value: fmt.Sprintf("%d", stats.BranchesMatched)},
+			{Label: "Protected", Value: fmt.Sprintf("%d", stats.BranchesProtected)},
+			{Label: "Unprotected (matched)", Value: fmt.Sprintf("%d", unprotectedMatched)},
 		}
 		// Surface partial-evaluation when /branches/{name}/protection
 		// 403'd (token lacked Administration:Read). Without this line
@@ -369,36 +424,13 @@ func buildGitHubControlStats(controlName string, stats *control.GitHubAnalysisSt
 		// incomplete-data footgun we want to avoid.
 		if stats.BranchesProtectionDetailsUnknown > 0 {
 			lines = append(lines, statLine{
-				"⚠ Force-push & code-owner rules",
-				fmt.Sprintf("skipped on %d branch(es) — token lacks Administration:Read", stats.BranchesProtectionDetailsUnknown),
+				Label: "⚠ Force-push & code-owner rules",
+				Value: fmt.Sprintf("skipped on %d branch(es) — token lacks Administration:Read", stats.BranchesProtectionDetailsUnknown),
 			})
 		}
 		return lines
 	}
 	return nil
-}
-
-// gitHubControlCompliance returns binary per-control compliance,
-// matching the GitLab semantics: any finding on the control → 0%,
-// otherwise 100%. The stats parameter is retained on the signature
-// because the per-control stats blocks (rendered separately by
-// buildGitHubControlStats) still consume it; only the percentage
-// itself is binary.
-//
-// Why binary: GitLab's outputText computes compliance the same way
-// (`if !skipped && len(items) > 0 { compliance = 0.0 }`). Mixing a
-// gradient on the GitHub side led to "100.0% compliant" headers
-// rendering above HIGH-severity findings for the same control —
-// confusing and contradictory. A control either passed or it
-// didn't; the stats block already shows the underlying numerators
-// for users who want the gradient view.
-func gitHubControlCompliance(controlName string, stats *control.GitHubAnalysisStats, findings int) float64 {
-	_ = controlName
-	_ = stats
-	if findings > 0 {
-		return 0
-	}
-	return 100
 }
 
 func buildGitLabControlStats(controlName string, result *control.AnalysisResult, pc *configuration.PlumberConfig, findings []opaengine.Finding) []statLine {
@@ -437,15 +469,15 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 			}
 		}
 		lines := []statLine{
-			{"Total Images", fmt.Sprintf("%d", total)},
+			{Label: statTotalImages, Value: fmt.Sprintf("%d", total)},
 		}
 		if pc != nil && pc.ControlsFor("gitlab").ContainerImageMustNotUseForbiddenTags.IsPinnedByDigestRequired() {
 			lines = append(lines,
-				statLine{"Pinned By Digest", fmt.Sprintf("%d", pinned)},
-				statLine{"Not Pinned By Digest", fmt.Sprintf("%d", notPinned)},
+				statLine{Label: "Pinned By Digest", Value: fmt.Sprintf("%d", pinned)},
+				statLine{Label: "Not Pinned By Digest", Value: fmt.Sprintf("%d", notPinned)},
 			)
 		}
-		lines = append(lines, statLine{"Using Forbidden Tags", fmt.Sprintf("%d", usingForbidden)})
+		lines = append(lines, statLine{Label: "Using Forbidden Tags", Value: fmt.Sprintf("%d", usingForbidden)})
 		return lines
 	case "containerImageMustComeFromAuthorizedSources":
 		total := 0
@@ -458,9 +490,9 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 			authorized = 0
 		}
 		return []statLine{
-			{"Total Images", fmt.Sprintf("%d", total)},
-			{"Authorized", fmt.Sprintf("%d", authorized)},
-			{"Unauthorized", fmt.Sprintf("%d", unauthorized)},
+			{Label: statTotalImages, Value: fmt.Sprintf("%d", total)},
+			{Label: "Authorized", Value: fmt.Sprintf("%d", authorized)},
+			{Label: "Unauthorized", Value: fmt.Sprintf("%d", unauthorized)},
 		}
 	case "pipelineMustNotIncludeHardcodedJobs":
 		total := uint(0)
@@ -470,8 +502,8 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 			hardcoded = result.PipelineOriginMetrics.JobHardcoded
 		}
 		return []statLine{
-			{"Total Jobs", fmt.Sprintf("%d", total)},
-			{"Hardcoded Jobs", fmt.Sprintf("%d", hardcoded)},
+			{Label: "Total Jobs", Value: fmt.Sprintf("%d", total)},
+			{Label: "Hardcoded Jobs", Value: fmt.Sprintf("%d", hardcoded)},
 		}
 	case "includesMustBeUpToDate":
 		// _externalIncludeCount strips the project's own pseudo-origin
@@ -484,8 +516,8 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 			outdated = result.PipelineOriginMetrics.OriginOutdated
 		}
 		return []statLine{
-			{"Total Includes", fmt.Sprintf("%d", total)},
-			{"Outdated", fmt.Sprintf("%d", outdated)},
+			{Label: "Total Includes", Value: fmt.Sprintf("%d", total)},
+			{Label: "Outdated", Value: fmt.Sprintf("%d", outdated)},
 		}
 	case "includesMustNotUseForbiddenVersions":
 		total := _externalIncludeCount(result)
@@ -494,9 +526,9 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 			authorized = 0
 		}
 		return []statLine{
-			{"Total Includes", fmt.Sprintf("%d", total)},
-			{"Using Authorized Versions", fmt.Sprintf("%d", authorized)},
-			{"Using Forbidden Versions", fmt.Sprintf("%d", findingsCount)},
+			{Label: "Total Includes", Value: fmt.Sprintf("%d", total)},
+			{Label: "Using Authorized Versions", Value: fmt.Sprintf("%d", authorized)},
+			{Label: "Using Forbidden Versions", Value: fmt.Sprintf("%d", findingsCount)},
 		}
 	case "pipelineMustNotEnableDebugTrace":
 		// "Variables Checked" mirrors v0.2.x: the total number of
@@ -508,7 +540,7 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 		// machinery — the merged workflow/job/step `env:` lives on
 		// each Job.Variables — so sum those for the GitHub path.
 		var checked int
-		if result != nil && result.GitHubPipeline != nil {
+		if result.GitHubPipeline != nil {
 			for _, j := range result.GitHubPipeline.Jobs {
 				checked += len(j.Variables)
 			}
@@ -516,8 +548,8 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 			checked = _countAllVariableBindings(result)
 		}
 		return []statLine{
-			{"Variables Checked", fmt.Sprintf("%d", checked)},
-			{"Forbidden Found", fmt.Sprintf("%d", findingsCount)},
+			{Label: statVariablesChecked, Value: fmt.Sprintf("%d", checked)},
+			{Label: "Forbidden Found", Value: fmt.Sprintf("%d", findingsCount)},
 		}
 	case "pipelineMustNotOverrideJobVariables":
 		// Override checks only apply to bindings authored by the
@@ -525,20 +557,20 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 		// legitimately set their own. Mirror that scope here so
 		// "Variables Checked" matches the count actually scanned.
 		return []statLine{
-			{"Variables Checked", fmt.Sprintf("%d", _countProjectAuthoredVariables(result))},
-			{"Overridden Found", fmt.Sprintf("%d", findingsCount)},
+			{Label: statVariablesChecked, Value: fmt.Sprintf("%d", _countProjectAuthoredVariables(result))},
+			{Label: "Overridden Found", Value: fmt.Sprintf("%d", findingsCount)},
 		}
 	case "pipelineMustNotUseUnsafeVariableExpansion":
 		return []statLine{
-			{"Jobs Checked", fmt.Sprintf("%d", jobTotal)},
-			{"Script Lines Checked", fmt.Sprintf("%d", _countScriptLines(result))},
-			{"Unsafe Expansions", fmt.Sprintf("%d", findingsCount)},
+			{Label: statJobsChecked, Value: fmt.Sprintf("%d", jobTotal)},
+			{Label: statScriptLinesChecked, Value: fmt.Sprintf("%d", _countScriptLines(result))},
+			{Label: "Unsafe Expansions", Value: fmt.Sprintf("%d", findingsCount)},
 		}
 	case "pipelineMustNotExecuteUnverifiedScripts":
 		return []statLine{
-			{"Jobs Checked", fmt.Sprintf("%d", jobTotal)},
-			{"Script Lines Checked", fmt.Sprintf("%d", _countScriptLines(result))},
-			{"Unverified Scripts", fmt.Sprintf("%d", findingsCount)},
+			{Label: statJobsChecked, Value: fmt.Sprintf("%d", jobTotal)},
+			{Label: statScriptLinesChecked, Value: fmt.Sprintf("%d", _countScriptLines(result))},
+			{Label: "Unverified Scripts", Value: fmt.Sprintf("%d", findingsCount)},
 		}
 	case "pipelineMustNotLeakSecretsInConfig":
 		// One scanned input (the merged GitLab pipeline). Hits are
@@ -553,8 +585,8 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 			}
 		}
 		return []statLine{
-			{"Hits Found", fmt.Sprintf("%d", findingsCount)},
-			{"Distinct Rules Matched", fmt.Sprintf("%d", len(uniqueRules))},
+			{Label: "Hits Found", Value: fmt.Sprintf("%d", findingsCount)},
+			{Label: "Distinct Rules Matched", Value: fmt.Sprintf("%d", len(uniqueRules))},
 		}
 	case "securityJobsMustNotBeWeakened":
 		// Stable's "Security Jobs Found" counts how many of the merged
@@ -562,8 +594,8 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 		// denominator for "0 weakened" findings: 0/14 reads very
 		// differently from 0/0.
 		return []statLine{
-			{"Security Jobs Found", fmt.Sprintf("%d", _countSecurityJobs(result, pc))},
-			{"Weakened Jobs", fmt.Sprintf("%d", findingsCount)},
+			{Label: "Security Jobs Found", Value: fmt.Sprintf("%d", _countSecurityJobs(result, pc))},
+			{Label: "Weakened Jobs", Value: fmt.Sprintf("%d", findingsCount)},
 		}
 	case "pipelineMustIncludeComponent":
 		var resolved [][]string
@@ -574,8 +606,8 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 		}
 		satisfied := countSatisfiedGroups(resolved, result, "component")
 		return []statLine{
-			{"Requirement Groups", fmt.Sprintf("%d", len(resolved))},
-			{"Satisfied Groups", fmt.Sprintf("%d", satisfied)},
+			{Label: statRequirementGroups, Value: fmt.Sprintf("%d", len(resolved))},
+			{Label: statSatisfiedGroups, Value: fmt.Sprintf("%d", satisfied)},
 		}
 	case "pipelineMustIncludeTemplate":
 		var resolved [][]string
@@ -586,14 +618,14 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 		}
 		satisfied := countSatisfiedGroups(resolved, result, "template")
 		return []statLine{
-			{"Requirement Groups", fmt.Sprintf("%d", len(resolved))},
-			{"Satisfied Groups", fmt.Sprintf("%d", satisfied)},
+			{Label: statRequirementGroups, Value: fmt.Sprintf("%d", len(resolved))},
+			{Label: statSatisfiedGroups, Value: fmt.Sprintf("%d", satisfied)},
 		}
 	case "pipelineMustNotUseDockerInDocker":
 		return []statLine{
-			{"Jobs Checked", fmt.Sprintf("%d", jobTotal)},
-			{"DinD Services Found", fmt.Sprintf("%d", _countDinDServices(result))},
-			{"Insecure Daemon Config", fmt.Sprintf("%d", findingsCount)},
+			{Label: statJobsChecked, Value: fmt.Sprintf("%d", jobTotal)},
+			{Label: "DinD Services Found", Value: fmt.Sprintf("%d", _countDinDServices(result))},
+			{Label: "Insecure Daemon Config", Value: fmt.Sprintf("%d", findingsCount)},
 		}
 	case "workflowMustIncludeRequiredActions":
 		var resolved [][]string
@@ -604,31 +636,31 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 		}
 		satisfied := countSatisfiedRequiredActionGroups(resolved, result)
 		return []statLine{
-			{"Requirement Groups", fmt.Sprintf("%d", len(resolved))},
-			{"Satisfied Groups", fmt.Sprintf("%d", satisfied)},
+			{Label: statRequirementGroups, Value: fmt.Sprintf("%d", len(resolved))},
+			{Label: statSatisfiedGroups, Value: fmt.Sprintf("%d", satisfied)},
 		}
 	case "workflowMustNotGrantPermissionsWriteAll":
 		return []statLine{
-			{"Jobs Checked", fmt.Sprintf("%d", jobTotal)},
-			{"Jobs With write-all", fmt.Sprintf("%d", findingsCount)},
+			{Label: statJobsChecked, Value: fmt.Sprintf("%d", jobTotal)},
+			{Label: "Jobs With write-all", Value: fmt.Sprintf("%d", findingsCount)},
 		}
 	case "actionsMustNotBeArchived":
 		actionRefs := 0
-		if result != nil && result.GitHubStats != nil {
+		if result.GitHubStats != nil {
 			actionRefs = result.GitHubStats.ActionRefsTotal
 		}
 		return []statLine{
-			{"Action Refs Checked", fmt.Sprintf("%d", actionRefs)},
-			{"Archived Refs Found", fmt.Sprintf("%d", findingsCount)},
+			{Label: statActionRefsChecked, Value: fmt.Sprintf("%d", actionRefs)},
+			{Label: "Archived Refs Found", Value: fmt.Sprintf("%d", findingsCount)},
 		}
 	case "actionsMustNotCarryKnownCVEs":
 		actionRefs := 0
-		if result != nil && result.GitHubStats != nil {
+		if result.GitHubStats != nil {
 			actionRefs = result.GitHubStats.ActionRefsTotal
 		}
 		return []statLine{
-			{"Action Refs Checked", fmt.Sprintf("%d", actionRefs)},
-			{"Refs With Advisories", fmt.Sprintf("%d", findingsCount)},
+			{Label: statActionRefsChecked, Value: fmt.Sprintf("%d", actionRefs)},
+			{Label: "Refs With Advisories", Value: fmt.Sprintf("%d", findingsCount)},
 		}
 	case "branchMustBeProtected":
 		total, toProtect, protected, unprotected := _branchProtectionCounts(result, pc)
@@ -639,11 +671,11 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 			}
 		}
 		return []statLine{
-			{"Total Branches", fmt.Sprintf("%d", total)},
-			{"Branches to Protect", fmt.Sprintf("%d", toProtect)},
-			{"Protected Branches", fmt.Sprintf("%d", protected)},
-			{"Unprotected", fmt.Sprintf("%d", unprotected)},
-			{"Non-Compliant", fmt.Sprintf("%d", nonCompliant)},
+			{Label: "Total Branches", Value: fmt.Sprintf("%d", total)},
+			{Label: "Branches to Protect", Value: fmt.Sprintf("%d", toProtect)},
+			{Label: "Protected Branches", Value: fmt.Sprintf("%d", protected)},
+			{Label: "Unprotected", Value: fmt.Sprintf("%d", unprotected)},
+			{Label: "Non-Compliant", Value: fmt.Sprintf("%d", nonCompliant)},
 		}
 	}
 	return nil
@@ -1023,7 +1055,7 @@ func actionRefMatches(reference, required string) bool {
 	return strings.HasPrefix(normalized, required+"/")
 }
 
-func originGroupMatch(required string, data *collector.GitlabPipelineOriginData, kindFilter string) bool {
+func originGroupMatch(required string, data *gitlab.GitlabPipelineOriginData, kindFilter string) bool {
 	cleanRequired := utils.CleanOriginPath(required)
 	for i := range data.Origins {
 		o := &data.Origins[i]

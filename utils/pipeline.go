@@ -29,6 +29,42 @@ type OverriddenJobDetail struct {
 	OverriddenKeys []string `json:"overriddenKeys"`
 }
 
+const dockerHubCanonical = "docker.io"
+
+// dockerHubRegistryAliases are alternative hostnames that all resolve to
+// Docker Hub. Pipeline authors may write any of them; we fold them to the
+// canonical "docker.io" at parse time so trustedUrls patterns match
+// regardless of which Hub hostname was used.
+var dockerHubRegistryAliases = map[string]string{
+	"index.docker.io":         dockerHubCanonical,
+	"registry-1.docker.io":    dockerHubCanonical,
+	"registry.hub.docker.com": dockerHubCanonical,
+}
+
+// CanonicalizeDockerHubRegistry maps any known Docker Hub registry-host
+// alias to "docker.io". Non-Hub hosts pass through unchanged.
+func CanonicalizeDockerHubRegistry(host string) string {
+	if canon, ok := dockerHubRegistryAliases[host]; ok {
+		return canon
+	}
+	return host
+}
+
+// FoldDockerHubAliasInName rewrites the leading registry-host segment of an
+// image name when that segment is a Docker Hub alias. Names without a leading
+// host segment (e.g. bare "alpine") are returned unchanged.
+func FoldDockerHubAliasInName(name string) string {
+	slash := strings.Index(name, "/")
+	if slash <= 0 {
+		return name
+	}
+	host := name[:slash]
+	if canon, ok := dockerHubRegistryAliases[host]; ok {
+		return canon + name[slash:]
+	}
+	return name
+}
+
 // CleanOriginPath normalizes a GitLab include/component path by stripping
 // the version suffix and instance URL prefix, producing a bare path suitable
 // for comparison (e.g. "components/sast/sast").

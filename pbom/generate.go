@@ -4,7 +4,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/getplumber/plumber/collector"
+	"github.com/getplumber/plumber/gitlab"
 	"github.com/getplumber/plumber/utils"
 )
 
@@ -58,8 +58,8 @@ func (g *Generator) WithIncludeOverrideData(data *IncludeOverrideData) *Generato
 
 // Generate creates a PBOM from pipeline data collections
 func (g *Generator) Generate(
-	imageData *collector.GitlabPipelineImageData,
-	originData *collector.GitlabPipelineOriginData,
+	imageData *gitlab.GitlabPipelineImageData,
+	originData *gitlab.GitlabPipelineOriginData,
 ) *PBOM {
 	pbom := &PBOM{
 		PBOMVersion: Version,
@@ -93,10 +93,10 @@ func (g *Generator) Generate(
 }
 
 // processImages extracts container image information from the image data collection
-func (g *Generator) processImages(imageData *collector.GitlabPipelineImageData) []ContainerImage {
+func (g *Generator) processImages(imageData *gitlab.GitlabPipelineImageData) []ContainerImage {
 	// Group images by their full link to aggregate jobs
 	imageJobMap := make(map[string][]string)
-	imageInfoMap := make(map[string]collector.GitlabPipelineImageInfo)
+	imageInfoMap := make(map[string]gitlab.GitlabPipelineImageInfo)
 
 	for _, img := range imageData.Images {
 		imageJobMap[img.Link] = append(imageJobMap[img.Link], img.Job)
@@ -146,7 +146,7 @@ func (g *Generator) processImages(imageData *collector.GitlabPipelineImageData) 
 }
 
 // processIncludes extracts include information from the origin data collection
-func (g *Generator) processIncludes(originData *collector.GitlabPipelineOriginData) []Include {
+func (g *Generator) processIncludes(originData *gitlab.GitlabPipelineOriginData) []Include {
 	includes := make([]Include, 0, len(originData.Origins))
 
 	for _, origin := range originData.Origins {

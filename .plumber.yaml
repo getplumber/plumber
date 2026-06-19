@@ -560,6 +560,37 @@ github:
         - github
 
     # ===========================================
+    # Actions must come from authorized sources
+    # ===========================================
+    # Restrict which `uses:` action sources are allowed. Every third-
+    # party action runs with the caller workflow's token and secrets, so
+    # limiting actions to vetted owners shrinks the supply-chain surface.
+    githubActionMustComeFromAuthorizedSources:
+      enabled: true
+      # Trust the first-party GitHub-owned actions (actions/*, github/*)
+      # that any workflow already executes implicitly. Defaults to true.
+      trustGithubOfficialActions: true
+      # Trust actions whose owner is the same org/user as the scanned
+      # repository — an org's own actions are inside its trust boundary.
+      # Defaults to true.
+      trustSameOrgActions: true
+      # When > 0, also trust any action whose upstream repository has at
+      # least this many GitHub stars. Catches rename/re-creation squats
+      # where a once-trusted name is re-registered with no history.
+      # Requires GitHub API access; 0 disables the star check.
+      minimumStars: 0
+      # Allowlist of trusted action sources. Each entry is either an
+      # exact `owner/repo` or an `owner/*` wildcard for a whole org.
+      trustedGithubActions:
+        - docker/setup-qemu-action
+        - docker/setup-buildx-action
+        - docker/login-action
+        - docker/metadata-action
+        - docker/build-push-action
+        - ossf/scorecard-action
+        - anchore/scan-action
+
+    # ===========================================
     # Container images must not use forbidden tags
     # ===========================================
     # Same control as GitLab; values are GitHub-side. Pinning by digest
@@ -882,9 +913,11 @@ github:
     # How it works: one Advisory Database query per `owner/repo`
     # (`ecosystem=actions`), cached. When the pinned ref resolves to a
     # semver tag, Plumber filters advisories by `vulnerable_version_range`.
-    # When the ref is an unresolvable commit SHA, any advisory for that
-    # repo may match (conservative). Upgrade past the fixed-in version and
-    # re-pin the SHA to clear the finding.
+    # A ref that cannot be resolved to a release version — a commit SHA
+    # with no matching release tag, or a mutable non-numeric tag such as
+    # `rc` / `main` / `latest` — abstains and surfaces a "could not verify"
+    # warning rather than matching every advisory for that repo. Upgrade
+    # past the fixed-in version and re-pin the SHA to clear the finding.
     #
     # Does not see: org/repo Variables, runtime `$GITHUB_ENV` writes, or
     # actions nested inside composite actions you do not call directly.

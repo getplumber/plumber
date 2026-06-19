@@ -35,3 +35,20 @@ type DegradedError struct {
 func (e *DegradedError) Error() string {
 	return fmt.Sprintf("%d check(s) could not be verified and --fail-warnings is set", e.Count)
 }
+
+// IncompleteDataError is returned when a run is data-collection-degraded:
+// a GitLab merged-CI fetch failed, or some GitHub workflow files / the
+// branch-protection fetch could not be retrieved. The analysis ran on
+// partial data, so Plumber withholds the verdict — score and compliance
+// tables in the terminal, badge/MR updates — and fails the run rather than
+// pass an incomplete scan. Artifacts are still written but stamped degraded
+// (#220). Maps to exit code 3, the same "could not fully verify" lane as
+// DegradedError, distinct from a real compliance failure (1) and a
+// configuration error (2).
+type IncompleteDataError struct {
+	Reasons []string
+}
+
+func (e *IncompleteDataError) Error() string {
+	return fmt.Sprintf("data collection was incomplete (%d issue(s)); score withheld, re-run when complete", len(e.Reasons))
+}

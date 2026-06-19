@@ -1,0 +1,17 @@
+# issue_comment job that checks out the PR head, but a job-level `if:`
+# allowlists trusted author associations (OWNER/MEMBER/COLLABORATOR), so
+# untrusted users cannot reach the checkout. Expected: 0 findings (#235).
+name: Comment handler trusted
+on:
+  issue_comment:
+    types: [created]
+
+jobs:
+  handler:
+    if: contains(fromJSON('["OWNER","MEMBER","COLLABORATOR"]'), github.event.comment.author_association)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+      - run: echo "handle"

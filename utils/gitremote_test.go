@@ -8,12 +8,12 @@ import (
 
 func TestParseGitRemoteURL(t *testing.T) {
 	tests := []struct {
-		name         string
-		remoteURL    string
-		wantHost     string
-		wantProject  string
-		wantURL      string
-		wantNil      bool
+		name        string
+		remoteURL   string
+		wantHost    string
+		wantProject string
+		wantURL     string
+		wantNil     bool
 	}{
 		// SSH SCP-like format (git@host:path)
 		{

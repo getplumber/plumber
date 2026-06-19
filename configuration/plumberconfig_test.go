@@ -313,7 +313,6 @@ controls: {}
 	}
 }
 
-
 func TestValidControlNames(t *testing.T) {
 	names := ValidControlNames()
 
@@ -324,6 +323,7 @@ func TestValidControlNames(t *testing.T) {
 		"branchMustBeProtected",
 		"containerImageMustComeFromAuthorizedSources",
 		"containerImageMustNotUseForbiddenTags",
+		"githubActionMustComeFromAuthorizedSources",
 		"includesMustBeUpToDate",
 		"includesMustNotUseForbiddenVersions",
 		"pipelineMustIncludeComponent",

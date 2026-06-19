@@ -10,6 +10,7 @@ import (
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
+	providerPkg "github.com/getplumber/plumber/provider"
 )
 
 // locationLinker turns a finding's repo-relative file path + line into
@@ -31,11 +32,11 @@ import (
 // back to whatever a previous Plumber version would have emitted — no
 // silent breakage.
 type locationLinker struct {
-	provider   string // "github" or "gitlab"
-	serverURL  string // web URL of the forge, without trailing slash
-	repo       string // owner/repo or group/project
-	ref        string // commit SHA preferred, branch name as fallback
-	useRemote  bool   // true => emit a remote blob URL; false => emit absolute local path
+	provider  string // "github" or "gitlab"
+	serverURL string // web URL of the forge, without trailing slash
+	repo      string // owner/repo or group/project
+	ref       string // commit SHA preferred, branch name as fallback
+	useRemote bool   // true => emit a remote blob URL; false => emit absolute local path
 }
 
 // newLocationLinker constructs a linker from the run's configuration
@@ -47,29 +48,20 @@ func newLocationLinker(conf *configuration.Configuration, result *control.Analys
 	}
 	l := &locationLinker{provider: provider}
 
-	switch provider {
-	case "github":
-		l.serverURL = strings.TrimRight(githubWebURL(conf.GithubAPIHost), "/")
-		l.repo = firstNonEmpty(os.Getenv("GITHUB_REPOSITORY"), result.ProjectPath, conf.ProjectPath)
-		l.ref = firstNonEmpty(
-			os.Getenv("GITHUB_SHA"),
-			result.HeadCommitSha,
-			os.Getenv("GITHUB_REF_NAME"),
-			result.AnalyzeBranch,
-			conf.Branch,
-			result.DefaultBranch,
-		)
-	default: // gitlab
+	if reg, ok := providerPkg.Get(l.provider); ok {
+		env := reg.CIEnvVars()
+		serverURLFallback := conf.GitlabURL
+		if l.provider == "github" {
+			serverURLFallback = githubWebURL(conf.GithubAPIHost)
+		}
+		l.serverURL = strings.TrimRight(firstNonEmpty(os.Getenv(env.ServerURL), serverURLFallback), "/")
+		l.repo = firstNonEmpty(os.Getenv(env.RepoPath), result.ProjectPath, conf.ProjectPath)
+		l.ref = firstNonEmpty(os.Getenv(env.CommitSHA), result.HeadCommitSha, result.AnalyzeBranch, conf.Branch, result.DefaultBranch)
+	} else {
+		// Fallback for unknown providers: use GitLab defaults.
 		l.serverURL = strings.TrimRight(firstNonEmpty(os.Getenv("CI_SERVER_URL"), conf.GitlabURL), "/")
 		l.repo = firstNonEmpty(os.Getenv("CI_PROJECT_PATH"), result.ProjectPath, conf.ProjectPath)
-		l.ref = firstNonEmpty(
-			os.Getenv("CI_COMMIT_SHA"),
-			result.HeadCommitSha,
-			os.Getenv("CI_COMMIT_REF_NAME"),
-			result.AnalyzeBranch,
-			conf.Branch,
-			result.DefaultBranch,
-		)
+		l.ref = firstNonEmpty(os.Getenv("CI_COMMIT_SHA"), result.HeadCommitSha, result.AnalyzeBranch, conf.Branch, result.DefaultBranch)
 	}
 
 	// Decide whether to prefer remote URLs. The artifact-portability
@@ -140,12 +132,9 @@ func buildBlobURL(provider, serverURL, repo, ref, relPath string, line int) stri
 		}
 		return strings.Join(parts, "/")
 	}
-	var infix string
-	switch provider {
-	case "gitlab":
-		infix = "/-/blob/"
-	default: // github
-		infix = "/blob/"
+	infix := "/blob/"
+	if p, ok := providerPkg.Get(provider); ok {
+		infix = p.BlobURLInfix()
 	}
 	u := serverURL + "/" + escapeSegments(repo) + infix + escapeSegments(ref) + "/" + escapeSegments(relPath)
 	if line > 0 {

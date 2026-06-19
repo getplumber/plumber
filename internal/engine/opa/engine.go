@@ -34,12 +34,12 @@ import (
 // downstream consumers can read both the human message and the
 // machine-parseable evidence on the same finding object.
 type Finding struct {
-	Code     string         `json:"-"`
-	Severity string         `json:"-"`
-	Message  string         `json:"-"`
-	Job      string         `json:"-"`
-	File     string         `json:"-"`
-	Line     int            `json:"-"`
+	Code     string `json:"-"`
+	Severity string `json:"-"`
+	Message  string `json:"-"`
+	Job      string `json:"-"`
+	File     string `json:"-"`
+	Line     int    `json:"-"`
 	// URL is a clickable pointer to the offending file/line, populated at
 	// output time (not by Rego). In CI it is the remote blob URL on the
 	// host forge; locally it is the absolute filesystem path with the

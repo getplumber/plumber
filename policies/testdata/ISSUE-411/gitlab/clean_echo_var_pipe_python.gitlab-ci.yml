@@ -1,0 +1,9 @@
+# Regression for issue #236: a leading echo/printf piping in-workflow
+# data (a variable) into an interpreter is local data, not a remote
+# fetch — the generic `| <shell>` catch-all must NOT fire.
+# Expected hits: 0.
+evaluate:
+  image: alpine:3.19
+  script:
+    - echo "$PIPELINE_CONTEXT" | python3 -c 'import json, sys; print(json.load(sys.stdin))'
+    - printf '%s' "$RELEASE_NOTES" | ruby -e 'puts STDIN.read.length'

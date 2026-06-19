@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -18,9 +19,13 @@ import (
 )
 
 const (
+	defaultForbiddenTags  = "latest, dev, development, staging, main, master"
+	defaultBranchPatterns = "main, master, release/*, production, dev"
+
 	// Provider selection (the first question — drives every later filter).
 	provGitLab = "GitLab (gitlab.com / self-hosted)"
 	provGitHub = "GitHub Actions (github.com / GHES)"
+	provBoth   = "Both (GitLab + GitHub Actions)"
 
 	catImages      = "Container image security (tags, trusted registries)"
 	catComposition = "Pipeline composition (includes, scripts, security jobs, DinD)"
@@ -40,6 +45,7 @@ const (
 	// GitHub-applicable composition checks (new). The cross-provider ones
 	// (security jobs, DinD) reuse compSecurity / compDinD above.
 	compActionPin          = "Require third-party actions pinned by commit SHA"
+	compAuthorizedActions  = "Restrict third-party actions to authorized sources"
 	compDangerousTriggers  = "Flag dangerous workflow triggers (pull_request_target, workflow_run, …)"
 	compPRTargetHead       = "Forbid pull_request_target workflows that check out the PR head"
 	compDeclarePermissions = "Require workflows to declare an explicit permissions: block"
@@ -191,6 +197,343 @@ func printInitSection(label string) {
 	fmt.Fprintf(os.Stderr, "\n── %s ──\n\n", label)
 }
 
+func (st *initWizardState) askImageQuestions() error {
+	printInitSection("Container image security")
+	if err := survey.AskOne(&survey.Confirm{Message: "Forbid mutable image tags (e.g. latest, dev, main)?", Default: true}, &st.ForbiddenTagsEnabled); err != nil {
+		return err
+	}
+	if st.ForbiddenTagsEnabled {
+		if err := survey.AskOne(&survey.Input{
+			Message: "Forbidden tags (comma-separated)",
+			Default: defaultForbiddenTags,
+		}, &st.ForbiddenTagsCSV); err != nil {
+			return err
+		}
+		if err := survey.AskOne(&survey.Confirm{Message: "Require every image to be pinned by digest (@sha256:…)?", Default: true}, &st.PinByDigest); err != nil {
+			return err
+		}
+	}
+	if !hasProvider(st, "gitlab") {
+		return nil
+	}
+	if err := survey.AskOne(&survey.Confirm{Message: "Restrict images to authorized registries only? (GitLab)", Default: true}, &st.AuthorizedEnabled); err != nil {
+		return err
+	}
+	if !st.AuthorizedEnabled {
+		return nil
+	}
+	if err := survey.AskOne(&survey.Confirm{Message: "Trust official Docker Hub library images (e.g. alpine, python)?", Default: true}, &st.TrustDockerHubOfficial); err != nil {
+		return err
+	}
+	return survey.AskOne(&survey.Multiline{
+		Message: "Trusted registry URL patterns (one per line)",
+		Help:    "Supports wildcards, e.g. registry.example.com/*, $CI_REGISTRY_IMAGE:*. Images not matching any pattern will be flagged.",
+		Default: strings.Join(defaultTrustedURLs(), "\n"),
+	}, &st.TrustedURLsText)
+}
+
+func (st *initWizardState) askGitLabSecurityJobQuestions() error {
+	if err := survey.AskOne(&survey.Multiline{
+		Message: "GitLab security-job patterns (one per line)",
+		Help:    "Wildcards are supported, e.g. *-sast, gemnasium-*. GitLab job names are bare (no workflow prefix).",
+		Default: strings.Join(defaultSecurityJobPatterns(), "\n"),
+	}, &st.SecurityJobPatternsMultiline); err != nil {
+		return err
+	}
+	if err := survey.AskOne(&survey.Confirm{Message: "Flag GitLab jobs that set allow_failure: true?", Default: false}, &st.SecuritySubAllowFailure); err != nil {
+		return err
+	}
+	if err := survey.AskOne(&survey.Confirm{Message: "Flag GitLab jobs that redefine rules?", Default: false}, &st.SecuritySubRules); err != nil {
+		return err
+	}
+	return survey.AskOne(&survey.Confirm{Message: "Flag GitLab jobs that set when: manual?", Default: false}, &st.SecuritySubWhenNotManual)
+}
+
+func (st *initWizardState) askGitHubSecurityJobQuestions() error {
+	if err := survey.AskOne(&survey.Multiline{
+		Message: "GitHub security-job patterns (one per line)",
+		Help:    "GitHub job names are namespaced as workflow/job, so patterns use *substring* form. Defaults cover the GitHub-native scanners.",
+		Default: strings.Join(defaultGitHubSecurityJobPatterns(), "\n"),
+	}, &st.SecurityJobPatternsGitHubMultiline); err != nil {
+		return err
+	}
+	if err := survey.AskOne(&survey.Confirm{Message: "Flag GitHub jobs that set continue-on-error: true?", Default: true}, &st.SecuritySubAllowFailureGitHub); err != nil {
+		return err
+	}
+	if err := survey.AskOne(&survey.Confirm{Message: "Flag GitHub jobs that redefine rules (if:/when overrides)?", Default: true}, &st.SecuritySubRulesGitHub); err != nil {
+		return err
+	}
+	return survey.AskOne(&survey.Confirm{Message: "Flag GitHub jobs that are manual-dispatch only?", Default: true}, &st.SecuritySubWhenNotManualGitHub)
+}
+
+func (st *initWizardState) askSecurityJobQuestions() error {
+	fmt.Fprintf(os.Stderr, "\n  › Security jobs\n")
+	if hasProvider(st, "gitlab") {
+		if err := st.askGitLabSecurityJobQuestions(); err != nil {
+			return err
+		}
+	}
+	if hasProvider(st, "github") {
+		return st.askGitHubSecurityJobQuestions()
+	}
+	return nil
+}
+
+func (st *initWizardState) askRequiredInclusionQuestions() error {
+	if hasProvider(st, "github") {
+		fmt.Fprintf(os.Stderr, "\n  › Required actions (GitHub)\n")
+		if err := survey.AskOne(&survey.Confirm{Message: "Require specific actions or reusable workflows across all workflows?", Default: false}, &st.RequireActions); err != nil {
+			return err
+		}
+		if st.RequireActions {
+			if err := survey.AskOne(&survey.Input{
+				Message: "Required actions expression",
+				Help:    "owner/repo[/path] entries with optional AND / OR and parentheses. Examples:\n  myorg/sast-scan\n  myorg/sast-scan AND myorg/dependency-review\n  (myorg/sast-scan AND myorg/secret-scan) OR myorg/full-security-suite",
+			}, &st.RequiredActionsExpr); err != nil {
+				return err
+			}
+		}
+	}
+	if !hasProvider(st, "gitlab") {
+		return nil
+	}
+	fmt.Fprintf(os.Stderr, "\n  › Required inclusions (GitLab)\n")
+	if err := survey.AskOne(&survey.Confirm{Message: "Require specific catalog components in every pipeline?", Default: false}, &st.RequireComponents); err != nil {
+		return err
+	}
+	if st.RequireComponents {
+		if err := survey.AskOne(&survey.Input{
+			Message: "Required components expression",
+			Help:    "Paths with optional AND / OR and parentheses. Examples:\n  components/sast/sast\n  components/sast/sast AND components/secret-detection/secret-detection\n  (components/sast/sast AND components/secret-detection) OR components/full-security",
+		}, &st.RequiredComponentsExpr); err != nil {
+			return err
+		}
+	}
+	fmt.Fprintln(os.Stderr)
+	if err := survey.AskOne(&survey.Confirm{Message: "Require specific project file templates in every pipeline?", Default: false}, &st.RequireTemplates); err != nil {
+		return err
+	}
+	if st.RequireTemplates {
+		return survey.AskOne(&survey.Input{
+			Message: "Required templates expression",
+			Help:    "Paths with optional AND / OR and parentheses. Examples:\n  templates/security/sast\n  templates/security/sast AND templates/security/secret-detection",
+		}, &st.RequiredTemplatesExpr)
+	}
+	return nil
+}
+
+// askCompositionFirstHalf covers: action-pin, forbidden refs, security jobs, scripts.
+func (st *initWizardState) askCompositionFirstHalf() error {
+	if compSelected(st, compActionPin) {
+		fmt.Fprintf(os.Stderr, "\n  › Action pin trusted owners (GitHub)\n")
+		if err := survey.AskOne(&survey.Multiline{
+			Message: "Action-owner prefixes exempt from the pin-by-SHA requirement (one per line)",
+			Help:    "Only list owners already inside your workflow's trust boundary. \"actions\" and \"github\" cover the first-party GitHub-owned actions.",
+			Default: strings.Join(defaultGitHubTrustedActionOwners(), "\n"),
+		}, &st.ActionPinTrustedOwnersMultiline); err != nil {
+			return err
+		}
+	}
+	if compSelected(st, compForbidden) && hasProvider(st, "gitlab") {
+		fmt.Fprintf(os.Stderr, "\n  › Forbidden include refs\n")
+		if err := survey.AskOne(&survey.Multiline{
+			Message: "Forbidden version refs (one per line)",
+			Help:    "Refs like latest, ~latest, main, master, HEAD are mutable and can introduce breaking changes silently.",
+			Default: strings.Join(defaultForbiddenVersions(), "\n"),
+		}, &st.ForbiddenVersionsMultiline); err != nil {
+			return err
+		}
+		if err := survey.AskOne(&survey.Confirm{
+			Message: "Also treat the project's default branch name as a forbidden ref?",
+			Default: false,
+		}, &st.DefaultBranchIsForbiddenVersion); err != nil {
+			return err
+		}
+	}
+	if compSelected(st, compSecurity) {
+		if err := st.askSecurityJobQuestions(); err != nil {
+			return err
+		}
+	}
+	if compSelected(st, compScripts) {
+		fmt.Fprintf(os.Stderr, "\n  › Unverified scripts\n")
+		if err := survey.AskOne(&survey.Multiline{
+			Message: "Script host URL patterns to trust (one per line)",
+			Help:    "Leave empty to flag every remote script. Example: https://internal.example.com/*",
+		}, &st.ScriptTrustedURLsMultiline); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// askCompositionSecondHalf covers: job-var overrides, DinD, debug trace, required inclusions.
+func (st *initWizardState) askCompositionSecondHalf() error {
+	if compSelected(st, compJobVars) && hasProvider(st, "gitlab") {
+		fmt.Fprintf(os.Stderr, "\n  › Job variable overrides\n")
+		if err := survey.AskOne(&survey.Multiline{
+			Message: "Variables that pipelines must not override (one per line)",
+			Help:    "These are security-critical GitLab CI variables; overriding them can disable scanning.",
+			Default: strings.Join(defaultJobOverrideVariables(), "\n"),
+		}, &st.JobOverrideVariablesMultiline); err != nil {
+			return err
+		}
+	}
+	if compSelected(st, compDinD) {
+		fmt.Fprintf(os.Stderr, "\n  › Docker-in-Docker\n")
+		if err := survey.AskOne(&survey.Confirm{
+			Message: "Also detect insecure daemon socket usage (e.g. tcp:// without TLS)?",
+			Default: true,
+		}, &st.DinDDetectInsecureDaemon); err != nil {
+			return err
+		}
+	}
+	if compSelected(st, compDebugTraceGitHub) {
+		fmt.Fprintf(os.Stderr, "\n  › Actions debug logging\n")
+		if err := survey.AskOne(&survey.Multiline{
+			Message: "Forbidden debug variables (one per line)",
+			Help:    "Setting these to true makes the Actions runner dump every env var (including masked secrets) into the job log.",
+			Default: strings.Join(defaultGitHubDebugTraceVariables(), "\n"),
+		}, &st.DebugForbiddenVariablesGitHubMultiline); err != nil {
+			return err
+		}
+	}
+	return st.askRequiredInclusionQuestions()
+}
+
+func (st *initWizardState) askCompositionDetails() error {
+	if err := st.askCompositionFirstHalf(); err != nil {
+		return err
+	}
+	return st.askCompositionSecondHalf()
+}
+
+func (st *initWizardState) askCompositionQuestions() error {
+	printInitSection("Pipeline composition")
+	allComp := compositionOptionsForProviders(st.Providers)
+	if err := survey.AskOne(&survey.MultiSelect{
+		Message:  "Which pipeline checks should be enabled?",
+		Options:  allComp,
+		PageSize: 14,
+		Default:  allComp,
+	}, &st.CompositionChoices, survey.WithValidator(survey.Required)); err != nil {
+		return err
+	}
+	return st.askCompositionDetails()
+}
+
+func (st *initWizardState) askAccessQuestions() error {
+	printInitSection("Access control: branch protection")
+	st.BranchEnabled = true
+	if err := survey.AskOne(&survey.Input{
+		Message: "Branch name patterns to protect (comma-separated; wildcards ok)",
+		Default: defaultBranchPatterns,
+	}, &st.BranchPatterns); err != nil {
+		return err
+	}
+	if err := survey.AskOne(&survey.Confirm{
+		Message: "Require the repository default branch to be covered by a protected pattern?",
+		Default: true,
+	}, &st.BranchDefaultMustBeProtected); err != nil {
+		return err
+	}
+	if err := survey.AskOne(&survey.Confirm{Message: "Allow force push on protected branches?", Default: false}, &st.BranchAllowForcePush); err != nil {
+		return err
+	}
+	if hasProvider(st, "gitlab") {
+		if err := survey.AskOne(&survey.Confirm{
+			Message: "Require code owner approval on protected branches? (GitLab)",
+			Default: false,
+		}, &st.BranchCodeOwnerApprovalRequired); err != nil {
+			return err
+		}
+		if err := survey.AskOne(&survey.Input{
+			Message: "Minimum access level to merge (GitLab)",
+			Help:    "30 = Developer, 40 = Maintainer, 50 = Owner",
+			Default: "30",
+		}, &st.BranchMinMergeAccessLevel); err != nil {
+			return err
+		}
+		if err := survey.AskOne(&survey.Input{
+			Message: "Minimum access level to push to protected branches (GitLab)",
+			Help:    "30 = Developer, 40 = Maintainer, 50 = Owner",
+			Default: "40",
+		}, &st.BranchMinPushAccessLevel); err != nil {
+			return err
+		}
+	}
+	if hasProvider(st, "github") {
+		if err := survey.AskOne(&survey.Confirm{
+			Message: "Require code owner approval on protected branches? (GitHub)",
+			Default: true,
+		}, &st.BranchCodeOwnerApprovalRequiredGitHub); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func (st *initWizardState) askVariableQuestions() error {
+	printInitSection("Variable security")
+	if err := survey.AskOne(&survey.Confirm{Message: "Flag pipelines that enable CI_DEBUG_TRACE or CI_DEBUG_SERVICES?", Default: true}, &st.DebugTraceEnabled); err != nil {
+		return err
+	}
+	if st.DebugTraceEnabled {
+		if err := survey.AskOne(&survey.Multiline{
+			Message: "Variables whose presence in pipeline YAML is forbidden (one per line)",
+			Help:    "Setting CI_DEBUG_TRACE=true exposes all masked variables and secrets in job logs.",
+			Default: "CI_DEBUG_TRACE\nCI_DEBUG_SERVICES",
+		}, &st.DebugForbiddenVariablesMultiline); err != nil {
+			return err
+		}
+	}
+	if err := survey.AskOne(&survey.Confirm{Message: "Flag pipelines that expand user-controlled variables in scripts unsafely?", Default: true}, &st.UnsafeExpansionEnabled); err != nil {
+		return err
+	}
+	if !st.UnsafeExpansionEnabled {
+		return nil
+	}
+	if err := survey.AskOne(&survey.Multiline{
+		Message: "User-controlled variables to watch for unsafe expansion (one per line)",
+		Help:    "These are variables whose values come from user input (MR title, commit message, branch name, etc.) and should not appear in scripts without sanitization.",
+		Default: strings.Join(defaultDangerousVariables(), "\n"),
+	}, &st.DangerousVariablesMultiline); err != nil {
+		return err
+	}
+	return survey.AskOne(&survey.Multiline{
+		Message: "Script line regexes to exclude from findings (one per line, optional)",
+		Help:    "Lines matching any of these patterns are ignored. Useful for approved patterns like echo \"$$VAR\" that are safe in your context.",
+	}, &st.AllowedPatternsMultiline)
+}
+
+func (st *initWizardState) hasCategory(cat string) bool {
+	return slices.Contains(st.Categories, cat)
+}
+
+func (st *initWizardState) askCategoryQuestions() error {
+	if st.hasCategory(catImages) {
+		if err := st.askImageQuestions(); err != nil {
+			return err
+		}
+	}
+	if st.hasCategory(catComposition) {
+		if err := st.askCompositionQuestions(); err != nil {
+			return err
+		}
+	}
+	if st.hasCategory(catAccess) {
+		if err := st.askAccessQuestions(); err != nil {
+			return err
+		}
+	}
+	if st.hasCategory(catVariables) {
+		if err := st.askVariableQuestions(); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 func runInitWizard(skipAnalyzePrompt bool) (*initWizardState, error) {
 	fmt.Fprintln(os.Stderr, "Welcome to Plumber.")
 	fmt.Fprintln(os.Stderr, "This wizard creates a .plumber.yaml tailored to your project.")
@@ -204,389 +547,37 @@ func runInitWizard(skipAnalyzePrompt bool) (*initWizardState, error) {
 	// area, and which provider section(s) the resulting config gets
 	// written under. Auto-detect from the git remote when possible
 	// so the default lands on the right provider out of the box;
-	// multi-select still lets the user pick "both" for monorepos
-	// that ship to both platforms or for shared config repos.
-	providerOptions := []string{provGitLab, provGitHub}
-	providerDefault := autoDetectProviderForInit()
-	if err := survey.AskOne(&survey.MultiSelect{
-		Message:  "Which provider(s) do you want to configure?",
-		Help:     "Pick one to scope the wizard. Pick both for a config that targets a monorepo or a config file shared across repos. Auto-detection picks the default based on your git remote.",
+	// an explicit "Both" option still covers monorepos that ship to
+	// both platforms or shared config repos.
+	providerOptions := []string{provGitLab, provGitHub, provBoth}
+	providerDefault := provGitLab
+	if d := autoDetectProviderForInit(); len(d) > 0 {
+		providerDefault = d[0]
+	}
+	var providerChoice string
+	if err := survey.AskOne(&survey.Select{
+		Message:  "Which provider do you want to configure?",
+		Help:     "Pick the platform this config targets. Choose Both for a monorepo or a config file shared across repos. The default follows your git remote.",
 		Options:  providerOptions,
 		PageSize: 4,
 		Default:  providerDefault,
-	}, &st.Providers, survey.WithValidator(survey.Required)); err != nil {
+	}, &providerChoice); err != nil {
 		return nil, err
 	}
-	st.Providers = providersFromWizardLabels(st.Providers)
+	st.Providers = providersFromProviderChoice(providerChoice)
 
 	allCats := wizardCategoriesForProviders(st.Providers)
-	err := survey.AskOne(&survey.MultiSelect{
+	if err := survey.AskOne(&survey.MultiSelect{
 		Message:  "Which areas do you want to enforce?",
 		Options:  allCats,
 		PageSize: 10,
 		Default:  allCats,
-	}, &st.Categories, survey.WithValidator(survey.Required))
-	if err != nil {
+	}, &st.Categories, survey.WithValidator(survey.Required)); err != nil {
 		return nil, err
 	}
 
-	has := func(s string) bool {
-		for _, c := range st.Categories {
-			if c == s {
-				return true
-			}
-		}
-		return false
-	}
-
-	if has(catImages) {
-		printInitSection("Container image security")
-		if err := survey.AskOne(&survey.Confirm{Message: "Forbid mutable image tags (e.g. latest, dev, main)?", Default: true}, &st.ForbiddenTagsEnabled); err != nil {
-			return nil, err
-		}
-		if st.ForbiddenTagsEnabled {
-			if err := survey.AskOne(&survey.Input{
-				Message: "Forbidden tags (comma-separated)",
-				Default: "latest, dev, development, staging, main, master",
-			}, &st.ForbiddenTagsCSV); err != nil {
-				return nil, err
-			}
-			if err := survey.AskOne(&survey.Confirm{Message: "Require every image to be pinned by digest (@sha256:…)?", Default: true}, &st.PinByDigest); err != nil {
-				return nil, err
-			}
-		}
-
-		// The authorized-sources control (containerImageMustComeFromAuthorizedSources)
-		// is GitLab-only today — the GitHub rego rule is on the dev bench.
-		// Only surface its prompts when GitLab is in scope; skipping them
-		// for a GitHub-only run keeps the wizard from collecting answers
-		// that would never reach the written config.
-		if hasProvider(st, "gitlab") {
-			if err := survey.AskOne(&survey.Confirm{Message: "Restrict images to authorized registries only? (GitLab)", Default: true}, &st.AuthorizedEnabled); err != nil {
-				return nil, err
-			}
-			if st.AuthorizedEnabled {
-				if err := survey.AskOne(&survey.Confirm{Message: "Trust official Docker Hub library images (e.g. alpine, python)?", Default: true}, &st.TrustDockerHubOfficial); err != nil {
-					return nil, err
-				}
-				if err := survey.AskOne(&survey.Multiline{
-					Message: "Trusted registry URL patterns (one per line)",
-					Help:    "Supports wildcards, e.g. registry.example.com/*, $CI_REGISTRY_IMAGE:*. Images not matching any pattern will be flagged.",
-					Default: strings.Join(defaultTrustedURLs(), "\n"),
-				}, &st.TrustedURLsText); err != nil {
-					return nil, err
-				}
-			}
-		}
-	}
-
-	if has(catComposition) {
-		printInitSection("Pipeline composition")
-		allComp := compositionOptionsForProviders(st.Providers)
-		if err := survey.AskOne(&survey.MultiSelect{
-			Message:  "Which pipeline checks should be enabled?",
-			Options:  allComp,
-			PageSize: 14,
-			Default:  allComp,
-		}, &st.CompositionChoices, survey.WithValidator(survey.Required)); err != nil {
-			return nil, err
-		}
-
-		if compSelected(st, compActionPin) {
-			fmt.Fprintf(os.Stderr, "\n  › Action pin trusted owners (GitHub)\n")
-			if err := survey.AskOne(&survey.Multiline{
-				Message: "Action-owner prefixes exempt from the pin-by-SHA requirement (one per line)",
-				Help:    "Only list owners already inside your workflow's trust boundary. \"actions\" and \"github\" cover the first-party GitHub-owned actions.",
-				Default: strings.Join(defaultGitHubTrustedActionOwners(), "\n"),
-			}, &st.ActionPinTrustedOwnersMultiline); err != nil {
-				return nil, err
-			}
-		}
-
-		if compSelected(st, compForbidden) && hasProvider(st, "gitlab") {
-			fmt.Fprintf(os.Stderr, "\n  › Forbidden include refs\n")
-			if err := survey.AskOne(&survey.Multiline{
-				Message: "Forbidden version refs (one per line)",
-				Help:    "Refs like latest, ~latest, main, master, HEAD are mutable and can introduce breaking changes silently.",
-				Default: strings.Join(defaultForbiddenVersions(), "\n"),
-			}, &st.ForbiddenVersionsMultiline); err != nil {
-				return nil, err
-			}
-			if err := survey.AskOne(&survey.Confirm{
-				Message: "Also treat the project's default branch name as a forbidden ref?",
-				Default: false,
-			}, &st.DefaultBranchIsForbiddenVersion); err != nil {
-				return nil, err
-			}
-		}
-
-		if compSelected(st, compSecurity) {
-			fmt.Fprintf(os.Stderr, "\n  › Security jobs\n")
-			if hasProvider(st, "gitlab") {
-				if err := survey.AskOne(&survey.Multiline{
-					Message: "GitLab security-job patterns (one per line)",
-					Help:    "Wildcards are supported, e.g. *-sast, gemnasium-*. GitLab job names are bare (no workflow prefix).",
-					Default: strings.Join(defaultSecurityJobPatterns(), "\n"),
-				}, &st.SecurityJobPatternsMultiline); err != nil {
-					return nil, err
-				}
-			}
-			if hasProvider(st, "github") {
-				if err := survey.AskOne(&survey.Multiline{
-					Message: "GitHub security-job patterns (one per line)",
-					Help:    "GitHub job names are namespaced as workflow/job, so patterns use *substring* form. Defaults cover the GitHub-native scanners.",
-					Default: strings.Join(defaultGitHubSecurityJobPatterns(), "\n"),
-				}, &st.SecurityJobPatternsGitHubMultiline); err != nil {
-					return nil, err
-				}
-			}
-			// allow_failure default differs per provider: GitLab security
-			// templates ship with allow_failure: true (so flagging it would
-			// fire on everyone — default off), GitHub has no such convention
-			// (default on). Ask per provider in scope.
-			if hasProvider(st, "gitlab") {
-				if err := survey.AskOne(&survey.Confirm{
-					Message: "Flag GitLab jobs that set allow_failure: true?",
-					Default: false,
-				}, &st.SecuritySubAllowFailure); err != nil {
-					return nil, err
-				}
-			}
-			if hasProvider(st, "github") {
-				if err := survey.AskOne(&survey.Confirm{
-					Message: "Flag GitHub jobs that set continue-on-error: true?",
-					Default: true,
-				}, &st.SecuritySubAllowFailureGitHub); err != nil {
-					return nil, err
-				}
-			}
-			// rules / when:manual follow the same per-provider default as
-			// allow_failure (GitLab off, GitHub on).
-			if hasProvider(st, "gitlab") {
-				if err := survey.AskOne(&survey.Confirm{
-					Message: "Flag GitLab jobs that redefine rules?",
-					Default: false,
-				}, &st.SecuritySubRules); err != nil {
-					return nil, err
-				}
-				if err := survey.AskOne(&survey.Confirm{
-					Message: "Flag GitLab jobs that set when: manual?",
-					Default: false,
-				}, &st.SecuritySubWhenNotManual); err != nil {
-					return nil, err
-				}
-			}
-			if hasProvider(st, "github") {
-				if err := survey.AskOne(&survey.Confirm{
-					Message: "Flag GitHub jobs that redefine rules (if:/when overrides)?",
-					Default: true,
-				}, &st.SecuritySubRulesGitHub); err != nil {
-					return nil, err
-				}
-				if err := survey.AskOne(&survey.Confirm{
-					Message: "Flag GitHub jobs that are manual-dispatch only?",
-					Default: true,
-				}, &st.SecuritySubWhenNotManualGitHub); err != nil {
-					return nil, err
-				}
-			}
-		}
-
-		if compSelected(st, compScripts) && (hasProvider(st, "gitlab") || hasProvider(st, "github")) {
-			fmt.Fprintf(os.Stderr, "\n  › Unverified scripts\n")
-			if err := survey.AskOne(&survey.Multiline{
-				Message: "Script host URL patterns to trust (one per line)",
-				Help:    "Leave empty to flag every remote script. Example: https://internal.example.com/*",
-			}, &st.ScriptTrustedURLsMultiline); err != nil {
-				return nil, err
-			}
-		}
-
-		if compSelected(st, compJobVars) && hasProvider(st, "gitlab") {
-			fmt.Fprintf(os.Stderr, "\n  › Job variable overrides\n")
-			if err := survey.AskOne(&survey.Multiline{
-				Message: "Variables that pipelines must not override (one per line)",
-				Help:    "These are security-critical GitLab CI variables; overriding them can disable scanning.",
-				Default: strings.Join(defaultJobOverrideVariables(), "\n"),
-			}, &st.JobOverrideVariablesMultiline); err != nil {
-				return nil, err
-			}
-		}
-
-		if compSelected(st, compDinD) {
-			fmt.Fprintf(os.Stderr, "\n  › Docker-in-Docker\n")
-			if err := survey.AskOne(&survey.Confirm{
-				Message: "Also detect insecure daemon socket usage (e.g. tcp:// without TLS)?",
-				Default: true,
-			}, &st.DinDDetectInsecureDaemon); err != nil {
-				return nil, err
-			}
-		}
-
-		if compSelected(st, compDebugTraceGitHub) {
-			fmt.Fprintf(os.Stderr, "\n  › Actions debug logging\n")
-			if err := survey.AskOne(&survey.Multiline{
-				Message: "Forbidden debug variables (one per line)",
-				Help:    "Setting these to true makes the Actions runner dump every env var (including masked secrets) into the job log.",
-				Default: strings.Join(defaultGitHubDebugTraceVariables(), "\n"),
-			}, &st.DebugForbiddenVariablesGitHubMultiline); err != nil {
-				return nil, err
-			}
-		}
-
-		// Required-actions (GitHub) and required-components/templates
-		// (GitLab) are the "must include" controls. Each is opt-in and
-		// only written when an expression is supplied.
-		if hasProvider(st, "github") {
-			fmt.Fprintf(os.Stderr, "\n  › Required actions (GitHub)\n")
-			if err := survey.AskOne(&survey.Confirm{
-				Message: "Require specific actions or reusable workflows across all workflows?",
-				Default: false,
-			}, &st.RequireActions); err != nil {
-				return nil, err
-			}
-			if st.RequireActions {
-				if err := survey.AskOne(&survey.Input{
-					Message: "Required actions expression",
-					Help:    "owner/repo[/path] entries with optional AND / OR and parentheses. Examples:\n  myorg/sast-scan\n  myorg/sast-scan AND myorg/dependency-review\n  (myorg/sast-scan AND myorg/secret-scan) OR myorg/full-security-suite",
-				}, &st.RequiredActionsExpr); err != nil {
-					return nil, err
-				}
-			}
-		}
-
-		// Required-inclusions prompts are GitLab-only (catalog components
-		// and project-file templates have no GitHub equivalent; the GitHub
-		// analogue is required-actions, handled just above).
-		if hasProvider(st, "gitlab") {
-			fmt.Fprintf(os.Stderr, "\n  › Required inclusions (GitLab)\n")
-			if err := survey.AskOne(&survey.Confirm{
-				Message: "Require specific catalog components in every pipeline?",
-				Default: false,
-			}, &st.RequireComponents); err != nil {
-				return nil, err
-			}
-			if st.RequireComponents {
-				if err := survey.AskOne(&survey.Input{
-					Message: "Required components expression",
-					Help:    "Paths with optional AND / OR and parentheses. Examples:\n  components/sast/sast\n  components/sast/sast AND components/secret-detection/secret-detection\n  (components/sast/sast AND components/secret-detection) OR components/full-security",
-				}, &st.RequiredComponentsExpr); err != nil {
-					return nil, err
-				}
-			}
-
-			fmt.Fprintln(os.Stderr)
-			if err := survey.AskOne(&survey.Confirm{
-				Message: "Require specific project file templates in every pipeline?",
-				Default: false,
-			}, &st.RequireTemplates); err != nil {
-				return nil, err
-			}
-			if st.RequireTemplates {
-				if err := survey.AskOne(&survey.Input{
-					Message: "Required templates expression",
-					Help:    "Paths with optional AND / OR and parentheses. Examples:\n  templates/security/sast\n  templates/security/sast AND templates/security/secret-detection",
-				}, &st.RequiredTemplatesExpr); err != nil {
-					return nil, err
-				}
-			}
-		}
-	}
-
-	if has(catAccess) {
-		printInitSection("Access control: branch protection")
-		st.BranchEnabled = true
-		if err := survey.AskOne(&survey.Input{
-			Message: "Branch name patterns to protect (comma-separated; wildcards ok)",
-			Default: "main, master, release/*, production, dev",
-		}, &st.BranchPatterns); err != nil {
-			return nil, err
-		}
-		if err := survey.AskOne(&survey.Confirm{
-			Message: "Require the repository default branch to be covered by a protected pattern?",
-			Default: true,
-		}, &st.BranchDefaultMustBeProtected); err != nil {
-			return nil, err
-		}
-		if err := survey.AskOne(&survey.Confirm{
-			Message: "Allow force push on protected branches?",
-			Default: false,
-		}, &st.BranchAllowForcePush); err != nil {
-			return nil, err
-		}
-		// Code-owner approval default differs per provider (GitLab off,
-		// GitHub on), matching the curated .plumber.yaml. Ask per scope.
-		if hasProvider(st, "gitlab") {
-			if err := survey.AskOne(&survey.Confirm{
-				Message: "Require code owner approval on protected branches? (GitLab)",
-				Default: false,
-			}, &st.BranchCodeOwnerApprovalRequired); err != nil {
-				return nil, err
-			}
-		}
-		if hasProvider(st, "github") {
-			if err := survey.AskOne(&survey.Confirm{
-				Message: "Require code owner approval on protected branches? (GitHub)",
-				Default: true,
-			}, &st.BranchCodeOwnerApprovalRequiredGitHub); err != nil {
-				return nil, err
-			}
-		}
-		// minMerge/minPushAccessLevel are GitLab-specific numeric
-		// permission tiers; GitHub uses a different model (role
-		// strings + branch-protection rule shape) and the GitHub
-		// rego rule doesn't read these fields. Skip the prompts when
-		// GitLab is out of scope.
-		if hasProvider(st, "gitlab") {
-			if err := survey.AskOne(&survey.Input{
-				Message: "Minimum access level to merge (GitLab)",
-				Help:    "30 = Developer, 40 = Maintainer, 50 = Owner",
-				Default: "30",
-			}, &st.BranchMinMergeAccessLevel); err != nil {
-				return nil, err
-			}
-			if err := survey.AskOne(&survey.Input{
-				Message: "Minimum access level to push to protected branches (GitLab)",
-				Help:    "30 = Developer, 40 = Maintainer, 50 = Owner",
-				Default: "40",
-			}, &st.BranchMinPushAccessLevel); err != nil {
-				return nil, err
-			}
-		}
-	}
-
-	if has(catVariables) {
-		printInitSection("Variable security")
-		if err := survey.AskOne(&survey.Confirm{Message: "Flag pipelines that enable CI_DEBUG_TRACE or CI_DEBUG_SERVICES?", Default: true}, &st.DebugTraceEnabled); err != nil {
-			return nil, err
-		}
-		if st.DebugTraceEnabled {
-			if err := survey.AskOne(&survey.Multiline{
-				Message: "Variables whose presence in pipeline YAML is forbidden (one per line)",
-				Help:    "Setting CI_DEBUG_TRACE=true exposes all masked variables and secrets in job logs.",
-				Default: "CI_DEBUG_TRACE\nCI_DEBUG_SERVICES",
-			}, &st.DebugForbiddenVariablesMultiline); err != nil {
-				return nil, err
-			}
-		}
-		if err := survey.AskOne(&survey.Confirm{Message: "Flag pipelines that expand user-controlled variables in scripts unsafely?", Default: true}, &st.UnsafeExpansionEnabled); err != nil {
-			return nil, err
-		}
-		if st.UnsafeExpansionEnabled {
-			if err := survey.AskOne(&survey.Multiline{
-				Message: "User-controlled variables to watch for unsafe expansion (one per line)",
-				Help:    "These are variables whose values come from user input (MR title, commit message, branch name, etc.) and should not appear in scripts without sanitization.",
-				Default: strings.Join(defaultDangerousVariables(), "\n"),
-			}, &st.DangerousVariablesMultiline); err != nil {
-				return nil, err
-			}
-			if err := survey.AskOne(&survey.Multiline{
-				Message: "Script line regexes to exclude from findings (one per line, optional)",
-				Help:    "Lines matching any of these patterns are ignored. Useful for approved patterns like echo \"$$VAR\" that are safe in your context.",
-			}, &st.AllowedPatternsMultiline); err != nil {
-				return nil, err
-			}
-		}
+	if err := st.askCategoryQuestions(); err != nil {
+		return nil, err
 	}
 
 	if !skipAnalyzePrompt {
@@ -611,12 +602,7 @@ func intPtrInit(i int) *int    { return &i }
 // for an empty Providers slice — callers should always set at least
 // one provider before invoking the per-control flow.
 func hasProvider(st *initWizardState, name string) bool {
-	for _, p := range st.Providers {
-		if p == name {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(st.Providers, name)
 }
 
 // providersFromWizardLabels translates the human-facing provider
@@ -635,9 +621,22 @@ func providersFromWizardLabels(labels []string) []string {
 	return out
 }
 
+// providersFromProviderChoice maps the single provider-selection answer
+// (provGitLab / provGitHub / provBoth) to the canonical provider list.
+// A single-select replaces rather than accumulates, so picking GitHub
+// yields GitHub only; "Both" is the explicit multi-provider opt-in
+// (issue #256, where a pre-checked multi-select left GitLab in scope).
+func providersFromProviderChoice(choice string) []string {
+	labels := []string{choice}
+	if choice == provBoth {
+		labels = []string{provGitLab, provGitHub}
+	}
+	return providersFromWizardLabels(labels)
+}
+
 // autoDetectProviderForInit picks the default provider selection
 // based on the current git remote so the most common single-provider
-// case lands on the right pre-checked option without the user
+// case lands on the right highlighted default without the user
 // having to touch it. Falls back to GitLab when nothing matches —
 // preserves historical behaviour for the (still common) GitLab-only
 // case.
@@ -700,6 +699,7 @@ func compositionOptionsForProviders(providers []string) []string {
 	if hasGitHub {
 		out = append(out,
 			compActionPin,
+			compAuthorizedActions,
 			compDangerousTriggers,
 			compPRTargetHead,
 			compDeclarePermissions,
@@ -926,44 +926,117 @@ func parseIntInit(s string, def int) int {
 }
 
 func compSelected(st *initWizardState, label string) bool {
-	for _, c := range st.CompositionChoices {
-		if c == label {
-			return true
+	return slices.Contains(st.CompositionChoices, label)
+}
+
+func (st *initWizardState) applyImageControls(gl, gh *configuration.ProviderConfig) {
+	if st.ForbiddenTagsEnabled {
+		tags := parseCSVInit(st.ForbiddenTagsCSV)
+		if len(tags) == 0 {
+			tags = parseCSVInit(defaultForbiddenTags)
+		}
+		block := &configuration.ImageForbiddenTagsControlConfig{
+			Enabled:                             boolPtrInit(true),
+			Tags:                                tags,
+			ContainerImagesMustBePinnedByDigest: boolPtrInit(st.PinByDigest),
+		}
+		if gl != nil {
+			gl.Controls.ContainerImageMustNotUseForbiddenTags = block
+		}
+		if gh != nil {
+			gh.Controls.ContainerImageMustNotUseForbiddenTags = block
 		}
 	}
-	return false
+	// containerImageMustComeFromAuthorizedSources is GitLab-only.
+	if st.AuthorizedEnabled && gl != nil {
+		urls := parseLinesInit(st.TrustedURLsText)
+		if len(urls) == 0 {
+			urls = defaultTrustedURLs()
+		}
+		gl.Controls.ContainerImageMustComeFromAuthorizedSources = &configuration.ImageAuthorizedSourcesControlConfig{
+			Enabled:                      boolPtrInit(true),
+			TrustedUrls:                  urls,
+			TrustDockerHubOfficialImages: boolPtrInit(st.TrustDockerHubOfficial),
+		}
+	}
+}
+
+func (st *initWizardState) applyAccessControls(gl, gh *configuration.ProviderConfig) {
+	patterns := parseCSVInit(st.BranchPatterns)
+	if len(patterns) == 0 {
+		patterns = parseCSVInit(defaultBranchPatterns)
+	}
+	if gl != nil {
+		gl.Controls.BranchMustBeProtected = &configuration.BranchProtectionControlConfig{
+			Enabled:                   boolPtrInit(true),
+			DefaultMustBeProtected:    boolPtrInit(st.BranchDefaultMustBeProtected),
+			NamePatterns:              patterns,
+			AllowForcePush:            boolPtrInit(st.BranchAllowForcePush),
+			CodeOwnerApprovalRequired: boolPtrInit(st.BranchCodeOwnerApprovalRequired),
+			MinMergeAccessLevel:       intPtrInit(parseIntInit(st.BranchMinMergeAccessLevel, 30)),
+			MinPushAccessLevel:        intPtrInit(parseIntInit(st.BranchMinPushAccessLevel, 40)),
+		}
+	}
+	if gh != nil {
+		// GitHub branch-protection ignores access-level fields.
+		gh.Controls.BranchMustBeProtected = &configuration.BranchProtectionControlConfig{
+			Enabled:                   boolPtrInit(true),
+			DefaultMustBeProtected:    boolPtrInit(st.BranchDefaultMustBeProtected),
+			NamePatterns:              patterns,
+			AllowForcePush:            boolPtrInit(st.BranchAllowForcePush),
+			CodeOwnerApprovalRequired: boolPtrInit(st.BranchCodeOwnerApprovalRequiredGitHub),
+		}
+	}
+}
+
+// applyVariableControls writes the catVariables controls (GitLab-only).
+func (st *initWizardState) applyVariableControls(gl *configuration.ProviderConfig) {
+	if st.DebugTraceEnabled {
+		fb := parseLinesInit(st.DebugForbiddenVariablesMultiline)
+		if len(fb) == 0 {
+			fb = []string{"CI_DEBUG_TRACE", "CI_DEBUG_SERVICES"}
+		}
+		gl.Controls.PipelineMustNotEnableDebugTrace = &configuration.DebugTraceControlConfig{
+			Enabled:            boolPtrInit(true),
+			ForbiddenVariables: fb,
+		}
+	}
+	if st.UnsafeExpansionEnabled {
+		danger := parseLinesInit(st.DangerousVariablesMultiline)
+		if len(danger) == 0 {
+			danger = defaultDangerousVariables()
+		}
+		gl.Controls.PipelineMustNotUseUnsafeVariableExpansion = &configuration.VariableInjectionControlConfig{
+			Enabled:            boolPtrInit(true),
+			DangerousVariables: danger,
+			AllowedPatterns:    parseLinesInit(st.AllowedPatternsMultiline),
+		}
+	}
 }
 
 func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 	cfg := &configuration.PlumberConfig{Version: "2.0"}
 
-	// Empty Providers slice = backwards-compatible path (existing
-	// tests, starter config). Default to GitLab-only so historical
-	// callers keep producing the same shape they always did.
 	providers := st.Providers
 	if len(providers) == 0 {
 		providers = []string{"gitlab"}
 	}
 
-	// Build target provider sections up front so each per-control
-	// block writes to whichever side(s) apply without sprinkling
-	// hasProvider checks across the function body. gitlabSection /
-	// githubSection are nil when the provider isn't in scope.
-	var gitlabSection, githubSection *configuration.ProviderConfig
+	var gl, gh *configuration.ProviderConfig
 	for _, p := range providers {
 		switch p {
 		case "gitlab":
 			cfg.GitLab = &configuration.ProviderConfig{}
-			gitlabSection = cfg.GitLab
+			gl = cfg.GitLab
 		case "github":
 			cfg.GitHub = &configuration.ProviderConfig{}
-			githubSection = cfg.GitHub
+			gh = cfg.GitHub
 		}
 	}
 
-	has := func(s string) bool {
+	has := func(cat string) bool {
 		for _, c := range st.Categories {
-			if c == s {
+			if c == cat {
 				return true
 			}
 		}
@@ -971,48 +1044,18 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 	}
 
 	if has(catImages) {
-		if st.ForbiddenTagsEnabled {
-			tags := parseCSVInit(st.ForbiddenTagsCSV)
-			if len(tags) == 0 {
-				tags = parseCSVInit("latest, dev, development, staging, main, master")
-			}
-			block := &configuration.ImageForbiddenTagsControlConfig{
-				Enabled:                             boolPtrInit(true),
-				Tags:                                tags,
-				ContainerImagesMustBePinnedByDigest: boolPtrInit(st.PinByDigest),
-			}
-			if gitlabSection != nil {
-				gitlabSection.Controls.ContainerImageMustNotUseForbiddenTags = block
-			}
-			if githubSection != nil {
-				githubSection.Controls.ContainerImageMustNotUseForbiddenTags = block
-			}
-		}
-		// containerImageMustComeFromAuthorizedSources is GitLab-only
-		// (the GitHub rego rule is on the dev bench).
-		if st.AuthorizedEnabled && gitlabSection != nil {
-			urls := parseLinesInit(st.TrustedURLsText)
-			if len(urls) == 0 {
-				urls = defaultTrustedURLs()
-			}
-			gitlabSection.Controls.ContainerImageMustComeFromAuthorizedSources = &configuration.ImageAuthorizedSourcesControlConfig{
-				Enabled:                      boolPtrInit(true),
-				TrustedUrls:                  urls,
-				TrustDockerHubOfficialImages: boolPtrInit(st.TrustDockerHubOfficial),
-			}
-		}
+		st.applyImageControls(gl, gh)
 	}
-
 	if has(catComposition) {
 		// GitLab-only composition checks.
-		if gitlabSection != nil {
+		if gl != nil {
 			if compSelected(st, compHardcoded) {
-				gitlabSection.Controls.PipelineMustNotIncludeHardcodedJobs = &configuration.HardcodedJobsControlConfig{
+				gl.Controls.PipelineMustNotIncludeHardcodedJobs = &configuration.HardcodedJobsControlConfig{
 					Enabled: boolPtrInit(true),
 				}
 			}
 			if compSelected(st, compUpToDate) {
-				gitlabSection.Controls.IncludesMustBeUpToDate = &configuration.IncludesUpToDateControlConfig{
+				gl.Controls.IncludesMustBeUpToDate = &configuration.IncludesUpToDateControlConfig{
 					Enabled: boolPtrInit(true),
 				}
 			}
@@ -1021,7 +1064,7 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 				if len(vers) == 0 {
 					vers = defaultForbiddenVersions()
 				}
-				gitlabSection.Controls.IncludesMustNotUseForbiddenVersions = &configuration.IncludesForbiddenVersionsControlConfig{
+				gl.Controls.IncludesMustNotUseForbiddenVersions = &configuration.IncludesForbiddenVersionsControlConfig{
 					Enabled:                         boolPtrInit(true),
 					ForbiddenVersions:               vers,
 					DefaultBranchIsForbiddenVersion: boolPtrInit(st.DefaultBranchIsForbiddenVersion),
@@ -1032,14 +1075,14 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 				if len(vars) == 0 {
 					vars = defaultJobOverrideVariables()
 				}
-				gitlabSection.Controls.PipelineMustNotOverrideJobVariables = &configuration.JobVariablesOverrideControlConfig{
+				gl.Controls.PipelineMustNotOverrideJobVariables = &configuration.JobVariablesOverrideControlConfig{
 					Enabled:   boolPtrInit(true),
 					Variables: vars,
 				}
 			}
 
 			if e := strings.TrimSpace(st.RequiredComponentsExpr); e != "" {
-				gitlabSection.Controls.PipelineMustIncludeComponent = &configuration.RequiredComponentsControlConfig{
+				gl.Controls.PipelineMustIncludeComponent = &configuration.RequiredComponentsControlConfig{
 					Enabled:  boolPtrInit(true),
 					Required: e,
 				}
@@ -1048,7 +1091,7 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 			}
 
 			if e := strings.TrimSpace(st.RequiredTemplatesExpr); e != "" {
-				gitlabSection.Controls.PipelineMustIncludeTemplate = &configuration.RequiredTemplatesControlConfig{
+				gl.Controls.PipelineMustIncludeTemplate = &configuration.RequiredTemplatesControlConfig{
 					Enabled:  boolPtrInit(true),
 					Required: e,
 				}
@@ -1063,12 +1106,12 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 		// sub-toggles are shared. Each section gets fresh toggle structs
 		// so the two providers never alias the same pointer.
 		if compSelected(st, compSecurity) {
-			if gitlabSection != nil {
+			if gl != nil {
 				p := parseLinesInit(st.SecurityJobPatternsMultiline)
 				if len(p) == 0 {
 					p = defaultSecurityJobPatterns()
 				}
-				gitlabSection.Controls.SecurityJobsMustNotBeWeakened = &configuration.SecurityJobsWeakenedControlConfig{
+				gl.Controls.SecurityJobsMustNotBeWeakened = &configuration.SecurityJobsWeakenedControlConfig{
 					Enabled:                 boolPtrInit(true),
 					SecurityJobPatterns:     p,
 					AllowFailureMustBeFalse: &configuration.SecurityJobsSubControlToggle{Enabled: boolPtrInit(st.SecuritySubAllowFailure)},
@@ -1076,12 +1119,12 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 					WhenMustNotBeManual:     &configuration.SecurityJobsSubControlToggle{Enabled: boolPtrInit(st.SecuritySubWhenNotManual)},
 				}
 			}
-			if githubSection != nil {
+			if gh != nil {
 				p := parseLinesInit(st.SecurityJobPatternsGitHubMultiline)
 				if len(p) == 0 {
 					p = defaultGitHubSecurityJobPatterns()
 				}
-				githubSection.Controls.SecurityJobsMustNotBeWeakened = &configuration.SecurityJobsWeakenedControlConfig{
+				gh.Controls.SecurityJobsMustNotBeWeakened = &configuration.SecurityJobsWeakenedControlConfig{
 					Enabled:                 boolPtrInit(true),
 					SecurityJobPatterns:     p,
 					AllowFailureMustBeFalse: &configuration.SecurityJobsSubControlToggle{Enabled: boolPtrInit(st.SecuritySubAllowFailureGitHub)},
@@ -1097,11 +1140,11 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 				Enabled:     boolPtrInit(true),
 				TrustedUrls: parseLinesInit(st.ScriptTrustedURLsMultiline),
 			}
-			if gitlabSection != nil {
-				gitlabSection.Controls.PipelineMustNotExecuteUnverifiedScripts = block
+			if gl != nil {
+				gl.Controls.PipelineMustNotExecuteUnverifiedScripts = block
 			}
-			if githubSection != nil {
-				githubSection.Controls.PipelineMustNotExecuteUnverifiedScripts = block
+			if gh != nil {
+				gh.Controls.PipelineMustNotExecuteUnverifiedScripts = block
 			}
 		}
 
@@ -1114,11 +1157,11 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 			block := &configuration.SecretDetectionControlConfig{
 				Enabled: boolPtrInit(true),
 			}
-			if gitlabSection != nil {
-				gitlabSection.Controls.PipelineMustNotLeakSecretsInConfig = block
+			if gl != nil {
+				gl.Controls.PipelineMustNotLeakSecretsInConfig = block
 			}
-			if githubSection != nil {
-				githubSection.Controls.PipelineMustNotLeakSecretsInConfig = block
+			if gh != nil {
+				gh.Controls.PipelineMustNotLeakSecretsInConfig = block
 			}
 		}
 
@@ -1128,56 +1171,67 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 				Enabled:              boolPtrInit(true),
 				DetectInsecureDaemon: boolPtrInit(st.DinDDetectInsecureDaemon),
 			}
-			if gitlabSection != nil {
-				gitlabSection.Controls.PipelineMustNotUseDockerInDocker = block
+			if gl != nil {
+				gl.Controls.PipelineMustNotUseDockerInDocker = block
 			}
-			if githubSection != nil {
-				githubSection.Controls.PipelineMustNotUseDockerInDocker = block
+			if gh != nil {
+				gh.Controls.PipelineMustNotUseDockerInDocker = block
 			}
 		}
 
 		// GitHub-only composition checks.
-		if githubSection != nil {
+		if gh != nil {
 			if compSelected(st, compActionPin) {
 				owners := parseLinesInit(st.ActionPinTrustedOwnersMultiline)
 				if len(owners) == 0 {
 					owners = defaultGitHubTrustedActionOwners()
 				}
-				githubSection.Controls.ActionsMustBePinnedByCommitSha = &configuration.ActionsPinnedByShaControlConfig{
+				gh.Controls.ActionsMustBePinnedByCommitSha = &configuration.ActionsPinnedByShaControlConfig{
 					Enabled:       boolPtrInit(true),
 					TrustedOwners: owners,
 				}
 			}
+			if compSelected(st, compAuthorizedActions) {
+				// Ship with the secure defaults: trust GitHub-official
+				// owners and the repo's own org; the user fills in
+				// trustedGithubActions / minimumStars in the generated
+				// file as needed.
+				gh.Controls.GithubActionMustComeFromAuthorizedSources = &configuration.ActionAuthorizedSourcesControlConfig{
+					Enabled:                    boolPtrInit(true),
+					TrustGithubOfficialActions: boolPtrInit(true),
+					TrustSameOrgActions:        boolPtrInit(true),
+				}
+			}
 			if compSelected(st, compDangerousTriggers) {
-				githubSection.Controls.WorkflowMustNotUseDangerousTriggers = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
+				gh.Controls.WorkflowMustNotUseDangerousTriggers = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
 			}
 			if compSelected(st, compPRTargetHead) {
-				githubSection.Controls.PullRequestTargetMustNotCheckoutHead = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
+				gh.Controls.PullRequestTargetMustNotCheckoutHead = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
 			}
 			if compSelected(st, compDeclarePermissions) {
-				githubSection.Controls.WorkflowsMustDeclarePermissions = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
+				gh.Controls.WorkflowsMustDeclarePermissions = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
 			}
 			if compSelected(st, compReusableSecrets) {
-				githubSection.Controls.ReusableWorkflowsMustNotInheritSecrets = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
+				gh.Controls.ReusableWorkflowsMustNotInheritSecrets = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
 			}
 			if compSelected(st, compTemplateInjection) {
-				githubSection.Controls.WorkflowMustNotInjectUserInputInScripts = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
+				gh.Controls.WorkflowMustNotInjectUserInputInScripts = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
 			}
 			if compSelected(st, compWriteAllPerms) {
-				githubSection.Controls.WorkflowMustNotGrantPermissionsWriteAll = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
+				gh.Controls.WorkflowMustNotGrantPermissionsWriteAll = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
 			}
 			if compSelected(st, compArchivedActions) {
-				githubSection.Controls.ActionsMustNotBeArchived = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
+				gh.Controls.ActionsMustNotBeArchived = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
 			}
 			if compSelected(st, compKnownCVEs) {
-				githubSection.Controls.ActionsMustNotCarryKnownCVEs = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
+				gh.Controls.ActionsMustNotCarryKnownCVEs = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
 			}
 			if compSelected(st, compDebugTraceGitHub) {
 				fb := parseLinesInit(st.DebugForbiddenVariablesGitHubMultiline)
 				if len(fb) == 0 {
 					fb = defaultGitHubDebugTraceVariables()
 				}
-				githubSection.Controls.PipelineMustNotEnableDebugTrace = &configuration.DebugTraceControlConfig{
+				gh.Controls.PipelineMustNotEnableDebugTrace = &configuration.DebugTraceControlConfig{
 					Enabled:            boolPtrInit(true),
 					ForbiddenVariables: fb,
 				}
@@ -1187,7 +1241,7 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 			// is supplied, mirroring pipelineMustIncludeComponent on the
 			// GitLab side.
 			if e := strings.TrimSpace(st.RequiredActionsExpr); e != "" {
-				githubSection.Controls.WorkflowMustIncludeRequiredActions = &configuration.RequiredActionsControlConfig{
+				gh.Controls.WorkflowMustIncludeRequiredActions = &configuration.RequiredActionsControlConfig{
 					Enabled:  boolPtrInit(true),
 					Required: e,
 				}
@@ -1196,63 +1250,12 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 			}
 		}
 	}
-
 	if has(catAccess) && st.BranchEnabled {
-		patterns := parseCSVInit(st.BranchPatterns)
-		if len(patterns) == 0 {
-			patterns = parseCSVInit("main, master, release/*, production, dev")
-		}
-		if gitlabSection != nil {
-			gitlabSection.Controls.BranchMustBeProtected = &configuration.BranchProtectionControlConfig{
-				Enabled:                   boolPtrInit(true),
-				DefaultMustBeProtected:    boolPtrInit(st.BranchDefaultMustBeProtected),
-				NamePatterns:              patterns,
-				AllowForcePush:            boolPtrInit(st.BranchAllowForcePush),
-				CodeOwnerApprovalRequired: boolPtrInit(st.BranchCodeOwnerApprovalRequired),
-				MinMergeAccessLevel:       intPtrInit(parseIntInit(st.BranchMinMergeAccessLevel, 30)),
-				MinPushAccessLevel:        intPtrInit(parseIntInit(st.BranchMinPushAccessLevel, 40)),
-			}
-		}
-		if githubSection != nil {
-			// GitHub branch-protection ignores the access-level fields
-			// (different permission model), so leave them unset to
-			// keep the YAML focused on what the GitHub rule reads.
-			githubSection.Controls.BranchMustBeProtected = &configuration.BranchProtectionControlConfig{
-				Enabled:                   boolPtrInit(true),
-				DefaultMustBeProtected:    boolPtrInit(st.BranchDefaultMustBeProtected),
-				NamePatterns:              patterns,
-				AllowForcePush:            boolPtrInit(st.BranchAllowForcePush),
-				CodeOwnerApprovalRequired: boolPtrInit(st.BranchCodeOwnerApprovalRequiredGitHub),
-			}
-		}
+		st.applyAccessControls(gl, gh)
 	}
-
-	// catVariables (debug-trace + unsafe-expansion) is GitLab-only.
-	// The GitHub-side controls in that bucket are all benched, so
-	// the option doesn't even appear in the menu when only GitHub
-	// is selected — but guard the writer too for defence in depth.
-	if has(catVariables) && gitlabSection != nil {
-		if st.DebugTraceEnabled {
-			fb := parseLinesInit(st.DebugForbiddenVariablesMultiline)
-			if len(fb) == 0 {
-				fb = []string{"CI_DEBUG_TRACE", "CI_DEBUG_SERVICES"}
-			}
-			gitlabSection.Controls.PipelineMustNotEnableDebugTrace = &configuration.DebugTraceControlConfig{
-				Enabled:            boolPtrInit(true),
-				ForbiddenVariables: fb,
-			}
-		}
-		if st.UnsafeExpansionEnabled {
-			danger := parseLinesInit(st.DangerousVariablesMultiline)
-			if len(danger) == 0 {
-				danger = defaultDangerousVariables()
-			}
-			gitlabSection.Controls.PipelineMustNotUseUnsafeVariableExpansion = &configuration.VariableInjectionControlConfig{
-				Enabled:            boolPtrInit(true),
-				DangerousVariables: danger,
-				AllowedPatterns:    parseLinesInit(st.AllowedPatternsMultiline),
-			}
-		}
+	// catVariables is GitLab-only.
+	if has(catVariables) && gl != nil {
+		st.applyVariableControls(gl)
 	}
 
 	return cfg
@@ -1263,14 +1266,14 @@ func starterPlumberConfig() *configuration.PlumberConfig {
 		Providers:              []string{"gitlab", "github"},
 		Categories:             []string{catImages, catComposition, catAccess, catVariables},
 		ForbiddenTagsEnabled:   true,
-		ForbiddenTagsCSV:       "latest, dev, development, staging, main, master",
+		ForbiddenTagsCSV:       defaultForbiddenTags,
 		PinByDigest:            true,
 		AuthorizedEnabled:      true,
 		TrustDockerHubOfficial: true,
 		TrustedURLsText:        strings.Join(defaultTrustedURLs(), "\n"),
 		CompositionChoices: []string{
 			compHardcoded, compUpToDate, compForbidden, compSecurity, compScripts, compJobVars, compDinD,
-			compActionPin, compDangerousTriggers, compPRTargetHead, compDeclarePermissions, compReusableSecrets, compTemplateInjection,
+			compActionPin, compAuthorizedActions, compDangerousTriggers, compPRTargetHead, compDeclarePermissions, compReusableSecrets, compTemplateInjection,
 			compWriteAllPerms, compArchivedActions, compKnownCVEs, compDebugTraceGitHub,
 		},
 		ActionPinTrustedOwnersMultiline:        strings.Join(defaultGitHubTrustedActionOwners(), "\n"),
@@ -1288,7 +1291,7 @@ func starterPlumberConfig() *configuration.PlumberConfig {
 		JobOverrideVariablesMultiline:          strings.Join(defaultJobOverrideVariables(), "\n"),
 		DinDDetectInsecureDaemon:               true,
 		BranchEnabled:                          true,
-		BranchPatterns:                         "main, master, release/*, production, dev",
+		BranchPatterns:                         defaultBranchPatterns,
 		BranchDefaultMustBeProtected:           true,
 		BranchAllowForcePush:                   false,
 		BranchCodeOwnerApprovalRequired:        false,
@@ -1327,31 +1330,35 @@ func injectGitleaksHints(b []byte) []byte {
 
 // writeInitConfig writes validated YAML with a provenance header. If promptIfExists is true
 // and the path exists without --force, an interactive overwrite prompt may be shown.
-func writeInitConfig(cfg *configuration.PlumberConfig, path string, force, promptIfExists bool, generatedBy string) error {
-	if cfg == nil {
-		return fmt.Errorf("internal error: nil config")
+// checkInitOverwrite returns an error when the target file exists and the user
+// does not consent to overwriting it.
+func checkInitOverwrite(path string, force, promptIfExists bool) error {
+	if _, err := os.Stat(path); err != nil {
+		return nil // file does not exist — nothing to check
 	}
-	if err := cfg.Validate(); err != nil {
-		return fmt.Errorf("generated configuration failed validation: %w", err)
+	if force {
+		return nil
 	}
-
-	if _, err := os.Stat(path); err == nil && !force {
-		if promptIfExists && isInteractiveInit() {
-			var overwrite bool
-			if err := survey.AskOne(&survey.Confirm{
-				Message: fmt.Sprintf("%s already exists. Overwrite?", path),
-				Default: false,
-			}, &overwrite); err != nil {
-				return err
-			}
-			if !overwrite {
-				return fmt.Errorf("aborted: file exists")
-			}
-		} else {
-			return fmt.Errorf("file %s already exists (use --force to overwrite)", path)
+	if promptIfExists && isInteractiveInit() {
+		var overwrite bool
+		if err := survey.AskOne(&survey.Confirm{
+			Message: fmt.Sprintf("%s already exists. Overwrite?", path),
+			Default: false,
+		}, &overwrite); err != nil {
+			return err
 		}
+		if !overwrite {
+			return fmt.Errorf("aborted: file exists")
+		}
+		return nil
 	}
+	return fmt.Errorf("file %s already exists (use --force to overwrite)", path)
+}
 
+// marshalAndWriteConfig encodes cfg to YAML, prepends the provenance header,
+// ensures the parent directory exists, writes the file, and prints any
+// post-write validation warnings.
+func marshalAndWriteConfig(cfg *configuration.PlumberConfig, path, generatedBy string) error {
 	out, err := yaml.Marshal(cfg)
 	if err != nil {
 		return fmt.Errorf("marshal config: %w", err)
@@ -1369,12 +1376,28 @@ func writeInitConfig(cfg *configuration.PlumberConfig, path string, force, promp
 	if err := os.WriteFile(path, content, 0644); err != nil {
 		return fmt.Errorf("write %s: %w", path, err)
 	}
-	if _, _, warnings, err := configuration.LoadPlumberConfig(path); err != nil {
+	_, _, warnings, err := configuration.LoadPlumberConfig(path)
+	if err != nil {
 		return fmt.Errorf("reload check failed: %w", err)
-	} else {
-		for _, w := range warnings {
-			fmt.Fprintf(os.Stderr, "warning: %s\n", w)
-		}
+	}
+	for _, w := range warnings {
+		fmt.Fprintf(os.Stderr, "warning: %s\n", w)
+	}
+	return nil
+}
+
+func writeInitConfig(cfg *configuration.PlumberConfig, path string, force, promptIfExists bool, generatedBy string) error {
+	if cfg == nil {
+		return fmt.Errorf("internal error: nil config")
+	}
+	if err := cfg.Validate(); err != nil {
+		return fmt.Errorf("generated configuration failed validation: %w", err)
+	}
+	if err := checkInitOverwrite(path, force, promptIfExists); err != nil {
+		return err
+	}
+	if err := marshalAndWriteConfig(cfg, path, generatedBy); err != nil {
+		return err
 	}
 	fmt.Printf("Wrote %s\n", path)
 	return nil

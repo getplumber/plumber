@@ -8,8 +8,8 @@ branding:
 
 inputs:
   version:
-    description: "Plumber release tag to install (e.g. v0.3.51). Downloaded from GitHub Releases and verified against checksums.txt and SLSA attestation"
-    default: "v0.3.51"
+    description: "Plumber release tag to install (e.g. v0.3.65). Downloaded from GitHub Releases and verified against checksums.txt and SLSA attestation"
+    default: "v0.3.65"
   verify-attestation:
     description: "Verify the downloaded binary's build-provenance attestation (sigstore/SLSA) against the getplumber/plumber release workflow, using the gh CLI. This anchors the binary to a trusted build regardless of the mutable release tag. Disable for air-gapped or GHES setups without attestation access."
     default: "true"
@@ -38,7 +38,7 @@ inputs:
     description: "Skip these controls (comma-separated). Mutually exclusive with controls."
     default: ""
   score:
-    description: "Show the Plumber letter score, points and breakdown."
+    description: "Include the full Plumber points breakdown. The score is shown by default; set false for the banner without the per-issue-code breakdown."
     default: "true"
   fail-warnings:
     description: "Fail the run on warnings: unknown configuration keys (exit 2) and 'could not verify' checks such as a skipped known-CVE lookup when an action version cannot be resolved (exit 3). soft-fail does not mask exit 3."

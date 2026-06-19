@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/getplumber/plumber/configuration"
+	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	"github.com/getplumber/plumber/internal/ir"
 )
 
@@ -74,5 +75,35 @@ func TestAggregate_ReusableWorkflowRefsCountTowardActionPinning(t *testing.T) {
 	}
 	if stats.ReusableCalls != 3 {
 		t.Errorf("ReusableCalls = %d, want 3 (the three jobs with ReusableWorkflowUses set)", stats.ReusableCalls)
+	}
+}
+
+// TestDangerousTriggerMetricFollowsFindings locks the
+// workflowsWithDangerousTrigger metric to the ISSUE-802 findings the rule
+// actually emits, rather than a structural scan of trigger names. The
+// rule's fork-guard recognition lives in Rego (#235), so a workflow with
+// a dangerous trigger but a `push`-event / author-association guard emits
+// no finding and must not inflate the metric (#235 follow-up).
+func TestDangerousTriggerMetricFollowsFindings(t *testing.T) {
+	// No ISSUE-802 findings → metric 0, even if a structural pass seeded
+	// a higher value.
+	s := &GitHubAnalysisStats{WorkflowsWithDangerousTrigger: 2}
+	ApplyGitHubFindingCounts(s, nil)
+	if s.WorkflowsWithDangerousTrigger != 0 {
+		t.Fatalf("no ISSUE-802 findings → metric 0, got %d", s.WorkflowsWithDangerousTrigger)
+	}
+
+	// Per-job findings collapse to their distinct workflows; other codes
+	// are ignored.
+	s = &GitHubAnalysisStats{}
+	findings := []opaengine.Finding{
+		{Code: "ISSUE-802", Job: "ci/build", File: ".github/workflows/ci.yml"},
+		{Code: "ISSUE-802", Job: "ci/test", File: ".github/workflows/ci.yml"},
+		{Code: "ISSUE-802", Job: "release/publish", File: ".github/workflows/release.yml"},
+		{Code: "ISSUE-103", Job: "ci/build", File: ".github/workflows/ci.yml"},
+	}
+	ApplyGitHubFindingCounts(s, findings)
+	if s.WorkflowsWithDangerousTrigger != 2 {
+		t.Fatalf("expected 2 distinct flagged workflows, got %d", s.WorkflowsWithDangerousTrigger)
 	}
 }

