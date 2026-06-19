@@ -144,8 +144,10 @@ spec:
     entrypoint: [""]  # Override ENTRYPOINT to allow shell script execution
   variables:
     # Use intermediate variable to avoid self-reference when default is $GITLAB_TOKEN
+    # GITLAB_TOKEN is exported in script (not here) to avoid a circular variable
+    # reference: with the default, PLUMBER_TOKEN expands to $GITLAB_TOKEN, so
+    # defining GITLAB_TOKEN: $PLUMBER_TOKEN here cycles back on itself.
     PLUMBER_TOKEN: $[[ inputs.gitlab_token ]]
-    GITLAB_TOKEN: $PLUMBER_TOKEN
     PLUMBER_ANALYZE_CONFIG: $[[ inputs.config_file ]]
     PLUMBER_ANALYZE_GITLAB_URL: $[[ inputs.server_url ]]
     PLUMBER_ANALYZE_PROJECT: $[[ inputs.project_path ]]
@@ -166,6 +168,10 @@ spec:
     PLUMBER_ANALYZE_CI_CONFIG_PATH: $[[ inputs.ci_config_path ]]
     PLUMBER_ANALYZE_VERBOSE: $[[ inputs.verbose ]]
   script:
+    # Export GITLAB_TOKEN for the CLI here (runtime), where $PLUMBER_TOKEN is
+    # already expanded to the real token value, avoiding the circular reference
+    # that occurs if GITLAB_TOKEN is set from $PLUMBER_TOKEN in variables.
+    - export GITLAB_TOKEN="$PLUMBER_TOKEN"
     - plumber analyze
   artifacts:
     paths:
