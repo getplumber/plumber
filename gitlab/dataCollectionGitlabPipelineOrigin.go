@@ -115,6 +115,10 @@ type GitlabPipelineOriginDataProjectSpecific struct {
 	Version  string `json:"version"`
 	UpToDate bool   `json:"upToDate"`
 	Nested   bool   `json:"nested"`
+	// RefIsAmbiguous: the pinned Version resolves upstream as both a
+	// tag and a branch (ref-confusion, ISSUE-710). Set by the origin
+	// collector's tag+branch probe; false unless both are confirmed.
+	RefIsAmbiguous bool `json:"refIsAmbiguous"`
 
 	// Job related data
 	Jobs []GitlabPipelineJobData `json:"jobs"`
@@ -192,6 +196,34 @@ func splitComponentPath(cleanPath string) (project string, component string) {
 		return "", cleanPath
 	}
 	return cleanPath[:i], cleanPath[i+1:]
+}
+
+// isFullCommitSHA reports whether s is a 40-character lowercase hex commit
+// SHA. SHA-pinned includes are unambiguous, so ref-confusion (ISSUE-710)
+// skips them.
+func isFullCommitSHA(s string) bool {
+	if len(s) != 40 {
+		return false
+	}
+	for _, r := range s {
+		if (r < '0' || r > '9') && (r < 'a' || r > 'f') {
+			return false
+		}
+	}
+	return true
+}
+
+// shouldProbeRefAmbiguity reports whether a pinned include version is a
+// literal symbolic ref worth probing for a tag/branch collision
+// (ref-confusion, ISSUE-710). Exempt: empty (local include, no ref),
+// ~latest / latest (catalog-resolved, not a literal ref), HEAD, and full
+// commit SHAs (unambiguous by construction).
+func shouldProbeRefAmbiguity(version string) bool {
+	switch strings.TrimSpace(version) {
+	case "", "~latest", "latest", "HEAD":
+		return false
+	}
+	return !isFullCommitSHA(strings.TrimSpace(version))
 }
 
 // latestSemver returns the newest version from versions using semantic-version
@@ -676,6 +708,17 @@ func (dc *GitlabPipelineOriginDataCollection) Run(project *ProjectInfo, token st
 					lInclude.WithField("cleanPath", cleanPath).Debug("Could not resolve latest version for component (not in catalog and no semver tags)")
 				}
 
+				// ref-confusion (ISSUE-710): a component pinned to a name that
+				// resolves upstream as BOTH a tag and a branch is ambiguous.
+				// Fail-safe — only a confirmed tag+branch double-hit sets the
+				// flag; a SHA / ~latest / failed probe leaves it false.
+				if shouldProbeRefAmbiguity(version) {
+					if tagExists, branchExists, errAmb := RefResolvesAsTagAndBranch(project, version, token, conf.GitlabURL, conf); errAmb == nil && tagExists && branchExists {
+						originData.RefIsAmbiguous = true
+						lInclude.WithFields(logrus.Fields{"project": project, "ref": version}).Debug("Component ref resolves as both a tag and a branch (ref-confusion)")
+					}
+				}
+
 			// External file (project)
 			case glOriginProject:
 
@@ -683,6 +726,16 @@ func (dc *GitlabPipelineOriginDataCollection) Run(project *ProjectInfo, token st
 				originData.OriginType = originProject
 				// Set version from ref
 				originData.Version = include.Extra.Ref
+
+				// ref-confusion (ISSUE-710): a project include whose ref
+				// resolves as BOTH a tag and a branch in the source project is
+				// ambiguous. Fail-safe — confirmed tag+branch double-hit only.
+				if include.Extra.Project != "" && shouldProbeRefAmbiguity(include.Extra.Ref) {
+					if tagExists, branchExists, errAmb := RefResolvesAsTagAndBranch(include.Extra.Project, include.Extra.Ref, token, conf.GitlabURL, conf); errAmb == nil && tagExists && branchExists {
+						originData.RefIsAmbiguous = true
+						lInclude.WithFields(logrus.Fields{"project": include.Extra.Project, "ref": include.Extra.Ref}).Debug("Project include ref resolves as both a tag and a branch (ref-confusion)")
+					}
+				}
 
 				// Try to detect if this project include is outdated by checking tags
 				// The ref format can be: templates/go/go@0.1.0

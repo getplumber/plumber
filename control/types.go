@@ -118,13 +118,14 @@ type GitHubAnalysisStats struct {
 	ActionRefsUnpinned int
 	ActionRefsExempt   int
 
-	// Actions supply-chain (ISSUE-702, ISSUE-703). Counted across
-	// every `uses:` entry that has API metadata, regardless of the
-	// pin-by-SHA trusted-owner exemption — the rules themselves do
+	// Actions supply-chain (ISSUE-702, ISSUE-703, ISSUE-710). Counted
+	// across every `uses:` entry that has API metadata, regardless of
+	// the pin-by-SHA trusted-owner exemption — the rules themselves do
 	// not exempt. In practice trusted-owner refs have nil metadata
 	// (enrichment skips them) and won't add to either count.
 	ActionRefsArchived   int
 	ActionRefsVulnerable int
+	ActionRefsAmbiguous  int
 
 	// Container images (ISSUE-102 / ISSUE-103).
 	ImagesTotal          int

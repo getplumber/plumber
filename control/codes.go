@@ -322,11 +322,11 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 	CodeRefConfusion: {
 		Code:        CodeRefConfusion,
 		Severity:    SeverityMedium,
-		Title:       "Action ref name collides with both a tag and a branch",
-		Description: "A workflow pins an action to a name that exists upstream **as both a tag and a branch** (classic case: a tag `v1` kept in parallel with a branch `v1`). GitHub Actions resolves tags first, so today the workflow runs the tagged commit — but a maintainer rename, a pipeline typo, or a CI parameter that drops a character can switch the binding to the branch, which tracks every push. The ambiguity makes the reference fundamentally unreliable: the reviewer cannot tell from the YAML alone which of the two upstream revisions will execute.",
-		Remediation: "Replace the ambiguous name with either a 40-character commit SHA (preferred) or a suffix that disambiguates (`refs/tags/v1` vs `refs/heads/v1`). Ask the action maintainer to remove one of the two refs; keeping both is a supply-chain landmine for every caller.",
+		Title:       "Reference collides with both a tag and a branch",
+		Description: "An external CI reference is pinned to a name that exists upstream **as both a tag and a branch** (classic case: a tag `v1` kept in parallel with a branch `v1`). This covers GitHub Actions `uses:` refs and GitLab `include:` project `ref:` / component `@version` refs. The platform resolves the tag first, so today the pinned, tagged revision runs — but a maintainer rename, a typo, or a parameter that drops a character can switch the binding to the branch, which tracks every push. The ambiguity makes the reference fundamentally unreliable: the reviewer cannot tell from the YAML alone which of the two upstream revisions will execute, and the referenced code runs in the pipeline with its secrets and tokens.",
+		Remediation: "Pin the reference to a 40-character commit SHA (preferred), which is unambiguous. Alternatively, ask the upstream maintainer to remove one of the two colliding refs; keeping both is a supply-chain landmine for every caller.",
 		DocURL:      docsBaseURL + string(CodeRefConfusion),
-		ControlName: "actionRefsMustNotCollide",
+		ControlName: "externalRefsMustNotCollide",
 	},
 	CodeKnownVulnerableAction: {
 		Code:        CodeKnownVulnerableAction,

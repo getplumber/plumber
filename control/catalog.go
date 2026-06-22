@@ -58,6 +58,11 @@ func GitLabControls(pc *configuration.PlumberConfig) []ControlEntry {
 		Skipped:     c.PipelineMustNotIncludeHardcodedJobs == nil || !c.PipelineMustNotIncludeHardcodedJobs.IsEnabled(),
 	})
 	entries = append(entries, ControlEntry{
+		DisplayName: "Includes must not use ambiguous tag/branch refs",
+		ControlName: "externalRefsMustNotCollide",
+		Skipped:     c.ExternalRefsMustNotCollide == nil || !c.ExternalRefsMustNotCollide.IsEnabled(),
+	})
+	entries = append(entries, ControlEntry{
 		DisplayName: "Includes must be up to date",
 		ControlName: "includesMustBeUpToDate",
 		Skipped:     c.IncludesMustBeUpToDate == nil || !c.IncludesMustBeUpToDate.IsEnabled(),
@@ -210,6 +215,11 @@ func GitHubControls(pc *configuration.PlumberConfig) []ControlEntry {
 		Skipped:     c.WorkflowMustNotGrantPermissionsWriteAll == nil || !c.WorkflowMustNotGrantPermissionsWriteAll.IsEnabled(),
 	})
 	entries = append(entries, ControlEntry{
+		DisplayName: "Actions must not use ambiguous tag/branch refs",
+		ControlName: "externalRefsMustNotCollide",
+		Skipped:     c.ExternalRefsMustNotCollide == nil || !c.ExternalRefsMustNotCollide.IsEnabled(),
+	})
+	entries = append(entries, ControlEntry{
 		DisplayName: "Actions must not reference archived repositories",
 		ControlName: "actionsMustNotBeArchived",
 		Skipped:     c.ActionsMustNotBeArchived == nil || !c.ActionsMustNotBeArchived.IsEnabled(),
@@ -284,6 +294,9 @@ func DisabledControlNames(c *configuration.ControlsConfig) map[string]bool {
 	}
 	if cfg := c.PipelineMustNotIncludeHardcodedJobs; cfg == nil || !cfg.IsEnabled() {
 		out["pipelineMustNotIncludeHardcodedJobs"] = true
+	}
+	if cfg := c.ExternalRefsMustNotCollide; cfg == nil || !cfg.IsEnabled() {
+		out["externalRefsMustNotCollide"] = true
 	}
 	if cfg := c.IncludesMustBeUpToDate; cfg == nil || !cfg.IsEnabled() {
 		out["includesMustBeUpToDate"] = true

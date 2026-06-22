@@ -182,6 +182,22 @@ gitlab:
       # Set to false to disable this control
       enabled: true
     # ===========================================
+    # Includes must not use ambiguous tag/branch refs
+    # ===========================================
+    # Flags `include:` references whose ref resolves upstream as BOTH a tag
+    # and a branch: an `include:project` with `ref: v1`, or a CI/CD component
+    # `@v1`, where the source project keeps both a `v1` tag and a `v1` branch.
+    # GitLab resolves the tag first, so the pipeline runs today — but a tag
+    # deletion, rename, or typo silently switches the include onto the mutable
+    # branch, and the reviewer cannot tell from the YAML which revision runs.
+    #
+    # API-backed: the collector probes the source project's tag and branch
+    # namespaces and flags only a confirmed double-hit. Requires a token;
+    # without one (or on a failed probe) the control abstains. Pin to a
+    # 40-char commit SHA to remove the ambiguity.
+    externalRefsMustNotCollide:
+      enabled: true
+    # ===========================================
     # Includes must be up to date
     # ===========================================
     # Detects CI/CD includes (components, templates, project files) from the
@@ -868,6 +884,26 @@ github:
     #
     # Pair with `workflowsMustDeclarePermissions` for the full story.
     workflowMustNotGrantPermissionsWriteAll:
+      enabled: true
+
+    # ===========================================
+    # Actions must not use ambiguous tag/branch refs
+    # ===========================================
+    # Flags `uses: owner/repo@ref` references whose symbolic name resolves
+    # upstream as BOTH a tag and a branch (e.g. a tag `v1` kept alongside a
+    # long-lived `v1` branch). GitHub Actions resolves tags first, so the
+    # workflow runs the tagged commit today — but a tag deletion, rename, or
+    # a workflow typo silently switches which revision executes, and the
+    # reviewer cannot tell from the YAML alone. Pin to a 40-char commit SHA
+    # to remove the ambiguity.
+    #
+    # Scope: committed `.github/workflows/*.{yml,yaml}` only; step-level
+    # `uses: owner/repo@ref`. Requires GitHub API auth: the collector probes
+    # both the tag and branch namespaces, and without auth the rule abstains.
+    #
+    # Fail-safe: the finding fires only on a positive tag+branch double-hit;
+    # any probe failure leaves the ref unflagged (no false positive).
+    externalRefsMustNotCollide:
       enabled: true
 
     # ===========================================

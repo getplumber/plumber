@@ -323,6 +323,7 @@ func TestValidControlNames(t *testing.T) {
 		"branchMustBeProtected",
 		"containerImageMustComeFromAuthorizedSources",
 		"containerImageMustNotUseForbiddenTags",
+		"externalRefsMustNotCollide",
 		"githubActionMustComeFromAuthorizedSources",
 		"includesMustBeUpToDate",
 		"includesMustNotUseForbiddenVersions",

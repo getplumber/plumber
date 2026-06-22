@@ -33,14 +33,15 @@ const (
 	catVariables   = "Variable security (debug trace, unsafe expansion)"
 
 	// GitLab-applicable composition checks (existing).
-	compHardcoded = "Disallow hardcoded jobs (use includes/components)"
-	compUpToDate  = "Require catalog includes to be up to date"
-	compForbidden = "Forbid mutable include refs (latest, main, HEAD, …)"
-	compSecurity  = "Detect weakened security scanning jobs"
-	compScripts   = "Detect unverified script execution (curl|bash, base64|bash, |sh, …)"
-	compJobVars   = "Detect sensitive variables overridden in pipeline YAML"
-	compDinD      = "Detect Docker-in-Docker (dind) usage"
-	compLeaks     = "Scan pipeline YAML for hardcoded secrets (requires `gitleaks` on PATH)"
+	compHardcoded    = "Disallow hardcoded jobs (use includes/components)"
+	compUpToDate     = "Require catalog includes to be up to date"
+	compForbidden    = "Forbid mutable include refs (latest, main, HEAD, …)"
+	compRefCollision = "Flag include refs that resolve to both a tag and a branch"
+	compSecurity     = "Detect weakened security scanning jobs"
+	compScripts      = "Detect unverified script execution (curl|bash, base64|bash, |sh, …)"
+	compJobVars      = "Detect sensitive variables overridden in pipeline YAML"
+	compDinD         = "Detect Docker-in-Docker (dind) usage"
+	compLeaks        = "Scan pipeline YAML for hardcoded secrets (requires `gitleaks` on PATH)"
 
 	// GitHub-applicable composition checks (new). The cross-provider ones
 	// (security jobs, DinD) reuse compSecurity / compDinD above.
@@ -52,6 +53,7 @@ const (
 	compReusableSecrets    = "Forbid reusable-workflow calls using secrets: inherit"
 	compTemplateInjection  = "Detect script-injection sinks (${{ github.event.* }} → run:)"
 	compWriteAllPerms      = "Forbid permissions: write-all in workflows"
+	compRefConfusion       = "Flag third-party actions whose ref is both a tag and a branch"
 	compArchivedActions    = "Flag third-party actions from archived repositories"
 	compKnownCVEs          = "Flag third-party actions with known CVEs (GitHub Advisory DB)"
 	compDebugTraceGitHub   = "Flag Actions debug logging (ACTIONS_STEP_DEBUG / ACTIONS_RUNNER_DEBUG)"
@@ -690,7 +692,7 @@ func compositionOptionsForProviders(providers []string) []string {
 	}
 	var out []string
 	if hasGitLab {
-		out = append(out, compHardcoded, compUpToDate, compForbidden)
+		out = append(out, compHardcoded, compUpToDate, compForbidden, compRefCollision)
 	}
 	out = append(out, compSecurity, compDinD, compLeaks)
 	if hasGitLab {
@@ -706,6 +708,7 @@ func compositionOptionsForProviders(providers []string) []string {
 			compReusableSecrets,
 			compTemplateInjection,
 			compWriteAllPerms,
+			compRefConfusion,
 			compArchivedActions,
 			compKnownCVEs,
 			compDebugTraceGitHub,
@@ -1059,6 +1062,9 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 					Enabled: boolPtrInit(true),
 				}
 			}
+			if compSelected(st, compRefCollision) {
+				gl.Controls.ExternalRefsMustNotCollide = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
+			}
 			if compSelected(st, compForbidden) {
 				vers := parseLinesInit(st.ForbiddenVersionsMultiline)
 				if len(vers) == 0 {
@@ -1220,6 +1226,9 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 			if compSelected(st, compWriteAllPerms) {
 				gh.Controls.WorkflowMustNotGrantPermissionsWriteAll = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
 			}
+			if compSelected(st, compRefConfusion) {
+				gh.Controls.ExternalRefsMustNotCollide = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
+			}
 			if compSelected(st, compArchivedActions) {
 				gh.Controls.ActionsMustNotBeArchived = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
 			}
@@ -1272,9 +1281,9 @@ func starterPlumberConfig() *configuration.PlumberConfig {
 		TrustDockerHubOfficial: true,
 		TrustedURLsText:        strings.Join(defaultTrustedURLs(), "\n"),
 		CompositionChoices: []string{
-			compHardcoded, compUpToDate, compForbidden, compSecurity, compScripts, compJobVars, compDinD,
+			compHardcoded, compUpToDate, compForbidden, compRefCollision, compSecurity, compScripts, compJobVars, compDinD,
 			compActionPin, compAuthorizedActions, compDangerousTriggers, compPRTargetHead, compDeclarePermissions, compReusableSecrets, compTemplateInjection,
-			compWriteAllPerms, compArchivedActions, compKnownCVEs, compDebugTraceGitHub,
+			compWriteAllPerms, compRefConfusion, compArchivedActions, compKnownCVEs, compDebugTraceGitHub,
 		},
 		ActionPinTrustedOwnersMultiline:        strings.Join(defaultGitHubTrustedActionOwners(), "\n"),
 		SecurityJobPatternsGitHubMultiline:     strings.Join(defaultGitHubSecurityJobPatterns(), "\n"),

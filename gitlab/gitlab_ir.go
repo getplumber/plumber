@@ -134,13 +134,14 @@ func buildIncludes(origin *GitlabPipelineOriginData, ciConfigPath string) []ir.I
 	for i := range origin.Origins {
 		o := &origin.Origins[i]
 		inc := ir.Include{
-			Kind:          o.OriginType,
-			Source:        o.GitlabIncludeOrigin.Location,
-			Ref:           o.Version,
-			Current:       o.PlumberOrigin.LatestVersion,
-			Nested:        o.Nested,
-			ComponentName: o.GitlabComponent.ComponentName,
-			OriginHash:    o.OriginHash,
+			Kind:           o.OriginType,
+			Source:         o.GitlabIncludeOrigin.Location,
+			Ref:            o.Version,
+			Current:        o.PlumberOrigin.LatestVersion,
+			Nested:         o.Nested,
+			ComponentName:  o.GitlabComponent.ComponentName,
+			RefIsAmbiguous: o.RefIsAmbiguous,
+			OriginHash:     o.OriginHash,
 		}
 		if inc.Source == "" && o.GitlabComponent.ComponentIncludePath != "" {
 			inc.Source = o.GitlabComponent.ComponentIncludePath

@@ -26,6 +26,9 @@ var validControlSchema = map[string][]string{
 	"pipelineMustNotIncludeHardcodedJobs": {
 		"enabled",
 	},
+	"externalRefsMustNotCollide": {
+		"enabled",
+	},
 	"includesMustBeUpToDate": {
 		"enabled",
 	},
@@ -210,6 +213,14 @@ type ControlsConfig struct {
 
 	// PipelineMustNotIncludeHardcodedJobs control configuration
 	PipelineMustNotIncludeHardcodedJobs *HardcodedJobsControlConfig `yaml:"pipelineMustNotIncludeHardcodedJobs,omitempty"`
+
+	// ExternalRefsMustNotCollide control configuration (GitLab + GitHub).
+	// Flags external CI references whose symbolic ref resolves upstream as
+	// BOTH a tag and a branch (ref-confusion, ISSUE-710): GitHub `uses:`
+	// action refs and GitLab `include:` project `ref:` / component
+	// `@version` refs. Driven by a per-ref tag+branch API probe.
+	// Config-free; toggle via `enabled`.
+	ExternalRefsMustNotCollide *EnabledOnlyControlConfig `yaml:"externalRefsMustNotCollide,omitempty"`
 
 	// IncludesMustBeUpToDate control configuration
 	IncludesMustBeUpToDate *IncludesUpToDateControlConfig `yaml:"includesMustBeUpToDate,omitempty"`

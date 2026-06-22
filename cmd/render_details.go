@@ -373,6 +373,11 @@ func buildGitHubControlStats(controlName string, stats *control.GitHubAnalysisSt
 			{Label: statJobsChecked, Value: fmt.Sprintf("%d", stats.JobsTotal)},
 			{Label: "Jobs With write-all", Value: fmt.Sprintf("%d", stats.JobsWithWriteAll)},
 		}
+	case "externalRefsMustNotCollide":
+		return []statLine{
+			{Label: statActionRefsChecked, Value: fmt.Sprintf("%d", stats.ActionRefsTotal+stats.ActionRefsExempt)},
+			{Label: "Ambiguous Refs Found", Value: fmt.Sprintf("%d", stats.ActionRefsAmbiguous)},
+		}
 	case "actionsMustNotBeArchived":
 		return []statLine{
 			{Label: statActionRefsChecked, Value: fmt.Sprintf("%d", stats.ActionRefsTotal+stats.ActionRefsExempt)},
@@ -504,6 +509,19 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 		return []statLine{
 			{Label: "Total Jobs", Value: fmt.Sprintf("%d", total)},
 			{Label: "Hardcoded Jobs", Value: fmt.Sprintf("%d", hardcoded)},
+		}
+	case "externalRefsMustNotCollide":
+		// Cross-provider control: GitHub counts action refs, GitLab counts
+		// external includes. Branch on which collector populated the result.
+		if result.GitHubStats != nil {
+			return []statLine{
+				{Label: statActionRefsChecked, Value: fmt.Sprintf("%d", result.GitHubStats.ActionRefsTotal)},
+				{Label: "Ambiguous Refs Found", Value: fmt.Sprintf("%d", findingsCount)},
+			}
+		}
+		return []statLine{
+			{Label: "Total Includes", Value: fmt.Sprintf("%d", _externalIncludeCount(result))},
+			{Label: "Ambiguous Refs Found", Value: fmt.Sprintf("%d", findingsCount)},
 		}
 	case "includesMustBeUpToDate":
 		// _externalIncludeCount strips the project's own pseudo-origin

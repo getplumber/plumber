@@ -3271,36 +3271,116 @@ func TestIssue308_SecretsDynamicIndex(t *testing.T) {
 // test harness (PLUMBER_DISABLE_GITHUB_API is set in TestMain).
 // The test checks that the policy fires exactly when RefIsAmbiguous
 // is true on an Action.
-func TestIssue113_RefConfusion(t *testing.T) {
+// TestIssue710_RefConfusion flags action refs whose symbolic name
+// resolves upstream as BOTH a tag and a branch (the collector sets
+// metadata.RefIsAmbiguous). The rule fires only on a positive
+// double-hit; an unambiguous ref and a ref with no metadata at all
+// both stay silent — fail-safe, so a degraded API probe never invents
+// a finding.
+func TestIssue710_RefConfusion(t *testing.T) {
 	engine := opaengine.New()
 	if err := engine.LoadFromFS(policies.FS); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 
-	pipeline := &ir.NormalizedPipeline{
-		Provider: ir.ProviderGitHub,
-		Jobs: []ir.Job{
-			{
-				Name: "build",
-				Uses: []ir.Action{
-					{Uses: "owner/repo@v1", Metadata: &ir.ActionMetadata{RefKind: "tag", RefExists: true, RefIsAmbiguous: true}},
-					{Uses: "actions/checkout@v4", Metadata: &ir.ActionMetadata{RefKind: "tag", RefExists: true}},
-				},
-			},
+	cases := []struct {
+		name     string
+		action   ir.Action
+		wantHits int
+	}{
+		{
+			name:     "ambiguous tag+branch flagged",
+			action:   ir.Action{Uses: "owner/repo@v1", Metadata: &ir.ActionMetadata{RefKind: "tag", RefExists: true, RefIsAmbiguous: true}},
+			wantHits: 1,
+		},
+		{
+			name:     "unambiguous tag silent",
+			action:   ir.Action{Uses: "actions/checkout@v4", Metadata: &ir.ActionMetadata{RefKind: "tag", RefExists: true}},
+			wantHits: 0,
+		},
+		{
+			name:     "missing metadata abstains",
+			action:   ir.Action{Uses: "owner/repo@v2"},
+			wantHits: 0,
 		},
 	}
-	findings, err := engine.Evaluate(context.Background(), pipeline, nil)
-	if err != nil {
-		t.Fatalf("evaluate: %v", err)
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pipeline := &ir.NormalizedPipeline{
+				Provider: ir.ProviderGitHub,
+				Jobs:     []ir.Job{{Name: "build", Uses: []ir.Action{tc.action}}},
+			}
+			findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+			if err != nil {
+				t.Fatalf("evaluate: %v", err)
+			}
+			hits := 0
+			for _, f := range findings {
+				if f.Code == "ISSUE-710" {
+					hits++
+				}
+			}
+			if hits != tc.wantHits {
+				t.Fatalf("%s: expected %d ISSUE-710 finding(s), got %d", tc.name, tc.wantHits, hits)
+			}
+		})
 	}
-	hits := 0
-	for _, f := range findings {
-		if f.Code == "ISSUE-710" {
-			hits++
-		}
+}
+
+// TestIssue710_GitLabRefConfusion flags GitLab includes whose ref
+// resolves upstream as both a tag and a branch (the collector sets
+// Include.RefIsAmbiguous). Fires only on a positive double-hit; a clean
+// tag pin and a SHA pin both stay silent — fail-safe, so a degraded
+// probe never invents a finding.
+func TestIssue710_GitLabRefConfusion(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFS(policies.FS); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
 	}
-	if hits != 1 {
-		t.Fatalf("expected 1 ISSUE-710 finding, got %d", hits)
+
+	cases := []struct {
+		name     string
+		include  ir.Include
+		wantHits int
+	}{
+		{
+			name:     "ambiguous tag+branch flagged",
+			include:  ir.Include{Kind: "component", Source: "gitlab.com/my-org/comp/tmpl", Ref: "v1", RefIsAmbiguous: true},
+			wantHits: 1,
+		},
+		{
+			name:     "clean tag pin silent",
+			include:  ir.Include{Kind: "component", Source: "gitlab.com/my-org/comp/tmpl", Ref: "v3"},
+			wantHits: 0,
+		},
+		{
+			name:     "sha pin silent",
+			include:  ir.Include{Kind: "project", Source: "my-group/templates", Ref: "e3262fdd0914fa823210cdb79a8c421e2cef79d8"},
+			wantHits: 0,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pipeline := &ir.NormalizedPipeline{
+				Provider: ir.ProviderGitLab,
+				Includes: []ir.Include{tc.include},
+			}
+			findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+			if err != nil {
+				t.Fatalf("evaluate: %v", err)
+			}
+			hits := 0
+			for _, f := range findings {
+				if f.Code == "ISSUE-710" {
+					hits++
+				}
+			}
+			if hits != tc.wantHits {
+				t.Fatalf("%s: expected %d ISSUE-710 finding(s), got %d", tc.name, tc.wantHits, hits)
+			}
+		})
 	}
 }
 

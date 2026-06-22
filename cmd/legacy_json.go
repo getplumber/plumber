@@ -100,6 +100,8 @@ func buildLegacyResult(e control.ControlEntry, result *control.AnalysisResult, p
 		return "branchProtectionResult", buildBranchProtectionBlock(common, result, pc, findings)
 	case "pipelineMustNotIncludeHardcodedJobs":
 		return "hardcodedJobsResult", buildHardcodedJobsBlock(common, result, findings)
+	case "externalRefsMustNotCollide":
+		return "includeRefConfusionResult", buildIncludeRefConfusionBlock(common, result, findings)
 	case "includesMustBeUpToDate":
 		return "outdatedIncludesResult", buildOutdatedIncludesBlock(common, result, findings)
 	// (jobNameKey is dropped for the outdated builder — the legacy
@@ -646,6 +648,55 @@ func buildOutdatedIncludesBlock(c legacyCommon, result *control.AnalysisResult, 
 			"originOutdated": outdated,
 			"ciInvalid":      0,
 			"ciMissing":      0,
+		},
+		"compliance": c.Compliance,
+		"version":    "0.1.0",
+		"ciValid":    c.CiValid,
+		"ciMissing":  c.CiMissing,
+		"skipped":    c.Skipped,
+	}
+}
+
+// buildIncludeRefConfusionBlock — ISSUE-710. Denominator is the number of
+// external includes scanned (same as the outdated block), numerator the
+// finding count, one per include whose ref resolves as both a tag and a
+// branch. Mirrors buildOutdatedIncludesBlock, including the precise
+// originHash re-injection lost in the Rego float64 round-trip.
+func buildIncludeRefConfusionBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	total := _externalIncludeCount(result)
+	issues := projectFindings(_sortedFindings(findings), "")
+	sort.SliceStable(issues, func(i, j int) bool {
+		a, _ := issues[i]["gitlabIncludeLocation"].(string)
+		b, _ := issues[j]["gitlabIncludeLocation"].(string)
+		return a < b
+	})
+	hashByLocation := map[string]uint64{}
+	if result.PipelineOriginData != nil {
+		for i := range result.PipelineOriginData.Origins {
+			o := &result.PipelineOriginData.Origins[i]
+			loc := o.GitlabIncludeOrigin.Location
+			if loc == "" {
+				loc = o.GitlabComponent.ComponentIncludePath
+			}
+			if loc != "" && o.OriginHash != 0 {
+				hashByLocation[loc] = o.OriginHash
+			}
+		}
+	}
+	for _, iss := range issues {
+		if loc, ok := iss["gitlabIncludeLocation"].(string); ok {
+			if h, ok := hashByLocation[loc]; ok {
+				iss["originHash"] = h
+			}
+		}
+	}
+	return map[string]any{
+		"issues": issues,
+		"metrics": map[string]any{
+			"total":         total,
+			"ambiguousRefs": len(findings),
+			"ciInvalid":     0,
+			"ciMissing":     0,
 		},
 		"compliance": c.Compliance,
 		"version":    "0.1.0",

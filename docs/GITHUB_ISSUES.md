@@ -490,7 +490,7 @@ silent.
 
 ## ISSUE-710 — `ref-confusion`
 
-**Severity:** `medium` _(API)_ • **Control:** `actionRefsMustNotCollide`
+**Severity:** `medium` _(API)_ • **Control:** `externalRefsMustNotCollide`
 
 The action's ref resolves upstream as **both a tag and a branch**
 (classic case: a tag `v1` kept alongside a long-lived `v1` branch).
@@ -1808,7 +1808,7 @@ and in `.plumber.yaml`) is declared in
 | ISSUE-713 | `githubActionMustComeFromAuthorizedSources` _(`minimumStars` requires the GitHub API)_ |
 | ISSUE-706 | `dockerfilesMustPinBaseImageByDigest` |
 | ISSUE-712 | `releaseWorkflowsMustSignArtefacts` |
-| ISSUE-710 | `actionRefsMustNotCollide` |
+| ISSUE-710 | `externalRefsMustNotCollide` |
 | ISSUE-703 | `actionsMustNotCarryKnownCVEs` |
 | ISSUE-711 | `actionsMustNotDuplicateRunnerBuiltins` |
 | ISSUE-213 | `workflowMustNotExportEntireGitHubContext` |

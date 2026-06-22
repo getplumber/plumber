@@ -56,6 +56,8 @@ func buildLegacyResultGitHub(e control.ControlEntry, result *control.AnalysisRes
 		return "requiredActionsResult", buildRequiredActionsBlock(common, pc.ControlsFor("github").WorkflowMustIncludeRequiredActions, result, findings)
 	case "workflowMustNotGrantPermissionsWriteAll":
 		return "excessivePermissionsResult", buildExcessivePermissionsBlock(common, result, findings)
+	case "externalRefsMustNotCollide":
+		return "refConfusionResult", buildRefConfusionBlock(common, result, findings)
 	case "actionsMustNotBeArchived":
 		return "archivedActionsResult", buildArchivedActionsBlock(common, result, findings)
 	case "actionsMustNotCarryKnownCVEs":
@@ -547,6 +549,27 @@ func buildAuthorizedActionSourcesBlock(c legacyCommon, result *control.AnalysisR
 			// (buildGitHubControlStats) so the two views never disagree.
 			"actionRefsTotal":        s.ActionRefsTotal + s.ActionRefsExempt,
 			"actionRefsUnauthorized": len(findings),
+		},
+		"compliance": c.Compliance,
+		"version":    "0.1.0",
+		"ciValid":    c.CiValid,
+		"ciMissing":  c.CiMissing,
+		"skipped":    c.Skipped,
+	}
+}
+
+// buildRefConfusionBlock — ISSUE-710. Denominator is the number of
+// action refs scanned (same denominator the archived/CVE blocks use),
+// so a "X of Y" ratio stays meaningful even when the GitHub API
+// metadata enrichment hit a quota and some refs went unresolved.
+// Numerator is the finding count, one per (job, ambiguous-ref) pair.
+func buildRefConfusionBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	s := statsOf(result)
+	return map[string]any{
+		"issues": projectFindings(findings, "job"),
+		"metrics": map[string]any{
+			"actionRefsTotal":     s.ActionRefsTotal,
+			"actionRefsAmbiguous": len(findings),
 		},
 		"compliance": c.Compliance,
 		"version":    "0.1.0",

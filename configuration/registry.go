@@ -33,6 +33,7 @@ var controlsMeta = map[string]ControlMeta{
 	"branchMustBeProtected":                       {Providers: []string{ProviderGitLab, ProviderGitHub}},
 	"containerImageMustComeFromAuthorizedSources": {Providers: []string{ProviderGitLab, ProviderGitHub}},
 	"containerImageMustNotUseForbiddenTags":       {Providers: []string{ProviderGitLab, ProviderGitHub}},
+	"externalRefsMustNotCollide":                  {Providers: []string{ProviderGitLab, ProviderGitHub}},
 	"includesMustBeUpToDate":                      {Providers: []string{ProviderGitLab, ProviderGitHub}},
 	"includesMustNotUseForbiddenVersions":         {Providers: []string{ProviderGitLab, ProviderGitHub}},
 	"pipelineMustIncludeComponent":                {Providers: []string{ProviderGitLab, ProviderGitHub}},
@@ -50,7 +51,6 @@ var controlsMeta = map[string]ControlMeta{
 	"actionPinCommentsMustMatchSha":                       {Providers: []string{ProviderGitHub}},
 	"actionPinsMustNotBeStale":                            {Providers: []string{ProviderGitHub}},
 	"actionRefsMustExistUpstream":                         {Providers: []string{ProviderGitHub}},
-	"actionRefsMustNotCollide":                            {Providers: []string{ProviderGitHub}},
 	"actionsMustBePinnedByCommitSha":                      {Providers: []string{ProviderGitHub}},
 	"actionsMustNotBeArchived":                            {Providers: []string{ProviderGitHub}},
 	"actionsMustNotCarryKnownCVEs":                        {Providers: []string{ProviderGitHub}},
@@ -124,7 +124,6 @@ var benchedControls = map[string]map[string]struct{}{
 		"actionPinCommentsMustMatchSha":         {},
 		"actionPinsMustNotBeStale":              {},
 		"actionRefsMustExistUpstream":           {},
-		"actionRefsMustNotCollide":              {},
 		"actionsMustNotDuplicateRunnerBuiltins": {},
 
 		// Repo-artifact / setup-side controls (need fixture coverage).
@@ -187,7 +186,7 @@ var actionMetadataConsumers = []string{
 	"actionPinCommentsMustMatchSha",
 	"actionPinsMustNotBeStale",
 	"actionRefsMustExistUpstream",
-	"actionRefsMustNotCollide",
+	"externalRefsMustNotCollide",
 	"actionsMustNotBeArchived",
 	"actionsMustNotCarryKnownCVEs",
 	"actionsMustNotDuplicateRunnerBuiltins",

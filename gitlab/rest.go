@@ -222,6 +222,48 @@ func BranchExists(projectID int, branch string, token string, APIURL string, con
 	return true, nil
 }
 
+// RefResolvesAsTagAndBranch probes whether ref exists in projectPath as a
+// tag and/or as a branch. go-gitlab accepts a "group/project" path as the
+// project identifier, so callers pass the include's resolved project path
+// directly. A 404 means "not that kind of ref" (false); any other error is
+// returned so the caller abstains rather than guessing. ref-confusion
+// (ISSUE-710) fires only on a confirmed tag-AND-branch collision, so an
+// indeterminate probe (auth, network, rate limit) must never assert
+// ambiguity — the error path leaves both false and surfaces err.
+func RefResolvesAsTagAndBranch(projectPath string, ref string, token string, APIURL string, conf *configuration.Configuration) (tagExists bool, branchExists bool, err error) {
+	l := logger.WithFields(logrus.Fields{
+		"action":      "RefResolvesAsTagAndBranch",
+		"projectPath": projectPath,
+		"ref":         ref,
+	})
+
+	glab, err := GetNewGitlabClient(token, APIURL, conf)
+	if err != nil {
+		l.WithError(err).Error("Unable to get a Gitlab client")
+		return false, false, err
+	}
+
+	if _, resp, e := glab.Tags.GetTag(projectPath, ref); e != nil {
+		if resp == nil || resp.StatusCode != http.StatusNotFound {
+			l.WithError(e).Error("Failed to check whether tag exists")
+			return false, false, e
+		}
+	} else {
+		tagExists = true
+	}
+
+	if _, resp, e := glab.Branches.GetBranch(projectPath, ref); e != nil {
+		if resp == nil || resp.StatusCode != http.StatusNotFound {
+			l.WithError(e).Error("Failed to check whether branch exists")
+			return tagExists, false, e
+		}
+	} else {
+		branchExists = true
+	}
+
+	return tagExists, branchExists, nil
+}
+
 // FetchBranchProtections retrieves branch protection settings for a project
 func FetchBranchProtections(projectID int, token string, APIURL string, conf *configuration.Configuration) ([]BranchProtection, error) {
 	l := logger.WithFields(logrus.Fields{

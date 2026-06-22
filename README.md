@@ -254,7 +254,7 @@ Plumber ships controls for:
 - Docker-in-Docker
 - weakened security jobs
 - unsafe variable expansion
-- GitHub action pinning, archived actions, and known CVEs
+- GitHub action pinning, archived actions, ref confusion, and known CVEs
 - dangerous GitHub triggers and overbroad permissions
 - hardcoded secrets in pipeline YAML (opt-in; shells out to [gitleaks](https://github.com/gitleaks/gitleaks))
 

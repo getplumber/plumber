@@ -340,6 +340,13 @@ type Include struct {
 	AltPath       string `json:"altPath,omitempty"`
 	Nested        bool   `json:"nested,omitempty"`
 	ComponentName string `json:"componentName,omitempty"`
+	// RefIsAmbiguous is set by the collector when the include's
+	// symbolic ref resolves upstream as BOTH a tag and a branch
+	// (ref-confusion, ISSUE-710). Zero-valued when the ref is a SHA,
+	// `~latest`, or when the API probe could not confirm both — the
+	// rule fires only on a positive double-hit, so a degraded probe
+	// never invents a finding.
+	RefIsAmbiguous bool `json:"refIsAmbiguous,omitempty"`
 	// OriginFile + OriginLine point at the line in the user's
 	// .gitlab-ci.yml that introduced this include. They let rules
 	// emit findings with a clickable source pointer instead of a
