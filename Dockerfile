@@ -20,7 +20,12 @@ RUN cp .plumber.yaml internal/defaultconfig/default.yaml
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o plumber .
 
 # Final stage - Alpine (small, has shell for CI compatibility)
-FROM alpine:3.22@sha256:55ae5d250caebc548793f321534bc6a8ef1d116f334f18f4ada1b2daad3251b2
+# Named `runtime` so CI can target it with build-push-action's `no-cache-filter:
+# runtime`, forcing the `apk upgrade` layer below to re-run on every build. Without
+# that, BuildKit caches this layer (its key is the pinned base digest + the literal
+# RUN command, neither of which changes between releases) and `apk upgrade` silently
+# stops pulling OS security fixes, leaving published images on stale openssl/curl/git.
+FROM alpine:3.22@sha256:55ae5d250caebc548793f321534bc6a8ef1d116f334f18f4ada1b2daad3251b2 AS runtime
 
 # Upgrade base packages (including OpenSSL) and install CA certificates +
 # git. Plumber shells out to `git` for auto-detection of the remote URL,

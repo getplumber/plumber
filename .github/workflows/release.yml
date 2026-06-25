@@ -243,6 +243,11 @@ jobs:
           labels: ${{ steps.meta.outputs.labels }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
+          # Always rebuild the `runtime` stage so `apk upgrade` re-runs and pulls
+          # current OS security fixes; the cached `builder` stage keeps Go builds
+          # fast. Without this the runtime layer is restored from gha cache release
+          # after release and ships stale openssl/curl/git.
+          no-cache-filter: runtime
 
       - name: Attest Docker image
         uses: actions/attest-build-provenance@a2bbfa25375fe432b6a289bc6b6cd05ecd0c4c32 # v4.1.0
