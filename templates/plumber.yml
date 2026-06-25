@@ -85,6 +85,13 @@ spec:
       description: "Add the full points breakdown table to stdout and the MR comment (the score banner is shown by default)"
       default: false
       type: boolean
+    score_push:
+      description: "Publish this repo's Plumber Score to the hosted badge service (score.getplumber.io). Uses CI-native OIDC (no secret needed)."
+      default: false
+      type: boolean
+    score_endpoint:
+      description: "Score service base URL. Override only for a self-hosted score service; the OIDC audience follows this value so it always matches the target."
+      default: "https://score.getplumber.io"
     controls:
       description: Run only listed controls (comma-separated control names). Cannot be used with skip_controls.
       default: ""
@@ -142,6 +149,13 @@ spec:
   image:
     name: $[[ inputs.image ]]
     entrypoint: [""]  # Override ENTRYPOINT to allow shell script execution
+  id_tokens:
+    # OIDC id-token for the Plumber Score push. The audience MUST equal the
+    # score service URL (the service validates `aud`), so it follows the
+    # score_endpoint input. Minted regardless of score_push so enabling the
+    # push is a one-line change; the CLI only uses it when push is on.
+    PLUMBER_ANALYZE_SCORE_TOKEN:
+      aud: $[[ inputs.score_endpoint ]]
   variables:
     # Use intermediate variable to avoid self-reference when default is $GITLAB_TOKEN
     # GITLAB_TOKEN is exported in script (not here) to avoid a circular variable
@@ -162,6 +176,8 @@ spec:
     PLUMBER_ANALYZE_BADGE: $[[ inputs.badge ]]
     PLUMBER_ANALYZE_SCORE: $[[ inputs.score ]]
     PLUMBER_ANALYZE_SCORE_POINT: $[[ inputs.score_point ]]
+    PLUMBER_ANALYZE_SCORE_PUSH: $[[ inputs.score_push ]]
+    PLUMBER_ANALYZE_SCORE_ENDPOINT: $[[ inputs.score_endpoint ]]
     PLUMBER_ANALYZE_CONTROLS: $[[ inputs.controls ]]
     PLUMBER_ANALYZE_SKIP_CONTROLS: $[[ inputs.skip_controls ]]
     PLUMBER_ANALYZE_FAIL_WARNINGS: $[[ inputs.fail_warnings ]]

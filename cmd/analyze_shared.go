@@ -57,6 +57,8 @@ func runWithProvider(p provider.Provider, cmd *cobra.Command, conf *configuratio
 		return err
 	}
 
+	handleScorePublishing(p, conf, result, summary)
+
 	pas := provider.PostActionSummary{
 		Compliance: compliance,
 		Threshold:  threshold,
@@ -240,6 +242,7 @@ func presentResultWithProvider(p provider.Provider, cmd *cobra.Command, result *
 	if err := writeOutputsWithProvider(p, result, conf, summary); err != nil {
 		return err
 	}
+	handleScorePublishing(p, conf, result, summary)
 	pas := provider.PostActionSummary{
 		Compliance: compliance,
 		Threshold:  threshold,

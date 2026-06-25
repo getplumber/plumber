@@ -40,6 +40,12 @@ inputs:
   score:
     description: "Include the full Plumber points breakdown. The score is shown by default; set false for the banner without the per-issue-code breakdown."
     default: "true"
+  score-push:
+    description: "Publish this repo's Plumber Score to the hosted badge service (score.getplumber.io) via CI-native OIDC (no secret). The calling workflow MUST grant 'permissions: id-token: write' — it cannot be set from inside a composite action."
+    default: "false"
+  score-endpoint:
+    description: "Score service base URL. Override only for a self-hosted score service; the minted OIDC audience follows this value so it always matches the target."
+    default: "https://score.getplumber.io"
   fail-warnings:
     description: "Fail the run on warnings: unknown configuration keys (exit 2) and 'could not verify' checks such as a skipped known-CVE lookup when an action version cannot be resolved (exit 3). soft-fail does not mask exit 3."
     default: "false"
@@ -160,6 +166,8 @@ runs:
         IN_CONTROLS: ${{ inputs.controls }}
         IN_SKIP_CONTROLS: ${{ inputs.skip-controls }}
         IN_SCORE: ${{ inputs.score }}
+        IN_SCORE_PUSH: ${{ inputs.score-push }}
+        IN_SCORE_ENDPOINT: ${{ inputs.score-endpoint }}
         IN_FAIL_WARNINGS: ${{ inputs.fail-warnings }}
         IN_OUTPUT: ${{ inputs.output }}
         IN_PBOM: ${{ inputs.pbom }}
@@ -182,6 +190,8 @@ runs:
         [ -n "$IN_CONTROLS" ]       && args+=(--controls "$IN_CONTROLS")
         [ -n "$IN_SKIP_CONTROLS" ]  && args+=(--skip-controls "$IN_SKIP_CONTROLS")
         [ "$IN_SCORE" = "true" ]    && args+=(--score-point)
+        [ "$IN_SCORE_PUSH" = "true" ] && args+=(--score-push)
+        [ -n "$IN_SCORE_ENDPOINT" ] && args+=(--score-endpoint "$IN_SCORE_ENDPOINT")
         [ "$IN_FAIL_WARNINGS" = "true" ] && args+=(--fail-warnings)
         [ -n "$IN_OUTPUT" ]         && args+=(--output "$IN_OUTPUT")
         [ -n "$IN_PBOM" ]           && args+=(--pbom "$IN_PBOM")

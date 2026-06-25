@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"sort"
+	"strings"
 
 	"github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v2"
@@ -152,10 +153,54 @@ type PlumberConfig struct {
 	// GitHub provider section (v2 schema). Same shape as GitLab.
 	GitHub *ProviderConfig `yaml:"github,omitempty"`
 
+	// Score holds Plumber Score options. Provider-agnostic, top-level. Only
+	// the service endpoint lives here; whether to publish is the CI
+	// integration's call (see ScoreConfig).
+	Score *ScoreConfig `yaml:"score,omitempty"`
+
 	// Controls configuration (legacy v1 schema, top-level).
 	// After a v2 load this is the zero value; after a v1 load convertV1ToV2
 	// moves these into GitLab.Controls and clears this field.
 	Controls ControlsConfig `yaml:"controls,omitempty"`
+
+	// Raw is the verbatim text of the config that produced this run, captured
+	// at load. The self-describing `plumberConfig` block in the JSON report
+	// parses it into a structured object (the verbatim text is never shipped).
+	// Not serialized into the config itself.
+	Raw string `yaml:"-"`
+	// Source is the path the config was loaded from, or "default" when no
+	// file was present and the embedded default was used. Not serialized.
+	Source string `yaml:"-"`
+}
+
+// DefaultScoreEndpoint is the built-in hosted Plumber Score badge service.
+// Only a self-hosted score service overrides it (via score.endpoint); the
+// OIDC audience the CLI mints then follows the configured endpoint.
+const DefaultScoreEndpoint = "https://score.getplumber.io"
+
+// ScoreConfig configures publishing the Plumber Score to the hosted badge
+// service. Whether to publish is the CI integration's call (the action/
+// component `score-push` input, surfaced as --score-push / PLUMBER_ANALYZE_
+// SCORE_PUSH), not a config toggle. Publishing happens only in CI, where a
+// CI-native OIDC id-token can be minted to prove the repo's identity. This
+// block only overrides the service endpoint.
+type ScoreConfig struct {
+	// Endpoint overrides the score service base URL. Empty means the
+	// built-in default (DefaultScoreEndpoint). Set only for a self-hosted
+	// score service; the minted OIDC audience follows this value so it
+	// always matches the target.
+	Endpoint string `yaml:"endpoint,omitempty"`
+}
+
+// EndpointOrDefault returns the configured score endpoint (trailing slash
+// trimmed), or the built-in default when unset.
+func (s *ScoreConfig) EndpointOrDefault() string {
+	if s != nil {
+		if e := strings.TrimRight(strings.TrimSpace(s.Endpoint), "/"); e != "" {
+			return e
+		}
+	}
+	return DefaultScoreEndpoint
 }
 
 // ProviderConfig is the per-provider configuration block introduced in
@@ -766,6 +811,10 @@ func LoadPlumberConfig(configPath string) (*PlumberConfig, string, []string, err
 		l.WithError(err).Error("Failed to parse config file")
 		return nil, configPath, warnings, err
 	}
+	// Capture the verbatim config + its source so the JSON report can carry
+	// a self-describing `plumberConfig` block (what produced this grade).
+	config.Raw = string(data)
+	config.Source = configPath
 
 	// Reject explicitly-set unsupported versions early. Empty version is
 	// allowed (legacy default behaviour) and gets a deprecation warning

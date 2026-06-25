@@ -23,6 +23,7 @@ jobs:
     permissions:
       contents: read
       security-events: write
+      id-token: write          # mint the OIDC id-token for the Plumber Score push
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
@@ -46,10 +47,15 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
+          # --score-push is safe on every trigger: the CLI publishes on every
+          # run, and the score service keeps only the default-branch result for
+          # the public badge (it reads the verified branch from the OIDC token
+          # claim, which the CLI cannot forge).
           ./plumber analyze \
             --sarif plumber.sarif \
             --output plumber-report.json \
             --score-point \
+            --score-push \
             --threshold 100 \
             --fail-warnings
 

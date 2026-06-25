@@ -8,7 +8,7 @@
 </p>
 
 <p align="center">
-  <a href="https://getplumber.io"><img src="https://img.shields.io/badge/Plumber%20Score-A-3fb950?style=for-the-badge&labelColor=2b2d42" alt="Plumber Score A"></a>
+  <a href="https://score.getplumber.io/github.com/getplumber/plumber"><img src="https://score.getplumber.io/github.com/getplumber/plumber.svg" alt="Plumber Score"></a>
   &nbsp;&nbsp;
   <a href="https://securityscorecards.dev/viewer/?uri=github.com/getplumber/plumber"><img src="https://img.shields.io/ossf-scorecard/github.com/getplumber/plumber?label=OpenSSF%20Scorecard&style=for-the-badge&labelColor=2b2d42&color=4a90d9" alt="OpenSSF Scorecard"></a>
   &nbsp;&nbsp;
@@ -143,56 +143,75 @@ plumber analyze \
   --project owner/repo
 ```
 
-## GitLab CI Component
-
-Add Plumber to `.gitlab-ci.yml`:
-
-```yaml
-include:
-  - component: gitlab.com/getplumber/plumber/plumber@<version>
-```
-
-Find the latest published version on the [GitLab CI/CD Catalog](https://gitlab.com/explore/catalog/getplumber/plumber).
-
-Then add `GITLAB_TOKEN` in **Settings -> CI/CD -> Variables**.
-
-Use `read_api` + `read_repository` for scanning. Use `api` if you want Plumber to create MR comments or badges.
-
-Full guide: [getplumber.io/docs/cli/gitlab#gitlab-ci-component](https://getplumber.io/docs/cli/gitlab#gitlab-ci-component)
-
-
 ## GitHub Action
 
-Add Plumber to `.github/workflows/plumber.yml`:
+1. Add [the official Plumber action](https://github.com/marketplace/actions/plumber-score) to `.github/workflows/plumber.yml`:
+    ```yaml
+    name: Plumber
 
-```yaml
-name: Plumber
+    on:
+      pull_request:
+      push:
+        branches: [main]
 
-on:
-  pull_request:
-  push:
-    branches: [main]
+    permissions:
+      contents: read
+      security-events: write
+      # id-token: write   # uncomment to enable score-push below
 
-permissions:
-  contents: read
-  security-events: write
+    jobs:
+      plumber:
+        runs-on: ubuntu-24.04
+        steps:
+          - uses: actions/checkout@v6
+          - uses: getplumber/plumber@<version>
+            with:
+              # Set to `true` to publish an official Plumber score badge
+              # (it makes your score and repo name public, see Score Push section below)
+              score-push: false
+    ```
 
-jobs:
-  plumber:
-    runs-on: ubuntu-24.04
-    steps:
-      - uses: actions/checkout@v6
-      - uses: getplumber/plumber@fec66e6efa296d4e09b0399c6bff981a90d2bb74 # v0.3.73
+
+> To resolve action versions hosted in an org with an IP allow list, pass a
+> public-repo-read token via the `metadata-token` input (kept in a secret):
+>
+> ```yaml
+>         with:
+>           metadata-token: ${{ secrets.PLUMBER_METADATA_TOKEN }}
+> ```
+
+**Full guide:** [getplumber.io/docs/cli/github#github-action](https://getplumber.io/docs/cli/github#github-action)
+
+## GitLab CI Component
+
+1. Add [the official Plumber component](https://gitlab.com/explore/catalog/getplumber/plumber) to `.gitlab-ci.yml`:
+    ```yaml
+    include:
+      - component: gitlab.com/getplumber/plumber/plumber@<version>
+        inputs:
+          # Set to `true` to publish an official Plumber score badge
+          # (it makes your score and repo name public, see Score Push section below)
+          score_push: false
+    ```
+2. Add `GITLAB_TOKEN` in **Settings -> CI/CD -> Variables**.
+    Use `read_api` + `read_repository` for scanning, or `api` if you want Plumber to post MR comments or badges.
+
+**Full guide:** [getplumber.io/docs/cli/gitlab#gitlab-ci-component](https://getplumber.io/docs/cli/gitlab#gitlab-ci-component)
+
+## Score Push
+
+Enabling score push publishes a self-updating `A–E` badge to the hosted score
+service. It's the only way to get an **official Plumber score**. It's only
+available in CI, not when running the CLI locally.
+
+Display it with a badge in your README (swap in your platform/owner/repo):
+```md
+[![Plumber Score](https://score.getplumber.io/github.com/OWNER/REPO.svg)](https://score.getplumber.io/github.com/OWNER/REPO)
 ```
 
-To resolve action versions hosted in an org with an IP allow list, pass a public-repo-read token via the `metadata-token` input (kept in a secret):
-
-```yaml
-        with:
-          metadata-token: ${{ secrets.PLUMBER_METADATA_TOKEN }}
-```
-
-Full guide (SARIF upload, Code Scanning, action inputs): [getplumber.io/docs/cli/github#github-action](https://getplumber.io/docs/cli/github#github-action)
+> ⚠️ Opt-in and off by default. Enabling it makes your **score and repository
+> name public**. Only the default branch's score is displayed. See [score
+> docs](https://getplumber.io/docs/plumber-score).
 
 ## Configuration
 
@@ -345,10 +364,10 @@ Contributing guide: [`CONTRIBUTING.md`](./CONTRIBUTING.md)
 
 - Website: [getplumber.io](https://getplumber.io)
 - Documentation: [getplumber.io/docs/cli](https://getplumber.io/docs/cli)
-- GitHub Action listing: [Plumber Compliance Scanner](https://github.com/marketplace/actions/plumber-compliance-scanner)
+- GitHub Action listing: [Plumber Score](https://github.com/marketplace/actions/plumber-score)
 - GitLab component docs: [`COMPONENT_README.md`](./COMPONENT_README.md)
 - Security policy: [`SECURITY.md`](./SECURITY.md)
 
 ## License
 
-Plumber is licensed under the [Mozilla Public License 2.0](LICENSE). 
+Plumber is licensed under the [Mozilla Public License 2.0](LICENSE).

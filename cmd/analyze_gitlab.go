@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -21,6 +23,7 @@ import (
 	"github.com/getplumber/plumber/utils"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
+	"gopkg.in/yaml.v2"
 )
 
 var (
@@ -42,6 +45,8 @@ var (
 	badge             bool
 	showScore         bool
 	showScorePoint    bool
+	pushScore         bool
+	scoreEndpoint     string
 	controlsFilter    string
 	skipControls      string
 	ciConfigPath      string
@@ -86,6 +91,8 @@ Optional flags:
   --badge            Create/update a Plumber compliance badge on the project (requires api scope; only runs on default branch)
   --score            Letter score, points, bar, and counts in stdout (banner only); points + score in JSON/PBOM/CycloneDX; badge/MR use letter when set (optional)
   --score-point      Same as --score plus full points breakdown in stdout and MR comment (optional; wins if both set)
+  --score-push       Publish this repo's Plumber Score to the hosted badge service (CI only; a local run is a no-op) (optional)
+  --score-endpoint   Score service base URL (default https://score.getplumber.io); override only for a self-hosted score service (optional)
   --controls         Run only listed controls (comma-separated)
   --skip-controls    Skip listed controls (comma-separated)
   --fail-warnings    Treat configuration warnings as errors (exit 2)
@@ -152,6 +159,8 @@ func init() {
 	analyzeCmd.Flags().BoolVar(&badge, "badge", false, "Create/update a Plumber compliance badge on the project (requires api scope; only runs on default branch)")
 	analyzeCmd.Flags().BoolVar(&showScore, "score", false, "Banner: letter score, points, bar, severity counts on stdout; points + score in JSON, PBOM, CycloneDX; badge shows letter when set")
 	analyzeCmd.Flags().BoolVar(&showScorePoint, "score-point", false, "Like --score plus full points breakdown in stdout and MR comment; overrides --score when both are set")
+	analyzeCmd.Flags().BoolVar(&pushScore, "score-push", false, "Publish this repo's Plumber Score to the hosted badge service (CI only; needs a CI OIDC id-token, so a local run is a no-op)")
+	analyzeCmd.Flags().StringVar(&scoreEndpoint, "score-endpoint", "", "Score service base URL (default https://score.getplumber.io); override only for a self-hosted score service")
 	analyzeCmd.Flags().StringVar(&controlsFilter, "controls", "", "Run only listed controls (comma-separated)")
 	analyzeCmd.Flags().StringVar(&skipControls, "skip-controls", "", "Skip listed controls (comma-separated)")
 	analyzeCmd.Flags().BoolVar(&failWarnings, "fail-warnings", false, "Treat configuration warnings as errors (exit 2)")
@@ -504,6 +513,8 @@ var envKeys = map[string]string{
 	"badge":          "PLUMBER_ANALYZE_BADGE",
 	"score":          "PLUMBER_ANALYZE_SCORE",
 	"score-point":    "PLUMBER_ANALYZE_SCORE_POINT",
+	"score-push":     "PLUMBER_ANALYZE_SCORE_PUSH",
+	"score-endpoint": "PLUMBER_ANALYZE_SCORE_ENDPOINT",
 	"controls":       "PLUMBER_ANALYZE_CONTROLS",
 	"skip-controls":  "PLUMBER_ANALYZE_SKIP_CONTROLS",
 	"fail-warnings":  "PLUMBER_ANALYZE_FAIL_WARNINGS",
@@ -511,12 +522,21 @@ var envKeys = map[string]string{
 	"verbose":        "PLUMBER_ANALYZE_VERBOSE",
 }
 
-func envStringFallback(cmd *cobra.Command, flag, envKey string, dest *string) {
+func envStringFallback(cmd *cobra.Command, flag, envKey string, dest *string) error {
 	if !cmd.Flags().Changed(flag) {
 		if v := os.Getenv(envKey); v != "" {
 			*dest = v
+			// Mark the flag as set so a value provided via a PLUMBER_ANALYZE_*
+			// env var drives provider/host/project selection exactly like the
+			// equivalent flag. The GitLab CI component passes coordinates as env
+			// vars, not flags; without this the provider stays undetermined and
+			// the host gets overwritten with the gitlab.com default.
+			if err := cmd.Flags().Set(flag, v); err != nil {
+				return fmt.Errorf("apply %s: %w", envKey, err)
+			}
 		}
 	}
+	return nil
 }
 
 func envBoolFallback(cmd *cobra.Command, flag, envKey string, dest *bool) error {
@@ -555,27 +575,32 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	}
 
 	// Apply environment variable fallbacks; CLI flags always take precedence.
-	envStringFallback(cmd, "gitlab-url", envKeys["gitlab-url"], &gitlabURL)
-	envStringFallback(cmd, "github-url", envKeys["github-url"], &githubURL)
-	envStringFallback(cmd, "project", envKeys["project"], &projectPath)
-	envStringFallback(cmd, "provider", envKeys["provider"], &providerFlag)
-	envStringFallback(cmd, "branch", envKeys["branch"], &defaultBranch)
-	envStringFallback(cmd, "config", envKeys["config"], &configFile)
-	envStringFallback(cmd, "output", envKeys["output"], &outputFile)
-	envStringFallback(cmd, "pbom", envKeys["pbom"], &pbomFile)
-	envStringFallback(cmd, "pbom-cyclonedx", envKeys["pbom-cyclonedx"], &pbomCycloneDXFile)
-	envStringFallback(cmd, "sarif", envKeys["sarif"], &sarifFile)
-	envStringFallback(cmd, "glsast", envKeys["glsast"], &glsastFile)
-	envStringFallback(cmd, "controls", envKeys["controls"], &controlsFilter)
-	envStringFallback(cmd, "skip-controls", envKeys["skip-controls"], &skipControls)
-	envStringFallback(cmd, "ci-config-path", envKeys["ci-config-path"], &ciConfigPath)
+	// The string fallbacks mark the flag as set, so env-provided coordinates
+	// select the provider/host/project exactly like flags (the GitLab CI
+	// component passes them as PLUMBER_ANALYZE_* env vars, not flags).
 	for _, apply := range []func() error{
+		func() error { return envStringFallback(cmd, "gitlab-url", envKeys["gitlab-url"], &gitlabURL) },
+		func() error { return envStringFallback(cmd, "github-url", envKeys["github-url"], &githubURL) },
+		func() error { return envStringFallback(cmd, "project", envKeys["project"], &projectPath) },
+		func() error { return envStringFallback(cmd, "provider", envKeys["provider"], &providerFlag) },
+		func() error { return envStringFallback(cmd, "branch", envKeys["branch"], &defaultBranch) },
+		func() error { return envStringFallback(cmd, "config", envKeys["config"], &configFile) },
+		func() error { return envStringFallback(cmd, "output", envKeys["output"], &outputFile) },
+		func() error { return envStringFallback(cmd, "pbom", envKeys["pbom"], &pbomFile) },
+		func() error { return envStringFallback(cmd, "pbom-cyclonedx", envKeys["pbom-cyclonedx"], &pbomCycloneDXFile) },
+		func() error { return envStringFallback(cmd, "sarif", envKeys["sarif"], &sarifFile) },
+		func() error { return envStringFallback(cmd, "glsast", envKeys["glsast"], &glsastFile) },
+		func() error { return envStringFallback(cmd, "score-endpoint", envKeys["score-endpoint"], &scoreEndpoint) },
+		func() error { return envStringFallback(cmd, "controls", envKeys["controls"], &controlsFilter) },
+		func() error { return envStringFallback(cmd, "skip-controls", envKeys["skip-controls"], &skipControls) },
+		func() error { return envStringFallback(cmd, "ci-config-path", envKeys["ci-config-path"], &ciConfigPath) },
 		func() error { return envFloat64Fallback(cmd, "threshold", envKeys["threshold"], &threshold) },
 		func() error { return envBoolFallback(cmd, "print", envKeys["print"], &printOutput) },
 		func() error { return envBoolFallback(cmd, "mr-comment", envKeys["mr-comment"], &mrComment) },
 		func() error { return envBoolFallback(cmd, "badge", envKeys["badge"], &badge) },
 		func() error { return envBoolFallback(cmd, "score", envKeys["score"], &showScore) },
 		func() error { return envBoolFallback(cmd, "score-point", envKeys["score-point"], &showScorePoint) },
+		func() error { return envBoolFallback(cmd, "score-push", envKeys["score-push"], &pushScore) },
 		func() error { return envBoolFallback(cmd, "fail-warnings", envKeys["fail-warnings"], &failWarnings) },
 	} {
 		if err := apply(); err != nil {
@@ -709,9 +734,12 @@ func parseControlsFilter(raw string) ([]string, error) {
 	return controls, nil
 }
 
-func writeJSONToFile(result *control.AnalysisResult, pc *configuration.PlumberConfig, s complianceSummary, p jsonOutputParams) error {
-	threshold, compliance, score, scoreMode, filePath, provider, includeOnly, skip :=
-		s.threshold, s.compliance, s.score, s.scoreMode, p.filePath, p.provider, p.includeOnly, p.skip
+// buildAnalysisJSONReport assembles the ordered analysis JSON payload. The
+// same bytes are written to --output and pushed to the score service, so the
+// stored badge record and the file on disk can never diverge.
+func buildAnalysisJSONReport(result *control.AnalysisResult, pc *configuration.PlumberConfig, s complianceSummary, p jsonOutputParams) ([]byte, error) {
+	threshold, compliance, score, scoreMode, provider, includeOnly, skip :=
+		s.threshold, s.compliance, s.score, s.scoreMode, p.provider, p.includeOnly, p.skip
 	// Marshal AnalysisResult into a generic map so the per-control
 	// `*Result` legacy blocks can sit alongside its existing fields
 	// without forcing every consumer to follow the dev's flat-findings
@@ -720,11 +748,11 @@ func writeJSONToFile(result *control.AnalysisResult, pc *configuration.PlumberCo
 	// downstream tooling parses the dev output unchanged.
 	raw, err := json.Marshal(result)
 	if err != nil {
-		return fmt.Errorf("marshal result: %w", err)
+		return nil, fmt.Errorf("marshal result: %w", err)
 	}
 	output := map[string]any{}
 	if err := json.Unmarshal(raw, &output); err != nil {
-		return fmt.Errorf("unmarshal result: %w", err)
+		return nil, fmt.Errorf("unmarshal result: %w", err)
 	}
 	output["threshold"] = threshold
 	output["compliance"] = compliance
@@ -741,6 +769,12 @@ func writeJSONToFile(result *control.AnalysisResult, pc *configuration.PlumberCo
 	if partial := partialControlEntries(result); len(partial) > 0 {
 		output["partialControls"] = partial
 	}
+	// plumberConfig makes the report self-describing: the policy that produced
+	// this grade, parsed into a structured object (not the verbatim file, so
+	// comments and formatting never leave the repo) plus a content hash. The
+	// CLI does NOT classify standard-vs-custom (it's the untrusted client); the
+	// score service classifies server-side from this object and its hash.
+	output["plumberConfig"] = buildPlumberConfigBlock(pc)
 	for k, v := range legacyResultsByName(result, pc, provider, includeOnly, skip) {
 		output[k] = v
 	}
@@ -784,11 +818,82 @@ func writeJSONToFile(result *control.AnalysisResult, pc *configuration.PlumberCo
 
 	// Encode with intentional key order so readers see project/context first,
 	// scoring next, then per-control *Result blocks (not Go map lexical order).
-	payload, err := marshalLegacyAnalysisJSONObject(output)
-	if err != nil {
-		return fmt.Errorf("marshal ordered analysis JSON: %w", err)
+	return marshalLegacyAnalysisJSONObject(output)
+}
+
+// buildPlumberConfigBlock returns the self-describing `plumberConfig` block:
+// the policy that produced the run parsed into a structured object (NOT the
+// verbatim file — comments and formatting are dropped), its source, and a
+// sha256 content hash of that object. Falls back to the embedded default
+// (source "default") when no config file was loaded.
+func buildPlumberConfigBlock(pc *configuration.PlumberConfig) map[string]any {
+	source, rawCfg := "default", ""
+	if pc != nil && pc.Raw != "" {
+		source, rawCfg = pc.Source, pc.Raw
 	}
-	if err := os.WriteFile(filePath, payload, 0o644); err != nil {
+	if rawCfg == "" {
+		rawCfg = string(defaultconfig.Get())
+		source = "default"
+	}
+	policy := parsePolicyObject(rawCfg)
+	// Hash the canonical JSON of the parsed policy: encoding/json sorts map
+	// keys, so the digest depends only on the policy's content, never on the
+	// file's comments, whitespace, or key order.
+	canonical, _ := json.Marshal(policy)
+	sum := sha256.Sum256(canonical)
+	return map[string]any{
+		"source":          source,
+		"effectivePolicy": policy,
+		"hash":            "sha256:" + hex.EncodeToString(sum[:]),
+	}
+}
+
+// parsePolicyObject parses YAML config text into a JSON-friendly object,
+// dropping comments and formatting. yaml.v2 decodes maps as map[any]any, which
+// json.Marshal cannot encode, so nested maps are rewritten to string keys.
+// Returns an empty object when the text is blank or cannot be parsed.
+func parsePolicyObject(rawCfg string) map[string]any {
+	if strings.TrimSpace(rawCfg) == "" {
+		return map[string]any{}
+	}
+	var parsed any
+	if err := yaml.Unmarshal([]byte(rawCfg), &parsed); err != nil {
+		return map[string]any{}
+	}
+	obj, ok := normalizeYAMLValue(parsed).(map[string]any)
+	if !ok {
+		return map[string]any{}
+	}
+	return obj
+}
+
+// normalizeYAMLValue rewrites yaml.v2's map[any]any into JSON-encodable
+// map[string]any, recursively, leaving scalars and slices intact.
+func normalizeYAMLValue(v any) any {
+	switch t := v.(type) {
+	case map[any]any:
+		m := make(map[string]any, len(t))
+		for k, val := range t {
+			m[fmt.Sprint(k)] = normalizeYAMLValue(val)
+		}
+		return m
+	case []any:
+		for i := range t {
+			t[i] = normalizeYAMLValue(t[i])
+		}
+		return t
+	default:
+		return v
+	}
+}
+
+// writeJSONToFile builds the analysis JSON report and writes it to p.filePath.
+func writeJSONToFile(result *control.AnalysisResult, pc *configuration.PlumberConfig, s complianceSummary, p jsonOutputParams) error {
+	payload, err := buildAnalysisJSONReport(result, pc, s, p)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(p.filePath, payload, 0o644); err != nil {
 		return fmt.Errorf("failed to create output file: %w", err)
 	}
 	return nil
@@ -816,13 +921,19 @@ func partialControlEntries(result *control.AnalysisResult) []map[string]any {
 
 // analysisJSONLegacyKeyHead is the canonical top-level key order before any
 // *Result control blocks so analysis.json reads: project → CI context →
-// outcome/score → findings (per-control).
+// outcome/score → findings (per-control). plumberConfig is pinned to the very
+// end instead (see analysisJSONLegacyKeyTail).
 var analysisJSONLegacyKeyHead = []string{
 	"projectPath", "projectId", "defaultBranch",
 	"ciConfigSource", "ciValid", "ciMissing", "ciErrors",
 	"pipelineOriginMetrics", "pipelineImageMetrics",
 	"compliance", "threshold", "passed", "plumberScore",
 }
+
+// analysisJSONLegacyKeyTail lists keys pinned to the END of the object, after
+// the per-control *Result blocks and everything else. plumberConfig is bulky
+// (the full parsed policy) and self-describing, so it reads best last.
+var analysisJSONLegacyKeyTail = []string{"plumberConfig"}
 
 func legacyAnalysisJSONKeyOrder(m map[string]any) []string {
 	seen := make(map[string]bool, len(m))
@@ -833,9 +944,15 @@ func legacyAnalysisJSONKeyOrder(m map[string]any) []string {
 			seen[k] = true
 		}
 	}
+	// Reserve the tail keys so they skip the middle groups below and land at
+	// the very end, in their declared order.
+	tail := make(map[string]bool, len(analysisJSONLegacyKeyTail))
+	for _, k := range analysisJSONLegacyKeyTail {
+		tail[k] = true
+	}
 	var suffixResult []string
 	for k := range m {
-		if seen[k] {
+		if seen[k] || tail[k] {
 			continue
 		}
 		if strings.HasSuffix(k, "Result") {
@@ -849,12 +966,19 @@ func legacyAnalysisJSONKeyOrder(m map[string]any) []string {
 	}
 	var rest []string
 	for k := range m {
-		if !seen[k] {
-			rest = append(rest, k)
+		if seen[k] || tail[k] {
+			continue
 		}
+		rest = append(rest, k)
 	}
 	sort.Strings(rest)
 	order = append(order, rest...)
+	for _, k := range analysisJSONLegacyKeyTail {
+		if _, ok := m[k]; ok && !seen[k] {
+			order = append(order, k)
+			seen[k] = true
+		}
+	}
 	return order
 }
 

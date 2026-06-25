@@ -24,7 +24,9 @@ func TestEnvStringFallback(t *testing.T) {
 		cmd := newFallbackCmd()
 		t.Setenv("PLUMBER_TEST_STR", "from-env")
 		dest := "default"
-		envStringFallback(cmd, "str", "PLUMBER_TEST_STR", &dest)
+		if err := envStringFallback(cmd, "str", "PLUMBER_TEST_STR", &dest); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 		if dest != "from-env" {
 			t.Fatalf("want %q, got %q", "from-env", dest)
 		}
@@ -37,7 +39,9 @@ func TestEnvStringFallback(t *testing.T) {
 		}
 		t.Setenv("PLUMBER_TEST_STR", "from-env")
 		dest := "from-flag"
-		envStringFallback(cmd, "str", "PLUMBER_TEST_STR", &dest)
+		if err := envStringFallback(cmd, "str", "PLUMBER_TEST_STR", &dest); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 		if dest != "from-flag" {
 			t.Fatalf("flag should win, got %q", dest)
 		}
@@ -47,7 +51,9 @@ func TestEnvStringFallback(t *testing.T) {
 		cmd := newFallbackCmd()
 		t.Setenv("PLUMBER_TEST_STR", "")
 		dest := "default"
-		envStringFallback(cmd, "str", "PLUMBER_TEST_STR", &dest)
+		if err := envStringFallback(cmd, "str", "PLUMBER_TEST_STR", &dest); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
 		if dest != "default" {
 			t.Fatalf("want %q, got %q", "default", dest)
 		}
