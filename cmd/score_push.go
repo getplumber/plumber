@@ -299,12 +299,14 @@ func handleScorePublishingOnce(p providerPkg.Provider, conf *configuration.Confi
 	maybePushScore(p, conf, payload)
 }
 
-// maybeScoreNudge prints a one-time invitation to publish a live badge — only
-// in an interactive local run (a human is reading). Suppressed in CI, on a
-// non-TTY, and when terminal output is off, so it never spams logs.
+// maybeScoreNudge prints an invitation to publish a live badge whenever text
+// output is on — including in CI — so a run that isn't already publishing a
+// score still points the user at how to turn it on. Suppressed only when
+// terminal output is off (e.g. --silent / JSON-only) so it never spams
+// machine-readable output.
 func maybeScoreNudge() {
-	if !printOutput || !isInteractiveInit() {
+	if !printOutput {
 		return
 	}
-	fmt.Fprintln(os.Stderr, "💡 Publish a live Plumber Score badge for this repo: turn on score-push in your CI pipeline (the Plumber GitHub Action / GitLab component, or --score-push). Publishing runs only in CI. Learn more: https://getplumber.io/docs/plumber-score")
+	fmt.Fprintln(os.Stderr, "💡 Display a live Plumber Score badge for this repo: turn on score-push in your CI pipeline. Learn more: https://getplumber.io/docs/plumber-score")
 }
