@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  <b>CI/CD compliance scanner for GitLab CI and GitHub Actions</b><br/>
+  <b>CI/CD security scanner for GitLab CI and GitHub Actions</b><br/>
   <sub>One CLI, one <code>.plumber.yaml</code>, one Rego policy engine.</sub>
 </p>
 
@@ -35,7 +35,7 @@
 
 ## What Is Plumber?
 
-Plumber scans CI/CD pipelines for risky patterns and compliance gaps.
+Plumber scans CI/CD pipelines for risky patterns and security gaps.
 
 - **GitLab CI:** reads `.gitlab-ci.yml`, resolved includes, and repository settings.
 - **GitHub Actions:** reads `.github/workflows/*.{yml,yaml}` locally or through the GitHub API.
@@ -317,8 +317,8 @@ More details:
 
 | Code | Meaning |
 |---|---|
-| `0` | Compliance is greater than or equal to `--threshold` |
-| `1` | Compliance is below `--threshold` |
+| `0` | The security score is greater than or equal to `--threshold` |
+| `1` | The security score is below `--threshold` |
 | `2` | Invalid usage, configuration, or a runtime / provider / auth / network failure |
 | `3` | A check could not be verified and `--fail-warnings` is set (e.g. an action version that could not be resolved) |
 
