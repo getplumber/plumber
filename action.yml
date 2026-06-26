@@ -1,5 +1,5 @@
-name: "Plumber Compliance Scanner"
-description: "CI/CD compliance scanner for GitHub Actions workflows and repository settings. Uploads SARIF to Code Scanning."
+name: "Plumber Score"
+description: "Plumber detects CI/CD security issues in your GitHub workflows and gives you a score."
 author: "Plumber (getplumber.io)"
 
 branding:
