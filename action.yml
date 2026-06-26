@@ -38,8 +38,8 @@ inputs:
     description: "Skip these controls (comma-separated). Mutually exclusive with controls."
     default: ""
   score:
-    description: "Include the full Plumber points breakdown. The score is shown by default; set false for the banner without the per-issue-code breakdown."
-    default: "true"
+    description: "Add the full Plumber points breakdown (beta) on top of the score banner. Off by default; set true to also include the per-issue-code breakdown."
+    default: "false"
   score-push:
     description: "Publish this repo's Plumber Score to the hosted badge service (score.getplumber.io) via CI-native OIDC (no secret). The calling workflow MUST grant 'permissions: id-token: write' — it cannot be set from inside a composite action."
     default: "false"
