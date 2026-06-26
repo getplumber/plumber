@@ -90,8 +90,8 @@ Other options:
 
 Full install docs:
 
-- GitLab: [getplumber.io/docs/cli/gitlab#installation](https://getplumber.io/docs/cli/gitlab#installation)
-- GitHub: [getplumber.io/docs/cli/github#installation](https://getplumber.io/docs/cli/github#installation)
+- GitLab: [getplumber.io/docs/cli/gitlab#run-with-the-gitlab-ci-component](https://getplumber.io/docs/cli/gitlab#run-with-the-gitlab-ci-component)
+- GitHub: [getplumber.io/docs/cli/github#run-with-github-actions](https://getplumber.io/docs/cli/github#run-with-github-actions)
 
 ### Authenticate
 
@@ -180,7 +180,7 @@ plumber analyze \
 >           metadata-token: ${{ secrets.PLUMBER_METADATA_TOKEN }}
 > ```
 
-**Full guide:** [getplumber.io/docs/cli/github#github-action](https://getplumber.io/docs/cli/github#github-action)
+**Full guide:** [getplumber.io/docs/cli/github#run-with-github-actions](https://getplumber.io/docs/cli/github#run-with-github-actions)
 
 ## GitLab CI Component
 
@@ -196,7 +196,7 @@ plumber analyze \
 2. Add `GITLAB_TOKEN` in **Settings -> CI/CD -> Variables**.
     Use `read_api` + `read_repository` for scanning, or `api` if you want Plumber to post MR comments or badges.
 
-**Full guide:** [getplumber.io/docs/cli/gitlab#gitlab-ci-component](https://getplumber.io/docs/cli/gitlab#gitlab-ci-component)
+**Full guide:** [getplumber.io/docs/cli/gitlab#run-with-the-gitlab-ci-component](https://getplumber.io/docs/cli/gitlab#run-with-the-gitlab-ci-component)
 
 ## Score Push
 
@@ -261,7 +261,7 @@ Full config reference:
 
 - Default config: [`.plumber.yaml`](./.plumber.yaml)
 - CLI docs: [getplumber.io/docs/cli](https://getplumber.io/docs/cli)
-- Issue reference: [getplumber.io/docs/cli/issues](https://getplumber.io/docs/cli/issues)
+- Issue reference: [getplumber.io/docs/use-plumber/issues](https://getplumber.io/docs/use-plumber/issues)
 
 ## Controls
 
@@ -279,8 +279,8 @@ Plumber ships controls for:
 
 Full catalogs:
 
-- GitLab controls: [getplumber.io/docs/cli/gitlab#available-controls](https://getplumber.io/docs/cli/gitlab#available-controls)
-- GitHub controls: [getplumber.io/docs/cli/github#available-controls](https://getplumber.io/docs/cli/github#available-controls)
+- GitLab controls: [getplumber.io/docs/use-plumber/controls?p=gitlab](https://getplumber.io/docs/use-plumber/controls?p=gitlab)
+- GitHub controls: [getplumber.io/docs/use-plumber/controls?p=github](https://getplumber.io/docs/use-plumber/controls?p=github)
 
 ## Outputs
 
