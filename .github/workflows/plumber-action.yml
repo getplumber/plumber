@@ -6,7 +6,7 @@
 # Plumber is built from source so the gate tracks the code in this repo (the
 # released binary may lag behind --sarif and friends). Once a release with the
 # action exists, this can switch to `uses: getplumber/plumber@<sha>`.
-name: Plumber compliance
+name: Plumber
 
 on:
   push:
@@ -18,7 +18,7 @@ permissions: {}
 
 jobs:
   plumber:
-    name: Plumber analyze
+    name: Plumber
     runs-on: ubuntu-24.04
     permissions:
       contents: read
