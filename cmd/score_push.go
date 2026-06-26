@@ -57,6 +57,15 @@ func maybePushScore(p providerPkg.Provider, conf *configuration.Configuration, p
 		return
 	}
 
+	// A CI run's OIDC identity — and thus the only badge it may write — is the
+	// pipeline's own repo. If --project / the `project` input pointed the scan at
+	// a DIFFERENT repository, the badge would be keyed to the CI repo but carry
+	// the foreign project's score. Skip rather than mis-key it.
+	if ciRepo, scanned, mismatch := ciScoreTargetMismatch(p, conf); mismatch {
+		scoreWarn(fmt.Sprintf("score push skipped: analyzing %q but this pipeline's identity is %q; a badge can only be published for the pipeline's own repository", scanned, ciRepo))
+		return
+	}
+
 	platform, projectPath, ok := resolveScoreTarget(p, conf)
 	if !ok {
 		scoreWarn("could not resolve the project path for the score push; skipped")
@@ -89,6 +98,24 @@ func maybePushScore(p providerPkg.Provider, conf *configuration.Configuration, p
 		return
 	}
 	fmt.Fprintf(os.Stderr, "✓ Plumber Score published: %s/%s/%s\n", endpoint, platform, projectPath)
+}
+
+// ciScoreTargetMismatch reports whether the scan analyzed a different project
+// than the one this CI pipeline can publish for. Inside a pipeline the badge is
+// gated by the OIDC identity (the CI repo); a scan retargeted with --project /
+// the `project` input therefore cannot be published here. mismatch is false
+// when either side is unknown (e.g. a local run, where env.RepoPath is empty)
+// so the existing local-run handling still applies.
+func ciScoreTargetMismatch(p providerPkg.Provider, conf *configuration.Configuration) (ciRepo, scanned string, mismatch bool) {
+	env := p.CIEnvVars()
+	ciRepo = strings.Trim(strings.TrimSpace(os.Getenv(env.RepoPath)), "/")
+	if conf != nil {
+		scanned = strings.Trim(strings.TrimSpace(conf.ProjectPath), "/")
+	}
+	if ciRepo == "" || scanned == "" {
+		return ciRepo, scanned, false
+	}
+	return ciRepo, scanned, !strings.EqualFold(ciRepo, scanned)
 }
 
 // resolveScoreTarget returns the {platform host} and {namespace/repo} project
