@@ -343,6 +343,7 @@ More help:
 - GitLab guide: [getplumber.io/docs/cli/gitlab](https://getplumber.io/docs/cli/gitlab)
 - GitHub guide: [getplumber.io/docs/cli/github](https://getplumber.io/docs/cli/github)
 - Discord: [discord.gg/932xkSU24f](https://discord.gg/932xkSU24f)
+- Contact: [tech@getplumber.io](mailto:tech@getplumber.io)
 
 ## Development
 
