@@ -145,7 +145,7 @@ plumber analyze \
 
 ## GitHub Action
 
-1. Add [the official Plumber action](https://github.com/marketplace/actions/plumber-score) to `.github/workflows/plumber.yml`:
+1. Add [the official Plumber action](https://github.com/marketplace/actions/plumber) to `.github/workflows/plumber.yml`:
     ```yaml
     name: Plumber
 
@@ -365,7 +365,7 @@ Contributing guide: [`CONTRIBUTING.md`](./CONTRIBUTING.md)
 
 - Website: [getplumber.io](https://getplumber.io)
 - Documentation: [getplumber.io/docs/cli](https://getplumber.io/docs/cli)
-- GitHub Action listing: [Plumber Score](https://github.com/marketplace/actions/plumber-score)
+- GitHub Action listing: [Plumber](https://github.com/marketplace/actions/plumber)
 - GitLab component docs: [`COMPONENT_README.md`](./COMPONENT_README.md)
 - Security policy: [`SECURITY.md`](./SECURITY.md)
 
