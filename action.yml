@@ -1,4 +1,4 @@
-name: "Plumber"
+name: "Plumber Security"
 description: "Plumber detects CI/CD security issues in your GitHub workflows and gives you a score."
 author: "Plumber (getplumber.io)"
 
