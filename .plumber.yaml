@@ -69,9 +69,8 @@ gitlab:
 
         # Common CI/CD tool images
         - docker.io/docker:*
-        - docker.io/getplumber/plumber:*
-        - getplumber/plumber:*
-        - docker.io/getplumber/plumber@sha256:*
+        - docker.io/getplumber/* # all Plumber org images on Docker Hub
+        - getplumber/* # docker.io implicit-prefix form
         # GitLab registry patterns
         - $CI_REGISTRY_IMAGE:*
         - $CI_REGISTRY_IMAGE/*

@@ -775,9 +775,8 @@ func defaultTrustedURLs() []string {
 	return []string{
 		// Common CI/CD tool images
 		"docker.io/docker:*",
-		"docker.io/getplumber/plumber:*",
-		"getplumber/plumber:*",
-		"docker.io/getplumber/plumber@sha256:*",
+		"docker.io/getplumber/*",
+		"getplumber/*",
 		// GitLab registry patterns
 		"$CI_REGISTRY_IMAGE:*",
 		"$CI_REGISTRY_IMAGE/*",
