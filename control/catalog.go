@@ -190,6 +190,11 @@ func GitHubControls(pc *configuration.PlumberConfig) []ControlEntry {
 		Skipped:     c.WorkflowMustNotInjectUserInputInScripts == nil || !c.WorkflowMustNotInjectUserInputInScripts.IsEnabled(),
 	})
 	entries = append(entries, ControlEntry{
+		DisplayName: "Workflows must not write untrusted content to $GITHUB_ENV",
+		ControlName: "workflowMustNotWriteUntrustedContentToGitHubEnv",
+		Skipped:     c.WorkflowMustNotWriteUntrustedContentToGitHubEnv == nil || !c.WorkflowMustNotWriteUntrustedContentToGitHubEnv.IsEnabled(),
+	})
+	entries = append(entries, ControlEntry{
 		DisplayName: "Workflows must not use dangerous triggers",
 		ControlName: "workflowMustNotUseDangerousTriggers",
 		Skipped:     c.WorkflowMustNotUseDangerousTriggers == nil || !c.WorkflowMustNotUseDangerousTriggers.IsEnabled(),
@@ -336,6 +341,9 @@ func DisabledControlNames(c *configuration.ControlsConfig) map[string]bool {
 	}
 	if cfg := c.WorkflowMustNotInjectUserInputInScripts; cfg == nil || !cfg.IsEnabled() {
 		out["workflowMustNotInjectUserInputInScripts"] = true
+	}
+	if cfg := c.WorkflowMustNotWriteUntrustedContentToGitHubEnv; cfg == nil || !cfg.IsEnabled() {
+		out["workflowMustNotWriteUntrustedContentToGitHubEnv"] = true
 	}
 	if cfg := c.WorkflowMustNotUseDangerousTriggers; cfg == nil || !cfg.IsEnabled() {
 		out["workflowMustNotUseDangerousTriggers"] = true

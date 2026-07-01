@@ -1,0 +1,10 @@
+# toJSON() escapes the newline, so the value cannot open a second env
+# line. Must stay silent (the only newline-safe inline form).
+name: toJSON wrapped
+on: [issue_comment]
+
+jobs:
+  safe:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "B=${{ toJSON(github.event.issue.body) }}" >> $GITHUB_ENV

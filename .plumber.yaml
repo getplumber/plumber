@@ -756,6 +756,19 @@ github:
       enabled: true
 
     # ===========================================
+    # Workflow must not write untrusted content to $GITHUB_ENV / $GITHUB_PATH
+    # ===========================================
+    # Flags a `run:` step that writes an attacker-controlled expression
+    # (${{ github.event.* }} / ${{ github.head_ref }}) into $GITHUB_ENV or
+    # $GITHUB_PATH. Both files are sticky: every later step inherits the
+    # variable or PATH entry, so an injected NODE_OPTIONS (or a front-loaded
+    # PATH directory) hijacks later steps. Critical under pull_request_target /
+    # workflow_run. Bind the value through `env:` and reference the shell
+    # variable on the redirect line.
+    workflowMustNotWriteUntrustedContentToGitHubEnv:
+      enabled: true
+
+    # ===========================================
     # Workflow must not use dangerous triggers
     # ===========================================
     # Flags `pull_request_target` and `workflow_run` triggers, which

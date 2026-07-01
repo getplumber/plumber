@@ -1,0 +1,9 @@
+# Commit message is attacker-controlled free text. Expect 1 on bad.
+name: Commit message
+on: [push]
+
+jobs:
+  bad:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "M=${{ github.event.head_commit.message }}" >> $GITHUB_ENV

@@ -1,0 +1,10 @@
+# `tee -a $GITHUB_PATH` sink with an attacker-controlled issue body.
+# Expect 1 on bad.
+name: Tee path
+on: [issue_comment]
+
+jobs:
+  bad:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "${{ github.event.issue.body }}" | tee -a $GITHUB_PATH

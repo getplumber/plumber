@@ -1,0 +1,14 @@
+# The recommended ISSUE-207 fix (env: binding) does NOT stop env-poisoning:
+# the issue body is multiline, so a newline still opens a second variable when
+# $BODY is written to $GITHUB_ENV. ISSUE-207 is silent here (no expression on
+# the run line). Expect 1 on bad.
+name: Env-bound body
+on: [issue_comment]
+
+jobs:
+  bad:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          BODY: ${{ github.event.issue.body }}
+        run: echo "DATA=$BODY" >> $GITHUB_ENV

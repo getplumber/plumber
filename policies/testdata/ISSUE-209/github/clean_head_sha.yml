@@ -1,0 +1,9 @@
+# A commit SHA is a 40-char hex string; not injectable. Must stay silent.
+name: Head SHA
+on: [pull_request_target]
+
+jobs:
+  safe:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "S=${{ github.event.pull_request.head.sha }}" >> $GITHUB_ENV

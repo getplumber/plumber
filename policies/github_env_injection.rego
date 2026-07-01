@@ -1,64 +1,132 @@
-# github-env-injection — flag `run:` steps that append user-controlled
-# content to $GITHUB_ENV or $GITHUB_PATH. These two files are sticky:
-# every subsequent step of the job reads the variables/PATH entries
-# they define. An attacker who can influence the appended value
-# (PR title, issue body, fork branch name, ...) can override
-# `NODE_OPTIONS`, front-load a malicious directory on PATH, and hijack
-# later tool invocations — exfiltrating secrets when the workflow runs
-# under a secret-bearing trigger (pull_request_target, workflow_run).
+# github-env-injection — flag untrusted content reaching $GITHUB_ENV or
+# $GITHUB_PATH. These two files are sticky: every later step of the job reads
+# the variables / PATH entries they define. An attacker who controls the value
+# (PR title, issue body, fork branch name, ...) can override `NODE_OPTIONS`,
+# front-load a malicious directory on PATH, and hijack later tool invocations,
+# exfiltrating secrets under a secret-bearing trigger (pull_request_target,
+# workflow_run).
 #
-# The check fires when a script line writes to $GITHUB_ENV or
-# $GITHUB_PATH AND the line contains a GitHub template expression
-# known to carry user input (github.event.*, github.head_ref,
-# github.pull_request.*). The env: binding pattern stays quiet —
-# `echo "VAR=$SAFE_BIND" >> $GITHUB_ENV` with SAFE_BIND coming from
-# an `env:` block is not matched because the expression is not on the
-# same line as the redirect.
+# Two distinct shapes are flagged:
+#
+#   1. DIRECT — the untrusted expression and the redirect are on the SAME `run:`
+#      line (`echo "K=${{ github.event.* }}" >> $GITHUB_ENV`).
+#
+#   2. ENV-BOUND — the value is bound through `env:` and the redirect writes the
+#      shell variable (`env: { BODY: ${{ … }} }` then `echo "K=$BODY" >> …`).
+#      The `env:` binding shell-escapes the value, so ISSUE-207 (command
+#      injection) is satisfied — but it does NOT stop env / PATH poisoning, and
+#      this is the case ISSUE-207 cannot see. For $GITHUB_ENV the value must be
+#      able to carry a NEWLINE to open a second variable line, so only multiline
+#      free text (bodies, commit messages) qualifies. For $GITHUB_PATH ANY
+#      controlled value is a directory the attacker can plant a binary in, so
+#      the full list applies. base64-encoding or a heredoc with an unguessable
+#      delimiter is the real fix; toJSON also neutralises the newline.
+#
+# `unsafe_patterns` is the full attacker-controlled FREE TEXT list, kept
+# byte-identical to template_injection.rego (ISSUE-207) by the parity test
+# TestIssue209UnsafePatternsMatchTemplateInjection. Numeric / enum / SHA fields
+# are excluded — they cannot carry a metacharacter or a newline.
 package github_env_injection
 
 import rego.v1
 
-# Expressions GitHub considers attacker-influenceable under fork-based
-# triggers. Same list as the template-injection policy (ISSUE-207);
-# any value under `github.event.*` or `github.head_ref` can be
-# replaced by a PR author.
+# KEEP IN SYNC with policies/template_injection.rego::unsafe_patterns
+# (byte-for-byte; enforced by TestIssue209UnsafePatternsMatchTemplateInjection).
 unsafe_patterns := [
-	`\${{\s*github\.event\.`,
-	`\${{\s*github\.head_ref\s*}}`,
-	`\${{\s*github\.pull_request\.`,
+	`\${{[^}]*github\.event\.[^}]*\.(title|body)\b`,
+	`\${{[^}]*github\.head_ref\b`,
+	`\${{[^}]*github\.event\.[^}]*\.head\.(ref|label)\b`,
+	`\${{[^}]*github\.event\.[^}]*head_branch\b`,
+	`\${{[^}]*github\.event\.[^}]*head\.repo\.default_branch\b`,
+	`\${{[^}]*github\.event\.[^}]*head_repository\.default_branch\b`,
+	`\${{[^}]*github\.event\.[^}]*\.message\b`,
+	`\${{[^}]*github\.event\.[^}]*\.(description|homepage)\b`,
+	`\${{[^}]*github\.event\.[^}]*(author|committer)\.(name|email)\b`,
+	`\${{[^}]*github\.event\.[^}]*page_name\b`,
 ]
 
-# sink_patterns are regex patterns matching a shell redirect that
-# writes into one of the two special GitHub files. Covers both the
-# `$GITHUB_ENV` and `${GITHUB_ENV}` forms, plus the rarer `tee`-style
-# variant.
-sink_patterns := [
-	`>>\s*\$\{?GITHUB_ENV\}?`,
-	`>\s*\$\{?GITHUB_ENV\}?`,
-	`>>\s*\$\{?GITHUB_PATH\}?`,
-	`>\s*\$\{?GITHUB_PATH\}?`,
-	`\btee\s+-a\s+\$\{?GITHUB_ENV\}?`,
-	`\btee\s+-a\s+\$\{?GITHUB_PATH\}?`,
+# NEWLINE-capable subset: fields that can contain a literal newline and thus
+# open a SECOND `KEY=value` line in $GITHUB_ENV. Bodies and commit messages are
+# multiline; titles, refs, labels, names, enums and SHAs are single-line and so
+# cannot poison $GITHUB_ENV through an env-bound write. Used only by the
+# env-bound $GITHUB_ENV rule. (A subset of unsafe_patterns by construction.)
+newline_unsafe_patterns := [
+	`\${{[^}]*github\.event\.[^}]*\.body\b`,
+	`\${{[^}]*github\.event\.[^}]*\.message\b`,
 ]
 
+# A redirect (`>>` / `>`) or `tee` writing into the named file, in `$VAR` or
+# `${VAR}` form, optionally double-quoted (`"$GITHUB_ENV"`). Single quotes are
+# NOT matched: the shell does not expand `$` inside `'...'`.
+env_sink_patterns := [
+	`>>?\s*"?\$\{?GITHUB_ENV\}?`,
+	`\btee\s+(-a\s+)?"?\$\{?GITHUB_ENV\}?`,
+]
+
+path_sink_patterns := [
+	`>>?\s*"?\$\{?GITHUB_PATH\}?`,
+	`\btee\s+(-a\s+)?"?\$\{?GITHUB_PATH\}?`,
+]
+
+sink_patterns := array.concat(env_sink_patterns, path_sink_patterns)
+
+# 1. DIRECT injection: untrusted expression and sink on the same line.
 deny contains finding if {
 	some i, j
 	job := input.pipeline.jobs[i]
-	script := job.scripts[j]
-	_writes_to_github_file(script)
-	_has_unsafe_expression(script)
-	finding := {
-		"code":     "ISSUE-209",
-		"severity": "critical",
-		"message":  sprintf("job %q writes a user-controlled template expression into $GITHUB_ENV or $GITHUB_PATH — an attacker can hijack later steps", [job.name]),
-		"job":      job.name,
-	}
+	line := split(job.scripts[j], "\n")[_]
+	_matches(line, sink_patterns)
+	_matches(line, unsafe_patterns)
+	not _tojson_wrapped(line)
+	finding := _finding(job.name, "writes a user-controlled template expression into $GITHUB_ENV or $GITHUB_PATH; an attacker can hijack later steps")
 }
 
-_writes_to_github_file(line) if {
-	regex.match(sink_patterns[_], line)
+# 2. ENV-BOUND poisoning of $GITHUB_ENV: a multiline untrusted value bound in
+# env: and written as "$VAR" into $GITHUB_ENV. The env: binding does not stop a
+# newline opening a second variable.
+deny contains finding if {
+	some i
+	job := input.pipeline.jobs[i]
+	some varname
+	_matches(job.variables[varname], newline_unsafe_patterns)
+	not _tojson_wrapped(job.variables[varname])
+	some j
+	line := split(job.scripts[j], "\n")[_]
+	_matches(line, env_sink_patterns)
+	_dereferences(line, varname)
+	not _base64(line)
+	finding := _finding(job.name, sprintf("binds an untrusted multiline value to $%s and writes it to $GITHUB_ENV; a newline still opens a second variable (base64-encode or use a heredoc delimiter)", [varname]))
 }
 
-_has_unsafe_expression(line) if {
-	regex.match(unsafe_patterns[_], line)
+# 3. ENV-BOUND poisoning of $GITHUB_PATH: any untrusted value bound in env: and
+# written as "$VAR" into $GITHUB_PATH becomes a directory on PATH.
+deny contains finding if {
+	some i
+	job := input.pipeline.jobs[i]
+	some varname
+	_matches(job.variables[varname], unsafe_patterns)
+	not _tojson_wrapped(job.variables[varname])
+	some j
+	line := split(job.scripts[j], "\n")[_]
+	_matches(line, path_sink_patterns)
+	_dereferences(line, varname)
+	not _base64(line)
+	finding := _finding(job.name, sprintf("binds an untrusted value to $%s and writes it to $GITHUB_PATH; an attacker controls a directory placed on PATH", [varname]))
+}
+
+_matches(s, patterns) if regex.match(patterns[_], s)
+
+# `\b` after the name avoids $TITLE matching $TITLE_SUFFIX. Env var names are
+# shell identifiers, so they carry no regex metacharacters.
+_dereferences(line, varname) if regex.match(sprintf(`\$\{?%s\b`, [varname]), line)
+
+_base64(line) if contains(line, "base64")
+
+_tojson_wrapped(s) if regex.match(`(?i)\$\{\{[^}]*\btojson\s*\(`, s)
+
+_finding(jobname, msg) := {
+	"code":     "ISSUE-209",
+	"severity": "high",
+	"message":  sprintf("job %q %s", [jobname, msg]),
+	"job":      jobname,
 }

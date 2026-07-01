@@ -1,0 +1,10 @@
+# The FORK's head.repo.default_branch is attacker-renamable free text
+# (distinct from the base repo's, which is admin metadata). Expect 1 on bad.
+name: Fork default branch
+on: [pull_request_target]
+
+jobs:
+  bad:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "D=${{ github.event.pull_request.head.repo.default_branch }}" >> $GITHUB_ENV

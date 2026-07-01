@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"testing"
@@ -2503,10 +2504,29 @@ func TestIssue209_GitHubEnvInjection(t *testing.T) {
 		fixture      string
 		expectedHits []string
 	}{
+		// Violations — each MUST flag.
 		{"violation_event_to_env.yml", []string{"violation_event_to_env/build"}},
 		{"violation_head_ref_to_path.yml", []string{"violation_head_ref_to_path/deploy"}},
-		{"clean_env_binding.yml", nil},
-		{"clean_literal.yml", nil},
+		{"violation_quoted_sink.yml", []string{"violation_quoted_sink/bad"}},
+		{"violation_tee_path.yml", []string{"violation_tee_path/bad"}},
+		{"violation_brace_env.yml", []string{"violation_brace_env/bad"}},
+		{"violation_message.yml", []string{"violation_message/bad"}},
+		{"violation_fork_default_branch.yml", []string{"violation_fork_default_branch/bad"}},
+		// Env-bound: the env: binding satisfies ISSUE-207 (no command injection)
+		// but NOT 209 — a newline still poisons $GITHUB_ENV, any value poisons PATH.
+		{"violation_env_bound_body.yml", []string{"violation_env_bound_body/bad"}},
+		{"violation_env_bound_path.yml", []string{"violation_env_bound_path/bad"}},
+		// Clean — each MUST stay silent (true-negative / false-positive guards).
+		{"clean_env_binding.yml", nil},          // env-bound title (single-line) to $GITHUB_ENV
+		{"clean_env_bound_ref_to_env.yml", nil}, // env-bound ref (single-line) to $GITHUB_ENV
+		{"clean_env_base64.yml", nil},           // env-bound body, but base64-encoded
+		{"clean_literal.yml", nil},          // static value
+		{"clean_pr_number.yml", nil},        // numeric field, not injectable
+		{"clean_head_sha.yml", nil},         // SHA, not injectable
+		{"clean_action_enum.yml", nil},      // enum, not injectable
+		{"clean_base_default_branch.yml", nil}, // base repo metadata (#230), not the fork's
+		{"clean_tojson.yml", nil},           // toJSON escapes the newline
+		{"clean_cross_line.yml", nil},       // sink and expression on different lines
 	}
 
 	engine := opaengine.New()
@@ -2551,6 +2571,50 @@ func TestIssue209_GitHubEnvInjection(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestIssue209UnsafePatternsMatchTemplateInjection enforces that the
+// github-env-injection rule's untrusted-expression list stays byte-identical
+// to the template-injection rule's. The OPA engine compiles each policy in
+// isolation so they cannot share a symbol; this guards against the two
+// drifting (which previously let ISSUE-209 over-match numeric/enum fields).
+func TestIssue209UnsafePatternsMatchTemplateInjection(t *testing.T) {
+	got := extractRegoUnsafePatterns(t, "github_env_injection.rego")
+	want := extractRegoUnsafePatterns(t, "template_injection.rego")
+	if len(want) == 0 {
+		t.Fatal("extracted zero patterns from template_injection.rego — extractor is broken")
+	}
+	if strings.Join(got, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("github_env_injection.rego unsafe_patterns drifted from template_injection.rego.\n  209: %q\n  207: %q", got, want)
+	}
+}
+
+// extractRegoUnsafePatterns returns the backtick-quoted regex strings inside
+// the `unsafe_patterns := [ ... ]` block of a rego file in this package dir.
+func extractRegoUnsafePatterns(t *testing.T, file string) []string {
+	t.Helper()
+	data, err := os.ReadFile(file)
+	if err != nil {
+		t.Fatalf("read %s: %v", file, err)
+	}
+	src := string(data)
+	// Newline-anchored so it does not also match `newline_unsafe_patterns := [`.
+	start := strings.Index(src, "\nunsafe_patterns := [")
+	if start < 0 {
+		t.Fatalf("%s: no unsafe_patterns block found", file)
+	}
+	rest := src[start:]
+	// The closing bracket sits on its own line; the `]` characters inside the
+	// patterns (e.g. `[^}]`) are mid-line, so match a newline-anchored bracket.
+	end := strings.Index(rest, "\n]")
+	if end < 0 {
+		t.Fatalf("%s: unterminated unsafe_patterns block", file)
+	}
+	var out []string
+	for _, m := range regexp.MustCompile("`([^`]*)`").FindAllStringSubmatch(rest[:end], -1) {
+		out = append(out, m[1])
+	}
+	return out
 }
 
 // TestIssue105_ContainerHardcodedCredentials flags

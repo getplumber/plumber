@@ -1,0 +1,10 @@
+# Quoted redirect target `>> "$GITHUB_ENV"` — the common, recommended
+# form. Must fire: the value is still attacker-controlled. Expect 1 on bad.
+name: Quoted sink
+on: [pull_request_target]
+
+jobs:
+  bad:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "PR_TITLE=${{ github.event.pull_request.title }}" >> "$GITHUB_ENV"

@@ -343,6 +343,7 @@ func TestValidControlNames(t *testing.T) {
 		"workflowMustNotGrantPermissionsWriteAll",
 		"workflowMustNotInjectUserInputInScripts",
 		"workflowMustNotUseDangerousTriggers",
+		"workflowMustNotWriteUntrustedContentToGitHubEnv",
 		"workflowsMustDeclarePermissions",
 	}
 

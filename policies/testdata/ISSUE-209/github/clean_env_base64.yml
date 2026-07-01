@@ -1,0 +1,12 @@
+# A multiline body bound through env:, but base64-encoded on the write line so
+# no newline reaches $GITHUB_ENV. This is the safe form. Must stay silent.
+name: Env-bound base64
+on: [issue_comment]
+
+jobs:
+  safe:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          BODY: ${{ github.event.issue.body }}
+        run: echo "DATA_B64=$(printf '%s' "$BODY" | base64 -w0)" >> $GITHUB_ENV

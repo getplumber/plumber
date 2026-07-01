@@ -46,6 +46,8 @@ func buildLegacyResultGitHub(e control.ControlEntry, result *control.AnalysisRes
 		return "securityJobsWeakenedResult", buildSecurityJobsBlockGitHub(common, result, findings)
 	case "workflowMustNotInjectUserInputInScripts":
 		return "templateInjectionResult", buildTemplateInjectionBlock(common, result, findings)
+	case "workflowMustNotWriteUntrustedContentToGitHubEnv":
+		return "githubEnvInjectionResult", buildGitHubEnvInjectionBlock(common, result, findings)
 	case "workflowMustNotUseDangerousTriggers":
 		return "dangerousTriggersResult", buildDangerousTriggersBlock(common, result, findings)
 	case "pullRequestTargetMustNotCheckoutHead":
@@ -345,6 +347,23 @@ func buildTemplateInjectionBlock(c legacyCommon, result *control.AnalysisResult,
 			"workflowsScanned":        s.WorkflowsTotal,
 			"scriptLinesChecked":      s.ScriptLinesTotal,
 			"templateInjectionsFound": len(findings),
+		},
+		"compliance": c.Compliance,
+		"version":    "0.1.0",
+		"ciValid":    c.CiValid,
+		"ciMissing":  c.CiMissing,
+		"skipped":    c.Skipped,
+	}
+}
+
+func buildGitHubEnvInjectionBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	s := statsOf(result)
+	return map[string]any{
+		"issues": projectFindings(findings, "jobName"),
+		"metrics": map[string]any{
+			"workflowsScanned":         s.WorkflowsTotal,
+			"scriptLinesChecked":       s.ScriptLinesTotal,
+			"githubEnvInjectionsFound": len(findings),
 		},
 		"compliance": c.Compliance,
 		"version":    "0.1.0",

@@ -1,0 +1,10 @@
+# A PR number is an integer GitHub assigns; it cannot carry a newline or
+# shell metacharacter, so it cannot poison the env file. Must stay silent.
+name: PR number
+on: [pull_request_target]
+
+jobs:
+  safe:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "N=${{ github.event.number }}" >> $GITHUB_ENV

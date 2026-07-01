@@ -599,7 +599,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 	},
 	CodeGitHubEnvInjection: {
 		Code:        CodeGitHubEnvInjection,
-		Severity:    SeverityCritical,
+		Severity:    SeverityHigh,
 		Title:       "Untrusted content written to $GITHUB_ENV or $GITHUB_PATH",
 		Description: "A GitHub Actions `run:` step appends a user-controlled value (PR title, issue body, fork branch name, ...) to `$GITHUB_ENV` or `$GITHUB_PATH`. The appended value becomes an environment variable or PATH entry for every subsequent step in the job. An attacker who controls the value can override existing variables (for example `NODE_OPTIONS=--require=./exfil.js`) or inject a malicious directory at the front of PATH, hijacking any later `npm`, `bash`, etc. invocation and exfiltrating secrets from privileged triggers.",
 		Remediation: "Do not write user-controlled values into `$GITHUB_ENV` or `$GITHUB_PATH`. If you must propagate a value derived from user input, bind it through an `env:` block first (`env: { TITLE: ${{ github.event.issue.title }} }`) and validate/escape it before writing — or pass it as a step output instead. Restrict workflows touching these files to non-PR triggers when possible.",

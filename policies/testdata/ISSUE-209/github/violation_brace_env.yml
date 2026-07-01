@@ -1,0 +1,9 @@
+# Brace form `>> ${GITHUB_ENV}`. Expect 1 on bad.
+name: Brace env
+on: [pull_request_target]
+
+jobs:
+  bad:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "T=${{ github.event.pull_request.title }}" >> ${GITHUB_ENV}

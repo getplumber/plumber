@@ -33,7 +33,7 @@ reading the upstream docs.
 | :--- | :--- | :--- |
 | [ISSUE-207](#issue-206--template-injection) | `template-injection` | **critical** |
 | [ISSUE-208](#issue-208--insecure-commands) | `insecure-commands` | high |
-| [ISSUE-209](#issue-209--github-env-injection) | `github-env-injection` | **critical** |
+| [ISSUE-209](#issue-209--github-env-injection) | `github-env-injection` | **high** |
 | [ISSUE-210](#issue-210--bot-conditions) | `bot-conditions` | high |
 | [ISSUE-211](#issue-211--unsound-condition) | `unsound-condition` | medium |
 | [ISSUE-212](#issue-212--unsound-contains) | `unsound-contains` | medium |
@@ -675,7 +675,7 @@ jobs:
 
 ## ISSUE-209 — `github-env-injection`
 
-**Severity:** `critical` • **Control:** `workflowMustNotWriteUntrustedContentToGitHubEnv`
+**Severity:** `high` • **Control:** `workflowMustNotWriteUntrustedContentToGitHubEnv`
 
 A `run:` step appends a value containing a `${{ github.event.* }}` /
 `head_ref` / `pull_request.*` expression to `$GITHUB_ENV` or

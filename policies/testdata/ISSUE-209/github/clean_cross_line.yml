@@ -1,0 +1,13 @@
+# The redirect and the untrusted expression are on DIFFERENT lines of the
+# same run block, so neither line is a sink+expression pair. Must stay
+# silent (per-line matching; this is the cross-line false positive guard).
+name: Cross line
+on: [pull_request_target]
+
+jobs:
+  safe:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "SAFE=ok" >> $GITHUB_ENV
+          echo "title is ${{ github.event.pull_request.title }}"

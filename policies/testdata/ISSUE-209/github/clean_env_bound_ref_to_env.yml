@@ -1,0 +1,14 @@
+# A ref (fork branch name) is single-line and bound through env:, then written
+# to $GITHUB_ENV. A ref cannot contain a newline, so it cannot open a second
+# variable. Must stay silent — the precision guard that env-bound writes to
+# $GITHUB_ENV are only flagged for multiline fields.
+name: Env-bound ref to env
+on: [pull_request_target]
+
+jobs:
+  safe:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          REF: ${{ github.head_ref }}
+        run: echo "BRANCH=$REF" >> $GITHUB_ENV

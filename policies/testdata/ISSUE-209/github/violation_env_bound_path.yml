@@ -1,0 +1,14 @@
+# A ref has no newline, so it cannot poison $GITHUB_ENV — but ANY attacker-
+# controlled value written to $GITHUB_PATH becomes a directory on PATH the
+# attacker can plant a binary in. So the env-bound PATH write is a violation
+# even for a ref. Expect 1 on bad.
+name: Env-bound path
+on: [pull_request_target]
+
+jobs:
+  bad:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          REF: ${{ github.head_ref }}
+        run: echo "/opt/$REF/bin" >> $GITHUB_PATH

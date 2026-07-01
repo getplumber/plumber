@@ -1,0 +1,10 @@
+# event.action is a fixed enum (opened, synchronize, ...); not injectable.
+# Must stay silent.
+name: Action enum
+on: [pull_request_target]
+
+jobs:
+  safe:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "A=${{ github.event.action }}" >> $GITHUB_ENV

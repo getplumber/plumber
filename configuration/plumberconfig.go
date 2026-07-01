@@ -70,6 +70,9 @@ var validControlSchema = map[string][]string{
 	"workflowMustNotInjectUserInputInScripts": {
 		"enabled",
 	},
+	"workflowMustNotWriteUntrustedContentToGitHubEnv": {
+		"enabled",
+	},
 	"workflowMustNotUseDangerousTriggers": {
 		"enabled",
 	},
@@ -312,6 +315,10 @@ type ControlsConfig struct {
 	// WorkflowMustNotInjectUserInputInScripts control configuration (GitHub Actions only).
 	// Config-free; toggle via `enabled`.
 	WorkflowMustNotInjectUserInputInScripts *EnabledOnlyControlConfig `yaml:"workflowMustNotInjectUserInputInScripts,omitempty"`
+
+	// WorkflowMustNotWriteUntrustedContentToGitHubEnv control configuration (GitHub Actions only).
+	// Config-free; toggle via `enabled`.
+	WorkflowMustNotWriteUntrustedContentToGitHubEnv *EnabledOnlyControlConfig `yaml:"workflowMustNotWriteUntrustedContentToGitHubEnv,omitempty"`
 
 	// WorkflowMustNotUseDangerousTriggers control configuration (GitHub Actions only).
 	// Config-free; toggle via `enabled`.
