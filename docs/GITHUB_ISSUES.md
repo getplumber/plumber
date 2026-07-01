@@ -677,11 +677,14 @@ jobs:
 
 **Severity:** `high` • **Control:** `workflowMustNotWriteUntrustedContentToGitHubEnv`
 
-A `run:` step appends a value containing a `${{ github.event.* }}` /
-`head_ref` / `pull_request.*` expression to `$GITHUB_ENV` or
-`$GITHUB_PATH`. Those files are sticky: every following step inherits
-the variables / PATH entries. Injecting `NODE_OPTIONS=--require=./exfil.js`
-hijacks every later Node invocation.
+Attacker-controlled content reaches `$GITHUB_ENV` or `$GITHUB_PATH`.
+Those files are sticky: every following step inherits the variables and
+PATH entries they define. Injecting `NODE_OPTIONS=--require=./exfil.js`
+hijacks every later Node invocation; front-loading a directory onto
+`$GITHUB_PATH` shadows a real binary. Two shapes are flagged.
+
+**Direct.** The untrusted expression and the redirect are on the same
+`run:` line.
 
 ```yaml
 # ❌ before
@@ -694,6 +697,38 @@ hijacks every later Node invocation.
     TITLE: ${{ github.event.pull_request.title }}
   run: echo "PR_TITLE=$TITLE" >> "$GITHUB_ENV"
 ```
+
+**Env-bound.** This is the case [ISSUE-207](#issue-207--template-injection)
+cannot see: the `env:` binding shell-escapes the value, so there is no
+command injection, but it does not stop env / PATH poisoning. Binding
+does **not** make these safe:
+
+- a multiline value (`*.body`, `*.message`) written to `$GITHUB_ENV` —
+  the newline survives the variable and opens a second `KEY=value` line;
+- **any** controlled value written to `$GITHUB_PATH` — the value is a
+  directory the attacker can plant a binary in.
+
+```yaml
+# ❌ before — env: binding does NOT protect these
+- env:
+    BODY: ${{ github.event.issue.body }}
+  run: echo "NOTE=$BODY" >> "$GITHUB_ENV"     # newline opens a 2nd var
+- env:
+    REF: ${{ github.head_ref }}
+  run: echo "$REF" >> "$GITHUB_PATH"          # attacker-named PATH dir
+```
+
+```yaml
+# ✅ after — neutralise the newline (base64 / toJSON) or pin the value
+- env:
+    BODY: ${{ github.event.issue.body }}
+  run: echo "NOTE=$(printf '%s' "$BODY" | base64 -w0)" >> "$GITHUB_ENV"
+- run: echo "/opt/tools/bin" >> "$GITHUB_PATH"   # not attacker-derived
+```
+
+A single-line value (title, ref) written to `$GITHUB_ENV` stays silent:
+with no newline it cannot open a second variable line. `toJSON(...)`
+also neutralises the newline and stays silent.
 
 ---
 
