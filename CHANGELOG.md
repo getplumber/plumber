@@ -1,3 +1,15 @@
+## [0.3.80](https://github.com/getplumber/plumber/compare/v0.3.79...v0.3.80) (2026-07-01)
+
+
+### ✨ Features
+
+* **config:** trust getplumber/plumber action in default authorized sources ([f883131](https://github.com/getplumber/plumber/commit/f88313181a0215b3a6bd0630ccf0dc6e5df5d671))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.3.79 refs [skip ci] ([42ed1c5](https://github.com/getplumber/plumber/commit/42ed1c5bf24a7b2e0859bdf30aeab89a5ab2e91f))
+
 ## [0.3.79](https://github.com/getplumber/plumber/compare/v0.3.78...v0.3.79) (2026-06-29)
 
 

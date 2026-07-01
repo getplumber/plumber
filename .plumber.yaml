@@ -608,6 +608,7 @@ github:
       # Allowlist of trusted action sources. Each entry is either an
       # exact `owner/repo` or an `owner/*` wildcard for a whole org.
       trustedGithubActions:
+        - getplumber/plumber # Plumber's own GitHub Action
         - docker/setup-qemu-action
         - docker/setup-buildx-action
         - docker/login-action
