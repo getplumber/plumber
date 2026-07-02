@@ -3,6 +3,8 @@ package gitlab
 import (
 	"strings"
 	"testing"
+
+	"github.com/getplumber/plumber/configuration"
 )
 
 // TestRedactPreview is the load-bearing safety test for ISSUE-301:
@@ -73,4 +75,17 @@ func TestParseGitleaksReport(t *testing.T) {
 			t.Fatal("expected decode error, got nil")
 		}
 	})
+}
+
+// TestGitleaksScanningDisabled pins the current state: gitleaks binary
+// resolution is turned off, so no external binary is ever resolved or run,
+// regardless of what a scanned repository's .plumber.yaml requests.
+func TestGitleaksScanningDisabled(t *testing.T) {
+	if _, err := resolveGitleaksBinary(nil); err == nil {
+		t.Fatal("gitleaks resolution should be disabled, got nil error")
+	}
+	cfg := &configuration.SecretDetectionControlConfig{GitleaksPath: "/bin/sh"}
+	if _, err := resolveGitleaksBinary(cfg); err == nil {
+		t.Fatal("gitleaks resolution should be disabled even with a configured path, got nil error")
+	}
 }

@@ -36,10 +36,6 @@ import (
 // mistake) rather than as part of normal flow.
 const gitleaksTimeout = 30 * time.Second
 
-// defaultGitleaksBinary is the name plumber looks up on $PATH when
-// the user has not set gitleaksPath explicitly.
-const defaultGitleaksBinary = "gitleaks"
-
 // gitleaksReportEntry mirrors the JSON shape from
 // `gitleaks detect --report-format=json --report-path=-`. Only fields
 // plumber actually surfaces are decoded; gitleaks's Author / Commit /
@@ -226,30 +222,13 @@ func execGitleaks(binary string, cfg *configuration.SecretDetectionControlConfig
 	return parseGitleaksReport(report)
 }
 
-// resolveGitleaksBinary returns the path plumber should exec.
-//
-//   - cfg.GitleaksPath set → that path is the override. Resolvable →
-//     use it; unresolvable → error. We never fall back to $PATH when
-//     the user explicitly named a binary — that would silently mask a
-//     misconfigured sealed-CI deploy and run a different gitleaks than
-//     the operator asked for.
-//   - cfg.GitleaksPath unset → look up `gitleaks` on $PATH.
-//
-// Returns an error when the chosen path doesn't resolve; the caller
-// logs and abstains rather than failing the whole run.
-func resolveGitleaksBinary(cfg *configuration.SecretDetectionControlConfig) (string, error) {
-	if cfg != nil && cfg.GitleaksPath != "" {
-		path, err := exec.LookPath(cfg.GitleaksPath)
-		if err != nil {
-			return "", fmt.Errorf("gitleaks not found at configured gitleaksPath %q: %w", cfg.GitleaksPath, err)
-		}
-		return path, nil
-	}
-	path, err := exec.LookPath(defaultGitleaksBinary)
-	if err != nil {
-		return "", fmt.Errorf("gitleaks not found on PATH: %w", err)
-	}
-	return path, nil
+// resolveGitleaksBinary is intentionally disabled: gitleaks secret
+// scanning is turned off for now, so plumber resolves and executes no
+// external binary. Callers receive an error and abstain (ISSUE-301 does
+// not fire), exactly as they do for any other gitleaks failure. Full
+// context will be disclosed soon.
+func resolveGitleaksBinary(_ *configuration.SecretDetectionControlConfig) (string, error) {
+	return "", errors.New("gitleaks secret scanning is disabled")
 }
 
 // parseGitleaksReport decodes gitleaks's JSON report. gitleaks writes

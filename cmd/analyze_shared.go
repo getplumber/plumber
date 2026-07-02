@@ -166,6 +166,7 @@ func buildProviderControlSummariesAndGroups(p provider.Provider, result *control
 			Title:      e.DisplayName,
 			Compliance: entryCompliance,
 			Skipped:    skipped,
+			SkipReason: e.SkipReason,
 			Stats:      stats,
 			Findings:   items,
 		})
