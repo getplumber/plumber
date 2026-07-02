@@ -204,7 +204,10 @@ func execGitleaks(binary string, cfg *configuration.SecretDetectionControlConfig
 	if cfg != nil && cfg.GitleaksConfigPath != "" {
 		args = append(args, "--config", cfg.GitleaksConfigPath)
 	}
-	cmd := exec.CommandContext(ctx, binary, args...) //nolint:gosec // operator-controlled binary path
+	// binary is validated by ensureBinaryOutsideWorkspace: it is either a
+	// $PATH lookup or an absolute path outside the checked-out repository,
+	// never an attacker-planted file inside the analyzed workspace.
+	cmd := exec.CommandContext(ctx, binary, args...) //nolint:gosec // path validated: resolved outside the analyzed workspace
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 
@@ -243,13 +246,69 @@ func resolveGitleaksBinary(cfg *configuration.SecretDetectionControlConfig) (str
 		if err != nil {
 			return "", fmt.Errorf("gitleaks not found at configured gitleaksPath %q: %w", cfg.GitleaksPath, err)
 		}
+		if err := ensureBinaryOutsideWorkspace(path); err != nil {
+			return "", err
+		}
 		return path, nil
 	}
 	path, err := exec.LookPath(defaultGitleaksBinary)
 	if err != nil {
 		return "", fmt.Errorf("gitleaks not found on PATH: %w", err)
 	}
+	if err := ensureBinaryOutsideWorkspace(path); err != nil {
+		return "", err
+	}
 	return path, nil
+}
+
+// ensureBinaryOutsideWorkspace refuses to run a gitleaks binary that resolves
+// inside the analyzed workspace (the current working directory — the
+// checked-out repository).
+//
+// SECURITY (arbitrary code execution): gitleaksPath is read from the repo's
+// own .plumber.yaml. When plumber scans an untrusted branch — the canonical
+// case being a fork merge-request / pull-request pipeline — that file is
+// attacker-controlled, and so is anything committed to the checkout. Without
+// this guard an attacker sets `gitleaksPath: ./x` (or any in-repo path),
+// commits an executable `x`, and plumber runs it with the CI job's privileges
+// and secrets. Executing a binary the attacker planted in the workspace is
+// remote code execution, so we reject it and abstain from the scan.
+//
+// Legitimate configurations are unaffected: a bare command name resolved via
+// $PATH, or an absolute path to a system-installed binary, both live outside
+// the workspace. The analyzed repository cannot influence $PATH.
+func ensureBinaryOutsideWorkspace(resolved string) error {
+	wd, err := os.Getwd()
+	if err != nil {
+		return fmt.Errorf("determine workspace root to validate gitleaks binary: %w", err)
+	}
+	absBin, err := filepath.Abs(resolved)
+	if err != nil {
+		return fmt.Errorf("resolve gitleaks binary path %q: %w", resolved, err)
+	}
+	// Resolve symlinks on both sides so a symlink planted in the checkout
+	// cannot disguise an in-workspace target as an outside path.
+	if real, rerr := filepath.EvalSymlinks(absBin); rerr == nil {
+		absBin = real
+	}
+	if real, rerr := filepath.EvalSymlinks(wd); rerr == nil {
+		wd = real
+	}
+	if pathWithin(wd, absBin) {
+		return fmt.Errorf("refusing to execute gitleaks binary %q inside the analyzed workspace %q: "+
+			"a repository-controlled .plumber.yaml must not select the binary plumber runs "+
+			"(install gitleaks on $PATH, or set gitleaksPath to an absolute path outside the repository)", absBin, wd)
+	}
+	return nil
+}
+
+// pathWithin reports whether target is root itself or lies beneath it.
+func pathWithin(root, target string) bool {
+	rel, err := filepath.Rel(root, target)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)))
 }
 
 // parseGitleaksReport decodes gitleaks's JSON report. gitleaks writes
