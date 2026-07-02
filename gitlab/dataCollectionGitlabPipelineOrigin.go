@@ -3,6 +3,7 @@ package gitlab
 import (
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 
@@ -185,6 +186,50 @@ func ParseGitlabComponentPath(path string, instanceURL string) (string, string, 
 	return instance, cleanPath, version
 }
 
+// Predefined GitLab project-path variables we can resolve from the scanned
+// project's full path. Each pattern ends on a word boundary (\b) so a longer
+// variable that merely shares a prefix is left untouched instead of being
+// corrupted: without the boundary, replacing $CI_PROJECT_PATH inside
+// $CI_PROJECT_PATH_SLUG would yield "<path>_SLUG", and $CI_PROJECT_NAMESPACE
+// inside $CI_PROJECT_NAMESPACE_ID would yield "<namespace>_ID". Because each
+// pattern is anchored on the full variable name plus a boundary, ordering no
+// longer matters for correctness.
+var (
+	reCIProjectRootNamespace = regexp.MustCompile(`\$CI_PROJECT_ROOT_NAMESPACE\b`)
+	reCIProjectNamespace     = regexp.MustCompile(`\$CI_PROJECT_NAMESPACE\b`)
+	reCIProjectPath          = regexp.MustCompile(`\$CI_PROJECT_PATH\b`)
+	reCIProjectName          = regexp.MustCompile(`\$CI_PROJECT_NAME\b`)
+)
+
+// resolvePredefinedProjectVars substitutes the predefined GitLab CI project
+// variables that can appear in a component/include path with their values for
+// the scanned project. GitLab resolves these server-side before fetching the
+// component, so the main-loop origin hash is built from the resolved path; we
+// must resolve them the same way here or the include's inputs-map hash will not
+// match, the inputs are dropped, and an overridden component job is misreported
+// as hardcoded (ISSUE-401, #286).
+func resolvePredefinedProjectVars(path, projectPath string) string {
+	if projectPath == "" || !strings.Contains(path, "$CI_PROJECT_") {
+		return path
+	}
+
+	namespace, name := projectPath, projectPath
+	if i := strings.LastIndex(projectPath, "/"); i >= 0 {
+		namespace = projectPath[:i] // group path, e.g. "swepy/cicd-templates"
+		name = projectPath[i+1:]    // project slug, e.g. "ci-trigger"
+	}
+	rootNamespace, _, _ := strings.Cut(projectPath, "/") // top-level group, e.g. "swepy"
+
+	// ReplaceAllLiteralString avoids interpreting "$" in the replacement value
+	// as a capture-group reference (GitLab paths never contain "$", but this is
+	// defensive and free).
+	path = reCIProjectRootNamespace.ReplaceAllLiteralString(path, rootNamespace)
+	path = reCIProjectNamespace.ReplaceAllLiteralString(path, namespace)
+	path = reCIProjectPath.ReplaceAllLiteralString(path, projectPath)
+	path = reCIProjectName.ReplaceAllLiteralString(path, name)
+	return path
+}
+
 // splitComponentPath splits a GitLab component cleanPath
 // ("group/.../project/component") into the project full path and the component
 // name (the last segment). GitLab component includes are always
@@ -268,7 +313,7 @@ func latestCatalogVersion(resource *CICatalogResource, component string) string 
 // extractInputsFromInclude extracts inputs from a single include entry and generates its hash
 // includeEntry can be a string (simple include) or a map (include with properties)
 // Returns: hash (uint64), inputs (map), error
-func extractInputsFromInclude(includeEntry interface{}, instanceURL string) (uint64, map[string]interface{}, error) {
+func extractInputsFromInclude(includeEntry interface{}, instanceURL, projectPath string) (uint64, map[string]interface{}, error) {
 	// If it's a string, create a simple include origin
 	if includeStr, ok := includeEntry.(string); ok {
 		// Simple string includes are typically templates or remote URLs
@@ -334,6 +379,13 @@ func extractInputsFromInclude(includeEntry interface{}, instanceURL string) (uin
 				instance = actualInstance
 			}
 
+			// GitLab also resolves predefined project variables ($CI_PROJECT_NAMESPACE,
+			// ...) in the component path before fetching it, so the main-loop hash is
+			// built from the resolved path. Substitute them here too, otherwise the
+			// hash mismatches, the include's inputs are dropped, and an overridden
+			// component job is misreported as hardcoded (ISSUE-401, #286).
+			cleanPath = resolvePredefinedProjectVars(cleanPath, projectPath)
+
 			includeOrigin.Location = instance + "/" + cleanPath
 		}
 
@@ -358,7 +410,7 @@ func generateIncludeHash(includeOrigin IncludeOriginWithoutRef) (uint64, error) 
 // buildIncludeInputsMap builds a map of include hash to inputs from the GitLab CI configuration
 // The map is used to pass the correct inputs when fetching includes
 // Uses the same hash mechanism as the main origin detection loop for consistency
-func buildIncludeInputsMap(gitlabConf *GitlabCIConf, instanceURL string) map[uint64]map[string]interface{} {
+func buildIncludeInputsMap(gitlabConf *GitlabCIConf, instanceURL, projectPath string) map[uint64]map[string]interface{} {
 	includeInputsMap := make(map[uint64]map[string]interface{})
 
 	if gitlabConf == nil || gitlabConf.Include == nil {
@@ -367,7 +419,7 @@ func buildIncludeInputsMap(gitlabConf *GitlabCIConf, instanceURL string) map[uin
 
 	// Process each include entry
 	for _, includeEntry := range gitlabConf.Include {
-		hash, inputs, err := extractInputsFromInclude(includeEntry, instanceURL)
+		hash, inputs, err := extractInputsFromInclude(includeEntry, instanceURL, projectPath)
 		if err != nil || hash == 0 {
 			continue
 		}
@@ -518,7 +570,7 @@ func (dc *GitlabPipelineOriginDataCollection) Run(project *ProjectInfo, token st
 	// This map will help us pass the correct inputs when fetching includes
 	// Key: include hash (same hash used for origin tracking)
 	// Value: map of input name to input value
-	includeInputsMap := buildIncludeInputsMap(data.Conf, conf.GitlabURL)
+	includeInputsMap := buildIncludeInputsMap(data.Conf, conf.GitlabURL, project.Path)
 	l.WithField("includeInputsMap", includeInputsMap).Debug("Built include inputs map from original configuration")
 
 	//////////////////
