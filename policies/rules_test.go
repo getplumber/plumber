@@ -2516,6 +2516,15 @@ func TestIssue209_GitHubEnvInjection(t *testing.T) {
 		// but NOT 209 — a newline still poisons $GITHUB_ENV, any value poisons PATH.
 		{"violation_env_bound_body.yml", []string{"violation_env_bound_body/bad"}},
 		{"violation_env_bound_path.yml", []string{"violation_env_bound_path/bad"}},
+		// Split sink/dereference: the redirect and the $VAR are on different
+		// lines of the run block (heredoc), so per-line matching misses it, but
+		// the body still lands in $GITHUB_ENV.
+		{"violation_env_bound_heredoc.yml", []string{"violation_env_bound_heredoc/bad"}},
+		// base64 present on the line, but applied to an unrelated substitution,
+		// not to the untrusted var — must not be suppressed. Covered in both
+		// orders: base64 after the var, and base64 before it.
+		{"violation_base64_elsewhere.yml", []string{"violation_base64_elsewhere/bad"}},
+		{"violation_base64_before.yml", []string{"violation_base64_before/bad"}},
 		// Clean — each MUST stay silent (true-negative / false-positive guards).
 		{"clean_env_binding.yml", nil},          // env-bound title (single-line) to $GITHUB_ENV
 		{"clean_env_bound_ref_to_env.yml", nil}, // env-bound ref (single-line) to $GITHUB_ENV

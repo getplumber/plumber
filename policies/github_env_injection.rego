@@ -6,7 +6,7 @@
 # exfiltrating secrets under a secret-bearing trigger (pull_request_target,
 # workflow_run).
 #
-# Two distinct shapes are flagged:
+# Three shapes are flagged:
 #
 #   1. DIRECT — the untrusted expression and the redirect are on the SAME `run:`
 #      line (`echo "K=${{ github.event.* }}" >> $GITHUB_ENV`).
@@ -19,8 +19,13 @@
 #      able to carry a NEWLINE to open a second variable line, so only multiline
 #      free text (bodies, commit messages) qualifies. For $GITHUB_PATH ANY
 #      controlled value is a directory the attacker can plant a binary in, so
-#      the full list applies. base64-encoding or a heredoc with an unguessable
-#      delimiter is the real fix; toJSON also neutralises the newline.
+#      the full list applies. base64-encoding the VAR or toJSON neutralises the
+#      newline; a base64 elsewhere on the line does not.
+#
+#   3. ENV-BOUND via HEREDOC — same as (2) but the redirect is a heredoc header
+#      (`cat <<EOF >> $GITHUB_ENV`) and the `$VAR` is dereferenced on a later
+#      line of the body, so per-line matching would miss it. Only a randomised
+#      (unguessable) heredoc delimiter is a real fix here, not a fixed `EOF`.
 #
 # `unsafe_patterns` is the full attacker-controlled FREE TEXT list, kept
 # byte-identical to template_injection.rego (ISSUE-207) by the parity test
@@ -94,7 +99,7 @@ deny contains finding if {
 	line := split(job.scripts[j], "\n")[_]
 	_matches(line, env_sink_patterns)
 	_dereferences(line, varname)
-	not _base64(line)
+	not _base64_of(line, varname)
 	finding := _finding(job.name, sprintf("binds an untrusted multiline value to $%s and writes it to $GITHUB_ENV; a newline still opens a second variable (base64-encode or use a heredoc delimiter)", [varname]))
 }
 
@@ -110,8 +115,37 @@ deny contains finding if {
 	line := split(job.scripts[j], "\n")[_]
 	_matches(line, path_sink_patterns)
 	_dereferences(line, varname)
-	not _base64(line)
+	not _base64_of(line, varname)
 	finding := _finding(job.name, sprintf("binds an untrusted value to $%s and writes it to $GITHUB_PATH; an attacker controls a directory placed on PATH", [varname]))
+}
+
+# 4. ENV-BOUND poisoning of $GITHUB_ENV through a HEREDOC / split redirect. The
+# sink (`>> $GITHUB_ENV`) sits on the `cat <<EOF` header line and the `$VAR`
+# dereference is on a later line of the same run block, so the per-line rules
+# above miss it — but the whole heredoc body still lands in $GITHUB_ENV and a
+# newline in a multiline value opens a second variable.
+deny contains finding if {
+	some i
+	job := input.pipeline.jobs[i]
+	some varname
+	_matches(job.variables[varname], newline_unsafe_patterns)
+	not _tojson_wrapped(job.variables[varname])
+	some j
+	_heredoc_to_sink(job.scripts[j], varname, env_sink_patterns)
+	finding := _finding(job.name, sprintf("writes $%s into $GITHUB_ENV through a heredoc/redirect; the multiline value still opens a second variable (base64-encode or use a randomised heredoc delimiter)", [varname]))
+}
+
+# 5. Same, for $GITHUB_PATH — any untrusted value written through a heredoc
+# becomes a directory on PATH.
+deny contains finding if {
+	some i
+	job := input.pipeline.jobs[i]
+	some varname
+	_matches(job.variables[varname], unsafe_patterns)
+	not _tojson_wrapped(job.variables[varname])
+	some j
+	_heredoc_to_sink(job.scripts[j], varname, path_sink_patterns)
+	finding := _finding(job.name, sprintf("writes $%s into $GITHUB_PATH through a heredoc/redirect; an attacker controls a directory placed on PATH", [varname]))
 }
 
 _matches(s, patterns) if regex.match(patterns[_], s)
@@ -120,7 +154,29 @@ _matches(s, patterns) if regex.match(patterns[_], s)
 # shell identifiers, so they carry no regex metacharacters.
 _dereferences(line, varname) if regex.match(sprintf(`\$\{?%s\b`, [varname]), line)
 
-_base64(line) if contains(line, "base64")
+# _base64_of is true only when base64 is applied to the UNTRUSTED var itself —
+# either the var is piped into base64 (`"$VAR" | base64`) or base64 consumes it
+# directly (`base64 <<< "$VAR"`). A bare "contains base64" is too broad: it also
+# silences `echo "K=$VAR X=$(date | base64)"` where the var is still raw.
+# The second pattern excludes `)`, `|`, `;`, `&` between base64 and the var so
+# the match cannot cross a command-substitution / pipeline / statement boundary
+# (`ENC=$(echo hi | base64) RAW=$VAR` must NOT suppress — the var is the next
+# command's raw argument, not base64's operand). Suppression is a negative
+# guard, so any ambiguity falls through to a finding rather than silencing one.
+_base64_of(line, varname) if regex.match(sprintf(`\$\{?%s\}?"?'?\s*\|\s*base64`, [varname]), line)
+
+_base64_of(line, varname) if regex.match(sprintf(`base64[^\n)|;&]*\$\{?%s\b`, [varname]), line)
+
+# _heredoc_to_sink: a heredoc header (`<<EOF`, `<<-'EOF'`, ...) whose redirect
+# writes into the sink file on the SAME line, with the untrusted $VAR
+# dereferenced somewhere after it (the heredoc body). RE2 has no backreferences,
+# so the exact closing delimiter can't be pinned; the residual over-match (a
+# static heredoc followed by an unrelated later use of the var) is rare and errs
+# toward flagging a write to a sticky file.
+_heredoc_to_sink(script, varname, sinkpatterns) if {
+	some sinkpat in sinkpatterns
+	regex.match(sprintf(`(?s)<<-?\s*["']?\w+["']?[^\n]*(%s).*\$\{?%s\b`, [sinkpat, varname]), script)
+}
 
 _tojson_wrapped(s) if regex.match(`(?i)\$\{\{[^}]*\btojson\s*\(`, s)
 

@@ -1,0 +1,14 @@
+# base64 appears on the write line, but it is applied to an UNRELATED command
+# substitution (`$(date | base64)`), not to the untrusted `$BODY`, which is
+# still written raw into $GITHUB_ENV. The broad "contains base64" suppression
+# must not silence this. Expect 1 on bad.
+name: Base64 elsewhere
+on: [issue_comment]
+
+jobs:
+  bad:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          BODY: ${{ github.event.issue.body }}
+        run: echo "DATA=$BODY STAMP=$(date | base64)" >> $GITHUB_ENV

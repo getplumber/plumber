@@ -1,0 +1,18 @@
+# Env-bound body written to $GITHUB_ENV through a HEREDOC. The sink
+# (`>> $GITHUB_ENV`) is on the `cat <<EOF` line and the `$BODY` dereference is
+# on a later line of the same run block, so per-line matching misses it — but
+# the multiline body still lands in $GITHUB_ENV verbatim and a newline opens a
+# second variable. Expect 1 on bad.
+name: Env-bound heredoc
+on: [issue_comment]
+
+jobs:
+  bad:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          BODY: ${{ github.event.issue.body }}
+        run: |
+          cat <<EOF >> $GITHUB_ENV
+          DATA=$BODY
+          EOF

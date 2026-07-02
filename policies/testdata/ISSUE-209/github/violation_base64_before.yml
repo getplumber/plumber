@@ -1,0 +1,14 @@
+# Mirror of violation_base64_elsewhere: base64 appears BEFORE the untrusted
+# var, applied to an unrelated substitution (`$(echo hi | base64)`), while
+# `$BODY` is written raw into $GITHUB_ENV. The base64-of-var suppression must
+# not reach across the `)` boundary and silence this. Expect 1 on bad.
+name: Base64 before
+on: [issue_comment]
+
+jobs:
+  bad:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          BODY: ${{ github.event.issue.body }}
+        run: echo "ENC=$(echo hi | base64) RAW=$BODY" >> $GITHUB_ENV
