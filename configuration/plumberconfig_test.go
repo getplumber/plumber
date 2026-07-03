@@ -363,6 +363,7 @@ func TestValidControlNames(t *testing.T) {
 		"actionsMustNotCarryKnownCVEs",
 		"actionsMustNotExecuteMutableRemoteCode",
 		"branchMustBeProtected",
+		"checkoutMustNotPersistCredentials",
 		"cicdVariablesMustBeMasked",
 		"cicdVariablesMustBeProtected",
 		"containerImageMustComeFromAuthorizedSources",

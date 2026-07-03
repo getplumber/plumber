@@ -160,7 +160,6 @@ var benchedControls = map[string]map[string]struct{}{
 		"actionsMustNotDuplicateRunnerBuiltins": {},
 
 		// Repo-artifact / setup-side controls (need fixture coverage).
-		"checkoutMustNotPersistCredentials":                   {},
 		"containerCredentialsMustComeFromSecrets":             {},
 		"dependabotEcosystemsMustHaveCooldown":                {},
 		"dependabotMustNotAllowInsecureExternalCodeExecution": {},
