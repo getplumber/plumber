@@ -122,13 +122,30 @@ jobs:
       - name: Build Docker image
         run: docker build -t plumber:ci .
 
+      # Grype is installed directly from a pinned release and verified
+      # against a checksum committed to this repo, NOT via
+      # anchore/scan-action. The action, though pinnable by SHA, fetches
+      # and executes install.sh from anchore/grype@main at runtime — a
+      # moving ref that voids the immutability the SHA pin implies. The
+      # hash below is the only trust anchor; bump both together.
+      - name: Install grype (pinned + checksum-verified)
+        env:
+          GRYPE_VERSION: "0.114.0"
+          GRYPE_SHA256: "edda0968d8827daab01d32b3cd7de192ae0915005e7bbfcfef9e68e79bc43343"
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          curl -sSfL -o "$tmp/grype.tar.gz" \
+            "https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}/grype_${GRYPE_VERSION}_linux_amd64.tar.gz"
+          echo "${GRYPE_SHA256}  $tmp/grype.tar.gz" | sha256sum -c -
+          tar -xzf "$tmp/grype.tar.gz" -C "$tmp" grype
+          sudo install "$tmp/grype" /usr/local/bin/grype
+          grype version
+
       - name: Grype image scan
-        uses: anchore/scan-action@e1165082ffb1fe366ebaf02d8526e7c4989ea9d2 # v7.4.0
-        with:
-          image: plumber:ci
-          fail-build: true
-          severity-cutoff: high
-          only-fixed: true
+        env:
+          GRYPE_CHECK_FOR_APP_UPDATE: "false"
+        run: grype "plumber:ci" --fail-on high --only-fixed
 
   # trivy:
   #   name: Container Scan (Trivy)
