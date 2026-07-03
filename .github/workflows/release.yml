@@ -461,12 +461,17 @@ jobs:
           ref: main
           fetch-depth: 0
           fetch-tags: true
-          token: ${{ steps.app-token.outputs.token }}
+          persist-credentials: false
 
+      # The app token is supplied at push time through a credential helper
+      # that reads it from the step env (same pattern as the homebrew job):
+      # .git/config only ever stores the literal helper script, never the
+      # token, so no credential outlives this step.
       - name: Pin README SHA and template image digest
         env:
           VERSION: ${{ needs.release.outputs.new_release_version }}
           DIGEST: ${{ needs.docker.outputs.digest }}
+          RELEASE_APP_TOKEN: ${{ steps.app-token.outputs.token }}
         run: |
           set -euo pipefail
           # The release tag points at the chore(release) commit; pin to it so
@@ -479,6 +484,7 @@ jobs:
           fi
           git config user.name "plumber-release-bot[bot]"
           git config user.email "plumber-release-bot[bot]@users.noreply.github.com"
+          git config credential.helper '!f() { echo "username=x-access-token"; echo "password=${RELEASE_APP_TOKEN}"; }; f'
           git add README.md templates/plumber.yml
           git commit -m "ci(release): pin v${VERSION} refs [skip ci]"
           git push origin HEAD:main
