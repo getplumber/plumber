@@ -4379,8 +4379,10 @@ func TestIssue415_PullRequestTargetWithHeadCheckout(t *testing.T) {
 }
 
 // TestIssue215_TemplateInjectionVars flags scripts that expand
-// `vars.*` or `inputs.*` directly into a shell command; env-binding
-// pattern stays silent.
+// `vars.*` or `inputs.*` directly into a shell command, plus
+// `github.event.inputs.*` under a caller-/fork-influenceable trigger
+// (workflow_call); env-binding and workflow_dispatch-only inputs stay
+// silent.
 func TestIssue215_TemplateInjectionVars(t *testing.T) {
 	cases := []struct {
 		fixture      string
@@ -4388,7 +4390,9 @@ func TestIssue215_TemplateInjectionVars(t *testing.T) {
 	}{
 		{"violation_vars_docker_login.yml", []string{"violation_vars_docker_login/login"}},
 		{"violation_inputs_reusable.yml", []string{"violation_inputs_reusable/run"}},
+		{"violation_github_event_inputs_reusable.yml", []string{"violation_github_event_inputs_reusable/run"}},
 		{"clean_env_binding.yml", nil},
+		{"clean_github_event_inputs_dispatch.yml", nil},
 	}
 	runGitHubFixtureCases(t, "ISSUE-215", cases)
 }
