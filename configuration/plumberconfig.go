@@ -119,6 +119,9 @@ var validControlSchema = map[string][]string{
 	"pullRequestTargetMustNotCheckoutHead": {
 		"enabled",
 	},
+	"checkoutMustNotPersistCredentials": {
+		"enabled",
+	},
 	"workflowsMustDeclarePermissions": {
 		"enabled",
 	},
@@ -394,6 +397,13 @@ type ControlsConfig struct {
 	// fork-controlled code in the same run (tj-actions / CVE-2025-30066).
 	// Config-free; toggle via `enabled`.
 	PullRequestTargetMustNotCheckoutHead *EnabledOnlyControlConfig `yaml:"pullRequestTargetMustNotCheckoutHead,omitempty"`
+
+	// CheckoutMustNotPersistCredentials control configuration (GitHub
+	// Actions only). Flags an `actions/checkout` step that omits
+	// `persist-credentials: false`, leaving the GITHUB_TOKEN in
+	// `.git/config` where a later step can exfiltrate it.
+	// Config-free; toggle via `enabled`.
+	CheckoutMustNotPersistCredentials *EnabledOnlyControlConfig `yaml:"checkoutMustNotPersistCredentials,omitempty"`
 
 	// WorkflowsMustDeclarePermissions control configuration (GitHub Actions only).
 	// Config-free; toggle via `enabled`.
