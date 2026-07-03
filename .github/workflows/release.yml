@@ -35,7 +35,7 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e # v6.4.0
         with:
-          node-version: 20
+          node-version: '20.20.2'
 
       # Run semantic-release directly instead of the third-party
       # cycjimmy/semantic-release-action wrapper. Top-level packages are
@@ -114,7 +114,7 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: '1.25'
+          go-version: '1.25.11'
 
       - name: Prepare embedded config
         run: cp .plumber.yaml internal/defaultconfig/default.yaml
@@ -211,9 +211,17 @@ jobs:
 
       - name: Set up QEMU
         uses: docker/setup-qemu-action@06116385d9baf250c9f4dcb4858b16962ea869c3 # v4.1.0
+        with:
+          # The action defaults to the mutable :latest tag for this
+          # privileged image; pin it by digest.
+          image: docker.io/tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
 
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@d7f5e7f509e45cec5c76c4d5afdd7de93d0b3df5 # v4.1.0
+        with:
+          # The docker-container driver otherwise boots the mutable
+          # moby/buildkit:buildx-stable-1 tag; pin it by digest.
+          driver-opts: image=docker.io/moby/buildkit:v0.30.0@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f
 
       - name: Login to Docker Hub
         uses: docker/login-action@650006c6eb7dba73a995cc03b0b2d7f5ca915bee # v4.2.0

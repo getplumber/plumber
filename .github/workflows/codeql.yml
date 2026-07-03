@@ -29,7 +29,7 @@ jobs:
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6.5.0
         with:
-          go-version: stable
+          go-version: '1.26.4'
 
       - name: Prepare embedded config
         run: cp .plumber.yaml internal/defaultconfig/default.yaml
@@ -38,6 +38,11 @@ jobs:
         uses: github/codeql-action/init@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
         with:
           languages: go
+          # Without this, the CodeQL bundle version is resolved from
+          # GitHub's live feature flags at run time, so the action SHA
+          # alone does not pin the toolchain. "linked" forces the
+          # bundle version shipped with the pinned action release.
+          tools: linked
 
       - name: Autobuild
         uses: github/codeql-action/autobuild@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
