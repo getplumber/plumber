@@ -23,6 +23,15 @@ jobs:
         with:
           persist-credentials: false
 
+      # KNOWN MUTABILITY GAP: this SHA pin does not pin the code that
+      # actually runs. The action's own action.yaml is a Docker action
+      # referencing ghcr.io/ossf/scorecard-action:v2.4.3 by mutable tag
+      # (no digest), so a re-pushed tag changes what executes here with
+      # no change to this file. We keep the official action anyway
+      # because publish_results (the OpenSSF badge in the README) only
+      # accepts results produced by it — scorecard.dev validates the
+      # workflow and OIDC claims. A solution is still to be found
+      # (upstream digest pin, or dropping the badge for a pinned CLI).
       - name: Run Scorecard
         uses: ossf/scorecard-action@4eaacf0543bb3f2c246792bd56e8cdeffafb205a # v2.4.3
         with:
