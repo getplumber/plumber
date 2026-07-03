@@ -1,0 +1,17 @@
+# Reusable workflow expanding the legacy `github.event.inputs.*`
+# context into a shell body. A caller that proxies github.event.* into
+# the input flips the surface to caller-controlled. workflow_call is a
+# gated trigger, so this fires. Expected: 1 finding on run.
+name: Acceptance tests
+on:
+  workflow_call:
+    inputs:
+      test-command:
+        type: string
+        required: true
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - run: make ${{ github.event.inputs.test-command }}
