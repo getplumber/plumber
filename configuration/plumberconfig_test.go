@@ -321,6 +321,7 @@ func TestValidControlNames(t *testing.T) {
 		"actionsMustNotBeArchived",
 		"actionsMustNotCarryKnownCVEs",
 		"branchMustBeProtected",
+		"checkoutMustNotPersistCredentials",
 		"containerImageMustComeFromAuthorizedSources",
 		"containerImageMustNotUseForbiddenTags",
 		"externalRefsMustNotCollide",

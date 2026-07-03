@@ -714,9 +714,10 @@ func TestIssue208_InsecureCommands(t *testing.T) {
 	}
 }
 
-// TestIssue307_Artipacked drives the artipacked policy against a
-// default actions/checkout (violation) and one explicitly passing
-// `persist-credentials: false` (clean).
+// TestIssue307_Artipacked drives the artipacked policy against both
+// violation forms (a default actions/checkout and an explicit
+// `persist-credentials: true`) and both clean forms (the boolean
+// `false` and the quoted string `"false"`).
 func TestIssue307_Artipacked(t *testing.T) {
 	cases := []struct {
 		fixture      string
@@ -727,7 +728,15 @@ func TestIssue307_Artipacked(t *testing.T) {
 			expectedHits: []string{"violation_default_checkout/clone"},
 		},
 		{
+			fixture:      "violation_persist_true.yml",
+			expectedHits: []string{"violation_persist_true/clone"},
+		},
+		{
 			fixture:      "clean_credentials_disabled.yml",
+			expectedHits: nil,
+		},
+		{
+			fixture:      "clean_credentials_disabled_quoted.yml",
 			expectedHits: nil,
 		},
 	}

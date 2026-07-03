@@ -1,0 +1,14 @@
+# Checkout explicitly re-enables credential persistence with
+# `persist-credentials: true`. Same exposure as the default: the
+# GITHUB_TOKEN lingers in .git/config. Expected: 1 finding on clone.
+name: Explicit persist true
+on: push
+
+jobs:
+  clone:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: true
+      - run: echo "built"

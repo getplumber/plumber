@@ -222,6 +222,11 @@ func GitHubControls(pc *configuration.PlumberConfig) []ControlEntry {
 		Skipped:     c.PullRequestTargetMustNotCheckoutHead == nil || !c.PullRequestTargetMustNotCheckoutHead.IsEnabled(),
 	})
 	entries = append(entries, ControlEntry{
+		DisplayName: "Checkout must not persist credentials",
+		ControlName: "checkoutMustNotPersistCredentials",
+		Skipped:     c.CheckoutMustNotPersistCredentials == nil || !c.CheckoutMustNotPersistCredentials.IsEnabled(),
+	})
+	entries = append(entries, ControlEntry{
 		DisplayName: "Workflows must declare permissions",
 		ControlName: "workflowsMustDeclarePermissions",
 		Skipped:     c.WorkflowsMustDeclarePermissions == nil || !c.WorkflowsMustDeclarePermissions.IsEnabled(),
@@ -367,6 +372,9 @@ func DisabledControlNames(c *configuration.ControlsConfig) map[string]bool {
 	}
 	if cfg := c.PullRequestTargetMustNotCheckoutHead; cfg == nil || !cfg.IsEnabled() {
 		out["pullRequestTargetMustNotCheckoutHead"] = true
+	}
+	if cfg := c.CheckoutMustNotPersistCredentials; cfg == nil || !cfg.IsEnabled() {
+		out["checkoutMustNotPersistCredentials"] = true
 	}
 	if cfg := c.WorkflowsMustDeclarePermissions; cfg == nil || !cfg.IsEnabled() {
 		out["workflowsMustDeclarePermissions"] = true

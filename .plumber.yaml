@@ -791,6 +791,18 @@ github:
       enabled: true
 
     # ===========================================
+    # Checkout must not persist credentials
+    # ===========================================
+    # By default `actions/checkout` writes the GITHUB_TOKEN into the
+    # cloned repository's `.git/config`, where it survives for the rest
+    # of the job. Any later step that uploads `.git` as an artifact or
+    # runs fork-controlled code can then exfiltrate the token. The fix
+    # is a one-liner: `with: persist-credentials: false`. Flags any
+    # `actions/checkout` step that omits it or sets it to `true`.
+    checkoutMustNotPersistCredentials:
+      enabled: true
+
+    # ===========================================
     # Workflows must declare permissions
     # ===========================================
     # Workflows without an explicit `permissions:` block fall back to
