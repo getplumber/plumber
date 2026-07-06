@@ -1,0 +1,16 @@
+# A push-triggered job restores an unscoped cache and then runs an
+# org-specific publish action that is NOT in the built-in list. It must
+# flag only when the org declares my-org/ship-it in publishActions.
+# (PR #300 review — configurability)
+name: Ship
+on: [push]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache
+          key: deps-${{ hashFiles('**/lockfile') }}
+      - uses: my-org/ship-it@v1

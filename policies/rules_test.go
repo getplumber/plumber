@@ -2848,11 +2848,11 @@ func TestIssue303_UnredactedSecrets(t *testing.T) {
 	}
 }
 
-// TestIssue106_CachePoisoning flags release/publish workflows that
+// TestIssue705_CachePoisoning flags release/publish workflows that
 // restore a build cache without a release-ref-scoped key. A plain CI
 // workflow or a release workflow with the ref woven into the cache
 // key stays silent.
-func TestIssue106_CachePoisoning(t *testing.T) {
+func TestIssue705_CachePoisoning(t *testing.T) {
 	cases := []struct {
 		fixture      string
 		expectedHits []string
@@ -2860,7 +2860,20 @@ func TestIssue106_CachePoisoning(t *testing.T) {
 		{"violation_release_unkeyed.yml", []string{"violation_release_unkeyed/publish"}},
 		{"violation_publish_action.yml", []string{"violation_publish_action/build"}},
 		{"clean_release_scoped_key.yml", nil},
+		{"clean_cache_disabled.yml", nil},
 		{"clean_ci_no_publish.yml", nil},
+		// PR #300 review: FP — no restorable cache must stay silent.
+		{"clean_setup_node_nocache.yml", nil},
+		{"clean_gradle_cache_disabled.yml", nil},
+		{"clean_setup_go_false_caps.yml", nil},
+		// PR #300 review: FN — unscoped restore-keys fallback.
+		{"violation_restore_keys.yml", []string{"violation_restore_keys/publish"}},
+		// PR #300 review: FN — publish script (push+tags) is release intent.
+		{"violation_pushtags_publish_script.yml", []string{"violation_pushtags_publish_script/publish"}},
+		// PR #300 review: FN — Swatinem/rust-cache + cargo publish.
+		{"violation_rust_cache.yml", []string{"violation_rust_cache/publish"}},
+		// PR #300 review: FN — inert cache: false on always-restore actions/cache.
+		{"violation_inert_cache_false.yml", []string{"violation_inert_cache_false/publish"}},
 	}
 
 	engine := opaengine.New()
@@ -2886,7 +2899,7 @@ func TestIssue106_CachePoisoning(t *testing.T) {
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
-			findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+			findings, err := engine.Evaluate(context.Background(), pipeline, issue705DefaultConfig())
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -2905,6 +2918,121 @@ func TestIssue106_CachePoisoning(t *testing.T) {
 			}
 		})
 	}
+}
+
+// issue705DefaultConfig mirrors the shipped .plumber.yaml lists for the
+// cache-poisoning control. The action/script inventories are config, not
+// hardcoded, so the rego reads them from input.config.cachePoisoning.
+func issue705DefaultConfig() map[string]any {
+	return map[string]any{
+		"cachePoisoning": map[string]any{
+			"publishActions": []string{
+				"pypa/gh-action-pypi-publish",
+				"JS-DevTools/npm-publish",
+				"gradle/publish-plugin",
+				"softprops/action-gh-release",
+				"ncipollo/release-action",
+				"goreleaser/goreleaser-action",
+				"crazy-max/ghaction-docker-buildx",
+			},
+			"cacheActions": []map[string]any{
+				{"action": "actions/cache", "mode": "always"},
+				{"action": "actions/cache/restore", "mode": "always"},
+				{"action": "Swatinem/rust-cache", "mode": "always"},
+				{"action": "actions/setup-go", "mode": "default", "disableInput": "cache", "disableValue": false},
+				{"action": "gradle/actions/setup-gradle", "mode": "default", "disableInput": "cache-disabled", "disableValue": true},
+				{"action": "actions/setup-node", "mode": "opt-in", "enableInput": "cache"},
+				{"action": "actions/setup-python", "mode": "opt-in", "enableInput": "cache"},
+				{"action": "actions/setup-java", "mode": "opt-in", "enableInput": "cache"},
+				{"action": "pnpm/action-setup", "mode": "opt-in", "enableInput": "cache"},
+			},
+			"publishScriptPatterns": []string{
+				`(?i)(npm|pnpm|yarn|bun)\s+publish`,
+				`(?i)cargo\s+publish`,
+				`(?i)twine\s+upload`,
+				`(?i)poetry\s+publish`,
+				`(?i)gh\s+release\s+create`,
+				`(?i)goreleaser\s+release`,
+			},
+		},
+	}
+}
+
+// TestIssue705_CachePoisoning_Configurable proves the action inventory is
+// config-driven: an org-specific publish action flags only when the org
+// declares it in publishActions, not because it is hardcoded.
+func TestIssue705_CachePoisoning_Configurable(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFS(policies.FS); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	scan := func(t *testing.T) *ir.NormalizedPipeline {
+		t.Helper()
+		tmp := t.TempDir()
+		wfDir := filepath.Join(tmp, ".github", "workflows")
+		if err := os.MkdirAll(wfDir, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		data, err := os.ReadFile(filepath.Join("testdata", "ISSUE-705", "github", "violation_custom_publish_action.yml"))
+		if err != nil {
+			t.Fatalf("read fixture: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(wfDir, "violation_custom_publish_action.yml"), data, 0o644); err != nil {
+			t.Fatal(err)
+		}
+		pipeline, _, err := githubpkg.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
+		if err != nil {
+			t.Fatalf("scan: %v", err)
+		}
+		return pipeline
+	}
+	countHits := func(t *testing.T, cfg map[string]any) int {
+		t.Helper()
+		findings, err := engine.Evaluate(context.Background(), scan(t), cfg)
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		n := 0
+		for _, f := range findings {
+			if f.Code == "ISSUE-705" {
+				n++
+			}
+		}
+		return n
+	}
+
+	cacheAlways := []map[string]any{{"action": "actions/cache", "mode": "always"}}
+
+	t.Run("custom publish action not configured stays silent", func(t *testing.T) {
+		cfg := map[string]any{"cachePoisoning": map[string]any{
+			"publishActions": []string{"pypa/gh-action-pypi-publish"},
+			"cacheActions":   cacheAlways,
+		}}
+		if n := countHits(t, cfg); n != 0 {
+			t.Fatalf("expected 0 findings, got %d", n)
+		}
+	})
+
+	t.Run("custom publish action configured flags", func(t *testing.T) {
+		cfg := map[string]any{"cachePoisoning": map[string]any{
+			"publishActions": []string{"my-org/ship-it"},
+			"cacheActions":   cacheAlways,
+		}}
+		if n := countHits(t, cfg); n != 1 {
+			t.Fatalf("expected 1 finding, got %d", n)
+		}
+	})
+
+	t.Run("allowedJobs glob suppresses a flagged job", func(t *testing.T) {
+		cfg := map[string]any{"cachePoisoning": map[string]any{
+			"publishActions": []string{"my-org/ship-it"},
+			"cacheActions":   cacheAlways,
+			"allowedJobs":    []string{"*/release"},
+		}}
+		if n := countHits(t, cfg); n != 0 {
+			t.Fatalf("expected 0 findings (job allowlisted), got %d", n)
+		}
+	})
 }
 
 // TestIssue601_AnonymousDefinition flags workflow files without a

@@ -337,6 +337,7 @@ func TestValidControlNames(t *testing.T) {
 		"pipelineMustNotUseDockerInDocker",
 		"pipelineMustNotUseUnsafeVariableExpansion",
 		"pullRequestTargetMustNotCheckoutHead",
+		"releaseWorkflowsMustNotRestoreUntrustedCache",
 		"reusableWorkflowsMustNotInheritSecrets",
 		"securityJobsMustNotBeWeakened",
 		"workflowMustIncludeRequiredActions",

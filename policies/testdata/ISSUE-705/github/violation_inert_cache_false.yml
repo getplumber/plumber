@@ -1,0 +1,17 @@
+# actions/cache has no `cache:` input, so `cache: false` is inert — the
+# cache is still restored and the unscoped key remains poisonable. The
+# exemption must not apply to always-restore actions. Expected: 1 finding
+# on publish. (PR #300 review, FN #11 — bypass)
+name: Release
+on: [release]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: deps-${{ hashFiles('**/package-lock.json') }}
+          cache: false
+      - uses: JS-DevTools/npm-publish@v3

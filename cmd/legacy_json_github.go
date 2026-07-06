@@ -66,6 +66,8 @@ func buildLegacyResultGitHub(e control.ControlEntry, result *control.AnalysisRes
 		return "archivedActionsResult", buildArchivedActionsBlock(common, result, findings)
 	case "actionsMustNotCarryKnownCVEs":
 		return "knownVulnerableActionsResult", buildKnownVulnerableActionsBlock(common, result, findings)
+	case "releaseWorkflowsMustNotRestoreUntrustedCache":
+		return "cachePoisoningResult", buildCachePoisoningBlock(common, result, findings)
 	case "pipelineMustNotEnableDebugTrace":
 		return "debugTraceResult", buildDebugTraceBlockGitHub(common, result, findings)
 	case "pipelineMustNotExecuteUnverifiedScripts":
@@ -385,6 +387,24 @@ func buildOverprovisionedSecretsBlock(c legacyCommon, result *control.AnalysisRe
 		"metrics": map[string]any{
 			"workflowsScanned":           s.WorkflowsTotal,
 			"secretsContextExportsFound": len(findings),
+		},
+		"compliance": c.Compliance,
+		"version":    "0.1.0",
+		"ciValid":    c.CiValid,
+		"ciMissing":  c.CiMissing,
+		"skipped":    c.Skipped,
+	}
+}
+
+// buildCachePoisoningBlock — ISSUE-705. One finding per release/publish
+// job that restores a build cache with a key not scoped to the release ref.
+func buildCachePoisoningBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	s := statsOf(result)
+	return map[string]any{
+		"issues": projectFindings(findings, "jobName"),
+		"metrics": map[string]any{
+			"workflowsScanned":          s.WorkflowsTotal,
+			"unscopedCacheRestoreFound": len(findings),
 		},
 		"compliance": c.Compliance,
 		"version":    "0.1.0",

@@ -183,6 +183,39 @@ func buildEngineConfig(controls *configuration.ControlsConfig) map[string]any {
 		}
 	}
 
+	if c := controls.ReleaseWorkflowsMustNotRestoreUntrustedCache; c != nil {
+		entry := map[string]any{}
+		if len(c.PublishActions) > 0 {
+			entry["publishActions"] = c.PublishActions
+		}
+		if len(c.CacheActions) > 0 {
+			specs := make([]map[string]any, 0, len(c.CacheActions))
+			for _, s := range c.CacheActions {
+				m := map[string]any{"action": s.Action, "mode": s.Mode}
+				if s.DisableInput != "" {
+					m["disableInput"] = s.DisableInput
+				}
+				if s.DisableValue != nil {
+					m["disableValue"] = *s.DisableValue
+				}
+				if s.EnableInput != "" {
+					m["enableInput"] = s.EnableInput
+				}
+				specs = append(specs, m)
+			}
+			entry["cacheActions"] = specs
+		}
+		if len(c.PublishScriptPatterns) > 0 {
+			entry["publishScriptPatterns"] = c.PublishScriptPatterns
+		}
+		if len(c.AllowedJobs) > 0 {
+			entry["allowedJobs"] = c.AllowedJobs
+		}
+		if len(entry) > 0 {
+			cfg["cachePoisoning"] = entry
+		}
+	}
+
 	// pipelineMustNotLeakSecretsInConfig: the rego rule only needs to
 	// know the control is enabled (it gates on input.config presence);
 	// the actual detection lives in the collector and the hits are on

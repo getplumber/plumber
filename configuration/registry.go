@@ -135,7 +135,6 @@ var benchedControls = map[string]map[string]struct{}{
 		"dockerfilesMustPinBaseImageByDigest":                 {},
 		"githubAppTokensMustBeRevokedOnExit":                  {},
 		"publishWorkflowsMustUseOidcTrustedPublishing":        {},
-		"releaseWorkflowsMustNotRestoreUntrustedCache":        {},
 		"releaseWorkflowsMustSignArtefacts":                   {},
 		"repositoriesMustConfigureDependencyUpdates":          {},
 		"repositoriesMustPublishSecurityPolicy":               {},

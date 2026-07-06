@@ -424,6 +424,10 @@ func buildGitHubControlStats(controlName string, stats *control.GitHubAnalysisSt
 			{Label: statActionRefsChecked, Value: fmt.Sprintf("%d", stats.ActionRefsTotal+stats.ActionRefsExempt)},
 			{Label: "Refs With Advisories", Value: fmt.Sprintf("%d", stats.ActionRefsVulnerable)},
 		}
+	case "releaseWorkflowsMustNotRestoreUntrustedCache":
+		return []statLine{
+			{Label: "Workflows Scanned", Value: fmt.Sprintf("%d", stats.WorkflowsTotal)},
+		}
 	case "pipelineMustNotEnableDebugTrace":
 		return []statLine{
 			{Label: statVariablesChecked, Value: fmt.Sprintf("%d", stats.VariableBindingsTotal)},

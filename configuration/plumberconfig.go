@@ -101,6 +101,9 @@ var validControlSchema = map[string][]string{
 	"actionsMustNotCarryKnownCVEs": {
 		"enabled",
 	},
+	"releaseWorkflowsMustNotRestoreUntrustedCache": {
+		"enabled", "publishActions", "cacheActions", "publishScriptPatterns", "allowedJobs",
+	},
 	"workflowMustIncludeRequiredActions": {
 		"enabled", "required", "requiredGroups",
 	},
@@ -346,6 +349,12 @@ type ControlsConfig struct {
 	// via `enabled`.
 	ActionsMustNotCarryKnownCVEs *EnabledOnlyControlConfig `yaml:"actionsMustNotCarryKnownCVEs,omitempty"`
 
+	// ReleaseWorkflowsMustNotRestoreUntrustedCache control configuration (GitHub
+	// Actions only). Flags a release/publish job that restores a build cache
+	// whose key is not scoped to the release ref, so a PR-populated cache can be
+	// injected into the published output. Config-free; toggle via `enabled`.
+	ReleaseWorkflowsMustNotRestoreUntrustedCache *CachePoisoningControlConfig `yaml:"releaseWorkflowsMustNotRestoreUntrustedCache,omitempty"`
+
 	// WorkflowMustIncludeRequiredActions control configuration (GitHub
 	// Actions only). The GitHub counterpart of
 	// PipelineMustIncludeComponent / PipelineMustIncludeTemplate on
@@ -392,6 +401,63 @@ type ActionsPinnedByShaControlConfig struct {
 
 // IsEnabled returns whether the control is enabled
 func (c *ActionsPinnedByShaControlConfig) IsEnabled() bool {
+	if c == nil || c.Enabled == nil {
+		return false
+	}
+	return *c.Enabled
+}
+
+// CachePoisoningControlConfig configures the release cache-poisoning
+// check (ISSUE-705). The action and script INVENTORIES are configurable
+// so an org can add its own publish actions, cache actions, or publish
+// commands without a plumber release. The built-in cache SEMANTICS
+// (which setup-* actions cache by default vs on opt-in, and the
+// github.ref* scope tokens) stay in code — that is GitHub behaviour, not
+// org policy.
+type CachePoisoningControlConfig struct {
+	// Enabled controls whether this check runs.
+	Enabled *bool `yaml:"enabled,omitempty"`
+
+	// PublishActions are `uses:` owner/repo prefixes that mark a job as
+	// release intent (running one restores into a published build).
+	PublishActions []string `yaml:"publishActions,omitempty"`
+
+	// CacheActions is the full inventory of cache-restoring actions with
+	// their per-action semantics. The rego is a pure engine over this
+	// list — nothing about which actions cache (or how) is hardcoded.
+	CacheActions []CacheActionSpec `yaml:"cacheActions,omitempty"`
+
+	// PublishScriptPatterns are regexes matched against `run:` scripts to
+	// mark a job as release intent (e.g. `cargo publish`).
+	PublishScriptPatterns []string `yaml:"publishScriptPatterns,omitempty"`
+
+	// AllowedJobs are glob patterns matched against the namespaced job
+	// name (`<workflow>/<job>`). A job that matches is exempt from this
+	// control — the escape hatch for reviewed/accepted release jobs.
+	AllowedJobs []string `yaml:"allowedJobs,omitempty"`
+}
+
+// CacheActionSpec describes one cache-restoring action and when it
+// actually restores a cache. Mode is "always" (restores whenever
+// present), "default" (restores unless DisableInput holds DisableValue),
+// or "opt-in" (restores only when EnableInput names a manager).
+type CacheActionSpec struct {
+	// Action is the `uses:` owner/repo prefix (e.g. "actions/setup-go").
+	Action string `yaml:"action"`
+	// Mode is "always", "default", or "opt-in".
+	Mode string `yaml:"mode"`
+	// DisableInput / DisableValue apply to mode "default": the action's
+	// `with:` input whose value turns caching off (e.g. cache=false for
+	// setup-go, cache-disabled=true for setup-gradle).
+	DisableInput string `yaml:"disableInput,omitempty"`
+	DisableValue *bool  `yaml:"disableValue,omitempty"`
+	// EnableInput applies to mode "opt-in": the `with:` input that, when
+	// set to a package manager, turns caching on (e.g. cache=npm).
+	EnableInput string `yaml:"enableInput,omitempty"`
+}
+
+// IsEnabled reports whether the control is enabled.
+func (c *CachePoisoningControlConfig) IsEnabled() bool {
 	if c == nil || c.Enabled == nil {
 		return false
 	}

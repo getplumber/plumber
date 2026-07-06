@@ -1,0 +1,14 @@
+# setup-gradle disabled with the vendor's documented off-switch,
+# cache-disabled: true (it has no `cache:` input). Expected: 0.
+# (PR #300 review, FP #5)
+name: Release
+on: [release]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-disabled: true
+      - uses: gradle/publish-plugin@v1

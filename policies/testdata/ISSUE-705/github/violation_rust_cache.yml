@@ -1,0 +1,12 @@
+# Swatinem/rust-cache primes ~/.cargo with a lockfile-derived key (no ref),
+# and `cargo publish` ships the build. Expected: 1 finding on publish.
+# (PR #300 review, FN #10)
+name: Publish Crate
+on: [push]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo publish

@@ -16,7 +16,7 @@ reading the upstream docs.
 | [ISSUE-701](#issue-104--action-unpinned) | `action-unpinned` | high |
 | [ISSUE-713](#issue-713--action-authorized-sources) | `action-authorized-sources` | high |
 | [ISSUE-704](#issue-105--container-hardcoded-credentials) | `container-hardcoded-credentials` | **critical** |
-| [ISSUE-705](#issue-106--cache-poisoning) | `cache-poisoning` | high |
+| [ISSUE-705](#issue-705--cache-poisoning) | `cache-poisoning` | high |
 | [ISSUE-706](#issue-107--dockerfile-unpinned-base) | `dockerfile-unpinned-base` | medium |
 | [ISSUE-702](#issue-108--action-archived-repo) | `action-archived-repo` | high _(API)_ |
 | [ISSUE-707](#issue-109--impostor-commit) | `impostor-commit` | **critical** _(API)_ |
@@ -252,6 +252,40 @@ jobs:
           path: ~/.npm
       - uses: JS-DevTools/npm-publish@v3
 ```
+
+A scoped `key` with an **unscoped `restore-keys`** prefix fallback is still
+flagged — the fallback can restore a PR-populated cache. Weave the ref into
+every `restore-keys` entry too, or drop them.
+
+**Config.** The action / script inventory is fully data-driven (the rego
+hardcodes nothing); only the `github.ref*` scope tokens stay in code.
+
+```yaml
+releaseWorkflowsMustNotRestoreUntrustedCache:
+  enabled: true
+  publishActions:                 # actions that mark a job as a release
+    - JS-DevTools/npm-publish
+    - pypa/gh-action-pypi-publish
+  publishScriptPatterns:          # publish commands in run: scripts
+    - '(?i)(npm|pnpm|yarn)\s+publish'
+    - '(?i)cargo\s+publish'
+  cacheActions:                   # which actions restore a cache, and how
+    - {action: actions/cache, mode: always}
+    - {action: actions/setup-go, mode: default, disableInput: cache, disableValue: false}
+    - {action: gradle/actions/setup-gradle, mode: default, disableInput: cache-disabled, disableValue: true}
+    - {action: actions/setup-node, mode: opt-in, enableInput: cache}
+  allowedJobs:                    # jobs to exempt (glob on <workflow-file>/<job-id>)
+    - '*/lint'
+```
+
+- **Release context** = a `release` trigger, a `publishActions` action, or a
+  `publishScriptPatterns` match in a `run:` script.
+- **`cacheActions` `mode`:** `always` (restores whenever present), `default`
+  (restores unless `disableInput` holds `disableValue`), or `opt-in` (restores
+  only when `enableInput` names a package manager). Add your org's own cache
+  actions with the matching mode.
+- **`allowedJobs`** is the escape hatch: a glob whitelist for release jobs you
+  have reviewed and accept (e.g. a lint job that caches but ships nothing).
 
 ---
 

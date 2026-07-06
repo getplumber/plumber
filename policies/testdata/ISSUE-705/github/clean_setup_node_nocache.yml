@@ -1,0 +1,14 @@
+# setup-node with NO cache: input restores nothing (its cache is opt-in).
+# Release context is present, but there is no cache to poison. This is the
+# most common release pattern. Expected: 0. (PR #300 review, FP #4)
+name: Release
+on: [release]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - uses: JS-DevTools/npm-publish@v3

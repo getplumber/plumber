@@ -257,6 +257,11 @@ func GitHubControls(pc *configuration.PlumberConfig) []ControlEntry {
 		Skipped:     c.ActionsMustNotCarryKnownCVEs == nil || !c.ActionsMustNotCarryKnownCVEs.IsEnabled(),
 	})
 	entries = append(entries, ControlEntry{
+		DisplayName: "Release workflows must not restore an untrusted cache",
+		ControlName: "releaseWorkflowsMustNotRestoreUntrustedCache",
+		Skipped:     c.ReleaseWorkflowsMustNotRestoreUntrustedCache == nil || !c.ReleaseWorkflowsMustNotRestoreUntrustedCache.IsEnabled(),
+	})
+	entries = append(entries, ControlEntry{
 		DisplayName: "Pipeline must not enable debug trace",
 		ControlName: "pipelineMustNotEnableDebugTrace",
 		Skipped:     c.PipelineMustNotEnableDebugTrace == nil || !c.PipelineMustNotEnableDebugTrace.IsEnabled(),
@@ -393,6 +398,9 @@ func DisabledControlNames(c *configuration.ControlsConfig) map[string]bool {
 	}
 	if cfg := c.ActionsMustNotCarryKnownCVEs; cfg == nil || !cfg.IsEnabled() {
 		out["actionsMustNotCarryKnownCVEs"] = true
+	}
+	if cfg := c.ReleaseWorkflowsMustNotRestoreUntrustedCache; cfg == nil || !cfg.IsEnabled() {
+		out["releaseWorkflowsMustNotRestoreUntrustedCache"] = true
 	}
 	return out
 }

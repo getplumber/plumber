@@ -58,6 +58,7 @@ const (
 	compRefConfusion       = "Flag third-party actions whose ref is both a tag and a branch"
 	compArchivedActions    = "Flag third-party actions from archived repositories"
 	compKnownCVEs          = "Flag third-party actions with known CVEs (GitHub Advisory DB)"
+	compCachePoisoning     = "Flag release/publish jobs restoring an unscoped build cache"
 	compDebugTraceGitHub   = "Flag Actions debug logging (ACTIONS_STEP_DEBUG / ACTIONS_RUNNER_DEBUG)"
 )
 
@@ -715,6 +716,7 @@ func compositionOptionsForProviders(providers []string) []string {
 			compRefConfusion,
 			compArchivedActions,
 			compKnownCVEs,
+			compCachePoisoning,
 			compDebugTraceGitHub,
 		)
 	}
@@ -726,6 +728,47 @@ func compositionOptionsForProviders(providers []string) []string {
 // Actions debug toggles that dump masked secrets into job logs.
 func defaultGitHubDebugTraceVariables() []string {
 	return []string{"ACTIONS_STEP_DEBUG", "ACTIONS_RUNNER_DEBUG"}
+}
+
+// defaultCachePoisoning* mirror the shipped .plumber.yaml inventories for
+// releaseWorkflowsMustNotRestoreUntrustedCache. Kept in sync with the
+// embedded default by TestStarterGitHubControlsMatchEmbeddedDefault.
+func defaultCachePoisoningPublishActions() []string {
+	return []string{
+		"pypa/gh-action-pypi-publish",
+		"JS-DevTools/npm-publish",
+		"gradle/publish-plugin",
+		"softprops/action-gh-release",
+		"ncipollo/release-action",
+		"goreleaser/goreleaser-action",
+		"crazy-max/ghaction-docker-buildx",
+	}
+}
+
+func defaultCachePoisoningCacheActions() []configuration.CacheActionSpec {
+	f := func(b bool) *bool { return &b }
+	return []configuration.CacheActionSpec{
+		{Action: "actions/cache", Mode: "always"},
+		{Action: "actions/cache/restore", Mode: "always"},
+		{Action: "Swatinem/rust-cache", Mode: "always"},
+		{Action: "actions/setup-go", Mode: "default", DisableInput: "cache", DisableValue: f(false)},
+		{Action: "gradle/actions/setup-gradle", Mode: "default", DisableInput: "cache-disabled", DisableValue: f(true)},
+		{Action: "actions/setup-node", Mode: "opt-in", EnableInput: "cache"},
+		{Action: "actions/setup-python", Mode: "opt-in", EnableInput: "cache"},
+		{Action: "actions/setup-java", Mode: "opt-in", EnableInput: "cache"},
+		{Action: "pnpm/action-setup", Mode: "opt-in", EnableInput: "cache"},
+	}
+}
+
+func defaultCachePoisoningPublishScriptPatterns() []string {
+	return []string{
+		`(?i)(npm|pnpm|yarn|bun)\s+publish`,
+		`(?i)cargo\s+publish`,
+		`(?i)twine\s+upload`,
+		`(?i)poetry\s+publish`,
+		`(?i)gh\s+release\s+create`,
+		`(?i)goreleaser\s+release`,
+	}
 }
 
 // defaultGitHubSecurityJobPatterns mirrors the GitHub-side defaults
@@ -1245,6 +1288,14 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 			if compSelected(st, compKnownCVEs) {
 				gh.Controls.ActionsMustNotCarryKnownCVEs = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
 			}
+			if compSelected(st, compCachePoisoning) {
+				gh.Controls.ReleaseWorkflowsMustNotRestoreUntrustedCache = &configuration.CachePoisoningControlConfig{
+					Enabled:               boolPtrInit(true),
+					PublishActions:        defaultCachePoisoningPublishActions(),
+					CacheActions:          defaultCachePoisoningCacheActions(),
+					PublishScriptPatterns: defaultCachePoisoningPublishScriptPatterns(),
+				}
+			}
 			if compSelected(st, compDebugTraceGitHub) {
 				fb := parseLinesInit(st.DebugForbiddenVariablesGitHubMultiline)
 				if len(fb) == 0 {
@@ -1293,7 +1344,7 @@ func starterPlumberConfig() *configuration.PlumberConfig {
 		CompositionChoices: []string{
 			compHardcoded, compUpToDate, compForbidden, compRefCollision, compSecurity, compScripts, compJobVars, compDinD,
 			compActionPin, compAuthorizedActions, compDangerousTriggers, compPRTargetHead, compDeclarePermissions, compReusableSecrets, compOverprovSecrets, compTemplateInjection,
-			compEnvInjection, compWriteAllPerms, compRefConfusion, compArchivedActions, compKnownCVEs, compDebugTraceGitHub,
+			compEnvInjection, compWriteAllPerms, compRefConfusion, compArchivedActions, compKnownCVEs, compCachePoisoning, compDebugTraceGitHub,
 		},
 		ActionPinTrustedOwnersMultiline:        strings.Join(defaultGitHubTrustedActionOwners(), "\n"),
 		SecurityJobPatternsGitHubMultiline:     strings.Join(defaultGitHubSecurityJobPatterns(), "\n"),

@@ -1,0 +1,15 @@
+# setup-go caching disabled with a quoted, capitalized 'False' — the same
+# intent as cache: false, just a string YAML does not fold to a bool.
+# Expected: 0. (PR #300 review, FP #6)
+name: Release
+on: [release]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: 'False'
+      - uses: softprops/action-gh-release@v2

@@ -1,0 +1,18 @@
+# Publish action = release context, but the setup action explicitly
+# disables caching (cache: false), so there is no cache to poison. The
+# documented remediation ("disable caching on publish paths") must
+# silence the rule. Expected: 0.
+name: Release
+on: [push]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: false
+      - run: make release
+      - uses: softprops/action-gh-release@v2

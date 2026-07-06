@@ -1,0 +1,18 @@
+# A push+tags release vector with a publish SCRIPT (not a publish action)
+# and an unscoped cache. The release intent lives in `npm publish`.
+# Expected: 1 finding on publish. (PR #300 review, FN #9)
+name: Tag Release
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: deps-${{ hashFiles('**/package-lock.json') }}
+      - run: npm publish
