@@ -42,6 +42,15 @@ func TestSanitizeMarkdownInline(t *testing.T) {
 		}
 	})
 
+	t.Run("mention and reference chars are escaped", func(t *testing.T) {
+		got := sanitizeMarkdownInline("ping @all see #123 and !45 for 50% $x")
+		for _, sub := range []string{`\@`, `\#`, `\!`, `\%`, `\$`} {
+			if !strings.Contains(got, sub) {
+				t.Fatalf("expected %q escaped in %q", sub, got)
+			}
+		}
+	})
+
 	t.Run("plain text is preserved verbatim", func(t *testing.T) {
 		in := "Job build uses a mutable tag"
 		if got := sanitizeMarkdownInline(in); got != in {

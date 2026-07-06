@@ -240,7 +240,7 @@ func generateMRComment(result *AnalysisResult, pc *configuration.PlumberConfig, 
 // tabs become spaces) and Markdown-active characters are backslash-escaped so
 // the text renders literally.
 func sanitizeMarkdownInline(s string) string {
-	const escaped = "\\`*_[]()<>|~"
+	const escaped = "\\`*_[]()<>|~@#!%$"
 	var b strings.Builder
 	b.Grow(len(s))
 	for _, r := range s {
