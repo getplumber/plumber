@@ -452,20 +452,36 @@ func ResolveLocalIncludes(content []byte, repoRoot string) ([]byte, error) {
 // content is later unmarshalled.
 const maxLocalIncludeBytes = 1 << 20 // 1 MiB
 
-func readLocalInclude(repoRoot, includePath string) ([]byte, error) {
-	joined := filepath.Join(repoRoot, includePath)
-
+// ResolveWithinRepo joins relPath onto repoRoot and returns the joined path,
+// but only after confirming it does not escape repoRoot. Symlinks are resolved
+// on both sides so a link planted in the checkout cannot disguise an
+// out-of-repo target. It is the shared containment guard for repository-
+// relative paths taken from the analyzed project (include:local targets and
+// the CI config path).
+func ResolveWithinRepo(repoRoot, relPath string) (string, error) {
+	// Resolve the root first, then join onto it, so a target that does not yet
+	// exist (EvalSymlinks below fails) is still compared against the same
+	// resolved base — otherwise a repoRoot that itself lives under a symlink
+	// (e.g. macOS /var -> /private/var) yields a false mismatch.
 	rootReal := repoRoot
 	if real, err := filepath.EvalSymlinks(repoRoot); err == nil {
 		rootReal = real
 	}
+	joined := filepath.Join(rootReal, relPath)
 	targetReal := joined
 	if real, err := filepath.EvalSymlinks(joined); err == nil {
 		targetReal = real
 	}
 	if !pathWithin(rootReal, targetReal) {
-		return nil, fmt.Errorf("include:local %q resolves to %q outside the repository %q",
-			includePath, targetReal, rootReal)
+		return "", fmt.Errorf("%q resolves to %q outside the repository %q", relPath, targetReal, rootReal)
+	}
+	return joined, nil
+}
+
+func readLocalInclude(repoRoot, includePath string) ([]byte, error) {
+	joined, err := ResolveWithinRepo(repoRoot, includePath)
+	if err != nil {
+		return nil, err
 	}
 
 	f, err := os.Open(joined) //nolint:gosec // path validated: contained within the analyzed repository

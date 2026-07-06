@@ -31,6 +31,42 @@ func TestScanDockerfilesSortedByPath(t *testing.T) {
 	}
 }
 
+// TestScanDockerfilesSkipsSymlinks guards the no-follow behavior: a committed
+// symlink whose name matches the Dockerfile pattern must not be followed out of
+// the repository, while a real in-repo Dockerfile is still scanned.
+func TestScanDockerfilesSkipsSymlinks(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+
+	// A file outside the repo an attacker-planted symlink would point at.
+	secret := filepath.Join(outside, "secret")
+	mustWriteFile(t, secret, "FROM leaked:tag\n")
+
+	// A legitimate in-repo Dockerfile.
+	real := filepath.Join(root, "Dockerfile")
+	mustWriteFile(t, real, "FROM alpine:3\n")
+
+	// A committed symlink whose name matches the scan pattern.
+	link := filepath.Join(root, "Dockerfile.evil")
+	if err := os.Symlink(secret, link); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	dfs := scanDockerfiles(root)
+	foundReal := false
+	for _, df := range dfs {
+		if df.Path == link {
+			t.Fatalf("symlinked Dockerfile candidate was scanned: %q", df.Path)
+		}
+		if df.Path == real {
+			foundReal = true
+		}
+	}
+	if !foundReal {
+		t.Fatalf("legit in-repo Dockerfile not scanned; got %+v", dfs)
+	}
+}
+
 func mustWriteFile(t *testing.T, path, content string) {
 	t.Helper()
 	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {

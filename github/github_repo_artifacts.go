@@ -114,6 +114,11 @@ func collectDockerfileCandidates(dir string, depth int, out map[string]struct{})
 			continue
 		}
 		if dockerfileNamePattern.MatchString(name) {
+			if e.Type()&os.ModeSymlink != 0 {
+				// Do not follow a committed symlink: it could resolve to a
+				// file outside the checked-out repository.
+				continue
+			}
 			out[filepath.Join(dir, name)] = struct{}{}
 		}
 	}

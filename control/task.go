@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"path/filepath"
 	"time"
 
 	"github.com/getplumber/plumber/configuration"
@@ -435,8 +434,13 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	//    file exists locally: use local file (+ resolve include:local from filesystem)
 	// 3. Otherwise: use remote file (current default behavior)
 	if conf.Branch == "" && conf.IsLocalProject {
-		localCIPath := filepath.Join(conf.GitRepoRoot, project.CiConfPath)
-		if content, err := os.ReadFile(localCIPath); err == nil {
+		localCIPath, cErr := gitlab.ResolveWithinRepo(conf.GitRepoRoot, project.CiConfPath)
+		if cErr != nil {
+			l.WithFields(logrus.Fields{
+				"ciConfPath": project.CiConfPath,
+				"error":      cErr,
+			}).Warn("Local CI config path escapes the repository; using remote")
+		} else if content, err := os.ReadFile(localCIPath); err == nil {
 			conf.LocalCIConfigContent = content
 			conf.UsingLocalCIConfig = true
 			clearProgressLine(conf)

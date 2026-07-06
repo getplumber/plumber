@@ -84,6 +84,37 @@ func TestResolveLocalIncludesContainment(t *testing.T) {
 	})
 }
 
+// TestResolveWithinRepo covers the shared containment guard directly: an
+// in-repo path is returned joined, a path that escapes the repository is
+// rejected.
+func TestResolveWithinRepo(t *testing.T) {
+	repo := t.TempDir()
+	outside := t.TempDir()
+
+	got, err := ResolveWithinRepo(repo, "templates/build.yml")
+	if err != nil {
+		t.Fatalf("in-repo path rejected: %v", err)
+	}
+	// The returned path is joined onto the symlink-resolved root.
+	realRepo := repo
+	if r, e := filepath.EvalSymlinks(repo); e == nil {
+		realRepo = r
+	}
+	if want := filepath.Join(realRepo, "templates", "build.yml"); got != want {
+		t.Fatalf("joined path = %q, want %q", got, want)
+	}
+
+	rel, err := filepath.Rel(repo, filepath.Join(outside, "x"))
+	if err != nil {
+		t.Fatalf("compute rel: %v", err)
+	}
+	if _, err := ResolveWithinRepo(repo, rel); err == nil {
+		t.Fatal("expected rejection for a path escaping the repo, got nil")
+	} else if !strings.Contains(err.Error(), "outside the repository") {
+		t.Fatalf("error should explain containment, got: %v", err)
+	}
+}
+
 func TestPathWithinInclude(t *testing.T) {
 	root := filepath.FromSlash("/home/ci/repo")
 	cases := []struct {
