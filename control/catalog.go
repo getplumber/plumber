@@ -202,6 +202,11 @@ func GitHubControls(pc *configuration.PlumberConfig) []ControlEntry {
 		Skipped:     c.ReusableWorkflowsMustNotInheritSecrets == nil || !c.ReusableWorkflowsMustNotInheritSecrets.IsEnabled(),
 	})
 	entries = append(entries, ControlEntry{
+		DisplayName: "Workflows must not export the entire secrets context",
+		ControlName: "workflowMustNotExportEntireSecretsContext",
+		Skipped:     c.WorkflowMustNotExportEntireSecretsContext == nil || !c.WorkflowMustNotExportEntireSecretsContext.IsEnabled(),
+	})
+	entries = append(entries, ControlEntry{
 		DisplayName: "Workflows must not inject user input in scripts",
 		ControlName: "workflowMustNotInjectUserInputInScripts",
 		Skipped:     c.WorkflowMustNotInjectUserInputInScripts == nil || !c.WorkflowMustNotInjectUserInputInScripts.IsEnabled(),
@@ -361,6 +366,9 @@ func DisabledControlNames(c *configuration.ControlsConfig) map[string]bool {
 	}
 	if cfg := c.WorkflowMustNotWriteUntrustedContentToGitHubEnv; cfg == nil || !cfg.IsEnabled() {
 		out["workflowMustNotWriteUntrustedContentToGitHubEnv"] = true
+	}
+	if cfg := c.WorkflowMustNotExportEntireSecretsContext; cfg == nil || !cfg.IsEnabled() {
+		out["workflowMustNotExportEntireSecretsContext"] = true
 	}
 	if cfg := c.WorkflowMustNotUseDangerousTriggers; cfg == nil || !cfg.IsEnabled() {
 		out["workflowMustNotUseDangerousTriggers"] = true

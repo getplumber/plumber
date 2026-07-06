@@ -385,6 +385,10 @@ func buildGitHubControlStats(controlName string, stats *control.GitHubAnalysisSt
 			{Label: "Workflows Scanned", Value: fmt.Sprintf("%d", stats.WorkflowsTotal)},
 			{Label: statScriptLinesChecked, Value: fmt.Sprintf("%d", stats.ScriptLinesTotal)},
 		}
+	case "workflowMustNotExportEntireSecretsContext":
+		return []statLine{
+			{Label: "Workflows Scanned", Value: fmt.Sprintf("%d", stats.WorkflowsTotal)},
+		}
 	case "workflowMustNotUseDangerousTriggers":
 		return []statLine{
 			{Label: "Workflows Scanned", Value: fmt.Sprintf("%d", stats.WorkflowsTotal)},

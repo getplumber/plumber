@@ -2435,11 +2435,11 @@ func TestIssue302_SecretsInherit(t *testing.T) {
 	}
 }
 
-// TestIssue301_OverprovisionedSecrets flags jobs that serialise the
+// TestIssue309_OverprovisionedSecrets flags jobs that serialise the
 // entire `secrets` context via toJson/toJSON and pass it into a
 // step's script, env binding, or action `with:` input. The scoped
 // pattern `${{ secrets.NAME }}` stays silent.
-func TestIssue301_OverprovisionedSecrets(t *testing.T) {
+func TestIssue309_OverprovisionedSecrets(t *testing.T) {
 	cases := []struct {
 		fixture      string
 		expectedHits []string

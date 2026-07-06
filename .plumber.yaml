@@ -670,6 +670,19 @@ github:
       enabled: true
 
     # ===========================================
+    # Workflow must not export the entire secrets context
+    # ===========================================
+    # Flags a job that serialises the whole `secrets` context with
+    # toJson(secrets) / toJSON(secrets) into a run script, an env
+    # binding, or an action `with:` input. The JSON blob carries every
+    # repository, organisation and environment secret the job can see;
+    # GitHub log redaction masks known secret values, not a JSON string
+    # derived from them, so a single echo leaks the lot. Reference each
+    # secret by name instead.
+    workflowMustNotExportEntireSecretsContext:
+      enabled: true
+
+    # ===========================================
     # Security jobs must not be weakened
     # ===========================================
     # Jobs matching the security-scanner naming patterns must not be

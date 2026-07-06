@@ -89,6 +89,9 @@ var validControlSchema = map[string][]string{
 	"reusableWorkflowsMustNotInheritSecrets": {
 		"enabled",
 	},
+	"workflowMustNotExportEntireSecretsContext": {
+		"enabled",
+	},
 	"workflowMustNotGrantPermissionsWriteAll": {
 		"enabled",
 	},
@@ -314,6 +317,12 @@ type ControlsConfig struct {
 	// ReusableWorkflowsMustNotInheritSecrets control configuration (GitHub Actions only).
 	// Config-free; toggle via `enabled`.
 	ReusableWorkflowsMustNotInheritSecrets *EnabledOnlyControlConfig `yaml:"reusableWorkflowsMustNotInheritSecrets,omitempty"`
+
+	// WorkflowMustNotExportEntireSecretsContext control configuration (GitHub Actions only).
+	// Flags a job that serialises the whole `secrets` context via toJson(secrets)
+	// into a run script, env binding, or action `with:` input. Config-free; toggle
+	// via `enabled`.
+	WorkflowMustNotExportEntireSecretsContext *EnabledOnlyControlConfig `yaml:"workflowMustNotExportEntireSecretsContext,omitempty"`
 
 	// WorkflowMustNotGrantPermissionsWriteAll control configuration (GitHub
 	// Actions only). Flags workflows or jobs whose effective `permissions:`

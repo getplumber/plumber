@@ -146,7 +146,6 @@ var benchedControls = map[string]map[string]struct{}{
 		"workflowContainsCallsMustBeSound":          {},
 		"workflowMustNotContainObfuscation":         {},
 		"workflowMustNotExportEntireGitHubContext":  {},
-		"workflowMustNotExportEntireSecretsContext": {},
 		"workflowMustNotIndexSecretsDynamically":    {},
 		"workflowMustNotInjectVarsInScripts":        {},
 		"workflowMustNotReEnableInsecureCommands":   {},

@@ -48,6 +48,8 @@ func buildLegacyResultGitHub(e control.ControlEntry, result *control.AnalysisRes
 		return "templateInjectionResult", buildTemplateInjectionBlock(common, result, findings)
 	case "workflowMustNotWriteUntrustedContentToGitHubEnv":
 		return "githubEnvInjectionResult", buildGitHubEnvInjectionBlock(common, result, findings)
+	case "workflowMustNotExportEntireSecretsContext":
+		return "overprovisionedSecretsResult", buildOverprovisionedSecretsBlock(common, result, findings)
 	case "workflowMustNotUseDangerousTriggers":
 		return "dangerousTriggersResult", buildDangerousTriggersBlock(common, result, findings)
 	case "pullRequestTargetMustNotCheckoutHead":
@@ -364,6 +366,25 @@ func buildGitHubEnvInjectionBlock(c legacyCommon, result *control.AnalysisResult
 			"workflowsScanned":         s.WorkflowsTotal,
 			"scriptLinesChecked":       s.ScriptLinesTotal,
 			"githubEnvInjectionsFound": len(findings),
+		},
+		"compliance": c.Compliance,
+		"version":    "0.1.0",
+		"ciValid":    c.CiValid,
+		"ciMissing":  c.CiMissing,
+		"skipped":    c.Skipped,
+	}
+}
+
+// buildOverprovisionedSecretsBlock — ISSUE-309. One finding per job that
+// serialises the whole secrets context via toJson(secrets) into a run
+// script, env binding, or action `with:` input.
+func buildOverprovisionedSecretsBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	s := statsOf(result)
+	return map[string]any{
+		"issues": projectFindings(findings, "jobName"),
+		"metrics": map[string]any{
+			"workflowsScanned":           s.WorkflowsTotal,
+			"secretsContextExportsFound": len(findings),
 		},
 		"compliance": c.Compliance,
 		"version":    "0.1.0",

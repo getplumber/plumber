@@ -340,6 +340,7 @@ func TestValidControlNames(t *testing.T) {
 		"reusableWorkflowsMustNotInheritSecrets",
 		"securityJobsMustNotBeWeakened",
 		"workflowMustIncludeRequiredActions",
+		"workflowMustNotExportEntireSecretsContext",
 		"workflowMustNotGrantPermissionsWriteAll",
 		"workflowMustNotInjectUserInputInScripts",
 		"workflowMustNotUseDangerousTriggers",
