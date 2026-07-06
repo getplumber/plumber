@@ -1,7 +1,8 @@
 # Checkout explicitly re-enables credential persistence with
-# `persist-credentials: true`. Same exposure as the default: the
-# GITHUB_TOKEN lingers in .git/config. Expected: 1 finding on clone.
-name: Explicit persist true
+# `persist-credentials: true`, then a later upload-artifact uploads a
+# `.git`-inclusive path. Same exposure as the default: GITHUB_TOKEN is
+# packed into a downloadable artifact. Expected: 1 finding on clone.
+name: Explicit persist true then pack .git
 on: push
 
 jobs:
@@ -12,3 +13,9 @@ jobs:
         with:
           persist-credentials: true
       - run: echo "built"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: repo
+          path: |
+            dist/
+            .git
