@@ -46,6 +46,47 @@ func TestScanGitHubWorkflowsSkipsSymlink(t *testing.T) {
 	}
 }
 
+// TestScanGitHubWorkflowsSymlinkedDirStillScansArtifacts verifies that a
+// workflows directory symlinked outside the repository is ignored without
+// aborting the rest of the scan: repository-level artifacts (dependabot
+// config, security policy, ...) are still collected.
+func TestScanGitHubWorkflowsSymlinkedDirStillScansArtifacts(t *testing.T) {
+	root := t.TempDir()
+	outside := t.TempDir()
+	ghDir := filepath.Join(root, ".github")
+	if err := os.MkdirAll(ghDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	outsideWfDir := filepath.Join(outside, "workflows")
+	if err := os.MkdirAll(outsideWfDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	mustWriteFile(t, filepath.Join(outsideWfDir, "evil.yml"),
+		"name: leaked\non: push\njobs:\n  SHOULDNOTAPPEAR:\n    runs-on: x\n    steps:\n      - run: echo x\n")
+	if err := os.Symlink(outsideWfDir, filepath.Join(ghDir, "workflows")); err != nil {
+		t.Skipf("symlink unsupported: %v", err)
+	}
+
+	mustWriteFile(t, filepath.Join(ghDir, "dependabot.yml"),
+		"updates:\n  - package-ecosystem: npm\n    insecure-external-code-execution: allow\n")
+	mustWriteFile(t, filepath.Join(root, "SECURITY.md"), "# security\n")
+
+	pipeline, _, err := ScanGitHubWorkflows("o/r", "main", root, "github.com", false)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	if len(pipeline.Jobs) != 0 {
+		t.Fatalf("symlinked workflows dir should yield no jobs, got %+v", pipeline.Jobs)
+	}
+	if pipeline.Dependabot == nil {
+		t.Fatal("dependabot config should still be scanned when the workflows dir is rejected")
+	}
+	if pipeline.SecurityPolicyPath == "" {
+		t.Fatal("security policy should still be scanned when the workflows dir is rejected")
+	}
+}
+
 // TestScanGitHubWorkflowsCapsSize verifies an oversized workflow file is not
 // read into the pipeline (bounded read).
 func TestScanGitHubWorkflowsCapsSize(t *testing.T) {

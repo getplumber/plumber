@@ -45,6 +45,54 @@ const (
 	fmtFileErr = "%s: %w"
 )
 
+// collectWorkflowJobs reads every .yml/.yaml file under
+// <rootDir>/.github/workflows/ and returns the parsed jobs, sorted by
+// name. A missing workflows directory — or one that resolves outside
+// the repository (e.g. a committed symlink) — is not an error: the
+// scan simply carries no jobs, and the caller still collects the
+// repository-level artifacts (dependabot, Renovate, security policy,
+// Dockerfiles) that do not depend on that directory. Individual
+// unreadable or unparseable files land in partialErrors so the caller
+// can surface them without aborting the whole scan.
+func collectWorkflowJobs(rootDir string) (jobs []ir.Job, partialErrors []error, err error) {
+	dir, ok := resolveWithinRoot(rootDir, githubWorkflowsSubdir)
+	if !ok {
+		return nil, nil, nil
+	}
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, nil, nil
+		}
+		return nil, nil, fmt.Errorf(fmtReadErr, dir, err)
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
+			continue
+		}
+		name := entry.Name()
+		if !strings.HasSuffix(name, ".yml") && !strings.HasSuffix(name, ".yaml") {
+			continue
+		}
+		path := filepath.Join(dir, name)
+		data, readErr := utils.ReadFileLimit(path, maxWorkflowFileBytes)
+		if readErr != nil {
+			partialErrors = append(partialErrors, fmt.Errorf(fmtFileErr, name, readErr))
+			continue
+		}
+		fileJobs, parseErr := parseGitHubWorkflowJobs(data, workflowBaseName(name), path)
+		if parseErr != nil {
+			partialErrors = append(partialErrors, fmt.Errorf(fmtFileErr, name, parseErr))
+			continue
+		}
+		jobs = append(jobs, fileJobs...)
+	}
+	sort.Slice(jobs, func(i, j int) bool {
+		return jobs[i].Name < jobs[j].Name
+	})
+	return jobs, partialErrors, nil
+}
+
 // ScanGitHubWorkflows reads every .yml/.yaml file under
 // <rootDir>/.github/workflows/ and aggregates them into a single
 // NormalizedPipeline. Job names are namespaced by the workflow file base
@@ -62,43 +110,12 @@ func ScanGitHubWorkflows(projectPath, defaultBranch, rootDir, apiHost string, en
 		DefaultBranch: defaultBranch,
 	}
 
-	dir, ok := resolveWithinRoot(rootDir, githubWorkflowsSubdir)
-	if !ok {
-		return pipeline, nil, nil
-	}
-	entries, err := os.ReadDir(dir)
+	jobs, partialErrors, err := collectWorkflowJobs(rootDir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return pipeline, nil, nil
-		}
-		return nil, nil, fmt.Errorf(fmtReadErr, dir, err)
+		return nil, nil, err
 	}
+	pipeline.Jobs = jobs
 
-	for _, entry := range entries {
-		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
-			continue
-		}
-		name := entry.Name()
-		if !strings.HasSuffix(name, ".yml") && !strings.HasSuffix(name, ".yaml") {
-			continue
-		}
-		path := filepath.Join(dir, name)
-		data, readErr := utils.ReadFileLimit(path, maxWorkflowFileBytes)
-		if readErr != nil {
-			partialErrors = append(partialErrors, fmt.Errorf(fmtFileErr, name, readErr))
-			continue
-		}
-		jobs, parseErr := parseGitHubWorkflowJobs(data, workflowBaseName(name), path)
-		if parseErr != nil {
-			partialErrors = append(partialErrors, fmt.Errorf(fmtFileErr, name, parseErr))
-			continue
-		}
-		pipeline.Jobs = append(pipeline.Jobs, jobs...)
-	}
-
-	sort.Slice(pipeline.Jobs, func(i, j int) bool {
-		return pipeline.Jobs[i].Name < pipeline.Jobs[j].Name
-	})
 	if dcfg, derr := scanDependabotConfig(rootDir); derr != nil {
 		partialErrors = append(partialErrors, derr)
 	} else if dcfg != nil {
@@ -134,41 +151,11 @@ func ScanGitHubWorkflowsWithProgress(projectPath, defaultBranch, rootDir, apiHos
 		ProjectPath:   projectPath,
 		DefaultBranch: defaultBranch,
 	}
-	dir, ok := resolveWithinRoot(rootDir, githubWorkflowsSubdir)
-	if !ok {
-		return pipeline, nil, nil
-	}
-	entries, err := os.ReadDir(dir)
+	jobs, partialErrors, err := collectWorkflowJobs(rootDir)
 	if err != nil {
-		if os.IsNotExist(err) {
-			return pipeline, nil, nil
-		}
-		return nil, nil, fmt.Errorf(fmtReadErr, dir, err)
+		return nil, nil, err
 	}
-	for _, entry := range entries {
-		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
-			continue
-		}
-		name := entry.Name()
-		if !strings.HasSuffix(name, ".yml") && !strings.HasSuffix(name, ".yaml") {
-			continue
-		}
-		path := filepath.Join(dir, name)
-		data, readErr := utils.ReadFileLimit(path, maxWorkflowFileBytes)
-		if readErr != nil {
-			partialErrors = append(partialErrors, fmt.Errorf(fmtFileErr, name, readErr))
-			continue
-		}
-		jobs, parseErr := parseGitHubWorkflowJobs(data, workflowBaseName(name), path)
-		if parseErr != nil {
-			partialErrors = append(partialErrors, fmt.Errorf(fmtFileErr, name, parseErr))
-			continue
-		}
-		pipeline.Jobs = append(pipeline.Jobs, jobs...)
-	}
-	sort.Slice(pipeline.Jobs, func(i, j int) bool {
-		return pipeline.Jobs[i].Name < pipeline.Jobs[j].Name
-	})
+	pipeline.Jobs = jobs
 	if dcfg, derr := scanDependabotConfig(rootDir); derr != nil {
 		partialErrors = append(partialErrors, derr)
 	} else if dcfg != nil {
