@@ -16,6 +16,30 @@ import (
 
 const githubWorkflowsSubdir = ".github/workflows"
 
+// maxWorkflowFileBytes bounds a single workflow / dependabot file read.
+const maxWorkflowFileBytes = 1 << 20 // 1 MiB
+
+// resolveWithinRoot joins relParts onto rootDir and returns the path only when
+// it resolves inside rootDir, with symlinks resolved on both sides. ok is false
+// when the path escapes the repository (e.g. a committed symlink), so the
+// caller ignores it rather than reading outside the checkout.
+func resolveWithinRoot(rootDir string, relParts ...string) (string, bool) {
+	rootReal := rootDir
+	if r, err := filepath.EvalSymlinks(rootDir); err == nil {
+		rootReal = r
+	}
+	joined := filepath.Join(append([]string{rootReal}, relParts...)...)
+	targetReal := joined
+	if r, err := filepath.EvalSymlinks(joined); err == nil {
+		targetReal = r
+	}
+	rel, err := filepath.Rel(rootReal, targetReal)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return joined, false
+	}
+	return joined, true
+}
+
 const (
 	fmtReadErr = "read %s: %w"
 	fmtFileErr = "%s: %w"
@@ -38,7 +62,10 @@ func ScanGitHubWorkflows(projectPath, defaultBranch, rootDir, apiHost string, en
 		DefaultBranch: defaultBranch,
 	}
 
-	dir := filepath.Join(rootDir, githubWorkflowsSubdir)
+	dir, ok := resolveWithinRoot(rootDir, githubWorkflowsSubdir)
+	if !ok {
+		return pipeline, nil, nil
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -48,7 +75,7 @@ func ScanGitHubWorkflows(projectPath, defaultBranch, rootDir, apiHost string, en
 	}
 
 	for _, entry := range entries {
-		if entry.IsDir() {
+		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
 			continue
 		}
 		name := entry.Name()
@@ -56,7 +83,7 @@ func ScanGitHubWorkflows(projectPath, defaultBranch, rootDir, apiHost string, en
 			continue
 		}
 		path := filepath.Join(dir, name)
-		data, readErr := os.ReadFile(path)
+		data, readErr := utils.ReadFileLimit(path, maxWorkflowFileBytes)
 		if readErr != nil {
 			partialErrors = append(partialErrors, fmt.Errorf(fmtFileErr, name, readErr))
 			continue
@@ -107,7 +134,10 @@ func ScanGitHubWorkflowsWithProgress(projectPath, defaultBranch, rootDir, apiHos
 		ProjectPath:   projectPath,
 		DefaultBranch: defaultBranch,
 	}
-	dir := filepath.Join(rootDir, githubWorkflowsSubdir)
+	dir, ok := resolveWithinRoot(rootDir, githubWorkflowsSubdir)
+	if !ok {
+		return pipeline, nil, nil
+	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
@@ -116,7 +146,7 @@ func ScanGitHubWorkflowsWithProgress(projectPath, defaultBranch, rootDir, apiHos
 		return nil, nil, fmt.Errorf(fmtReadErr, dir, err)
 	}
 	for _, entry := range entries {
-		if entry.IsDir() {
+		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
 			continue
 		}
 		name := entry.Name()
@@ -124,7 +154,7 @@ func ScanGitHubWorkflowsWithProgress(projectPath, defaultBranch, rootDir, apiHos
 			continue
 		}
 		path := filepath.Join(dir, name)
-		data, readErr := os.ReadFile(path)
+		data, readErr := utils.ReadFileLimit(path, maxWorkflowFileBytes)
 		if readErr != nil {
 			partialErrors = append(partialErrors, fmt.Errorf(fmtFileErr, name, readErr))
 			continue
@@ -356,8 +386,11 @@ type ghDependabotConfig struct {
 // is (nil, nil) and the pipeline simply carries no dependabot data.
 func scanDependabotConfig(rootDir string) (*ir.DependabotConfig, error) {
 	for _, name := range []string{"dependabot.yml", "dependabot.yaml"} {
-		path := filepath.Join(rootDir, ".github", name)
-		data, err := os.ReadFile(path)
+		path, ok := resolveWithinRoot(rootDir, ".github", name)
+		if !ok {
+			continue
+		}
+		data, err := utils.ReadFileLimit(path, maxWorkflowFileBytes)
 		if err != nil {
 			if os.IsNotExist(err) {
 				continue
