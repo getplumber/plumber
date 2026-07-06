@@ -5,9 +5,14 @@ import (
 	"os"
 	"sort"
 
+	"github.com/getplumber/plumber/utils"
 	"github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v2"
 )
+
+// maxConfigFileBytes bounds a .plumber.yaml read. The config is read from the
+// analyzed repository, so its size is not trusted.
+const maxConfigFileBytes = 2 << 20 // 2 MiB
 
 // validControlSchema maps each known control name to its valid sub-keys.
 // When adding a new control, add its entry here to enable validation.
@@ -773,7 +778,7 @@ func LoadPlumberConfig(configPath string) (*PlumberConfig, string, []string, err
 	l = l.WithField("configPath", configPath)
 	l.Info("Loading configuration from file")
 
-	data, err := os.ReadFile(configPath)
+	data, err := utils.ReadFileLimit(configPath, maxConfigFileBytes)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, configPath, nil, fmt.Errorf("config file not found: %s", configPath)

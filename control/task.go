@@ -11,8 +11,13 @@ import (
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	"github.com/getplumber/plumber/internal/ir"
 	"github.com/getplumber/plumber/policies"
+	"github.com/getplumber/plumber/utils"
 	"github.com/sirupsen/logrus"
 )
+
+// maxLocalCIConfigBytes bounds a local .gitlab-ci.yml read from the analyzed
+// repository, whose size is not trusted.
+const maxLocalCIConfigBytes = 2 << 20 // 2 MiB
 
 // opaEvaluateTimeout bounds a single Rego/OPA evaluation. Policy evaluation
 // over a normal pipeline is sub-second; this ceiling only exists so a
@@ -440,7 +445,7 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 				"ciConfPath": project.CiConfPath,
 				"error":      cErr,
 			}).Warn("Local CI config path escapes the repository; using remote")
-		} else if content, err := os.ReadFile(localCIPath); err == nil {
+		} else if content, err := utils.ReadFileLimit(localCIPath, maxLocalCIConfigBytes); err == nil {
 			conf.LocalCIConfigContent = content
 			conf.UsingLocalCIConfig = true
 			clearProgressLine(conf)
