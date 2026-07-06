@@ -49,6 +49,12 @@ const (
 	CodeReleaseWorkflowUnsigned ErrorCode = "ISSUE-712"
 	// ISSUE-713: Third-party GitHub Action comes from an unauthorized source
 	CodeActionUnauthorizedSource ErrorCode = "ISSUE-713"
+	// ISSUE-714: Action fetches and runs remote code from a mutable ref, in the open (no integrity check)
+	CodeActionMutableRemoteExec ErrorCode = "ISSUE-714"
+	// ISSUE-715: Action OBFUSCATES a remote code fetch/exec (decode-then-run)
+	CodeActionObfuscatedRemoteExec ErrorCode = "ISSUE-715"
+	// ISSUE-716: Action source could not be verified (fetch failed) — not a pass
+	CodeActionRemoteExecUnverified ErrorCode = "ISSUE-716"
 )
 
 // Issue codes for CI/CD variable controls (2xx)
@@ -293,6 +299,33 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Use an action from an authorized source. Configure the allowlist in .plumber.yaml under githubActionMustComeFromAuthorizedSources: keep trustGithubOfficialActions on for actions/* and github/*, add trusted owners or actions to trustedGithubActions (exact `owner/repo` or `owner/*`), and optionally set minimumStars to require a popularity threshold. Vendoring the action into a local `./.github/actions/…` directory removes the external dependency entirely.",
 		DocURL:      docsBaseURL + string(CodeActionUnauthorizedSource),
 		ControlName: "githubActionMustComeFromAuthorizedSources",
+	},
+	CodeActionMutableRemoteExec: {
+		Code:        CodeActionMutableRemoteExec,
+		Severity:    SeverityHigh,
+		Title:       "Action fetches and runs remote code from a mutable ref (in the open)",
+		Description: "A third-party action's own source fetches and executes a script from a MOVING ref (a branch such as main/master, not a tag or SHA) of another repository at runtime, and does not verify the download against a checksum. Pinning the action by commit SHA does not reach this: the fetched code can change with nothing committed where the pin can see it, so a compromise or retag of that upstream branch runs arbitrary code in the job with its token and secrets. The canonical example is anchore/scan-action, which fetches `raw.githubusercontent.com/anchore/grype/main/install.sh` and runs it. This is a static, text-level match on the action's source: it catches the in-the-open shape, not an author who deliberately hides the fetch (see ISSUE-715), so a clean result asserts 'no known pattern seen', not 'safe'.",
+		Remediation: "Prefer an action that pins its downloads to an immutable ref AND verifies a checksum. Otherwise install the tool yourself from a pinned release, verify it against a checksum committed to your repo, and run it directly; or vendor the action and pin its internal fetch. A fetch that already verifies a pinned checksum is content-pinned and is not flagged here.",
+		DocURL:      docsBaseURL + string(CodeActionMutableRemoteExec),
+		ControlName: "actionsMustNotExecuteMutableRemoteCode",
+	},
+	CodeActionObfuscatedRemoteExec: {
+		Code:        CodeActionObfuscatedRemoteExec,
+		Severity:    SeverityCritical,
+		Title:       "Action obfuscates a remote code fetch/exec",
+		Description: "The action's own source decodes and then executes code: `base64 -d | sh`, `eval \"$(… | base64 -d)\"`, `eval(atob(…))`, `new Function(atob(x))`, a hex/xxd decode piped to a shell, and similar. No legitimate action needs to hide what it runs at runtime, so obfuscation-then-execute is treated as the strongest signal regardless of the host, ref, or encoding used. This deliberately does NOT chase every possible encoding (an unbounded space); it flags the act of hiding itself, which is what makes a clean result meaningful here.",
+		Remediation: "Remove the obfuscation. If the action is a dependency, drop or vendor it and replace the hidden fetch with an explicit, pinned, checksum-verified install. An action that must decode data at runtime should not feed that decoded value into a shell or eval.",
+		DocURL:      docsBaseURL + string(CodeActionObfuscatedRemoteExec),
+		ControlName: "actionsMustNotExecuteMutableRemoteCode",
+	},
+	CodeActionRemoteExecUnverified: {
+		Code:        CodeActionRemoteExecUnverified,
+		Severity:    SeverityLow,
+		Title:       "Action source could not be verified",
+		Description: "Plumber could not fetch the action's own source (a network error, API rate limit, GitHub Enterprise Server host, private repo, or a Docker-image action) so it could not confirm whether the action fetches mutable remote code at runtime. This is surfaced as an explicit could-not-verify finding rather than a silent pass, because a silent pass would let the same repository score differently across CI environments and would over-claim safety on an unchecked dependency.",
+		Remediation: "Re-run where the action source is reachable (authenticated token, network access) to get a definitive result, or vendor the action so its source is local and auditable. This finding is informational: it flags an unchecked dependency, not a confirmed problem.",
+		DocURL:      docsBaseURL + string(CodeActionRemoteExecUnverified),
+		ControlName: "actionsMustNotExecuteMutableRemoteCode",
 	},
 	CodeImpostorCommit: {
 		Code:        CodeImpostorCommit,

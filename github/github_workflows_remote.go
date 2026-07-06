@@ -38,6 +38,12 @@ func ScanGitHubWorkflowsRemote(host, owner, repo, ref string, enrichActionMetada
 		DefaultBranch: ref,
 	}
 
+	// Producer-side check: if the scanned repo is itself an action whose
+	// own source fetches mutable remote code, flag it (fetched over raw).
+	if host == "" {
+		pipeline.SelfActionMutableExec = ScanRemoteSelfAction(owner, repo, ref)
+	}
+
 	rest, err := newGitHubRESTClient(host)
 	if err != nil {
 		// ErrAuthRequired carries an actionable multi-line message;

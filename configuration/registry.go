@@ -54,6 +54,7 @@ var controlsMeta = map[string]ControlMeta{
 	"actionsMustNotBeArchived":                            {Providers: []string{ProviderGitHub}},
 	"actionsMustNotCarryKnownCVEs":                        {Providers: []string{ProviderGitHub}},
 	"actionsMustNotDuplicateRunnerBuiltins":               {Providers: []string{ProviderGitHub}},
+	"actionsMustNotExecuteMutableRemoteCode":              {Providers: []string{ProviderGitHub}},
 	"checkoutMustNotPersistCredentials":                   {Providers: []string{ProviderGitHub}},
 	"containerCredentialsMustComeFromSecrets":             {Providers: []string{ProviderGitHub}},
 	"dependabotEcosystemsMustHaveCooldown":                {Providers: []string{ProviderGitHub}},
@@ -211,6 +212,7 @@ var actionMetadataConsumers = []string{
 	"actionsMustNotBeArchived",
 	"actionsMustNotCarryKnownCVEs",
 	"actionsMustNotDuplicateRunnerBuiltins",
+	"actionsMustNotExecuteMutableRemoteCode",
 	"githubActionMustComeFromAuthorizedSources",
 }
 

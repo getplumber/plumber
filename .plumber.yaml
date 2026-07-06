@@ -999,6 +999,21 @@ github:
       enabled: true
 
     # ===========================================
+    # Actions must not execute mutable remote code
+    # ===========================================
+    # Flags a third-party action that, even pinned by commit SHA, fetches
+    # and executes a script from a MOVING ref (main/master/HEAD) of
+    # another repository at runtime. Pinning the action's own ref does
+    # not make its execution immutable: the fetched code can change with
+    # nothing committed where the pin can see it. The canonical case is
+    # anchore/scan-action, which runs `raw.githubusercontent.com/anchore/
+    # grype/main/install.sh`. Driven by the collector's per-action source
+    # analysis (needs API metadata enrichment). Config-free; toggle via
+    # `enabled`.
+    actionsMustNotExecuteMutableRemoteCode:
+      enabled: true
+
+    # ===========================================
     # Release workflows must not restore an untrusted cache
     # ===========================================
     # Flags a release/publish job that restores a build cache whose key

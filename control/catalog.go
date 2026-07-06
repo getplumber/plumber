@@ -235,6 +235,11 @@ func GitHubControls(pc *configuration.PlumberConfig) []ControlEntry {
 		Skipped:     c.ActionsMustNotCarryKnownCVEs == nil || !c.ActionsMustNotCarryKnownCVEs.IsEnabled(),
 	})
 	entries = append(entries, ControlEntry{
+		DisplayName: "Actions must not execute mutable remote code",
+		ControlName: "actionsMustNotExecuteMutableRemoteCode",
+		Skipped:     c.ActionsMustNotExecuteMutableRemoteCode == nil || !c.ActionsMustNotExecuteMutableRemoteCode.IsEnabled(),
+	})
+	entries = append(entries, ControlEntry{
 		DisplayName: "Release workflows must not restore an untrusted cache",
 		ControlName: "releaseWorkflowsMustNotRestoreUntrustedCache",
 		Skipped:     c.ReleaseWorkflowsMustNotRestoreUntrustedCache == nil || !c.ReleaseWorkflowsMustNotRestoreUntrustedCache.IsEnabled(),
@@ -376,6 +381,9 @@ func DisabledControlNames(c *configuration.ControlsConfig) map[string]bool {
 	}
 	if cfg := c.ActionsMustNotCarryKnownCVEs; cfg == nil || !cfg.IsEnabled() {
 		out["actionsMustNotCarryKnownCVEs"] = true
+	}
+	if cfg := c.ActionsMustNotExecuteMutableRemoteCode; cfg == nil || !cfg.IsEnabled() {
+		out["actionsMustNotExecuteMutableRemoteCode"] = true
 	}
 	if cfg := c.ReleaseWorkflowsMustNotRestoreUntrustedCache; cfg == nil || !cfg.IsEnabled() {
 		out["releaseWorkflowsMustNotRestoreUntrustedCache"] = true

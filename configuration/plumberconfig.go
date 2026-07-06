@@ -104,6 +104,9 @@ var validControlSchema = map[string][]string{
 	"actionsMustNotCarryKnownCVEs": {
 		"enabled",
 	},
+	"actionsMustNotExecuteMutableRemoteCode": {
+		"enabled",
+	},
 	"releaseWorkflowsMustNotRestoreUntrustedCache": {
 		"enabled", "publishActions", "cacheActions", "publishScriptPatterns", "publishScriptExcludePatterns", "allowedJobs",
 	},
@@ -354,6 +357,14 @@ type ControlsConfig struct {
 	// action API metadata enriched at collect time. Config-free; toggle
 	// via `enabled`.
 	ActionsMustNotCarryKnownCVEs *EnabledOnlyControlConfig `yaml:"actionsMustNotCarryKnownCVEs,omitempty"`
+
+	// ActionsMustNotExecuteMutableRemoteCode control configuration (GitHub
+	// Actions only). Flags a third-party action whose own source fetches
+	// and executes a script from a moving ref at runtime, so a SHA pin on
+	// the action does not make its execution immutable. Driven by the
+	// collector's per-action source analysis. Config-free; toggle via
+	// `enabled`.
+	ActionsMustNotExecuteMutableRemoteCode *EnabledOnlyControlConfig `yaml:"actionsMustNotExecuteMutableRemoteCode,omitempty"`
 
 	// ReleaseWorkflowsMustNotRestoreUntrustedCache control configuration (GitHub
 	// Actions only). Flags a release/publish job that restores a build cache

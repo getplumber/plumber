@@ -3969,6 +3969,98 @@ func TestIssue114_KnownVulnerableAction(t *testing.T) {
 	})
 }
 
+// TestIssue714_MutableRemoteExec locks in the graduated mutable-remote-exec
+// rule: the tier keys the code — exec→ISSUE-714 (high), obfuscated→ISSUE-715
+// (critical), unverified→ISSUE-716 (low) — for both the consumer side
+// (a used action) and the producer side (the scanned repo IS the action).
+// The "data" tier and a missing signal stay silent.
+func TestIssue714_MutableRemoteExec(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFS(policies.FS); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+
+	codeHits := func(pipeline *ir.NormalizedPipeline, code string) (int, string) {
+		findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		hits, msg := 0, ""
+		for _, f := range findings {
+			if f.Code == code {
+				hits++
+				msg = f.Message
+			}
+		}
+		return hits, msg
+	}
+
+	consumer := func(tier, url string) *ir.NormalizedPipeline {
+		return &ir.NormalizedPipeline{
+			Provider: ir.ProviderGitHub,
+			Jobs: []ir.Job{{
+				Name: "build",
+				Uses: []ir.Action{{
+					Uses:     "vendor/action@v1",
+					Metadata: &ir.ActionMetadata{MutableRemoteExec: &ir.MutableRemoteExec{Tier: tier, URL: url}},
+				}},
+			}},
+		}
+	}
+	producer := func(tier, url string) *ir.NormalizedPipeline {
+		return &ir.NormalizedPipeline{
+			Provider:              ir.ProviderGitHub,
+			SelfActionMutableExec: &ir.MutableRemoteExec{Tier: tier, URL: url},
+		}
+	}
+
+	t.Run("exec → ISSUE-714 high (consumer & producer)", func(t *testing.T) {
+		u := "raw.githubusercontent.com/anchore/grype/main/install.sh"
+		if h, msg := codeHits(consumer("exec", u), "ISSUE-714"); h != 1 || !strings.Contains(msg, u) {
+			t.Fatalf("consumer exec: hits=%d msg=%q", h, msg)
+		}
+		if h, _ := codeHits(producer("exec", u), "ISSUE-714"); h != 1 {
+			t.Fatalf("producer exec: want 1 ISSUE-714, got %d", h)
+		}
+	})
+
+	t.Run("obfuscated → ISSUE-715 critical (consumer & producer)", func(t *testing.T) {
+		if h, _ := codeHits(consumer("obfuscated", "base64 -d | sh"), "ISSUE-715"); h != 1 {
+			t.Fatalf("consumer obfuscated: want 1 ISSUE-715, got %d", h)
+		}
+		// obfuscated must NOT also fire the high exec code
+		if h, _ := codeHits(consumer("obfuscated", "x"), "ISSUE-714"); h != 0 {
+			t.Fatalf("obfuscated must not fire ISSUE-714, got %d", h)
+		}
+		if h, _ := codeHits(producer("obfuscated", "eval(atob(x))"), "ISSUE-715"); h != 1 {
+			t.Fatalf("producer obfuscated: want 1 ISSUE-715, got %d", h)
+		}
+	})
+
+	t.Run("unverified → ISSUE-716 low, never a pass", func(t *testing.T) {
+		if h, _ := codeHits(consumer("unverified", ""), "ISSUE-716"); h != 1 {
+			t.Fatalf("consumer unverified: want 1 ISSUE-716, got %d", h)
+		}
+	})
+
+	t.Run("data tier and absent signal stay silent", func(t *testing.T) {
+		for _, code := range []string{"ISSUE-714", "ISSUE-715", "ISSUE-716"} {
+			if h, _ := codeHits(consumer("data", "x"), code); h != 0 {
+				t.Fatalf("data tier fired %s (%d)", code, h)
+			}
+		}
+		absent := &ir.NormalizedPipeline{
+			Provider: ir.ProviderGitHub,
+			Jobs:     []ir.Job{{Name: "b", Uses: []ir.Action{{Uses: "actions/checkout@v4", Metadata: &ir.ActionMetadata{RefKind: "tag"}}}}},
+		}
+		for _, code := range []string{"ISSUE-714", "ISSUE-715", "ISSUE-716"} {
+			if h, _ := codeHits(absent, code); h != 0 {
+				t.Fatalf("absent signal fired %s (%d)", code, h)
+			}
+		}
+	})
+}
+
 // TestIssue108_ActionArchivedRepo locks in the three branches of the
 // archived-repo rule: archived=true positive, archived=false negative,
 // and missing-metadata silent abstain (no false positive when the

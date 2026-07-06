@@ -109,6 +109,10 @@ func ScanGitHubWorkflows(projectPath, defaultBranch, rootDir, apiHost string, en
 		ProjectPath:   projectPath,
 		DefaultBranch: defaultBranch,
 	}
+	// Producer-side check: if the scanned repo is itself an action whose
+	// own source fetches mutable remote code, flag it. Read from the
+	// local checkout; computed even when the repo has no workflows.
+	pipeline.SelfActionMutableExec = ScanLocalSelfAction(rootDir)
 
 	jobs, partialErrors, err := collectWorkflowJobs(rootDir)
 	if err != nil {
@@ -151,6 +155,10 @@ func ScanGitHubWorkflowsWithProgress(projectPath, defaultBranch, rootDir, apiHos
 		ProjectPath:   projectPath,
 		DefaultBranch: defaultBranch,
 	}
+	// Producer-side check: if the scanned repo is itself an action whose
+	// own source fetches mutable remote code, flag it. Read from the
+	// local checkout; computed even when the repo has no workflows.
+	pipeline.SelfActionMutableExec = ScanLocalSelfAction(rootDir)
 	jobs, partialErrors, err := collectWorkflowJobs(rootDir)
 	if err != nil {
 		return nil, nil, err
@@ -285,6 +293,7 @@ func enrichActionsWithAPIMetadata(pipeline *ir.NormalizedPipeline, apiHost strin
 	}
 	total := len(uniqueRefs)
 	seen := map[string]struct{}{}
+	mreCache := map[string]*ir.MutableRemoteExec{}
 	done := 0
 	for i := range pipeline.Jobs {
 		job := &pipeline.Jobs[i]
@@ -296,20 +305,22 @@ func enrichActionsWithAPIMetadata(pipeline *ir.NormalizedPipeline, apiHost strin
 				report(progressFn, done, total, fmt.Sprintf("Resolving action %s", action.Uses))
 			}
 			meta := client.Resolve(action.Uses)
-			if isZeroMetadata(meta) && action.Comment == "" {
+			mre := resolveMutableExec(action.Uses, mreCache)
+			if isZeroMetadata(meta) && action.Comment == "" && mre == nil {
 				continue
 			}
 			amd := &ir.ActionMetadata{
-				RepoArchived:     meta.RepoArchived,
-				RefExists:        meta.RefExists,
-				RefKnownAbsent:   meta.RefKnownAbsent,
-				RefKind:          meta.RefKind,
-				TagSha:           meta.TagSha,
-				LatestTag:        meta.LatestTag,
-				LatestReleaseSha: meta.LatestReleaseSha,
-				RefIsAmbiguous:   meta.RefIsAmbiguous,
-				Advisories:       meta.Advisories,
-				StargazersCount:  meta.StargazersCount,
+				RepoArchived:      meta.RepoArchived,
+				RefExists:         meta.RefExists,
+				RefKnownAbsent:    meta.RefKnownAbsent,
+				RefKind:           meta.RefKind,
+				TagSha:            meta.TagSha,
+				LatestTag:         meta.LatestTag,
+				LatestReleaseSha:  meta.LatestReleaseSha,
+				RefIsAmbiguous:    meta.RefIsAmbiguous,
+				Advisories:        meta.Advisories,
+				StargazersCount:   meta.StargazersCount,
+				MutableRemoteExec: mre,
 			}
 			if action.Comment != "" {
 				amd.CommentVersion = extractVersionFromComment(action.Comment)

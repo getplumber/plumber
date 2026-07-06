@@ -337,6 +337,7 @@ func TestValidControlNames(t *testing.T) {
 		"actionsMustBePinnedByCommitSha",
 		"actionsMustNotBeArchived",
 		"actionsMustNotCarryKnownCVEs",
+		"actionsMustNotExecuteMutableRemoteCode",
 		"branchMustBeProtected",
 		"containerImageMustComeFromAuthorizedSources",
 		"containerImageMustNotUseForbiddenTags",

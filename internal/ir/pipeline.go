@@ -23,6 +23,14 @@ type NormalizedPipeline struct {
 	Branches      []Branch          `json:"branches,omitempty"`
 	Dependabot    *DependabotConfig `json:"dependabot,omitempty"`
 
+	// SelfActionMutableExec is set when the scanned repository is itself
+	// a GitHub Action (has an action.yml) whose own source fetches and
+	// executes mutable remote code at runtime. This is the producer-side
+	// counterpart of the per-`uses:` action.metadata.mutableRemoteExec:
+	// scanning the action's own repo must flag that the action it
+	// publishes is the mutable-remote-exec vector. Nil otherwise.
+	SelfActionMutableExec *MutableRemoteExec `json:"selfActionMutableExec,omitempty"`
+
 	// WorkflowFileCount is the number of workflow files the GitHub
 	// collector fetched in remote (--github-url) mode. Used by
 	// TotalProgressStepsForPipeline to size the progress bar across
@@ -271,6 +279,28 @@ type ActionMetadata struct {
 	// threshold. Zero when enrichment did not run or the repo was
 	// unreachable — policies must abstain rather than flag on absence.
 	StargazersCount int `json:"stargazersCount,omitempty"`
+	// MutableRemoteExec, when set, records that the action's own source
+	// fetches code or a download-steering manifest from a MOVING ref
+	// (main/master/HEAD/…) at runtime — so pinning this action by SHA
+	// does not make its execution immutable. Nil when the source was not
+	// analysed (offline, non-github.com host, trusted owner) or nothing
+	// mutable was found. Consumed by the mutable-remote-exec control.
+	MutableRemoteExec *MutableRemoteExec `json:"mutableRemoteExec,omitempty"`
+}
+
+// MutableRemoteExec describes a mutable-remote-code signal found inside
+// a third-party action's own source. Tier separates the two risk levels
+// the control reports:
+//
+//   - "exec" — a script (.sh/.py/…) fetched from a moving ref and
+//     executed, or a `curl … | sh` pipe. Direct remote code execution.
+//   - "data" — a data manifest (.json/.yaml) pulled from a moving ref
+//     that steers a later binary download. Weaker: not executed itself.
+type MutableRemoteExec struct {
+	Tier string `json:"tier"`
+	URL  string `json:"url"`
+	Ref  string `json:"ref,omitempty"`
+	File string `json:"file"`
 }
 
 // Image references a container image (job image, service, step base).
