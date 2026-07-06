@@ -37,21 +37,18 @@ func TestEffectiveScorePush(t *testing.T) {
 		name     string
 		flagPush bool
 		flagEnd  string
-		cfg      *configuration.ScoreConfig
 		wantPush bool
 		wantEnd  string
 	}{
-		{"default off", false, "", nil, false, "https://score.getplumber.io"},
-		{"flag on", true, "", nil, true, "https://score.getplumber.io"},
-		{"config does not toggle push", false, "", &configuration.ScoreConfig{Endpoint: "https://score.example.com/"}, false, "https://score.example.com"},
-		{"config endpoint trims slash", false, "", &configuration.ScoreConfig{Endpoint: "https://score.example.com/"}, false, "https://score.example.com"},
-		{"flag endpoint wins over config", false, "https://flag.example.com", &configuration.ScoreConfig{Endpoint: "https://cfg.example.com"}, false, "https://flag.example.com"},
+		{"default off", false, "", false, "https://score.getplumber.io"},
+		{"flag push on", true, "", true, "https://score.getplumber.io"},
+		{"flag endpoint used", false, "https://score.example.com", false, "https://score.example.com"},
+		{"flag endpoint trims slash", false, "https://score.example.com/", false, "https://score.example.com"},
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			pushScore, scoreEndpoint = tc.flagPush, tc.flagEnd
-			conf := &configuration.Configuration{PlumberConfig: &configuration.PlumberConfig{Score: tc.cfg}}
-			gotPush, gotEnd := effectiveScorePush(conf)
+			gotPush, gotEnd := effectiveScorePush()
 			if gotPush != tc.wantPush || gotEnd != tc.wantEnd {
 				t.Errorf("got (%v, %q), want (%v, %q)", gotPush, gotEnd, tc.wantPush, tc.wantEnd)
 			}

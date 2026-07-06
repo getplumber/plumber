@@ -31,17 +31,14 @@ const gitlabScoreTokenEnv = "PLUMBER_ANALYZE_SCORE_TOKEN"
 // endpoint. Publishing has a single opt-in: the `--score-push` flag /
 // PLUMBER_ANALYZE_SCORE_PUSH env, which the CI integration input (the
 // action/component `score-push`) sets. The endpoint comes from the
-// `--score-endpoint` flag / env, else `score.endpoint` in config, else the
-// built-in default.
-func effectiveScorePush(conf *configuration.Configuration) (push bool, endpoint string) {
-	var sc *configuration.ScoreConfig
-	if conf != nil && conf.PlumberConfig != nil {
-		sc = conf.PlumberConfig.Score
-	}
+// `--score-endpoint` flag / PLUMBER_ANALYZE_SCORE_ENDPOINT env, else the
+// built-in default. It is resolved only from these operator-controlled
+// sources, never from the analyzed repository's config file.
+func effectiveScorePush() (push bool, endpoint string) {
 	push = pushScore
 	endpoint = strings.TrimRight(strings.TrimSpace(scoreEndpoint), "/")
 	if endpoint == "" {
-		endpoint = sc.EndpointOrDefault()
+		endpoint = configuration.DefaultScoreEndpoint
 	}
 	return push, endpoint
 }
@@ -52,7 +49,7 @@ func effectiveScorePush(conf *configuration.Configuration) (push bool, endpoint 
 // publish; an explicit --score-push then prints a one-line note instead of
 // skipping silently, so the requested push is never a mystery.
 func maybePushScore(p providerPkg.Provider, conf *configuration.Configuration, payload []byte) {
-	push, endpoint := effectiveScorePush(conf)
+	push, endpoint := effectiveScorePush()
 	if !push || len(payload) == 0 {
 		return
 	}
@@ -269,7 +266,7 @@ func handleScorePublishing(p providerPkg.Provider, conf *configuration.Configura
 }
 
 func handleScorePublishingOnce(p providerPkg.Provider, conf *configuration.Configuration, result *control.AnalysisResult, summary complianceSummary) {
-	if push, _ := effectiveScorePush(conf); !push {
+	if push, _ := effectiveScorePush(); !push {
 		maybeScoreNudge()
 		return
 	}

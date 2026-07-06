@@ -43,10 +43,9 @@ func TestHandleScorePublishing_DisabledNeverSends(t *testing.T) {
 	t.Setenv("CI_SERVER_URL", "https://gitlab.com")
 	t.Setenv(gitlabScoreTokenEnv, "a-valid-token")
 
-	conf := &configuration.Configuration{PlumberConfig: &configuration.PlumberConfig{
-		// Config carries an endpoint but, per design, cannot enable publishing.
-		Score: &configuration.ScoreConfig{Endpoint: score.URL},
-	}}
+	// The endpoint is set via the flag (scoreEndpoint above); publishing is
+	// still gated solely by the opt-in, which is off here.
+	conf := &configuration.Configuration{PlumberConfig: &configuration.PlumberConfig{}}
 	result := &control.AnalysisResult{ProjectPath: "group/repo", DefaultBranch: "main"}
 
 	handleScorePublishing(p, conf, result, complianceSummary{})

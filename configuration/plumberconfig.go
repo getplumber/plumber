@@ -4,7 +4,6 @@ import (
 	"fmt"
 	"os"
 	"sort"
-	"strings"
 
 	"github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v2"
@@ -156,11 +155,6 @@ type PlumberConfig struct {
 	// GitHub provider section (v2 schema). Same shape as GitLab.
 	GitHub *ProviderConfig `yaml:"github,omitempty"`
 
-	// Score holds Plumber Score options. Provider-agnostic, top-level. Only
-	// the service endpoint lives here; whether to publish is the CI
-	// integration's call (see ScoreConfig).
-	Score *ScoreConfig `yaml:"score,omitempty"`
-
 	// Controls configuration (legacy v1 schema, top-level).
 	// After a v2 load this is the zero value; after a v1 load convertV1ToV2
 	// moves these into GitLab.Controls and clears this field.
@@ -177,34 +171,11 @@ type PlumberConfig struct {
 }
 
 // DefaultScoreEndpoint is the built-in hosted Plumber Score badge service.
-// Only a self-hosted score service overrides it (via score.endpoint); the
-// OIDC audience the CLI mints then follows the configured endpoint.
+// A self-hosted score service is selected with the --score-endpoint flag /
+// PLUMBER_ANALYZE_SCORE_ENDPOINT env (surfaced by the CI integration input),
+// not from the config file; the OIDC audience the CLI mints then follows that
+// value.
 const DefaultScoreEndpoint = "https://score.getplumber.io"
-
-// ScoreConfig configures publishing the Plumber Score to the hosted badge
-// service. Whether to publish is the CI integration's call (the action/
-// component `score-push` input, surfaced as --score-push / PLUMBER_ANALYZE_
-// SCORE_PUSH), not a config toggle. Publishing happens only in CI, where a
-// CI-native OIDC id-token can be minted to prove the repo's identity. This
-// block only overrides the service endpoint.
-type ScoreConfig struct {
-	// Endpoint overrides the score service base URL. Empty means the
-	// built-in default (DefaultScoreEndpoint). Set only for a self-hosted
-	// score service; the minted OIDC audience follows this value so it
-	// always matches the target.
-	Endpoint string `yaml:"endpoint,omitempty"`
-}
-
-// EndpointOrDefault returns the configured score endpoint (trailing slash
-// trimmed), or the built-in default when unset.
-func (s *ScoreConfig) EndpointOrDefault() string {
-	if s != nil {
-		if e := strings.TrimRight(strings.TrimSpace(s.Endpoint), "/"); e != "" {
-			return e
-		}
-	}
-	return DefaultScoreEndpoint
-}
 
 // ProviderConfig is the per-provider configuration block introduced in
 // schema v2. One instance per provider section in .plumber.yaml.
