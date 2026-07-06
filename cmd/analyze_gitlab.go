@@ -1302,7 +1302,7 @@ func printNoControlsWarning(result *control.AnalysisResult) {
 		fmt.Printf(fmtIndentLine, styleError.Render("CI configuration errors:"))
 		bullet := styleError.Render("•")
 		for _, e := range result.CiErrors {
-			fmt.Printf("    %s %s\n", bullet, e)
+			fmt.Printf("    %s %s\n", bullet, sanitizeTerminal(e))
 		}
 		fmt.Println()
 		return

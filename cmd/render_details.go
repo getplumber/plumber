@@ -88,7 +88,7 @@ func renderDegradedCaveat(reasons []string) {
 	}
 	fmt.Printf("  %s⚠ Data collection was incomplete — results may be partial:%s\n", colorYellow, colorReset)
 	for _, r := range reasons {
-		fmt.Printf("    %s•%s %s\n", colorYellow, colorReset, r)
+		fmt.Printf("    %s•%s %s\n", colorYellow, colorReset, sanitizeTerminal(r))
 	}
 	fmt.Printf("    %s↳ controls with un-collected data are marked \"not evaluated\"; the letter score is withheld until the run completes cleanly.%s\n\n", colorDim, colorReset)
 }
