@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"slices"
 	"strings"
+	"unicode"
 
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
@@ -139,15 +140,15 @@ func renderFindingGroups(groups []findingGroup) {
 			fmt.Printf("\n  %sIssues Found:%s\n", colorYellow, colorReset)
 			for _, f := range g.Findings {
 				tag := severityTag(f.Code)
-				fmt.Printf("     %s [%s] %s\n", tag, f.Code, f.Message)
+				fmt.Printf("     %s [%s] %s\n", tag, f.Code, sanitizeTerminal(f.Message))
 				for _, line := range f.DetailLines {
-					fmt.Printf("      └─ %s\n", line)
+					fmt.Printf("      └─ %s\n", sanitizeTerminal(line))
 				}
 				if f.Location != "" {
 					// The bare path is emitted last so VS Code, iTerm
 					// and similar tools detect it as a clickable
 					// file:line reference and jump straight to the job.
-					fmt.Printf("      %s↳ at %s%s\n", colorDim, f.Location, colorReset)
+					fmt.Printf("      %s↳ at %s%s\n", colorDim, sanitizeTerminal(f.Location), colorReset)
 				}
 				if f.DocURL != "" {
 					fmt.Printf("      %s↳ docs: %s%s\n", colorDim, f.DocURL, colorReset)
@@ -156,6 +157,32 @@ func renderFindingGroups(groups []findingGroup) {
 		}
 		fmt.Println()
 	}
+}
+
+// sanitizeTerminal strips control characters from repo-controlled text before
+// it is printed to a terminal. Finding messages, detail lines and locations
+// embed data taken from the scanned repository (job names, image refs, script
+// lines, file paths); a crafted value could otherwise carry ANSI/OSC escape
+// sequences that rewrite the operator's terminal. Tabs become spaces; every
+// other control rune (including ESC) is dropped. Ordinary printable text — the
+// whole legitimate case — is returned unchanged.
+func sanitizeTerminal(s string) string {
+	if !strings.ContainsFunc(s, func(r rune) bool { return r == '\t' || unicode.IsControl(r) }) {
+		return s
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r == '\t':
+			b.WriteByte(' ')
+		case unicode.IsControl(r):
+			// drop C0/C1 control runes (incl. ESC) — neutralizes ANSI/OSC injection
+		default:
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
 }
 
 // formatFindingLocation returns the link the terminal should print

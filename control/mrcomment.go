@@ -3,6 +3,7 @@ package control
 import (
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/gitlab"
@@ -231,6 +232,33 @@ func generateMRComment(result *AnalysisResult, pc *configuration.PlumberConfig, 
 	return b.String()
 }
 
+// sanitizeMarkdownInline neutralizes repo-controlled text placed inline in the
+// merge-request comment. Finding messages embed data from the scanned
+// repository (job names, image refs, script lines); left raw they could inject
+// Markdown links/images or — via a newline — whole new lines into a comment
+// posted with Plumber's identity. Control characters are removed (newlines and
+// tabs become spaces) and Markdown-active characters are backslash-escaped so
+// the text renders literally.
+func sanitizeMarkdownInline(s string) string {
+	const escaped = "\\`*_[]()<>|~"
+	var b strings.Builder
+	b.Grow(len(s))
+	for _, r := range s {
+		switch {
+		case r == '\n' || r == '\r' || r == '\t':
+			b.WriteByte(' ')
+		case unicode.IsControl(r):
+			// drop other control characters
+		default:
+			if strings.ContainsRune(escaped, r) {
+				b.WriteByte('\\')
+			}
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
 // writeIssueDetails appends per-control issue details into the builder.
 // Findings are grouped by the ControlName declared in the issue-code
 // registry so the section headings line up with the controls table.
@@ -274,11 +302,7 @@ func writeIssueDetails(b *strings.Builder, result *AnalysisResult) {
 		fmt.Fprintf(b, "**%s:**\n", g.heading)
 		for _, f := range findings {
 			docURL := ErrorCode(f.Code).DocURL()
-			if f.Job != "" {
-				fmt.Fprintf(b, "- `%s` %s ([docs](%s))\n", f.Code, f.Message, docURL)
-			} else {
-				fmt.Fprintf(b, "- `%s` %s ([docs](%s))\n", f.Code, f.Message, docURL)
-			}
+			fmt.Fprintf(b, "- `%s` %s ([docs](%s))\n", f.Code, sanitizeMarkdownInline(f.Message), docURL)
 		}
 		b.WriteString("\n")
 	}

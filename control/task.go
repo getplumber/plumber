@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/gitlab"
@@ -13,6 +14,13 @@ import (
 	"github.com/getplumber/plumber/policies"
 	"github.com/sirupsen/logrus"
 )
+
+// opaEvaluateTimeout bounds a single Rego/OPA evaluation. Policy evaluation
+// over a normal pipeline is sub-second; this ceiling only exists so a
+// pathologically large attacker-supplied pipeline/config cannot pin the scan
+// process on CPU indefinitely. On timeout the evaluation errors and the
+// provider's controls abstain, exactly like any other engine failure.
+const opaEvaluateTimeout = 2 * time.Minute
 
 // controlBranchMustBeProtected is the sole .plumber.yaml control key
 // the task flow still references directly — to decide whether to fetch
@@ -127,7 +135,9 @@ func evaluatePolicies(l *logrus.Entry, conf *configuration.Configuration, provid
 		return empty
 	}
 	controls := conf.PlumberConfig.ControlsFor(provider)
-	findings, err := engine.Evaluate(context.Background(), pipeline, buildEngineConfig(controls))
+	ctx, cancel := context.WithTimeout(context.Background(), opaEvaluateTimeout)
+	defer cancel()
+	findings, err := engine.Evaluate(ctx, pipeline, buildEngineConfig(controls))
 	if err != nil {
 		l.WithError(err).Warn("Rego/OPA engine evaluation failed")
 		return empty

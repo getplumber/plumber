@@ -59,6 +59,19 @@ func TestResolveLocalIncludesContainment(t *testing.T) {
 		}
 	})
 
+	t.Run("oversized in-repo include is rejected", func(t *testing.T) {
+		big := filepath.Join(repo, "big.yml")
+		if err := os.WriteFile(big, make([]byte, maxLocalIncludeBytes+1), 0o600); err != nil {
+			t.Fatalf("seed oversized include: %v", err)
+		}
+		ci := []byte("include:\n  - local: 'big.yml'\n")
+		if _, err := ResolveLocalIncludes(ci, repo); err == nil {
+			t.Fatal("expected rejection for an oversized include, got nil")
+		} else if !strings.Contains(err.Error(), "limit") {
+			t.Fatalf("error should mention the size limit, got: %v", err)
+		}
+	})
+
 	t.Run("in-repo include is inlined", func(t *testing.T) {
 		ci := []byte("include:\n  - local: 'templates/build.yml'\nstages:\n  - build\n")
 		out, err := ResolveLocalIncludes(ci, repo)

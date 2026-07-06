@@ -446,6 +446,12 @@ func ResolveLocalIncludes(content []byte, repoRoot string) ([]byte, error) {
 // the project root and never outside it, so a target that resolves outside
 // repoRoot is rejected. Symlinks are resolved on both sides before the
 // containment check so the decision is made on the real target.
+// maxLocalIncludeBytes caps a single include:local file. GitLab bounds CI
+// config size similarly; the cap keeps an oversized or pathologically nested
+// committed file from exhausting memory or the YAML decoder's stack when the
+// content is later unmarshalled.
+const maxLocalIncludeBytes = 1 << 20 // 1 MiB
+
 func readLocalInclude(repoRoot, includePath string) ([]byte, error) {
 	joined := filepath.Join(repoRoot, includePath)
 
@@ -461,7 +467,20 @@ func readLocalInclude(repoRoot, includePath string) ([]byte, error) {
 		return nil, fmt.Errorf("include:local %q resolves to %q outside the repository %q",
 			includePath, targetReal, rootReal)
 	}
-	return os.ReadFile(joined) //nolint:gosec // path validated: contained within the analyzed repository
+
+	f, err := os.Open(joined) //nolint:gosec // path validated: contained within the analyzed repository
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = f.Close() }()
+	data, err := io.ReadAll(io.LimitReader(f, maxLocalIncludeBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxLocalIncludeBytes {
+		return nil, fmt.Errorf("include:local %q exceeds the %d-byte limit", includePath, maxLocalIncludeBytes)
+	}
+	return data, nil
 }
 
 // pathWithin reports whether target is root itself or lies beneath it.
