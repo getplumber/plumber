@@ -451,11 +451,18 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 			clearProgressLine(conf)
 			fmt.Fprintf(os.Stderr, "Using local CI configuration (specify --branch to force upstream CI config fetch): %s\n", localCIPath)
 			l.WithField("localCIPath", localCIPath).Info("Using local CI configuration file")
+		} else if os.IsNotExist(err) {
+			l.WithField("localCIPath", localCIPath).Debug("Local CI config file not found, will use remote")
 		} else {
+			// The file is present but could not be read (e.g. it exceeds the
+			// size limit). Surface it instead of silently scoring against the
+			// remote CI as though no local file existed.
+			clearProgressLine(conf)
+			fmt.Fprintf(os.Stderr, "Local CI configuration at %s could not be read (%v); using remote CI configuration instead\n", localCIPath, err)
 			l.WithFields(logrus.Fields{
 				"localCIPath": localCIPath,
 				"error":       err,
-			}).Debug("Local CI config file not found, will use remote")
+			}).Warn("Local CI config file present but unreadable; using remote")
 		}
 	} else if conf.Branch != "" {
 		clearProgressLine(conf)
