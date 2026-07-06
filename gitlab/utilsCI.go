@@ -380,8 +380,7 @@ func ResolveLocalIncludes(content []byte, repoRoot string) ([]byte, error) {
 		switch entry := inc.(type) {
 		case string:
 			// A bare string in the include list is a local include
-			filePath := filepath.Join(repoRoot, entry)
-			fileContent, err := os.ReadFile(filePath)
+			fileContent, err := readLocalInclude(repoRoot, entry)
 			if err != nil {
 				return nil, fmt.Errorf("unable to read local include '%s': %w", entry, err)
 			}
@@ -392,8 +391,7 @@ func ResolveLocalIncludes(content []byte, repoRoot string) ([]byte, error) {
 		case map[interface{}]interface{}:
 			if localPath, ok := entry["local"]; ok {
 				pathStr := fmt.Sprintf("%v", localPath)
-				filePath := filepath.Join(repoRoot, pathStr)
-				fileContent, err := os.ReadFile(filePath)
+				fileContent, err := readLocalInclude(repoRoot, pathStr)
 				if err != nil {
 					return nil, fmt.Errorf("unable to read local include '%s': %w", pathStr, err)
 				}
@@ -441,6 +439,38 @@ func ResolveLocalIncludes(content []byte, repoRoot string) ([]byte, error) {
 	}).Info("Local includes resolved from filesystem")
 
 	return combined, nil
+}
+
+// readLocalInclude reads a GitLab `include:local` target, resolving it only
+// within the analyzed repository. GitLab resolves include:local relative to
+// the project root and never outside it, so a target that resolves outside
+// repoRoot is rejected. Symlinks are resolved on both sides before the
+// containment check so the decision is made on the real target.
+func readLocalInclude(repoRoot, includePath string) ([]byte, error) {
+	joined := filepath.Join(repoRoot, includePath)
+
+	rootReal := repoRoot
+	if real, err := filepath.EvalSymlinks(repoRoot); err == nil {
+		rootReal = real
+	}
+	targetReal := joined
+	if real, err := filepath.EvalSymlinks(joined); err == nil {
+		targetReal = real
+	}
+	if !pathWithin(rootReal, targetReal) {
+		return nil, fmt.Errorf("include:local %q resolves to %q outside the repository %q",
+			includePath, targetReal, rootReal)
+	}
+	return os.ReadFile(joined) //nolint:gosec // path validated: contained within the analyzed repository
+}
+
+// pathWithin reports whether target is root itself or lies beneath it.
+func pathWithin(root, target string) bool {
+	rel, err := filepath.Rel(root, target)
+	if err != nil {
+		return false
+	}
+	return rel == "." || (rel != ".." && !strings.HasPrefix(rel, ".."+string(os.PathSeparator)))
 }
 
 // ParseGitlabCIJob parses a job from GitLab CI conf
