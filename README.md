@@ -275,7 +275,7 @@ Plumber ships controls for:
 - unsafe variable expansion
 - GitHub action pinning, archived actions, ref confusion, and known CVEs
 - dangerous GitHub triggers and overbroad permissions
-- hardcoded secrets in pipeline YAML (opt-in; shells out to [gitleaks](https://github.com/gitleaks/gitleaks))
+- hardcoded secrets in pipeline YAML (temporarily disabled pending a security fix; the control abstains and runs no scanner)
 
 Full catalogs:
 

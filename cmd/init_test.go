@@ -560,30 +560,30 @@ func TestCompositionOptionsForProviders(t *testing.T) {
 	}
 }
 
-// injectGitleaksHints must surface the two override knobs as commented
-// keys under every pipelineMustNotLeakSecretsInConfig block the wizard
-// emitted, and must leave files that do not contain that block
-// completely untouched. The hint serves as discoverability for users
-// who would otherwise need to read the docs to learn the overrides
-// exist; the unchanged-when-absent half guards against accidentally
-// rewriting unrelated YAML.
-func TestInjectGitleaksHints(t *testing.T) {
-	t.Run("block present once -> hints inserted", func(t *testing.T) {
+// annotateGitleaksDisabled must mark every pipelineMustNotLeakSecretsInConfig
+// block the wizard emitted with a note that secret scanning is temporarily
+// disabled, must NOT advertise the gitleaksPath / gitleaksConfigPath overrides
+// (gitleaksPath is the vector behind the resolved RCE — a generated config
+// must never steer a user toward setting it), and must leave files that do not
+// contain that block completely untouched.
+func TestAnnotateGitleaksDisabled(t *testing.T) {
+	const disabledNote = "temporarily disabled"
+
+	t.Run("block present once -> disabled note inserted, no path knobs", func(t *testing.T) {
 		in := []byte("gitlab:\n  controls:\n    pipelineMustNotLeakSecretsInConfig:\n      enabled: true\n    other:\n      enabled: true\n")
-		got := string(injectGitleaksHints(in))
-		for _, want := range []string{
-			"# gitleaksPath: /usr/local/bin/gitleaks",
-			"# gitleaksConfigPath: .gitleaks.toml",
-			"# Optional. Defaults to looking up `gitleaks` on $PATH.",
-			"# Optional. Defaults to gitleaks's built-in rule catalogue.",
-		} {
-			if !strings.Contains(got, want) {
-				t.Fatalf("output missing %q\n---\n%s", want, got)
+		got := string(annotateGitleaksDisabled(in))
+		if !strings.Contains(got, disabledNote) {
+			t.Fatalf("output missing temporarily-disabled note\n---\n%s", got)
+		}
+		// The former RCE knob must never be advertised in a generated config.
+		for _, banned := range []string{"gitleaksPath", "gitleaksConfigPath"} {
+			if strings.Contains(got, banned) {
+				t.Fatalf("output must not advertise %q\n---\n%s", banned, got)
 			}
 		}
-		// Hints must come immediately after the enabled line, not somewhere else.
-		if !strings.Contains(got, "      enabled: true\n      # Optional. Defaults to looking up `gitleaks` on $PATH.") {
-			t.Fatalf("hint not placed immediately after enabled line:\n%s", got)
+		// The note must come immediately after the enabled line, not somewhere else.
+		if !strings.Contains(got, "      enabled: true\n      # "+"Secret scanning is temporarily disabled") {
+			t.Fatalf("note not placed immediately after enabled line:\n%s", got)
 		}
 		// The other unrelated control must remain intact and unannotated.
 		if !strings.Contains(got, "    other:\n      enabled: true\n") {
@@ -591,31 +591,30 @@ func TestInjectGitleaksHints(t *testing.T) {
 		}
 	})
 
-	t.Run("block present in both provider sections -> hints in both", func(t *testing.T) {
+	t.Run("block present in both provider sections -> note in both", func(t *testing.T) {
 		in := []byte(
 			"gitlab:\n  controls:\n    pipelineMustNotLeakSecretsInConfig:\n      enabled: true\n" +
 				"github:\n  controls:\n    pipelineMustNotLeakSecretsInConfig:\n      enabled: true\n",
 		)
-		got := string(injectGitleaksHints(in))
-		if c := strings.Count(got, "# gitleaksPath:"); c != 2 {
-			t.Fatalf("expected exactly 2 gitleaksPath hints, got %d:\n%s", c, got)
+		got := string(annotateGitleaksDisabled(in))
+		if c := strings.Count(got, disabledNote); c != 2 {
+			t.Fatalf("expected exactly 2 disabled notes, got %d:\n%s", c, got)
 		}
 	})
 
 	t.Run("block absent -> bytes unchanged", func(t *testing.T) {
 		in := []byte("gitlab:\n  controls:\n    branchMustBeProtected:\n      enabled: true\n")
-		got := injectGitleaksHints(in)
+		got := annotateGitleaksDisabled(in)
 		if string(got) != string(in) {
 			t.Fatalf("expected unchanged output when no leak block present:\nin=%q\ngot=%q", in, got)
 		}
 	})
 
-	t.Run("block present but disabled -> no hint (avoids cluttering the disabled-by-default ship config)", func(t *testing.T) {
-		// .plumber.yaml's shipped form has enabled: false. We do not
-		// want the wizard's hint to leak into that path; the helper
-		// keys off `enabled: true` deliberately.
+	t.Run("block present but disabled -> unchanged (helper keys off enabled: true)", func(t *testing.T) {
+		// .plumber.yaml's shipped form has enabled: false. The helper keys
+		// off `enabled: true` deliberately, so a disabled block is left as-is.
 		in := []byte("gitlab:\n  controls:\n    pipelineMustNotLeakSecretsInConfig:\n      enabled: false\n")
-		got := injectGitleaksHints(in)
+		got := annotateGitleaksDisabled(in)
 		if string(got) != string(in) {
 			t.Fatalf("expected unchanged output for disabled leak block:\n%s", got)
 		}

@@ -511,17 +511,14 @@ gitlab:
       # - https://internal-artifacts.example.com/*
     # ── Pipeline must not leak secrets in configuration ─────────────
     #
-    # Runs gitleaks against the resolved pipeline YAML to detect hardcoded
-    # secrets (API tokens, private keys, passwords) committed directly in
-    # the CI configuration. Requires gitleaks to be installed and available
-    # on PATH (or configured via gitleaksPath).
+    # TEMPORARILY DISABLED pending a security fix. Secret scanning
+    # (gitleaks) does not run: this control always abstains regardless
+    # of the value below, so no external binary is resolved or executed.
+    # The binary/config path overrides are intentionally undocumented
+    # while the integration is reworked.
     pipelineMustNotLeakSecretsInConfig:
-      # Set to true to enable this control (requires gitleaks)
+      # No effect while secret scanning is disabled.
       enabled: false
-      # Path to the gitleaks binary. Defaults to "gitleaks" (PATH lookup).
-      # gitleaksPath: /usr/local/bin/gitleaks
-      # Optional path to a custom gitleaks configuration file.
-      # gitleaksConfigPath: /path/to/gitleaks.toml
     # ── Pipeline must not use Docker-in-Docker ──────────────────────
     #
     # Detects CI/CD jobs that use Docker-in-Docker (dind) services.
@@ -549,19 +546,14 @@ github:
   controls:
     # ── Pipeline must not leak secrets in configuration ─────────────
     #
-    # Runs gitleaks against every workflow file under
-    # .github/workflows/ to detect hardcoded secrets (API tokens,
-    # private keys, passwords) committed directly into the YAML.
-    # Requires gitleaks to be installed and available on PATH (or
-    # configured via gitleaksPath). Disabled by default because
-    # gitleaks is an external dependency.
+    # TEMPORARILY DISABLED pending a security fix. Secret scanning
+    # (gitleaks) does not run: this control always abstains regardless
+    # of the value below, so no external binary is resolved or executed.
+    # The binary/config path overrides are intentionally undocumented
+    # while the integration is reworked.
     pipelineMustNotLeakSecretsInConfig:
-      # Set to true to enable this control (requires gitleaks)
+      # No effect while secret scanning is disabled.
       enabled: false
-      # Path to the gitleaks binary. Defaults to "gitleaks" (PATH lookup).
-      # gitleaksPath: /usr/local/bin/gitleaks
-      # Optional path to a custom gitleaks configuration file.
-      # gitleaksConfigPath: /path/to/gitleaks.toml
 
     # ===========================================
     # Actions must be pinned by commit SHA
