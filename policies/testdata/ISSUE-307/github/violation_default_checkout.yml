@@ -1,6 +1,8 @@
-# Default actions/checkout persists GITHUB_TOKEN in .git/config.
-# Expected: 1 finding on clone.
-name: Default checkout
+# A default actions/checkout persists GITHUB_TOKEN in .git/config, and a
+# later upload-artifact packs the whole workspace (path: `.`) — which
+# includes `.git`. The token is shipped inside a downloadable artifact.
+# Expected: 1 finding on clone (A: persisted credential AND B: .git packed).
+name: Default checkout then pack workspace
 on: push
 
 jobs:
@@ -9,3 +11,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - run: echo "built"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: workspace
+          path: .
