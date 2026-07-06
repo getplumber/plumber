@@ -255,7 +255,7 @@ jobs:
           # current OS security fixes; the cached `builder` stage keeps Go builds
           # fast. Without this the runtime layer is restored from gha cache release
           # after release and ships stale openssl/curl/git.
-          no-cache-filter: runtime
+          no-cache-filters: runtime
 
       - name: Attest Docker image
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
