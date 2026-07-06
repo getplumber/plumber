@@ -159,6 +159,57 @@ func TestAnalyzeActionMutableExec_Unverified(t *testing.T) {
 	}
 }
 
+func TestScanActionDefinition_Docker(t *testing.T) {
+	noFetch := func(string) (string, bool) { return "", false }
+
+	t.Run("docker:// mutable tag is exec", func(t *testing.T) {
+		yml := "runs:\n  using: docker\n  image: docker://ghcr.io/super-linter/super-linter:latest"
+		got := scanActionDefinition(yml, "action.yml", noFetch)
+		if got == nil || got.Tier != "exec" {
+			t.Fatalf("mutable docker:// tag must be exec, got %+v", got)
+		}
+	})
+
+	t.Run("docker:// version tag is low (data), not high", func(t *testing.T) {
+		yml := "runs:\n  using: docker\n  image: docker://ghcr.io/super-linter/super-linter:v8.7.0"
+		got := scanActionDefinition(yml, "action.yml", noFetch)
+		if got == nil || got.Tier != "data" {
+			t.Fatalf("version-tagged image must be data tier, got %+v", got)
+		}
+	})
+
+	t.Run("docker:// pinned by digest is clean", func(t *testing.T) {
+		yml := "runs:\n  using: docker\n  image: docker://ghcr.io/x/y@sha256:deadbeef"
+		if got := scanActionDefinition(yml, "action.yml", noFetch); got != nil {
+			t.Fatalf("digest-pinned image must be clean, got %+v", got)
+		}
+	})
+
+	t.Run("Dockerfile RUN curl|sh is exec", func(t *testing.T) {
+		yml := "runs:\n  using: docker\n  image: Dockerfile"
+		fetch := func(rel string) (string, bool) {
+			if rel == "Dockerfile" {
+				return "FROM alpine\nRUN curl -fsSL https://get.docker.com | sh\n", true
+			}
+			return "", false
+		}
+		got := scanActionDefinition(yml, "action.yml", fetch)
+		if got == nil || got.Tier != "exec" {
+			t.Fatalf("Dockerfile with curl|sh must be exec, got %+v", got)
+		}
+	})
+
+	t.Run("clean Dockerfile is not flagged", func(t *testing.T) {
+		yml := "runs:\n  using: docker\n  image: Dockerfile"
+		fetch := func(rel string) (string, bool) {
+			return "FROM alpine\nRUN apk add --no-cache bash\n", true
+		}
+		if got := scanActionDefinition(yml, "action.yml", fetch); got != nil {
+			t.Fatalf("clean Dockerfile must not be flagged, got %+v", got)
+		}
+	})
+}
+
 func TestSplitActionRefWithSubpath(t *testing.T) {
 	cases := []struct {
 		uses                      string

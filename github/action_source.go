@@ -80,6 +80,11 @@ var (
 	reRef = regexp.MustCompile(ghContent + `/(` + movingRefAlt + `)/`)
 	// reMain extracts the node entrypoint from an action.yml `main:`.
 	reMain = regexp.MustCompile(`(?m)^\s*main:\s*['"]?([^\s'"]+)`)
+	// reUsing / reImage read the action.yml `runs:` block. A docker action
+	// (`using: docker`) executes a container, so its code lives in a
+	// Dockerfile or a docker:// image rather than a JS entrypoint.
+	reUsing = regexp.MustCompile(`(?m)^\s*using:\s*['"]?([A-Za-z0-9]+)`)
+	reImage = regexp.MustCompile(`(?m)^\s*image:\s*['"]?([^\s'"]+)`)
 )
 
 // entrypointCandidates are the usual hand-written and bundled source
@@ -199,6 +204,83 @@ func contains(s []string, v string) bool {
 	return false
 }
 
+// scanActionDefinition scans an action given its action.yml text and a
+// function that fetches a sibling file (path relative to the action's
+// directory). It handles all three action flavors:
+//
+//   - JS / composite: the declared entrypoint plus the `run:` steps in
+//     action.yml.
+//   - docker with `image: docker://<ref>`: a pre-built image. A tag not
+//     pinned by digest is mutable code (the SHA pin on the action does
+//     not reach it) → exec. A digest-pinned image is immutable → ok.
+//   - docker with `image: Dockerfile`: the RUN lines of the Dockerfile
+//     are scanned with the same logic (curl|sh, obfuscation, …).
+func scanActionDefinition(actionYML, ymlKey string, fetchRel func(rel string) (string, bool)) *ir.MutableRemoteExec {
+	files := map[string]string{ymlKey: actionYML}
+	dir := path.Dir(ymlKey) // "" for a root action, the subpath for a nested one
+	key := func(rel string) string {
+		if dir == "." || dir == "" {
+			return rel
+		}
+		return path.Join(dir, rel)
+	}
+
+	if u := reUsing.FindStringSubmatch(actionYML); len(u) == 2 && strings.EqualFold(u[1], "docker") {
+		img := ""
+		if m := reImage.FindStringSubmatch(actionYML); len(m) == 2 {
+			img = m[1]
+		}
+		if rest, ok := strings.CutPrefix(img, "docker://"); ok {
+			if tier := dockerImageTier(rest); tier != "" {
+				return &ir.MutableRemoteExec{Tier: tier, URL: img, File: ymlKey}
+			}
+			return nil // digest-pinned image is immutable
+		}
+		df := img
+		if df == "" || strings.EqualFold(df, "dockerfile") {
+			df = "Dockerfile"
+		}
+		if src, ok := fetchRel(df); ok {
+			files[key(df)] = src
+		}
+		return ScanActionSource(files)
+	}
+
+	for _, p := range entrypointPaths(actionYML) {
+		if src, ok := fetchRel(p); ok {
+			files[key(p)] = src
+		}
+	}
+	return ScanActionSource(files)
+}
+
+// dockerImageTier grades a `docker://` image reference by how immutable the
+// content it pulls actually is. A digest (`@sha256:…`) is content-addressed and
+// immutable -> "" (clean). A moving tag (`latest`, none, or any non-version
+// tag) can be re-pointed at will -> "exec" (high). A semver-style version tag
+// is conventionally frozen but the registry still lets the publisher re-push it
+// -> "data" (low, recorded but not surfaced as high), consistent with how the
+// script tiers treat a checksum-verified fetch.
+func dockerImageTier(rest string) string {
+	if strings.Contains(rest, "@sha256:") {
+		return ""
+	}
+	tag := ""
+	if i := strings.LastIndex(rest, ":"); i > strings.LastIndex(rest, "/") {
+		tag = rest[i+1:]
+	}
+	if tag == "" || strings.EqualFold(tag, "latest") {
+		return "exec"
+	}
+	if reVersionTag.MatchString(tag) {
+		return "data"
+	}
+	return "exec"
+}
+
+// reVersionTag matches a conventional semver-ish image tag (v1, 1.2.3, v8.7.0).
+var reVersionTag = regexp.MustCompile(`^v?\d+(?:\.\d+)*$`)
+
 // fetchStatus distinguishes "file absent" (not an action / subpath) from
 // "could not reach it" (network, rate limit) so the caller can emit an
 // explicit could-not-verify finding instead of a silent pass whose
@@ -286,14 +368,10 @@ func analyzeActionMutableExec(fetch rawFetcher, owner, repo, ref, subpath string
 			return nil // missing (not an action / subpath) or offline → silent
 		}
 	}
-	files := map[string]string{ymlPath: actionYML}
-	for _, p := range entrypointPaths(actionYML) {
-		full := path.Join(subpath, p)
-		if src, st := fetch(owner, repo, ref, full); st == fetchOK {
-			files[full] = src
-		}
-	}
-	return ScanActionSource(files)
+	return scanActionDefinition(actionYML, ymlPath, func(rel string) (string, bool) {
+		src, st := fetch(owner, repo, ref, path.Join(subpath, rel))
+		return src, st == fetchOK
+	})
 }
 
 // ScanLocalSelfAction checks whether the scanned repository is itself a
@@ -310,13 +388,9 @@ func ScanLocalSelfAction(rootDir string) *ir.MutableRemoteExec {
 			return nil
 		}
 	}
-	files := map[string]string{"action.yml": actionYML}
-	for _, p := range entrypointPaths(actionYML) {
-		if src, ok := readLocalFile(rootDir, p); ok {
-			files[p] = src
-		}
-	}
-	return ScanActionSource(files)
+	return scanActionDefinition(actionYML, "action.yml", func(rel string) (string, bool) {
+		return readLocalFile(rootDir, rel)
+	})
 }
 
 func readLocalFile(rootDir, rel string) (string, bool) {
