@@ -96,7 +96,8 @@ const (
 	CodeSecretsOutsideEnv ErrorCode = "ISSUE-305"
 	// ISSUE-306: GitHub App token issued with revocation disabled
 	CodeGitHubAppSkipRevoke ErrorCode = "ISSUE-306"
-	// ISSUE-307: Checkout persists credentials in .git/config (artipacked)
+	// ISSUE-307: Checkout persists credentials in .git/config — latent
+	// hygiene (low). The demonstrable-leak escalation is ISSUE-310.
 	CodeArtipacked ErrorCode = "ISSUE-307"
 	// ISSUE-308: Workflow reads a secret via a dynamic index (secrets[expr])
 	CodeSecretsDynamicIndex ErrorCode = "ISSUE-308"
@@ -104,6 +105,9 @@ const (
 	// Moved from ISSUE-301 in the 301/309 swap so the leaked-secrets rule could
 	// take the slot already used by the downstream jobs platform.
 	CodeOverprovisionedSecrets ErrorCode = "ISSUE-309"
+	// ISSUE-310: Persisted checkout credentials are packed into an uploaded
+	// artifact (`.git` in the artifact) — the demonstrable ArtiPACKED leak.
+	CodeArtipackedExfiltrated ErrorCode = "ISSUE-310"
 )
 
 // Issue codes for pipeline composition controls (4xx)
@@ -608,11 +612,20 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 	},
 	CodeArtipacked: {
 		Code:        CodeArtipacked,
-		Severity:    SeverityHigh,
-		Title:       "Checkout persists credentials in .git/config",
-		Description: "A GitHub Actions job runs `actions/checkout` without disabling credential persistence. By default the action writes GITHUB_TOKEN into the cloned repository's .git/config. Any subsequent step that uploads `.git` as part of an artifact, or executes fork-controlled code, can exfiltrate the token.",
+		Severity:    SeverityLow,
+		Title:       "Checkout persists credentials in .git/config (latent)",
+		Description: "A GitHub Actions job runs `actions/checkout` without disabling credential persistence. By default the action writes GITHUB_TOKEN into the cloned repository's .git/config, where it survives for the lifetime of the job. On its own this is latent hygiene: the token is discarded when the job ends. It becomes a demonstrable leak only when a later step packs `.git` into an uploaded artifact (escalated to ISSUE-310) or when fork-controlled code runs in the job (covered by ISSUE-802 / ISSUE-804).",
 		Remediation: "Add `with: { persist-credentials: false }` on every `uses: actions/checkout@*` step unless the job legitimately needs to push back. When push is required, scope the token with an explicit `permissions:` block.",
 		DocURL:      docsBaseURL + string(CodeArtipacked),
+		ControlName: "checkoutMustNotPersistCredentials",
+	},
+	CodeArtipackedExfiltrated: {
+		Code:        CodeArtipackedExfiltrated,
+		Severity:    SeverityHigh,
+		Title:       "Persisted checkout credentials packed into an uploaded artifact",
+		Description: "A GitHub Actions job runs `actions/checkout` with credential persistence enabled and then a later `actions/upload-artifact` step uploads a `.git`-inclusive path (the workspace root, `.`, or a path naming `.git`). The GITHUB_TOKEN written into `.git/config` is packed into the artifact, which is downloadable (anonymously, on public repos), so the token is exfiltrable. This is the canonical, demonstrable ArtiPACKED leak.",
+		Remediation: "Add `with: { persist-credentials: false }` on the `actions/checkout@*` step, or upload a scoped path that excludes `.git` (e.g. `path: dist/` instead of `path: .`). When push is required, scope the token with an explicit `permissions:` block.",
+		DocURL:      docsBaseURL + string(CodeArtipackedExfiltrated),
 		ControlName: "checkoutMustNotPersistCredentials",
 	},
 	CodeUnredactedSecrets: {

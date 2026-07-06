@@ -1,0 +1,14 @@
+# A default actions/checkout persists GITHUB_TOKEN in .git/config, but
+# nothing packs `.git` into an artifact. This is latent hygiene, not a
+# demonstrated leak, so it is the low-severity ISSUE-307 tier (the
+# persisted-credential-plus-fork-code route is owned by the dangerous-
+# triggers / PR-head-checkout controls). Expected: 1 ISSUE-307 (low).
+name: Persisted credential, no artifact upload
+on: push
+
+jobs:
+  clone:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: echo "built"

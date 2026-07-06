@@ -51,7 +51,8 @@ reading the upstream docs.
 | [ISSUE-801](#issue-304--undocumented-permissions) | `undocumented-permissions` | medium |
 | [ISSUE-305](#issue-305--secrets-outside-env) | `secrets-outside-env` | medium |
 | [ISSUE-306](#issue-306--github-app-skip-revoke) | `github-app-skip-revoke` | high |
-| [ISSUE-307](#issue-307--artipacked) | `artipacked` | high |
+| [ISSUE-307](#issue-307--artipacked) | `artipacked` | low |
+| [ISSUE-310](#issue-310--artipacked-exfiltrated) | `artipacked-exfiltrated` | high |
 | [ISSUE-308](#issue-308--secrets-dynamic-index) | `secrets-dynamic-index` | low |
 | [ISSUE-309](#issue-309--overprovisioned-secrets) | `overprovisioned-secrets` | **critical** |
 
@@ -1117,12 +1118,15 @@ stays exploitable instead of meeting a revoked token.
 
 ## ISSUE-307 — `artipacked`
 
-**Severity:** `high` • **Control:** `checkoutMustNotPersistCredentials`
+**Severity:** `low` • **Control:** `checkoutMustNotPersistCredentials`
 
 `actions/checkout` writes the GITHUB_TOKEN into the cloned repo's
-`.git/config` by default. Any later step that uploads `.git` as part
-of an artefact, or that runs fork-controlled code, can exfiltrate the
-token.
+`.git/config` by default. On its own that is latent hygiene: the token
+is discarded when the job ends. It becomes a demonstrable leak only
+when a later step packs `.git` into an uploaded artifact (escalated to
+[ISSUE-310](#issue-310--artipacked-exfiltrated)) or when fork-controlled
+code runs in the job (covered by ISSUE-802 / ISSUE-804). This low-tier
+finding is a heads-up to add the one-liner.
 
 ```yaml
 # ❌ before — token persisted
@@ -1134,6 +1138,38 @@ token.
 - uses: actions/checkout@v4
   with:
     persist-credentials: false
+```
+
+---
+
+## ISSUE-310 — `artipacked-exfiltrated`
+
+**Severity:** `high` • **Control:** `checkoutMustNotPersistCredentials`
+
+A checkout persists the GITHUB_TOKEN **and** a later
+`actions/upload-artifact` uploads a `.git`-inclusive path (the
+workspace root, `.`, or a path naming `.git`). The token is packed
+into the artifact, which is downloadable — anonymously, on public
+repos — so it is exfiltrable. This is the canonical, demonstrable
+ArtiPACKED leak, so it escalates from the latent
+[ISSUE-307](#issue-307--artipacked) hygiene tier to a real exposure.
+
+```yaml
+# ❌ before — persisted token packed into the artifact
+- uses: actions/checkout@v4
+- uses: actions/upload-artifact@v4
+  with:
+    path: .            # includes .git/, and .git/config holds the token
+```
+
+```yaml
+# ✅ after — disable persistence, or upload a scoped path
+- uses: actions/checkout@v4
+  with:
+    persist-credentials: false
+- uses: actions/upload-artifact@v4
+  with:
+    path: dist/        # excludes .git/
 ```
 
 ---

@@ -714,30 +714,41 @@ func TestIssue208_InsecureCommands(t *testing.T) {
 	}
 }
 
-// TestIssue307_Artipacked drives the artipacked policy against both
-// violation forms (a default actions/checkout and an explicit
-// `persist-credentials: true`) and both clean forms (the boolean
-// `false` and the quoted string `"false"`).
+// TestIssue307_Artipacked drives the artipacked policy under the graded
+// model. A persisted-credential checkout (A) always fires, but the
+// severity depends on whether `.git` is packed into an artifact (B):
+//   - A ∧ B  → ISSUE-310 (high): the demonstrable ArtiPACKED leak.
+//   - A ∧ ¬B → ISSUE-307 (low): latent hygiene.
+//   - ¬A     → nothing (credentials disabled).
+// expectedCodes lists the ISSUE codes each fixture must produce.
 func TestIssue307_Artipacked(t *testing.T) {
 	cases := []struct {
-		fixture      string
-		expectedHits []string
+		fixture       string
+		expectedCodes []string
 	}{
 		{
-			fixture:      "violation_default_checkout.yml",
-			expectedHits: []string{"violation_default_checkout/clone"},
+			fixture:       "violation_default_checkout.yml",
+			expectedCodes: []string{"ISSUE-310"},
 		},
 		{
-			fixture:      "violation_persist_true.yml",
-			expectedHits: []string{"violation_persist_true/clone"},
+			fixture:       "violation_persist_true.yml",
+			expectedCodes: []string{"ISSUE-310"},
 		},
 		{
-			fixture:      "clean_credentials_disabled.yml",
-			expectedHits: nil,
+			fixture:       "low_persisted_no_upload.yml",
+			expectedCodes: []string{"ISSUE-307"},
 		},
 		{
-			fixture:      "clean_credentials_disabled_quoted.yml",
-			expectedHits: nil,
+			fixture:       "low_upload_scoped_path.yml",
+			expectedCodes: []string{"ISSUE-307"},
+		},
+		{
+			fixture:       "clean_credentials_disabled.yml",
+			expectedCodes: nil,
+		},
+		{
+			fixture:       "clean_credentials_disabled_quoted.yml",
+			expectedCodes: nil,
 		},
 	}
 
@@ -772,18 +783,17 @@ func TestIssue307_Artipacked(t *testing.T) {
 				t.Fatalf("evaluate: %v", err)
 			}
 
-			hits := make([]string, 0, len(findings))
+			codes := make([]string, 0, len(findings))
 			for _, f := range findings {
-				if f.Code != "ISSUE-307" {
-					continue
+				if f.Code == "ISSUE-307" || f.Code == "ISSUE-310" {
+					codes = append(codes, f.Code)
 				}
-				hits = append(hits, f.Job)
 			}
-			sort.Strings(hits)
-			expected := append([]string(nil), tc.expectedHits...)
+			sort.Strings(codes)
+			expected := append([]string(nil), tc.expectedCodes...)
 			sort.Strings(expected)
-			if !stringSlicesEqual(hits, expected) {
-				t.Fatalf("%s: expected %v, got %v", tc.fixture, expected, hits)
+			if !stringSlicesEqual(codes, expected) {
+				t.Fatalf("%s: expected %v, got %v", tc.fixture, expected, codes)
 			}
 		})
 	}

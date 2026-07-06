@@ -1,0 +1,18 @@
+# A default actions/checkout persists GITHUB_TOKEN, and a later
+# upload-artifact runs — but it uploads a scoped build output (`dist/`),
+# not the workspace root or `.git`. The token is never packed, so it does
+# not escalate: it stays the low-severity ISSUE-307 tier, not ISSUE-310.
+# Expected: 1 ISSUE-307 (low), no ISSUE-310.
+name: Persisted credential, scoped artifact path
+on: push
+
+jobs:
+  clone:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - run: make build
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
