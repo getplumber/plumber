@@ -70,7 +70,7 @@ func renderWarnings(warnings []string) {
 	fmt.Println()
 	fmt.Printf("  %s⚠ Could not verify %d item(s):%s\n", colorYellow, len(warnings), colorReset)
 	for _, w := range warnings {
-		fmt.Printf("    %s•%s %s\n", colorYellow, colorReset, w)
+		fmt.Printf("    %s•%s %s\n", colorYellow, colorReset, sanitizeTerminal(w))
 	}
 	// When a version stays unresolved (the authenticated read was blocked and
 	// the anonymous fallback did not succeed), a user-supplied token resolves
