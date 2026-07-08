@@ -51,6 +51,7 @@ const (
 	compPRTargetHead       = "Forbid pull_request_target workflows that check out the PR head"
 	compDeclarePermissions = "Require workflows to declare an explicit permissions: block"
 	compReusableSecrets    = "Forbid reusable-workflow calls using secrets: inherit"
+	compOverprovSecrets    = "Forbid exporting the entire secrets context (toJson(secrets))"
 	compTemplateInjection  = "Detect script-injection sinks (${{ github.event.* }} → run:)"
 	compEnvInjection       = "Detect $GITHUB_ENV / $GITHUB_PATH injection (untrusted content → sticky env/PATH)"
 	compWriteAllPerms      = "Forbid permissions: write-all in workflows"
@@ -707,6 +708,7 @@ func compositionOptionsForProviders(providers []string) []string {
 			compPRTargetHead,
 			compDeclarePermissions,
 			compReusableSecrets,
+			compOverprovSecrets,
 			compTemplateInjection,
 			compEnvInjection,
 			compWriteAllPerms,
@@ -1222,6 +1224,9 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 			if compSelected(st, compReusableSecrets) {
 				gh.Controls.ReusableWorkflowsMustNotInheritSecrets = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
 			}
+			if compSelected(st, compOverprovSecrets) {
+				gh.Controls.WorkflowMustNotExportEntireSecretsContext = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
+			}
 			if compSelected(st, compTemplateInjection) {
 				gh.Controls.WorkflowMustNotInjectUserInputInScripts = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
 			}
@@ -1287,7 +1292,7 @@ func starterPlumberConfig() *configuration.PlumberConfig {
 		TrustedURLsText:        strings.Join(defaultTrustedURLs(), "\n"),
 		CompositionChoices: []string{
 			compHardcoded, compUpToDate, compForbidden, compRefCollision, compSecurity, compScripts, compJobVars, compDinD,
-			compActionPin, compAuthorizedActions, compDangerousTriggers, compPRTargetHead, compDeclarePermissions, compReusableSecrets, compTemplateInjection,
+			compActionPin, compAuthorizedActions, compDangerousTriggers, compPRTargetHead, compDeclarePermissions, compReusableSecrets, compOverprovSecrets, compTemplateInjection,
 			compEnvInjection, compWriteAllPerms, compRefConfusion, compArchivedActions, compKnownCVEs, compDebugTraceGitHub,
 		},
 		ActionPinTrustedOwnersMultiline:        strings.Join(defaultGitHubTrustedActionOwners(), "\n"),

@@ -1,3 +1,15 @@
+## [0.3.90](https://github.com/getplumber/plumber/compare/v0.3.89...v0.3.90) (2026-07-08)
+
+
+### ✨ Features
+
+* **control:** Ship control 186 workflowMustNotExportEntireSecretsContext ([25881bf](https://github.com/getplumber/plumber/commit/25881bfd844c286244a16cd294ddcd3add85ca6f))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.3.89 refs [skip ci] ([cd7a8d3](https://github.com/getplumber/plumber/commit/cd7a8d3138e3d15713cdbcb908d97112f93d95fc))
+
 ## [0.3.89](https://github.com/getplumber/plumber/compare/v0.3.88...v0.3.89) (2026-07-07)
 
 
