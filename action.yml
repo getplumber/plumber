@@ -8,8 +8,8 @@ branding:
 
 inputs:
   version:
-    description: "Plumber release tag to install (e.g. v0.3.91). Downloaded from GitHub Releases and verified against checksums.txt and SLSA attestation"
-    default: "v0.3.91"
+    description: "Plumber release tag to install (e.g. v0.3.92). Downloaded from GitHub Releases and verified against checksums.txt and SLSA attestation"
+    default: "v0.3.92"
   verify-attestation:
     description: "Verify the downloaded binary's build-provenance attestation (sigstore/SLSA) against the getplumber/plumber release workflow, using the gh CLI. This anchors the binary to a trusted build regardless of the mutable release tag. Disable for air-gapped or GHES setups without attestation access."
     default: "true"
@@ -252,7 +252,7 @@ runs:
 
     - name: Upload SARIF to Code Scanning
       if: ${{ always() && inputs.upload-sarif == 'true' && inputs.sarif != '' && hashFiles(inputs.sarif) != '' }}
-      uses: github/codeql-action/upload-sarif@8aad20d150bbac5944a9f9d289da16a4b0d87c1e # v4.36.2
+      uses: github/codeql-action/upload-sarif@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0
       with:
         sarif_file: ${{ inputs.sarif }}
 

@@ -1,3 +1,10 @@
+## [0.3.92](https://github.com/getplumber/plumber/compare/v0.3.91...v0.3.92) (2026-07-08)
+
+
+### 🔧 Chores
+
+* **ci:** bump github/codeql-action/upload-sarif from 4.36.2 to 4.37.0 ([f2b3e2e](https://github.com/getplumber/plumber/commit/f2b3e2e32fe5d445e2c2fb46ee4c63fe989f109a))
+
 ## [0.3.91](https://github.com/getplumber/plumber/compare/v0.3.90...v0.3.91) (2026-07-08)
 
 
