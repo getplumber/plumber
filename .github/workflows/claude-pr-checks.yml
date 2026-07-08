@@ -5,8 +5,9 @@ name: Claude PR checks
 #
 # Security posture: the PR is untrusted input. The review agents run
 # read-only (Read/Grep/Glob + git diff/log/show only) and have NO GitHub
-# write access of their own; a deterministic follow-up job merges their
-# reports into a single sticky PR comment.
+# write access of their own; a deterministic follow-up job posts each
+# finding as its own resolvable review-comment thread and never reposts a
+# finding it has already posted (so re-runs add nothing on unchanged code).
 
 on:
   pull_request:
@@ -91,23 +92,30 @@ jobs:
 
             OUTPUT — return structured output matching the JSON schema:
             - If there is nothing to report per the prompt file, set
-              `has_findings` to false and `comment` to "" (nothing will be
-              posted).
-            - Otherwise set `has_findings` to true and put your ENTIRE report
-              in `comment` as ONE consolidated GitHub-flavored-markdown
-              report. Do not include a top-level title or the control name:
-              the report is inserted under a section heading for this control.
-              Use only headings of level 3 (###) or deeper inside the report.
-            - Format EVERY individual finding as a task-list item so the
-              reviewer can check it off once addressed: the first line is
-              `- [ ] ` followed by a bold one-line summary (with severity
-              where applicable) and the `file:line` reference; put details
-              on indented continuation lines under that item.
+              `has_findings` to false and `findings` to [] (nothing posted).
+            - Otherwise set `has_findings` to true and list EACH distinct
+              issue as one object in `findings`. Do not bundle several issues
+              into one object, and do not split one issue across objects.
+            - Each finding object has:
+              - `summary`: a single-sentence description of that one issue
+                (include the severity word if the prompt file uses
+                severities).
+              - `severity`: optional short label (e.g. High/Medium/Low), or "".
+              - `file`: repo-relative path of the file the issue is about.
+                Prefer a file changed in this PR so the comment can anchor to
+                the diff.
+              - `line`: the most relevant line number in that file as an
+                integer; use the changed line when the issue is on changed
+                code. Omit only if truly not applicable.
+              - `details`: the full explanation, file/line references, and
+                suggested fix as GitHub-flavored markdown. Do NOT include the
+                control name, a heading, or a checkbox — those are added when
+                the finding is posted.
           claude_args: |
             --model claude-fable-5
             --allowedTools "Read,Grep,Glob,Bash(git diff:*),Bash(git log:*),Bash(git show:*)"
             --disallowedTools "Read(//proc/**),Read(//sys/**),Read(//etc/**),Read(//home/runner/work/_temp/**)"
-            --json-schema '{"type":"object","properties":{"has_findings":{"type":"boolean"},"comment":{"type":"string"}},"required":["has_findings","comment"]}'
+            --json-schema '{"type":"object","properties":{"has_findings":{"type":"boolean"},"findings":{"type":"array","items":{"type":"object","properties":{"summary":{"type":"string"},"severity":{"type":"string"},"file":{"type":"string"},"line":{"type":"integer"},"details":{"type":"string"}},"required":["summary","file","details"]}}},"required":["has_findings","findings"]}'
 
       # Review jobs never post; they hand their report to the comment job
       # below via an artifact.
@@ -126,8 +134,9 @@ jobs:
           retention-days: 7
 
   # The review agents have no GitHub write access; this deterministic job is
-  # the only thing that can post, and it can only create/update one PR
-  # comment. It merges all control reports into a single sticky comment.
+  # the only thing that can post. It creates one resolvable review-comment
+  # thread per finding and skips any finding already posted (open OR
+  # resolved), so re-runs never duplicate a comment.
   comment:
     name: post-review-comment
     needs: review
@@ -151,27 +160,50 @@ jobs:
           merge-multiple: true
           path: reports
 
-      - name: Post consolidated comment
+      - name: Post finding comments
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const fs = require("fs");
             const path = require("path");
+            const crypto = require("crypto");
 
-            // key = matrix control id (file/artifact names); title = heading
-            // shown in the PR comment.
+            // key = matrix control id (file/artifact names); title = the
+            // category heading shown on each finding comment.
             const CONTROLS = [
               { key: "security", title: "Security" },
               { key: "bug-risks", title: "Bug risks" },
               { key: "test-coverage", title: "Test coverage" },
               { key: "new-control-check", title: "New control check" },
             ];
-            const MARKER = "<!-- claude-pr-checks -->";
+            const FINDING_MARKER = "claude-finding"; // <!-- claude-finding:<id> -->
+            const UNANCHORED_MARKER = "<!-- claude-pr-checks-unanchored -->";
             const MAX_BODY = 65000; // GitHub comment limit is 65536 chars
 
-            const sections = [];
-            // Controls that produced no usable report (failed, cancelled, or
-            // invalid output) — distinct from "reviewed and found nothing".
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const pull_number = context.issue.number;
+            const headSha = context.payload.pull_request.head.sha;
+
+            // Comment bodies posted via the API are NOT covered by GitHub
+            // secret masking, so scrub key-shaped strings defensively.
+            const redact = (s) =>
+              String(s).replace(/sk-ant-[A-Za-z0-9_-]{8,}/g, "sk-ant-[REDACTED]");
+            const clamp = (s) =>
+              s.length > MAX_BODY
+                ? s.slice(0, MAX_BODY).replace(/[\uD800-\uDBFF]$/, "") + "\n\n*(truncated)*"
+                : s;
+            // Fingerprint excludes the line number so line drift across pushes
+            // does not turn one finding into a "new" one.
+            const fingerprint = (key, file, summary) =>
+              crypto
+                .createHash("sha1")
+                .update(`${key}\n${file}\n${summary.trim().replace(/\s+/g, " ").toLowerCase()}`)
+                .digest("hex")
+                .slice(0, 16);
+
+            // 1. Collect findings from each control's report.
+            const findings = [];
             const missing = [];
             for (const { key, title } of CONTROLS) {
               const file = path.join("reports", `report-${key}.json`);
@@ -192,100 +224,127 @@ jobs:
                 missing.push(title);
                 continue;
               }
-              const commentText =
-                typeof result.comment === "string" ? result.comment.trim() : "";
-              if (result.has_findings && !commentText) {
-                // The agent claimed findings but delivered none: a failed
-                // report, not a clean review.
-                core.warning(`Malformed report in ${file}: has_findings with empty comment`);
+              if (!result.has_findings) continue;
+              if (!Array.isArray(result.findings) || result.findings.length === 0) {
+                // Claimed findings but delivered none: a failed report.
+                core.warning(`Malformed report in ${file}: has_findings with no findings`);
                 missing.push(title);
                 continue;
               }
-              if (!result.has_findings) continue;
-              let text = commentText;
-              // Strip a redundant "[control]" prefix if the agent added one.
-              if (text.startsWith(`[${key}]`)) {
-                text = text.slice(key.length + 2).trim();
+              for (const f of result.findings) {
+                if (!f || typeof f !== "object" || !f.summary || !f.file) continue;
+                findings.push({
+                  key,
+                  title,
+                  summary: String(f.summary),
+                  severity: typeof f.severity === "string" ? f.severity : "",
+                  file: String(f.file),
+                  line: Number.isInteger(f.line) ? f.line : null,
+                  details: typeof f.details === "string" ? f.details : "",
+                  id: fingerprint(key, String(f.file), String(f.summary)),
+                });
               }
-              const promptPath = `.github/claude-prompts/${key}.md`;
-              const promptUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/blob/${context.payload.pull_request.head.sha}/${promptPath}`;
-              sections.push(
-                `## 🔴 ${title}\n\n<sub>Review instructions: [${promptPath}](${promptUrl})</sub>\n\n${text}`,
-              );
             }
 
-            // Find our previous sticky comment, if any.
-            const comments = await github.paginate(github.rest.issues.listComments, {
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              issue_number: context.issue.number,
+            // 2. Every fingerprint already posted anywhere — inline review
+            //    threads (open OR resolved) and the unanchored-fallback issue
+            //    comment (which holds many fingerprints) — so a re-run never
+            //    posts the same finding twice, in either mechanism.
+            const reviewComments = await github.paginate(github.rest.pulls.listReviewComments, {
+              owner,
+              repo,
+              pull_number,
               per_page: 100,
             });
-            const existing = comments.find(
-              (c) =>
-                c.user &&
-                c.user.login === "github-actions[bot]" &&
-                c.body &&
-                c.body.startsWith(MARKER),
-            );
+            const issueComments = await github.paginate(github.rest.issues.listComments, {
+              owner,
+              repo,
+              issue_number: pull_number,
+              per_page: 100,
+            });
+            const seen = new Set();
+            const reFp = new RegExp(`<!--\\s*${FINDING_MARKER}:([0-9a-f]+)\\s*-->`, "g");
+            for (const c of [...reviewComments, ...issueComments]) {
+              if (!c.body) continue;
+              for (const m of c.body.matchAll(reFp)) seen.add(m[1]);
+            }
 
-            if (sections.length === 0) {
-              if (missing.length > 0) {
-                // Some controls never reported. Do not touch an existing
-                // findings comment: a failed run must not read as a clean one.
-                core.warning(`No report from: ${missing.join(", ")}; leaving any existing comment untouched.`);
-                return;
+            // 3. Post each new finding as its own resolvable review thread.
+            const unanchored = [];
+            let postedCount = 0;
+            for (const f of findings) {
+              if (seen.has(f.id)) continue; // already posted or resolved
+              seen.add(f.id);
+              const sev = f.severity ? ` _(${f.severity})_` : "";
+              const body = clamp(
+                redact(
+                  `<!-- ${FINDING_MARKER}:${f.id} -->\n` +
+                    `### 🔴 ${f.title}\n\n` +
+                    `**${f.summary}**${sev}\n\n` +
+                    `${f.details}\n\n` +
+                    `<sub>Control: \`.github/claude-prompts/${f.key}.md\` · resolve this conversation once addressed.</sub>`,
+                ),
+              );
+              const base = { owner, repo, pull_number, commit_id: headSha, path: f.file, body };
+              try {
+                const params = { ...base };
+                if (f.line) {
+                  params.line = f.line;
+                  params.side = "RIGHT";
+                } else {
+                  params.subject_type = "file";
+                }
+                await github.rest.pulls.createReviewComment(params);
+                postedCount++;
+              } catch (e) {
+                // Line not part of the diff → retry as a file-level thread.
+                try {
+                  await github.rest.pulls.createReviewComment({ ...base, subject_type: "file" });
+                  postedCount++;
+                } catch (e2) {
+                  core.warning(`Could not anchor finding in ${f.file}: ${e2.status || e2}`);
+                  unanchored.push(f);
+                }
               }
-              if (existing) {
-                // Every control reported and none had findings; mark a
-                // previous report as addressed rather than leaving it stale.
-                await github.rest.issues.updateComment({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  comment_id: existing.id,
-                  body: `${MARKER}\n# Claude PR review\n\nNo findings on the latest revision.`,
-                });
+            }
+
+            // 4. Findings that could not anchor to the diff go into ONE
+            //    marker-based issue comment, updated in place (never a new
+            //    comment per run). These are not resolvable threads.
+            if (unanchored.length > 0) {
+              const list = unanchored
+                .map((f) => {
+                  const sev = f.severity ? ` _(${f.severity})_` : "";
+                  const loc = `${f.file}${f.line ? ":" + f.line : ""}`;
+                  return `<!-- ${FINDING_MARKER}:${f.id} -->\n- [ ] **[${f.title}] ${f.summary}**${sev} — \`${loc}\`\n\n  ${f.details.replace(/\n/g, "\n  ")}`;
+                })
+                .join("\n\n");
+              const body = clamp(
+                redact(
+                  `${UNANCHORED_MARKER}\n# Claude PR review — findings not anchorable to the diff\n\n${list}`,
+                ),
+              );
+              // Reuse the issue comments fetched for dedupe above.
+              const prev = issueComments.find(
+                (c) =>
+                  c.user &&
+                  c.user.login === "github-actions[bot]" &&
+                  c.body &&
+                  c.body.startsWith(UNANCHORED_MARKER),
+              );
+              if (prev) {
+                await github.rest.issues.updateComment({ owner, repo, comment_id: prev.id, body });
               } else {
-                core.info("No findings; posting nothing.");
+                await github.rest.issues.createComment({ owner, repo, issue_number: pull_number, body });
               }
-              return;
             }
 
-            let body = `${MARKER}\n# Claude PR review\n\n${sections.join("\n\n")}`;
-            if (missing.length > 0) {
-              body += `\n\n> ⚠️ Incomplete review: no report from the following control(s): ${missing.join(", ")}.`;
-            }
-            // Defense in depth: never let an Anthropic-key-shaped string
-            // reach a public comment, wherever it came from. Comment bodies
-            // posted via the API are NOT covered by GitHub secret masking.
-            body = body.replace(/sk-ant-[A-Za-z0-9_-]{8,}/g, "sk-ant-[REDACTED]");
-            if (body.length > MAX_BODY) {
-              // Don't cut inside a surrogate pair: a body ending in a lone
-              // high surrogate is rejected by the GitHub API.
-              body =
-                body.slice(0, MAX_BODY).replace(/[\uD800-\uDBFF]$/, "") +
-                "\n\n---\n\n*(truncated: comment length limit reached)*";
-            }
-
-            if (existing) {
-              await github.rest.issues.updateComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                comment_id: existing.id,
-                body,
-              });
-            } else {
-              await github.rest.issues.createComment({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                issue_number: context.issue.number,
-                body,
-              });
-            }
-
-            // Findings exist: fail this job so the check reads red instead of
-            // green. Still advisory — never add these jobs as required status
-            // checks (see the repo-settings checklist in the PR).
-            core.setFailed(
-              `Claude PR review reported findings in ${sections.length} control(s) — see the PR comment.`,
+            core.info(
+              `Detected ${findings.length} finding(s); posted ${postedCount} new comment(s).`,
             );
+            if (missing.length > 0) {
+              core.warning(`No report from: ${missing.join(", ")}.`);
+            }
+            // The job does not fail on findings: each is now an independent,
+            // resolvable review thread, so a red aggregate check would stay
+            // red until every thread is resolved and carries no extra signal.
