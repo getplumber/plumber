@@ -34,6 +34,29 @@ purpose) from likely accidents, and only report the latter — except for an
 intentional-looking breaking change that nothing in the PR acknowledges,
 which is worth reporting too.
 
+## Behavior across runs and over time
+
+Do not reason only about a single clean execution. For code that runs
+repeatedly, runs concurrently, or reads and writes state that outlives one
+run (files, databases, caches, queues, external records, comments, locks),
+trace how it behaves over multiple executions:
+
+- Idempotency: running the same operation twice — via a retry, a replay, a
+  re-trigger, or a duplicate concurrent invocation — should not double-apply,
+  oscillate, corrupt, or erase state. Flag operations that replace prior
+  results wholesale when they should merge, or that redo work already done.
+- Persisted / external state: state that is written but never cleaned up
+  (stale entries that linger after they are no longer valid), that grows
+  without bound, or that is read back on a later run and trusted without
+  re-validation.
+- Partial failure and degraded runs: when an input is missing, present but
+  empty/invalid, or a dependency fails, does the code silently treat it as
+  success? A run that did nothing, or only part of the work, should not be
+  indistinguishable from a complete, successful one.
+- Ordering and interleaving: correctness must not depend on an order the
+  runtime does not guarantee, or on one invocation observing another's
+  half-written state.
+
 Reference file and line for every finding.
 
 Do not comment on style, formatting, naming, or other non-functional
