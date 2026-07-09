@@ -136,7 +136,9 @@ jobs:
   # The review agents have no GitHub write access; this deterministic job is
   # the only thing that can post. It creates one resolvable review-comment
   # thread per finding and skips any finding already posted (open OR
-  # resolved), so re-runs never duplicate a comment.
+  # resolved) — both by exact fingerprint and, for reworded repeats, by a
+  # conservative Haiku semantic-dedup pass — so re-runs never duplicate a
+  # comment.
   comment:
     name: post-review-comment
     needs: review
@@ -162,6 +164,11 @@ jobs:
 
       - name: Post finding comments
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
+        env:
+          # Used only for the deterministic Haiku dedup pass below. This step
+          # never handles untrusted PR content directly (the review agents do,
+          # in a separate job with no pull-requests write access).
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
         with:
           script: |
             const fs = require("fs");
@@ -263,10 +270,101 @@ jobs:
               per_page: 100,
             });
             const seen = new Set();
+            // fingerprint -> the summary text of an already-posted finding,
+            // for the semantic dedup pass below.
+            const existingById = new Map();
             const reFp = new RegExp(`<!--\\s*${FINDING_MARKER}:([0-9a-f]+)\\s*-->`, "g");
+            const reFinding = new RegExp(
+              `<!--\\s*${FINDING_MARKER}:([0-9a-f]+)\\s*-->[\\s\\S]*?\\*\\*(.+?)\\*\\*`,
+              "g",
+            );
             for (const c of [...reviewComments, ...issueComments]) {
               if (!c.body) continue;
               for (const m of c.body.matchAll(reFp)) seen.add(m[1]);
+              for (const m of c.body.matchAll(reFinding)) {
+                if (!existingById.has(m[1])) existingById.set(m[1], m[2].trim());
+              }
+            }
+
+            // 2b. Semantic dedup. The fingerprint above only catches a
+            // byte-identical summary; the review agent routinely rewords the
+            // same issue between runs, giving a reworded-but-identical finding
+            // a fresh fingerprint. A single conservative Haiku pass matches new
+            // findings to already-posted ones by meaning. It merges only when
+            // clearly the same issue — a wrong merge would silently drop a real
+            // finding — and any failure falls back to posting (fail-open).
+            const candidates = findings.filter((f) => !seen.has(f.id));
+            const priorSummaries = [...existingById.entries()].map(([id, summary]) => ({ id, summary }));
+            if (candidates.length > 0 && priorSummaries.length > 0 && process.env.ANTHROPIC_API_KEY) {
+              try {
+                const prompt =
+                  "You deduplicate code-review findings across re-runs of an automated reviewer. " +
+                  "The reviewer rewords findings between runs, so the same underlying issue can reappear with different wording.\n\n" +
+                  "ALREADY-POSTED findings (id — summary):\n" +
+                  priorSummaries.map((p) => `${p.id} — ${p.summary}`).join("\n") +
+                  "\n\nNEW candidate findings (index — summary):\n" +
+                  candidates.map((c, i) => `${i} — ${c.summary}`).join("\n") +
+                  "\n\nFor each NEW candidate, decide whether it describes the SAME underlying issue " +
+                  "(same defect, same location or mechanism) as one of the already-posted findings — " +
+                  "not merely the same category or the same file. Be conservative: only mark a duplicate " +
+                  "when you are confident it is the same issue. When unsure, it is NOT a duplicate.";
+                const schema = {
+                  type: "object",
+                  additionalProperties: false,
+                  properties: {
+                    results: {
+                      type: "array",
+                      items: {
+                        type: "object",
+                        additionalProperties: false,
+                        properties: {
+                          candidate: { type: "integer" },
+                          is_duplicate: { type: "boolean" },
+                          duplicate_of: { type: "string" },
+                        },
+                        required: ["candidate", "is_duplicate", "duplicate_of"],
+                      },
+                    },
+                  },
+                  required: ["results"],
+                };
+                const resp = await fetch("https://api.anthropic.com/v1/messages", {
+                  method: "POST",
+                  headers: {
+                    "x-api-key": process.env.ANTHROPIC_API_KEY,
+                    "anthropic-version": "2023-06-01",
+                    "content-type": "application/json",
+                  },
+                  body: JSON.stringify({
+                    model: "claude-haiku-4-5",
+                    max_tokens: 1024,
+                    output_config: { format: { type: "json_schema", schema } },
+                    messages: [{ role: "user", content: prompt }],
+                  }),
+                });
+                if (!resp.ok) throw new Error(`Anthropic API ${resp.status}`);
+                const data = await resp.json();
+                const textBlock = (data.content || []).find((b) => b.type === "text");
+                const parsed = JSON.parse(textBlock.text);
+                const validIds = new Set(priorSummaries.map((p) => p.id));
+                let merged = 0;
+                for (const r of parsed.results || []) {
+                  if (
+                    r &&
+                    r.is_duplicate === true &&
+                    Number.isInteger(r.candidate) &&
+                    candidates[r.candidate] &&
+                    validIds.has(r.duplicate_of)
+                  ) {
+                    seen.add(candidates[r.candidate].id); // suppress reworded duplicate
+                    merged++;
+                  }
+                }
+                if (merged > 0) core.info(`Semantic dedup merged ${merged} reworded finding(s).`);
+              } catch (e) {
+                // Fail open: never drop a finding because the judge errored.
+                core.warning(`Semantic dedup skipped (posting all candidates): ${e}`);
+              }
             }
 
             // 3. Post each new finding as its own resolvable review thread.
