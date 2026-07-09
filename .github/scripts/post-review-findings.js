@@ -57,6 +57,20 @@ const sanitizeAgentText = (s) => {
   return out;
 };
 
+// Fence an untrusted summary for the semantic-dedup judge prompt so its text
+// cannot be read as an instruction. Strip <FINDING> tags in a loop — a single
+// pass is bypassable by splicing (e.g. "</FIND</FINDING>ING>" reassembles a
+// closing tag once the inner one is removed).
+const fenceSummary = (ref, s) => {
+  let inner = String(s);
+  let prev;
+  do {
+    prev = inner;
+    inner = inner.replace(/<\/?FINDING[^>]*>/gi, "");
+  } while (inner !== prev);
+  return `<FINDING ref="${ref}">${inner}</FINDING>`;
+};
+
 const markerRe = () => new RegExp(`<!--\\s*${FINDING_MARKER}:([0-9a-f]+)\\s*-->`, "g");
 // Greedy (.+) — bounded to the summary line since `.` excludes newlines — so
 // a summary that itself contains `**bold**` is recovered whole instead of
@@ -125,7 +139,10 @@ function collectFindings(reportsDir, fs, path, controls) {
       // Sanitize every agent-authored field that gets rendered into a
       // comment body — summary, details, severity, and file — so none can
       // smuggle a marker into the dedup state.
-      const summary = sanitizeAgentText(f.summary);
+      // Collapse newlines so the summary stays on one line — renderInlineBody
+      // emits `**summary**` and findingRe recovers it with `.` (no newline),
+      // so a multi-line summary would fail to parse back and blind dedup.
+      const summary = sanitizeAgentText(f.summary).replace(/[\r\n]+/g, " ").trim();
       const file = sanitizeAgentText(f.file);
       const line = Number.isInteger(f.line) ? f.line : null;
       findings.push({
@@ -191,6 +208,7 @@ module.exports = {
   fingerprint,
   stripTitle,
   sanitizeAgentText,
+  fenceSummary,
   markerRe,
   findingRe,
   collectSeen,
