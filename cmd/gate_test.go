@@ -1,0 +1,469 @@
+package cmd
+
+import (
+	"encoding/json"
+	"errors"
+	"strings"
+	"testing"
+
+	"github.com/getplumber/plumber/control"
+	"github.com/getplumber/plumber/provider"
+	"github.com/spf13/cobra"
+)
+
+func scoreWithPoints(points float64) *control.PlumberScoreResult {
+	// Mirrors the documented letter boundaries (docs/scoring.md).
+	letter := "E"
+	switch {
+	case points >= 90:
+		letter = "A"
+	case points >= 71:
+		letter = "B"
+	case points >= 51:
+		letter = "C"
+	case points >= 31:
+		letter = "D"
+	}
+	return &control.PlumberScoreResult{FinalPoints: points, Score: letter}
+}
+
+// ---------------------------------------------------------------------------
+// gateErr / passed — score gate (the default)
+// ---------------------------------------------------------------------------
+
+func TestGate_DefaultPassesOnPerfectScore(t *testing.T) {
+	s := complianceSummary{minPoints: 100, score: scoreWithPoints(100), controlCount: 1}
+	if err := s.gateErr(); err != nil {
+		t.Fatalf("100 pts with default gate must pass, got %v", err)
+	}
+	if !s.passed() {
+		t.Fatal("passed() must be true")
+	}
+}
+
+func TestGate_DefaultFailsOnAnyFinding(t *testing.T) {
+	// Any finding costs points, so <100 pts must fail the default gate —
+	// exact parity with the old default --threshold 100 behavior.
+	s := complianceSummary{minPoints: 100, score: scoreWithPoints(97), controlCount: 1}
+	err := s.gateErr()
+	var gateErr *ScoreGateError
+	if !errors.As(err, &gateErr) {
+		t.Fatalf("97 pts with default gate must fail with ScoreGateError, got %v", err)
+	}
+	if !gateErr.PointsGate {
+		t.Fatal("failure must be attributed to the points gate")
+	}
+}
+
+func TestGate_MinPointsRelaxed(t *testing.T) {
+	s := complianceSummary{minPoints: 80, minPointsSet: true, score: scoreWithPoints(85), controlCount: 1}
+	if err := s.gateErr(); err != nil {
+		t.Fatalf("85 pts >= 80 must pass, got %v", err)
+	}
+}
+
+func TestGate_MinScoreOnlyDisablesPointsGate(t *testing.T) {
+	// --min-score C without --min-points: 85 pts (B) passes even though the
+	// default minPoints value (100) is still in the struct.
+	s := complianceSummary{minPoints: 100, minScore: "C", score: scoreWithPoints(85), controlCount: 1}
+	if err := s.gateErr(); err != nil {
+		t.Fatalf("letter B >= C with points gate off must pass, got %v", err)
+	}
+}
+
+func TestGate_MinScoreFails(t *testing.T) {
+	s := complianceSummary{minPoints: 100, minScore: "B", score: scoreWithPoints(45), controlCount: 1} // D
+	err := s.gateErr()
+	var gateErr *ScoreGateError
+	if !errors.As(err, &gateErr) {
+		t.Fatalf("letter D < B must fail with ScoreGateError, got %v", err)
+	}
+	if gateErr.PointsGate {
+		t.Fatal("failure must be attributed to the letter gate")
+	}
+	if gateErr.Letter != "D" || gateErr.MinLetter != "B" {
+		t.Fatalf("letters = %q < %q, want D < B", gateErr.Letter, gateErr.MinLetter)
+	}
+}
+
+func TestGate_MinScoreEqualLetterPasses(t *testing.T) {
+	// --min-score B on a repo scoring exactly B: equality must pass ("require
+	// at least a B" is the common configuration; the comparison is strict <).
+	s := complianceSummary{minPoints: 100, minScore: "B", score: scoreWithPoints(85), controlCount: 1} // B
+	if err := s.gateErr(); err != nil {
+		t.Fatalf("letter B == min-score B must pass, got %v", err)
+	}
+}
+
+func TestGate_BothGatesMustPass(t *testing.T) {
+	// --min-score C --min-points 90: letter passes (B) but points fail.
+	s := complianceSummary{minPoints: 90, minPointsSet: true, minScore: "C", score: scoreWithPoints(85), controlCount: 1}
+	var gateErr *ScoreGateError
+	if !errors.As(s.gateErr(), &gateErr) {
+		t.Fatal("85 pts < 90 must fail even when the letter gate passes")
+	}
+	if !gateErr.PointsGate {
+		t.Fatal("failure must be attributed to the points gate")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// gateErr — nothing scoreable (missing / invalid CI)
+// ---------------------------------------------------------------------------
+
+func TestGate_MissingCIFailsDespitePerfectScore(t *testing.T) {
+	// No CI configuration → zero findings → 100 pts, but the gate must fail.
+	// The old GitLab default (--threshold 100 on compliance 0) failed this
+	// case too; on GitHub, whose compliance ignored CiMissing, this is an
+	// intentional tightening (a CI-less repo used to pass).
+	s := complianceSummary{minPoints: 100, score: scoreWithPoints(100), ciMissing: true}
+	var gateErr *ScoreGateError
+	if !errors.As(s.gateErr(), &gateErr) || !gateErr.CiMissing {
+		t.Fatalf("missing CI must fail the score gate, got %v", s.gateErr())
+	}
+	if !strings.Contains(s.gateLine(), "no CI configuration") {
+		t.Fatalf("gateLine %q must explain the missing CI", s.gateLine())
+	}
+}
+
+func TestGate_InvalidCIFailsDespitePerfectScore(t *testing.T) {
+	s := complianceSummary{minPoints: 100, score: scoreWithPoints(100), ciInvalid: true}
+	var gateErr *ScoreGateError
+	if !errors.As(s.gateErr(), &gateErr) || !gateErr.CiInvalid {
+		t.Fatalf("invalid CI must fail the score gate, got %v", s.gateErr())
+	}
+}
+
+func TestGate_NoControlsFailsDespitePerfectScore(t *testing.T) {
+	// Valid CI but zero controls evaluated (a .plumber.yaml that only
+	// configures the other provider, all controls disabled, or a skip-all
+	// filter): zero findings score 100 pts, but nothing was checked, so the
+	// gate must fail. The old GitLab default failed this too (compliance 0
+	// when no control is considered).
+	s := complianceSummary{minPoints: 100, score: scoreWithPoints(100), controlCount: 0}
+	var gateErr *ScoreGateError
+	if !errors.As(s.gateErr(), &gateErr) || !gateErr.NoControls {
+		t.Fatalf("zero evaluated controls must fail the score gate, got %v", s.gateErr())
+	}
+	if !strings.Contains(s.gateLine(), "no controls evaluated") {
+		t.Fatalf("gateLine %q must explain that no controls ran", s.gateLine())
+	}
+}
+
+// ---------------------------------------------------------------------------
+// gateErr — deprecated --threshold gate
+// ---------------------------------------------------------------------------
+
+func TestGate_DeprecatedThresholdWins(t *testing.T) {
+	// threshold set: the legacy passing-controls percentage gates, the score
+	// is ignored (even a failing score passes when compliance meets it).
+	s := complianceSummary{
+		thresholdSet: true, threshold: 80, compliance: 90,
+		minPoints: 100, score: scoreWithPoints(20), // letter E
+	}
+	if err := s.gateErr(); err != nil {
+		t.Fatalf("compliance 90 >= threshold 80 must pass, got %v", err)
+	}
+
+	s.compliance = 75
+	var complianceErr *ComplianceError
+	if !errors.As(s.gateErr(), &complianceErr) {
+		t.Fatal("compliance 75 < threshold 80 must fail with ComplianceError")
+	}
+}
+
+// ---------------------------------------------------------------------------
+// gateLine
+// ---------------------------------------------------------------------------
+
+func TestGateLine_ScoreGate(t *testing.T) {
+	s := complianceSummary{minPoints: 100, score: scoreWithPoints(85), controlCount: 1}
+	line := s.gateLine()
+	for _, want := range []string{"score B", "85.0/100 pts", "≥ 100 pts"} {
+		if !strings.Contains(line, want) {
+			t.Fatalf("gateLine %q must contain %q", line, want)
+		}
+	}
+}
+
+func TestGateLine_MinScoreOnly(t *testing.T) {
+	s := complianceSummary{minPoints: 100, minScore: "C", score: scoreWithPoints(85), controlCount: 1}
+	line := s.gateLine()
+	if strings.Contains(line, "pts, required ≥ 100 pts") {
+		t.Fatalf("points requirement must not appear when only --min-score gates: %q", line)
+	}
+	if !strings.Contains(line, "≥ C") {
+		t.Fatalf("gateLine %q must contain the letter requirement", line)
+	}
+}
+
+func TestGateLine_DeprecatedThreshold(t *testing.T) {
+	s := complianceSummary{thresholdSet: true, threshold: 80, compliance: 75}
+	line := s.gateLine()
+	if !strings.Contains(line, "75.0%") || !strings.Contains(line, "80%") {
+		t.Fatalf("gateLine %q must carry compliance and threshold", line)
+	}
+	if !strings.Contains(line, "deprecated") {
+		t.Fatalf("gateLine %q must flag the threshold gate as deprecated", line)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// resolveGateFlags — gate selection and validation
+// ---------------------------------------------------------------------------
+
+// newGateFlagsCmd resets the gate globals (re-registering the flags rebinds
+// them to their defaults), clears the set-markers and the component env vars,
+// restores everything on cleanup, and returns a command resolveGateFlags can
+// inspect — the same shape runAnalyze hands it.
+func newGateFlagsCmd(t *testing.T) *cobra.Command {
+	t.Helper()
+	origThreshold, origThresholdSet := threshold, thresholdSet
+	origMinPoints, origMinPointsSet := minPoints, minPointsSet
+	origMinScore := minScore
+	t.Cleanup(func() {
+		threshold, thresholdSet = origThreshold, origThresholdSet
+		minPoints, minPointsSet = origMinPoints, origMinPointsSet
+		minScore = origMinScore
+	})
+	thresholdSet, minPointsSet = false, false
+	t.Setenv(envKeys["threshold"], "")
+	t.Setenv(envKeys["min-points"], "")
+	cmd := &cobra.Command{Use: "test"}
+	cmd.Flags().Float64Var(&threshold, "threshold", 100, "")
+	cmd.Flags().StringVar(&minScore, "min-score", "", "")
+	cmd.Flags().Float64Var(&minPoints, "min-points", 100, "")
+	return cmd
+}
+
+func TestResolveGateFlags_NothingSetIsDefaultScoreGate(t *testing.T) {
+	cmd := newGateFlagsCmd(t)
+	if err := resolveGateFlags(cmd); err != nil {
+		t.Fatalf("no gate flags must resolve cleanly, got %v", err)
+	}
+	if thresholdSet || minPointsSet {
+		t.Fatalf("nothing set: want both markers false, got thresholdSet=%v minPointsSet=%v", thresholdSet, minPointsSet)
+	}
+}
+
+func TestResolveGateFlags_ThresholdExcludesScoreGate(t *testing.T) {
+	t.Run("with min-points", func(t *testing.T) {
+		cmd := newGateFlagsCmd(t)
+		mustSetFlag(t, cmd, "threshold", "80")
+		mustSetFlag(t, cmd, "min-points", "90")
+		if err := resolveGateFlags(cmd); err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+			t.Fatalf("threshold + min-points must error, got %v", err)
+		}
+	})
+	t.Run("with min-score", func(t *testing.T) {
+		cmd := newGateFlagsCmd(t)
+		mustSetFlag(t, cmd, "threshold", "80")
+		mustSetFlag(t, cmd, "min-score", "B")
+		if err := resolveGateFlags(cmd); err == nil || !strings.Contains(err.Error(), "cannot be combined") {
+			t.Fatalf("threshold + min-score must error, got %v", err)
+		}
+	})
+}
+
+func TestResolveGateFlags_EnvThresholdActivatesLegacyGate(t *testing.T) {
+	// The GitLab component path: PLUMBER_ANALYZE_THRESHOLD, never a CLI flag.
+	cmd := newGateFlagsCmd(t)
+	t.Setenv(envKeys["threshold"], "50")
+	threshold = 50 // the env fallback copies the value in before resolveGateFlags runs
+	if err := resolveGateFlags(cmd); err != nil {
+		t.Fatalf("env threshold 50 must resolve cleanly, got %v", err)
+	}
+	if !thresholdSet {
+		t.Fatal("PLUMBER_ANALYZE_THRESHOLD must switch the run to the deprecated gate")
+	}
+}
+
+func TestResolveGateFlags_EnvMinPointsActivatesPointsGate(t *testing.T) {
+	// The GitLab component delivers min_points only via env
+	// (PLUMBER_ANALYZE_MIN_POINTS), never as a CLI flag. minPointsSet must
+	// pick it up: with min-score also set, pointsGateActive() is
+	// minPointsSet || minScore == "", so losing the env clause silently
+	// disables the points gate for exactly that configuration.
+	cmd := newGateFlagsCmd(t)
+	t.Setenv(envKeys["min-points"], "80")
+	minPoints = 80 // the env fallback copies the value in before resolveGateFlags runs
+	minScore = "C"
+	if err := resolveGateFlags(cmd); err != nil {
+		t.Fatalf("env min-points 80 + min-score C must resolve cleanly, got %v", err)
+	}
+	if !minPointsSet {
+		t.Fatal("PLUMBER_ANALYZE_MIN_POINTS must mark the points gate as set")
+	}
+
+	// Both gates active: 60 pts (letter C) meets ≥ C but not ≥ 80 pts.
+	s := complianceSummary{minPoints: 80, minPointsSet: minPointsSet, minScore: minScore, score: scoreWithPoints(60), controlCount: 1}
+	var gateErr *ScoreGateError
+	if !errors.As(s.gateErr(), &gateErr) || !gateErr.PointsGate {
+		t.Fatalf("60 pts < env min-points 80 must fail on the points gate, got %v", s.gateErr())
+	}
+}
+
+func TestResolveGateFlags_MinScoreNormalized(t *testing.T) {
+	cmd := newGateFlagsCmd(t)
+	minScore = " b "
+	if err := resolveGateFlags(cmd); err != nil {
+		t.Fatalf("min-score ' b ' must normalize, got %v", err)
+	}
+	if minScore != "B" {
+		t.Fatalf("min-score = %q, want normalized %q", minScore, "B")
+	}
+}
+
+func TestResolveGateFlags_MinScoreInvalidErrors(t *testing.T) {
+	// An unknown letter must error out (exit 2), never silently disable the
+	// gate: a non-empty minScore turns off the default points gate, so letting
+	// "F" through would pass every run unconditionally.
+	for _, bad := range []string{"F", "AA", "1"} {
+		cmd := newGateFlagsCmd(t)
+		minScore = bad
+		if err := resolveGateFlags(cmd); err == nil || !strings.Contains(err.Error(), "must be one of A, B, C, D, E") {
+			t.Fatalf("min-score %q must error, got %v", bad, err)
+		}
+	}
+}
+
+func TestResolveGateFlags_RangeValidation(t *testing.T) {
+	t.Run("min-points out of range", func(t *testing.T) {
+		cmd := newGateFlagsCmd(t)
+		mustSetFlag(t, cmd, "min-points", "150")
+		if err := resolveGateFlags(cmd); err == nil || !strings.Contains(err.Error(), "between 0 and 100") {
+			t.Fatalf("min-points 150 must error, got %v", err)
+		}
+	})
+	t.Run("threshold out of range", func(t *testing.T) {
+		cmd := newGateFlagsCmd(t)
+		mustSetFlag(t, cmd, "threshold", "150")
+		if err := resolveGateFlags(cmd); err == nil || !strings.Contains(err.Error(), "between 0 and 100") {
+			t.Fatalf("threshold 150 must error, got %v", err)
+		}
+	})
+	t.Run("NaN fails closed", func(t *testing.T) {
+		// ParseFloat accepts "nan", and NaN answers false to every ordered
+		// comparison — both in the range check and in gateErr's
+		// `FinalPoints < minPoints` — so an accepted NaN would disable the
+		// gate entirely. It must be rejected at validation instead.
+		cmd := newGateFlagsCmd(t)
+		mustSetFlag(t, cmd, "min-points", "nan")
+		if err := resolveGateFlags(cmd); err == nil || !strings.Contains(err.Error(), "between 0 and 100") {
+			t.Fatalf("min-points NaN must error, got %v", err)
+		}
+
+		cmd = newGateFlagsCmd(t)
+		mustSetFlag(t, cmd, "threshold", "nan")
+		if err := resolveGateFlags(cmd); err == nil || !strings.Contains(err.Error(), "between 0 and 100") {
+			t.Fatalf("threshold NaN must error, got %v", err)
+		}
+	})
+}
+
+func mustSetFlag(t *testing.T, cmd *cobra.Command, name, value string) {
+	t.Helper()
+	if err := cmd.Flags().Set(name, value); err != nil {
+		t.Fatalf("set --%s=%s: %v", name, value, err)
+	}
+}
+
+// ---------------------------------------------------------------------------
+// buildComplianceSummary — ciMissing / ciInvalid wiring from AnalysisResult
+// ---------------------------------------------------------------------------
+
+func TestBuildComplianceSummary_CiWiring(t *testing.T) {
+	newGateFlagsCmd(t) // reset gate globals: default points gate (min-points 100)
+	p := &provider.GitLabProvider{}
+	conf := confWithDebugTrace()
+
+	t.Run("missing CI fails the gate", func(t *testing.T) {
+		s := buildComplianceSummary(p, &control.AnalysisResult{CiMissing: true, CiValid: true}, conf)
+		var gateErr *ScoreGateError
+		if !errors.As(s.gateErr(), &gateErr) || !gateErr.CiMissing {
+			t.Fatalf("CiMissing result must fail with ScoreGateError{CiMissing}, got %v", s.gateErr())
+		}
+	})
+
+	t.Run("invalid CI fails the gate", func(t *testing.T) {
+		s := buildComplianceSummary(p, &control.AnalysisResult{CiValid: false, CiMissing: false}, conf)
+		var gateErr *ScoreGateError
+		if !errors.As(s.gateErr(), &gateErr) || !gateErr.CiInvalid {
+			t.Fatalf("invalid-CI result must fail with ScoreGateError{CiInvalid}, got %v", s.gateErr())
+		}
+	})
+
+	t.Run("valid CI with no findings passes", func(t *testing.T) {
+		s := buildComplianceSummary(p, &control.AnalysisResult{CiValid: true}, conf)
+		if !s.passed() {
+			t.Fatalf("clean run on valid CI must pass, got %v", s.gateErr())
+		}
+	})
+}
+
+// ---------------------------------------------------------------------------
+// buildAnalysisJSONReport — the machine contract action.yml and the job
+// summary parse: conditional minPoints/minScore/threshold keys + passed
+// ---------------------------------------------------------------------------
+
+func TestBuildAnalysisJSONReport_GateContract(t *testing.T) {
+	result := &control.AnalysisResult{CiValid: true}
+	pc := confWithDebugTrace().PlumberConfig
+	params := jsonOutputParams{provider: "gitlab"}
+
+	decode := func(t *testing.T, s complianceSummary) map[string]any {
+		t.Helper()
+		payload, err := buildAnalysisJSONReport(result, pc, s, params)
+		if err != nil {
+			t.Fatalf("buildAnalysisJSONReport: %v", err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(payload, &m); err != nil {
+			t.Fatalf("report is not valid JSON: %v", err)
+		}
+		return m
+	}
+	assertAbsent := func(t *testing.T, m map[string]any, keys ...string) {
+		t.Helper()
+		for _, k := range keys {
+			if v, ok := m[k]; ok {
+				t.Errorf("key %q must be absent, got %v", k, v)
+			}
+		}
+	}
+
+	t.Run("default points gate", func(t *testing.T) {
+		m := decode(t, complianceSummary{minPoints: 100, score: scoreWithPoints(100), scoreMode: true, controlCount: 1})
+		if m["minPoints"] != 100.0 {
+			t.Fatalf("minPoints = %v, want 100", m["minPoints"])
+		}
+		if m["passed"] != true {
+			t.Fatalf("passed = %v, want true", m["passed"])
+		}
+		assertAbsent(t, m, "minScore", "threshold", "compliance")
+	})
+
+	t.Run("letter-only gate omits minPoints", func(t *testing.T) {
+		m := decode(t, complianceSummary{minPoints: 100, minScore: "C", score: scoreWithPoints(85), scoreMode: true, controlCount: 1})
+		if m["minScore"] != "C" {
+			t.Fatalf("minScore = %v, want C", m["minScore"])
+		}
+		if m["passed"] != true {
+			t.Fatalf("passed = %v, want true (85 pts, letter B >= C)", m["passed"])
+		}
+		// minPoints must NOT appear: only --min-score gates this run, and the
+		// job summary renders exactly the keys present.
+		assertAbsent(t, m, "minPoints", "threshold", "compliance")
+	})
+
+	t.Run("deprecated threshold gate", func(t *testing.T) {
+		m := decode(t, complianceSummary{thresholdSet: true, threshold: 80, compliance: 75})
+		if m["threshold"] != 80.0 {
+			t.Fatalf("threshold = %v, want 80", m["threshold"])
+		}
+		if m["passed"] != false {
+			t.Fatalf("passed = %v, want false (compliance 75 < 80)", m["passed"])
+		}
+		assertAbsent(t, m, "minPoints", "minScore", "compliance")
+	})
+}

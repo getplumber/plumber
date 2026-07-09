@@ -30,9 +30,15 @@ spec:
       description: Path to Plumber config file (relative to repo root). If not set, local `.plumber.yaml` if present, then global config `/.plumber.yaml` if present, then default plumber config.
       default: ""
 
-    # Compliance configuration
+    # Gate configuration
+    min_points:
+      description: "Minimum Plumber Score points required to pass (0-100). Default: 100 — any finding fails, same as the previous default behavior. Leave empty to keep the default."
+      default: ""
+    min_score:
+      description: "Minimum Plumber Score letter required to pass (A-E), e.g. B fails on C, D, E. When set without min_points, the letter alone gates."
+      default: ""
     threshold:
-      description: Minimum compliance percentage required to pass (0-100)
+      description: "Deprecated: minimum percentage of passing controls (0-100). Use min_points / min_score to gate on the Plumber Score instead. The default (100) is equivalent to the default score gate and is treated as unset."
       type: number
       default: 100
 
@@ -70,7 +76,7 @@ spec:
       default: false
       type: boolean
     mr_comment:
-      description: Post/update a compliance summary comment on the merge request (requires api scope on the token)
+      description: Post/update a Plumber summary comment on the merge request (requires api scope on the token)
       default: false
       type: boolean
     badge:
@@ -106,7 +112,7 @@ spec:
 ---
 
 # Plumber Component
-# Analyzes GitLab CI/CD pipelines for compliance issues
+# Analyzes GitLab CI/CD pipelines for security issues
 #
 # Prerequisites:
 #   1. Create a GitLab token (PAT or Project/Group Access Token) with:
@@ -140,7 +146,7 @@ spec:
 #   include:
 #     - component: gitlab.com/getplumber/plumber/plumber@v0.3.4
 #       inputs:
-#         threshold: 80
+#         min_points: 80
 #         output_file: results.json
 #         gitlab_token: $MY_CUSTOM_TOKEN_VAR
 
@@ -166,6 +172,8 @@ spec:
     PLUMBER_ANALYZE_GITLAB_URL: $[[ inputs.server_url ]]
     PLUMBER_ANALYZE_PROJECT: $[[ inputs.project_path ]]
     PLUMBER_ANALYZE_BRANCH: $[[ inputs.branch ]]
+    PLUMBER_ANALYZE_MIN_POINTS: $[[ inputs.min_points ]]
+    PLUMBER_ANALYZE_MIN_SCORE: $[[ inputs.min_score ]]
     PLUMBER_ANALYZE_THRESHOLD: $[[ inputs.threshold ]]
     PLUMBER_ANALYZE_PRINT: $[[ inputs.print_output ]]
     PLUMBER_ANALYZE_OUTPUT: $[[ inputs.output_file ]]
@@ -188,6 +196,11 @@ spec:
     # already expanded to the real token value, avoiding the circular reference
     # that occurs if GITLAB_TOKEN is set from $PLUMBER_TOKEN in variables.
     - export GITLAB_TOKEN="$PLUMBER_TOKEN"
+    # threshold is deprecated; its typed default (100) is exactly equivalent
+    # to the default score gate (min-points 100), so treat it as unset. Only
+    # a custom threshold reaches the CLI (and triggers the deprecation
+    # warning there).
+    - if [ "${PLUMBER_ANALYZE_THRESHOLD:-}" = "100" ]; then unset PLUMBER_ANALYZE_THRESHOLD; fi
     - plumber analyze
   artifacts:
     paths:

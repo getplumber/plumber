@@ -34,18 +34,7 @@ func runWithProvider(p provider.Provider, cmd *cobra.Command, conf *configuratio
 
 	newLocationLinker(conf, result, p.Name()).Annotate(result.Findings)
 
-	compliance, controlCount := p.ComputeCompliance(result, conf)
-	scoreMode := true // the score banner is shown by default (#218); --score is a no-op
-	scoreResult := computeScoreResult(result, scoreMode)
-
-	summary := complianceSummary{
-		compliance:   compliance,
-		controlCount: controlCount,
-		threshold:    threshold,
-		score:        scoreResult,
-		scoreMode:    scoreMode,
-		scorePoint:   showScorePoint,
-	}
+	summary := buildComplianceSummary(p, result, conf)
 
 	if printOutput {
 		if err := outputTextWithProvider(p, result, conf, summary, controlsFilterList, skipControlsList); err != nil {
@@ -60,17 +49,39 @@ func runWithProvider(p provider.Provider, cmd *cobra.Command, conf *configuratio
 	handleScorePublishing(p, conf, result, summary)
 
 	pas := provider.PostActionSummary{
-		Compliance: compliance,
-		Threshold:  threshold,
-		Score:      scoreResult,
-		ScoreMode:  scoreMode,
-		ScorePoint: showScorePoint,
+		Passed:     summary.passed(),
+		GateLine:   summary.gateLine(),
+		Score:      summary.score,
+		ScoreMode:  summary.scoreMode,
+		ScorePoint: summary.scorePoint,
 	}
 	if err := p.PostAnalysisActions(cmd, result, conf, pas); err != nil {
 		return err
 	}
 
-	return finalizeRun(result, compliance)
+	return finalizeRun(result, summary)
+}
+
+// buildComplianceSummary assembles the gate inputs for a run: the Plumber
+// Score (the default gate), the score-gate flags, and — only to serve the
+// deprecated --threshold gate — the legacy passing-controls percentage.
+func buildComplianceSummary(p provider.Provider, result *control.AnalysisResult, conf *configuration.Configuration) complianceSummary {
+	compliance, controlCount := p.ComputeCompliance(result, conf)
+	scoreMode := true // the score banner is shown by default (#218); --score is a no-op
+	return complianceSummary{
+		compliance:   compliance,
+		controlCount: controlCount,
+		threshold:    threshold,
+		thresholdSet: thresholdSet,
+		minPoints:    minPoints,
+		minPointsSet: minPointsSet,
+		minScore:     minScore,
+		score:        computeScoreResult(result, scoreMode),
+		scoreMode:    scoreMode,
+		scorePoint:   showScorePoint,
+		ciMissing:    result.CiMissing,
+		ciInvalid:    !result.CiValid && !result.CiMissing,
+	}
 }
 
 // outputTextWithProvider renders terminal output using the provider's catalog
@@ -106,21 +117,17 @@ func outputTextWithProvider(p provider.Provider, result *control.AnalysisResult,
 	switch {
 	case result.DataCollectionDegraded:
 		fmt.Printf("  Status: %s%sINCOMPLETE — data collection failed%s\n\n", colorBold, colorYellow, colorReset)
-	case s.compliance >= s.threshold:
-		fmt.Printf("  Status: %s%sPASSED ✓%s\n\n", colorBold, colorGreen, colorReset)
+	case s.passed():
+		fmt.Printf("  Status: %s%sPASSED ✓%s %s(%s)%s\n\n", colorBold, colorGreen, colorReset, colorDim, s.gateLine(), colorReset)
 	default:
-		fmt.Printf("  Status: %s%sFAILED ✗%s\n\n", colorBold, colorRed, colorReset)
+		fmt.Printf("  Status: %s%sFAILED ✗%s %s(%s)%s\n\n", colorBold, colorRed, colorReset, colorDim, s.gateLine(), colorReset)
 	}
 
 	// On a degraded run suppress the issues table when empty (it would imply a
-	// clean pipeline we never evaluated) and always suppress the compliance
-	// table and score, which would present partial data as a verdict (#220).
+	// clean pipeline we never evaluated) and the score, which would present
+	// partial data as a verdict (#220).
 	if !result.DataCollectionDegraded || len(result.Findings) > 0 {
 		printIssuesTable(controls)
-		fmt.Println()
-	}
-	if !result.DataCollectionDegraded {
-		printComplianceTable(controls, s.compliance, s.threshold)
 		fmt.Println()
 	}
 
@@ -149,14 +156,9 @@ func buildProviderControlSummariesAndGroups(p provider.Provider, result *control
 		}
 		codes, items := findingsToItems(findings)
 		skipped := e.Skipped || dataCollectionFailed
-		entryCompliance := 100.0
-		if !skipped && len(items) > 0 {
-			entryCompliance = 0.0
-		}
 		stats := provider.BuildControlStats(p.Name(), e.ControlName, result, conf.PlumberConfig, findings)
 		controls = append(controls, controlSummary{
 			name:       e.DisplayName,
-			compliance: entryCompliance,
 			issues:     len(items),
 			skipped:    skipped,
 			codes:      uniqueSortedIssueCodeStrings(codes),
@@ -164,7 +166,6 @@ func buildProviderControlSummariesAndGroups(p provider.Provider, result *control
 		})
 		groups = append(groups, findingGroup{
 			Title:      e.DisplayName,
-			Compliance: entryCompliance,
 			Skipped:    skipped,
 			SkipReason: e.SkipReason,
 			Stats:      stats,
@@ -224,17 +225,7 @@ func writeOutputsWithProvider(p provider.Provider, result *control.AnalysisResul
 // pipeline.
 func presentResultWithProvider(p provider.Provider, cmd *cobra.Command, result *control.AnalysisResult, conf *configuration.Configuration) error {
 	newLocationLinker(conf, result, p.Name()).Annotate(result.Findings)
-	compliance, controlCount := p.ComputeCompliance(result, conf)
-	scoreMode := true // the score banner is shown by default (#218); --score is a no-op
-	scoreResult := computeScoreResult(result, scoreMode)
-	summary := complianceSummary{
-		compliance:   compliance,
-		controlCount: controlCount,
-		threshold:    threshold,
-		score:        scoreResult,
-		scoreMode:    scoreMode,
-		scorePoint:   showScorePoint,
-	}
+	summary := buildComplianceSummary(p, result, conf)
 	if printOutput {
 		if err := outputTextWithProvider(p, result, conf, summary, conf.ControlsFilter, conf.SkipControlsFilter); err != nil {
 			return err
@@ -245,18 +236,18 @@ func presentResultWithProvider(p provider.Provider, cmd *cobra.Command, result *
 	}
 	handleScorePublishing(p, conf, result, summary)
 	pas := provider.PostActionSummary{
-		Compliance: compliance,
-		Threshold:  threshold,
-		Score:      scoreResult,
-		ScoreMode:  scoreMode,
-		ScorePoint: showScorePoint,
+		Passed:     summary.passed(),
+		GateLine:   summary.gateLine(),
+		Score:      summary.score,
+		ScoreMode:  summary.scoreMode,
+		ScorePoint: summary.scorePoint,
 	}
 	if cmd != nil {
 		if err := p.PostAnalysisActions(cmd, result, conf, pas); err != nil {
 			return err
 		}
 	}
-	return finalizeRun(result, compliance)
+	return finalizeRun(result, summary)
 }
 
 func joinStrings(ss []string) string {
@@ -295,24 +286,15 @@ func computeScoreResult(result *control.AnalysisResult, scoreMode bool) *control
 }
 
 // finalizeRun applies the exit-code gates in priority order: a degraded run
-// (incomplete data) fails at exit 3 regardless of compliance (#220); then
+// (incomplete data) fails at exit 3 regardless of the gate (#220); then
 // --fail-warnings fails at exit 3 when "could not verify" warnings exist;
-// otherwise the compliance threshold governs.
-func finalizeRun(result *control.AnalysisResult, compliance float64) error {
+// otherwise the score gate (or the deprecated --threshold gate) governs.
+func finalizeRun(result *control.AnalysisResult, s complianceSummary) error {
 	if result.DataCollectionDegraded {
 		return &IncompleteDataError{Reasons: result.DegradedReasons}
 	}
 	if failWarnings && len(result.Warnings) > 0 {
 		return &DegradedError{Count: len(result.Warnings)}
 	}
-	return checkComplianceThreshold(compliance)
-}
-
-// checkComplianceThreshold returns a ComplianceError when compliance is below
-// the configured threshold, nil otherwise.
-func checkComplianceThreshold(compliance float64) error {
-	if compliance < threshold {
-		return &ComplianceError{Compliance: compliance, Threshold: threshold}
-	}
-	return nil
+	return s.gateErr()
 }

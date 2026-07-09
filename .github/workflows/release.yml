@@ -309,7 +309,7 @@ jobs:
           # frozen_string_literal: true
 
           class Plumber < Formula
-            desc "CI/CD compliance scanner for GitLab pipelines"
+            desc "CI/CD security scanner for GitLab and GitHub pipelines"
             homepage "https://getplumber.io"
             version "VERSION_PLACEHOLDER"
             license "MPL-2.0"
@@ -379,7 +379,7 @@ jobs:
           # frozen_string_literal: true
 
           class PlumberAT${VERSION_UNDERSCORE} < Formula
-            desc "CI/CD compliance scanner for GitLab pipelines"
+            desc "CI/CD security scanner for GitLab and GitHub pipelines"
             homepage "https://getplumber.io"
             version "${VERSION}"
             license "MPL-2.0"

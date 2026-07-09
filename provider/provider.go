@@ -62,11 +62,12 @@ type CIEnvMapping struct {
 	CommitSHA string
 }
 
-// PostActionSummary bundles the compliance values needed by PostAnalysisActions
-// to avoid exceeding the parameter count limit.
+// PostActionSummary bundles the gate outcome needed by PostAnalysisActions
+// to avoid exceeding the parameter count limit. Passed is the active gate's
+// verdict; GateLine is its human-readable rendering for the MR comment.
 type PostActionSummary struct {
-	Compliance float64
-	Threshold  float64
+	Passed     bool
+	GateLine   string
 	Score      *control.PlumberScoreResult
 	ScoreMode  bool
 	ScorePoint bool
@@ -106,7 +107,7 @@ type Provider interface {
 	WritePBOMCycloneDX(result *control.AnalysisResult, conf *configuration.Configuration, filePath string, score *control.PlumberScoreResult, scoreMode bool) error
 
 	// PostAnalysisActions runs provider-specific post-analysis side-effects
-	// such as posting MR comments or updating a compliance badge. Providers
+	// such as posting MR comments or updating the project badge. Providers
 	// that have no post-analysis actions return nil.
 	PostAnalysisActions(cmd *cobra.Command, result *control.AnalysisResult, conf *configuration.Configuration, s PostActionSummary) error
 

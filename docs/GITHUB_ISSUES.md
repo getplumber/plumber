@@ -1860,8 +1860,8 @@ the policy from the repo landing page and the "Security" tab.
 
 | Code | Meaning |
 | :--- | :--- |
-| `0` | No finding above the threshold |
-| `1` | At least one finding / compliance below threshold |
+| `0` | The Plumber Score meets the gate (`--min-points` / `--min-score`) |
+| `1` | The Plumber Score is below the gate |
 | `2` | Runtime error (bad config, missing auth, collector failure) |
 
 ### `.plumber.yaml` control names

@@ -8,31 +8,26 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// ManageProjectBadge creates or updates the Plumber compliance badge on the project.
-// The badge shows the compliance percentage with green (passed) or red (failed) color.
-// When useLetterScore is true and ps is non-nil, the badge shows letter score (A–E) instead (see ScoreBadgeURL).
+// ManageProjectBadge creates or updates the Plumber badge on the project.
+// The badge shows the Plumber letter score (A–E, see ScoreBadgeURL) and links
+// to the score documentation. No-op when no score is available.
 func ManageProjectBadge(
 	projectID int,
-	compliance float64,
-	threshold float64,
 	conf *configuration.Configuration,
 	ps *PlumberScoreResult,
-	useLetterScore bool,
 ) error {
+	if ps == nil {
+		return nil
+	}
 	l := logrus.WithFields(logrus.Fields{
-		"action":     "ManageProjectBadge",
-		"projectID":  projectID,
-		"compliance": compliance,
-		"threshold":  threshold,
+		"action":    "ManageProjectBadge",
+		"projectID": projectID,
+		"score":     ps.Score,
 	})
 
 	// Generate badge image URL
-	badgeImageURL := ComplianceBadgeURL(compliance, threshold)
-	badgeLinkURL := conf.GitlabURL + "/" + conf.ProjectPath
-	if useLetterScore && ps != nil {
-		badgeImageURL = ScoreBadgeURL(ps.Score)
-		badgeLinkURL = PlumberScoreDocURL
-	}
+	badgeImageURL := ScoreBadgeURL(ps.Score)
+	badgeLinkURL := PlumberScoreDocURL
 
 	// List existing badges to find Plumber badge
 	badges, err := gitlab.ListProjectBadges(projectID, conf.GitlabToken, conf.GitlabURL, conf)

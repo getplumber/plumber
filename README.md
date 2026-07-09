@@ -317,8 +317,8 @@ More details:
 
 | Code | Meaning |
 |---|---|
-| `0` | The security score is greater than or equal to `--threshold` |
-| `1` | The security score is below `--threshold` |
+| `0` | The Plumber Score meets the gate (`--min-points` / `--min-score`) |
+| `1` | The Plumber Score is below the gate (or the deprecated `--threshold` is not met) |
 | `2` | Invalid usage, configuration, or a runtime / provider / auth / network failure |
 | `3` | A check could not be verified and `--fail-warnings` is set (e.g. an action version that could not be resolved) |
 

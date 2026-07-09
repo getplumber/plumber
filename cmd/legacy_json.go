@@ -28,9 +28,8 @@ func _minAccessLevelGitlab(levels []gitlab.BranchProtectionAccessLevel) int {
 // legacyResultsByName builds the per-control `*Result` JSON blocks
 // that the v0.2.x analyzer emitted alongside the bare findings list.
 // External consumers (CI gates, dashboards, MR comment generators)
-// learned to parse those blocks: each control's issues list, its
-// `metrics` object, and the binary `compliance` flag travel together
-// under a stable JSON key. The Rego port had collapsed them into a
+// learned to parse those blocks: each control's issues list and its
+// `metrics` object travel together under a stable JSON key. The Rego port had collapsed them into a
 // single `findings` array, so we reconstruct them here from the IR
 // data still attached to AnalysisResult plus the bucketed Rego
 // findings.
@@ -80,15 +79,10 @@ func legacyResultsByName(result *control.AnalysisResult, pc *configuration.Plumb
 // buildLegacyResult routes a control entry to its legacy JSON
 // builder and returns the (jsonKey, block) pair.
 func buildLegacyResult(e control.ControlEntry, result *control.AnalysisResult, pc *configuration.PlumberConfig, findings []opaengine.Finding) (string, any) {
-	compliance := 100.0
-	if !e.Skipped && len(findings) > 0 {
-		compliance = 0
-	}
 	common := legacyCommon{
-		Compliance: compliance,
-		CiValid:    result.CiValid,
-		CiMissing:  result.CiMissing,
-		Skipped:    e.Skipped,
+		CiValid:   result.CiValid,
+		CiMissing: result.CiMissing,
+		Skipped:   e.Skipped,
 	}
 
 	switch e.ControlName {
@@ -131,12 +125,11 @@ func buildLegacyResult(e control.ControlEntry, result *control.AnalysisResult, p
 }
 
 // legacyCommon carries the bookkeeping fields shared by every
-// `*Result` block: compliance, ciValid, ciMissing, skipped.
+// `*Result` block: ciValid, ciMissing, skipped.
 type legacyCommon struct {
-	Compliance float64
-	CiValid    bool
-	CiMissing  bool
-	Skipped    bool
+	CiValid   bool
+	CiMissing bool
+	Skipped   bool
 }
 
 // projectFinding strips the verbose Rego-side fields (severity,
@@ -414,7 +407,6 @@ func buildImageForbiddenTagsBlock(c legacyCommon, result *control.AnalysisResult
 			"ciInvalid":          0,
 			"ciMissing":          0,
 		},
-		"compliance":           c.Compliance,
 		"version":              "0.4.0",
 		"ciValid":              c.CiValid,
 		"ciMissing":            c.CiMissing,
@@ -442,11 +434,10 @@ func buildImageAuthorizedSourcesBlock(c legacyCommon, result *control.AnalysisRe
 			"ciInvalid":    0,
 			"ciMissing":    0,
 		},
-		"compliance": c.Compliance,
-		"version":    "0.1.0",
-		"ciValid":    c.CiValid,
-		"ciMissing":  c.CiMissing,
-		"skipped":    c.Skipped,
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
 	}
 }
 
@@ -557,10 +548,9 @@ func buildBranchProtectionBlock(c legacyCommon, result *control.AnalysisResult, 
 	// than emitting `"issues": []`; reproduce that quirk so byte-for-
 	// byte JSON consumers (snapshot tests, etc.) stay aligned.
 	block := map[string]any{
-		"enabled":    !c.Skipped,
-		"compliance": c.Compliance,
-		"version":    "0.2.0",
-		"data":       data,
+		"enabled": !c.Skipped,
+		"version": "0.2.0",
+		"data":    data,
 		"metrics": map[string]any{
 			"branches":                   total,
 			"branchesToProtect":          toProtect,
@@ -593,11 +583,10 @@ func buildHardcodedJobsBlock(c legacyCommon, result *control.AnalysisResult, fin
 			"ciInvalid":     0,
 			"ciMissing":     0,
 		},
-		"compliance": c.Compliance,
-		"version":    "0.1.0",
-		"ciValid":    c.CiValid,
-		"ciMissing":  c.CiMissing,
-		"skipped":    c.Skipped,
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
 	}
 }
 
@@ -649,11 +638,10 @@ func buildOutdatedIncludesBlock(c legacyCommon, result *control.AnalysisResult, 
 			"ciInvalid":      0,
 			"ciMissing":      0,
 		},
-		"compliance": c.Compliance,
-		"version":    "0.1.0",
-		"ciValid":    c.CiValid,
-		"ciMissing":  c.CiMissing,
-		"skipped":    c.Skipped,
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
 	}
 }
 
@@ -698,11 +686,10 @@ func buildIncludeRefConfusionBlock(c legacyCommon, result *control.AnalysisResul
 			"ciInvalid":     0,
 			"ciMissing":     0,
 		},
-		"compliance": c.Compliance,
-		"version":    "0.1.0",
-		"ciValid":    c.CiValid,
-		"ciMissing":  c.CiMissing,
-		"skipped":    c.Skipped,
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
 	}
 }
 
@@ -722,11 +709,10 @@ func buildForbiddenVersionsBlock(c legacyCommon, result *control.AnalysisResult,
 			"usingForbiddenVersion":  usingForbidden,
 			"usingAuthorizedVersion": usingAuthorized,
 		},
-		"compliance": c.Compliance,
-		"version":    "0.1.0",
-		"ciValid":    c.CiValid,
-		"ciMissing":  c.CiMissing,
-		"skipped":    c.Skipped,
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
 	}
 }
 
@@ -747,11 +733,10 @@ func buildRequirementGroupsBlock(c legacyCommon, cfg *configuration.RequiredComp
 			"ciInvalid":         0,
 			"ciMissing":         0,
 		},
-		"compliance": c.Compliance,
-		"version":    "0.2.0",
-		"ciValid":    c.CiValid,
-		"ciMissing":  c.CiMissing,
-		"skipped":    c.Skipped,
+		"version":   "0.2.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
 	}
 }
 
@@ -772,11 +757,10 @@ func buildRequirementGroupsTemplateBlock(c legacyCommon, cfg *configuration.Requ
 			"ciInvalid":         0,
 			"ciMissing":         0,
 		},
-		"compliance": c.Compliance,
-		"version":    "0.2.0",
-		"ciValid":    c.CiValid,
-		"ciMissing":  c.CiMissing,
-		"skipped":    c.Skipped,
+		"version":   "0.2.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
 	}
 }
 
@@ -852,11 +836,10 @@ func buildDebugTraceBlock(c legacyCommon, result *control.AnalysisResult, findin
 			"totalVariablesChecked": _countAllVariableBindings(result),
 			"forbiddenFound":        len(findings),
 		},
-		"compliance": c.Compliance,
-		"version":    "0.1.0",
-		"ciValid":    c.CiValid,
-		"ciMissing":  c.CiMissing,
-		"skipped":    c.Skipped,
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
 	}
 }
 
@@ -872,11 +855,10 @@ func buildVariableInjectionBlock(c legacyCommon, result *control.AnalysisResult,
 			"totalScriptLinesChecked": _countScriptLines(result),
 			"unsafeExpansionsFound":   len(findings),
 		},
-		"compliance": c.Compliance,
-		"version":    "0.1.0",
-		"ciValid":    c.CiValid,
-		"ciMissing":  c.CiMissing,
-		"skipped":    c.Skipped,
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
 	}
 }
 
@@ -887,11 +869,10 @@ func buildSecurityJobsBlock(c legacyCommon, result *control.AnalysisResult, pc *
 			"securityJobsFound": _countSecurityJobs(result, pc),
 			"weakenedJobs":      len(findings),
 		},
-		"compliance": c.Compliance,
-		"version":    "0.1.0",
-		"ciValid":    c.CiValid,
-		"ciMissing":  c.CiMissing,
-		"skipped":    c.Skipped,
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
 	}
 }
 
@@ -907,11 +888,10 @@ func buildUnverifiedScriptsBlock(c legacyCommon, result *control.AnalysisResult,
 			"totalScriptLinesChecked": _countScriptLines(result),
 			"unverifiedScriptsFound":  len(findings),
 		},
-		"compliance": c.Compliance,
-		"version":    "0.1.0",
-		"ciValid":    c.CiValid,
-		"ciMissing":  c.CiMissing,
-		"skipped":    c.Skipped,
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
 	}
 }
 
@@ -931,11 +911,10 @@ func buildJobVariablesOverrideBlock(c legacyCommon, result *control.AnalysisResu
 			"totalVariablesChecked": totalChecked,
 			"overriddenFound":       len(findings),
 		},
-		"compliance": c.Compliance,
-		"version":    "0.1.0",
-		"ciValid":    c.CiValid,
-		"ciMissing":  c.CiMissing,
-		"skipped":    c.Skipped,
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
 	}
 }
 
@@ -957,10 +936,9 @@ func buildDockerInDockerBlock(c legacyCommon, result *control.AnalysisResult, fi
 			"dindServicesFound":   _countDinDServices(result),
 			"insecureDaemonFound": insecure,
 		},
-		"compliance": c.Compliance,
-		"version":    "0.1.0",
-		"ciValid":    c.CiValid,
-		"ciMissing":  c.CiMissing,
-		"skipped":    c.Skipped,
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
 	}
 }

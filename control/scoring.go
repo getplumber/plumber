@@ -291,6 +291,25 @@ func ComputePlumberScore(codeCounts map[ErrorCode]int) PlumberScoreResult {
 	return out
 }
 
+// ScoreLetterRank orders letter scores for gate comparisons: A=5 … E=1,
+// 0 for anything unknown, so "at least a B" is Rank(got) >= Rank("B").
+func ScoreLetterRank(letter string) int {
+	switch letter {
+	case "A":
+		return 5
+	case "B":
+		return 4
+	case "C":
+		return 3
+	case "D":
+		return 2
+	case "E":
+		return 1
+	default:
+		return 0
+	}
+}
+
 func scoreLetterFromPoints(finalPoints float64) string {
 	switch {
 	case finalPoints >= 90:

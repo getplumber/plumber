@@ -44,12 +44,10 @@ type detailedFinding struct {
 }
 
 // findingGroup collects everything needed to render one per-rule
-// section: its title, compliance, optional stats block, and the list
-// of findings.
+// section: its title, optional stats block, and the list of findings.
 type findingGroup struct {
-	Title      string
-	Compliance float64
-	Skipped    bool
+	Title   string
+	Skipped bool
 	// SkipReason overrides the default "disabled in configuration"
 	// string printed under a skipped header. Empty → renderer uses
 	// the default; non-empty → the renderer prints "(<reason>)".
@@ -115,16 +113,16 @@ func filterGroupsForDegraded(groups []findingGroup, degraded bool) []findingGrou
 
 // renderFindingGroups prints each group in the canonical Plumber
 // format used across providers: horizontal separator header with the
-// rule title and compliance (or "skipped"), the stat lines, and an
-// "Issues Found" listing with severity tag, code, message and doc URL.
-// Groups with no stats, no findings and not marked skipped are not
-// rendered (they would just be empty noise).
+// rule title and pass/issue-count status (or "skipped"), the stat
+// lines, and an "Issues Found" listing with severity tag, code,
+// message and doc URL. Groups with no stats, no findings and not
+// marked skipped are not rendered (they would just be empty noise).
 func renderFindingGroups(groups []findingGroup) {
 	for _, g := range groups {
 		if !g.Skipped && len(g.Stats) == 0 && len(g.Findings) == 0 {
 			continue
 		}
-		printControlHeader(g.Title, g.Compliance, g.Skipped)
+		printControlHeader(g.Title, len(g.Findings), g.Skipped)
 		if g.Skipped {
 			reason := g.SkipReason
 			if reason == "" {

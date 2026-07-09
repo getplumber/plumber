@@ -113,8 +113,8 @@ func (p *GitLabProvider) PostAnalysisActions(cmd *cobra.Command, result *control
 			// pipeline (#220).
 			fmt.Fprintf(os.Stderr, "Skipping merge request comment: data collection was incomplete; not overwriting with a partial result.\n")
 		} else if mrIID := glabCI.DetectMergeRequestIID(); mrIID != 0 {
-			fmt.Fprintf(os.Stderr, "Merge request pipeline detected (MR !%d), posting compliance comment...\n", mrIID)
-			if err := control.ManageMergeRequestComment(result.ProjectID, mrIID, result, conf.PlumberConfig, s.Compliance, s.Threshold, conf, s.Score, s.ScoreMode, s.ScorePoint); err != nil {
+			fmt.Fprintf(os.Stderr, "Merge request pipeline detected (MR !%d), posting Plumber comment...\n", mrIID)
+			if err := control.ManageMergeRequestComment(result.ProjectID, mrIID, result, conf.PlumberConfig, s.Passed, s.GateLine, conf, s.Score, s.ScoreMode, s.ScorePoint); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to post merge request comment: %v\n", err)
 			} else {
 				fmt.Fprintf(os.Stderr, "Merge request comment posted successfully\n")
@@ -126,8 +126,8 @@ func (p *GitLabProvider) PostAnalysisActions(cmd *cobra.Command, result *control
 		if !shouldUpdate {
 			fmt.Fprintf(os.Stderr, "Skipping badge update (%s)\n", skipReason)
 		} else {
-			fmt.Fprintf(os.Stderr, "Updating project compliance badge...\n")
-			if err := control.ManageProjectBadge(result.ProjectID, s.Compliance, s.Threshold, conf, s.Score, s.ScoreMode); err != nil {
+			fmt.Fprintf(os.Stderr, "Updating project badge...\n")
+			if err := control.ManageProjectBadge(result.ProjectID, conf, s.Score); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to update project badge: %v\n", err)
 			} else {
 				fmt.Fprintf(os.Stderr, "Project badge updated successfully\n")

@@ -133,6 +133,22 @@ The legacy `--score` flag is deprecated and has no effect now that the score is 
 
 ---
 
+## Gating CI on the score
+
+The score is also the pass/fail gate for `plumber analyze` (exit code 1 on failure):
+
+- `--min-points <0-100>`: fail when `finalPoints` is below the value. **Default: 100** — any finding fails the run.
+- `--min-score <A-E>`: fail when the letter is below the given one (e.g. `--min-score B` fails on C, D, E). When set without `--min-points`, the letter alone gates.
+- Both set: both must pass.
+
+A run with **nothing scoreable** fails the score gate rather than passing as an empty 100-point pipeline. This covers three cases: no CI configuration found, a CI configuration that could not be parsed, and **zero controls evaluated** (a `.plumber.yaml` that enables no controls for the scanned provider — e.g. a `github:`-only config on a GitLab project — or a filter that skips them all). On GitLab this matches the old default (compliance was 0 in all three cases); **on GitHub it is a behavior change**: the old compliance gate passed a repository with no workflows or no enabled controls, the score gate fails it. Skip Plumber (or use `soft-fail`) on repositories that intentionally have no CI.
+
+The legacy `--threshold` flag (percentage of passing controls) is **deprecated**: it still works, with a warning, and cannot be combined with the score gate flags. Its old default (100) matches the default score gate on any repository with CI to score, since any finding drops both below 100.
+
+The JSON report spells out the active gate next to the verdict: `minPoints` / `minScore` (or `threshold` when the deprecated flag is used) and `passed`.
+
+---
+
 ## Where this appears
 
 | Surface | When |

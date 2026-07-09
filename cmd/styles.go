@@ -29,16 +29,15 @@ var (
 // Semantic styles — prefer these over raw colors to keep call sites
 // readable.
 var (
-	styleTitle   = lipgloss.NewStyle().Foreground(colBody).Bold(true)
-	styleAccent  = lipgloss.NewStyle().Foreground(colAccent)
-	styleMuted   = lipgloss.NewStyle().Foreground(colMuted)
-	styleDim     = lipgloss.NewStyle().Faint(true)
-	styleError   = lipgloss.NewStyle().Foreground(colCritical)
-	styleSuccess = lipgloss.NewStyle().Foreground(colPass)
-	styleCell    = lipgloss.NewStyle().Padding(0, 1)
-	styleHeader  = lipgloss.NewStyle().Foreground(colBody).Bold(true).Padding(0, 1)
-	styleRule    = lipgloss.NewStyle().Foreground(colMuted)
-	styleFail    = lipgloss.NewStyle().Foreground(colCritical).Bold(true)
+	styleTitle  = lipgloss.NewStyle().Foreground(colBody).Bold(true)
+	styleAccent = lipgloss.NewStyle().Foreground(colAccent)
+	styleMuted  = lipgloss.NewStyle().Foreground(colMuted)
+	styleDim    = lipgloss.NewStyle().Faint(true)
+	styleError  = lipgloss.NewStyle().Foreground(colCritical)
+	styleCell   = lipgloss.NewStyle().Padding(0, 1)
+	styleHeader = lipgloss.NewStyle().Foreground(colBody).Bold(true).Padding(0, 1)
+	styleRule   = lipgloss.NewStyle().Foreground(colMuted)
+	styleFail   = lipgloss.NewStyle().Foreground(colCritical).Bold(true)
 )
 
 // hrWidth controls the width of the horizontal separator used by

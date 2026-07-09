@@ -12,20 +12,23 @@ import (
 
 const (
 	// MRCommentIdentifier is an invisible HTML comment used to find the Plumber
-	// comment in the merge request notes so it can be updated on subsequent runs.
+	// comment in the merge request notes so it can be updated on subsequent
+	// runs. The historical wording is kept on purpose: changing it would stop
+	// matching comments posted by older versions and create duplicates.
 	MRCommentIdentifier = "<!-- Plumber Compliance Comment -->"
 )
 
-// ManageMergeRequestComment creates or updates the Plumber compliance comment
-// on the given merge request. projectID and gitlabURL come from the already-
-// resolved configuration/result; only mrIID is CI-specific.
+// ManageMergeRequestComment creates or updates the Plumber comment on the
+// given merge request. projectID and gitlabURL come from the already-resolved
+// configuration/result; only mrIID is CI-specific. passed is the run's gate
+// verdict and gateLine its human-readable rendering.
 func ManageMergeRequestComment(
 	projectID int,
 	mrIID int,
 	result *AnalysisResult,
 	pc *configuration.PlumberConfig,
-	compliance float64,
-	threshold float64,
+	passed bool,
+	gateLine string,
 	conf *configuration.Configuration,
 	score *PlumberScoreResult,
 	scoreMode bool,
@@ -38,7 +41,7 @@ func ManageMergeRequestComment(
 	})
 
 	// Generate comment body
-	commentBody := generateMRComment(result, pc, compliance, threshold, score, scoreMode, scorePointMode, conf.ControlsFilter, conf.SkipControlsFilter)
+	commentBody := generateMRComment(result, pc, passed, gateLine, score, scoreMode, scorePointMode, conf.ControlsFilter, conf.SkipControlsFilter)
 
 	// List existing notes to find our comment
 	notes, err := gitlab.ListMergeRequestNotes(
@@ -98,19 +101,6 @@ func ManageMergeRequestComment(
 	return nil
 }
 
-// ComplianceBadgeURL builds a Shields.io badge URL for the given compliance %.
-// Color is green if compliance meets threshold, red otherwise.
-// Exported so it can be used by the project badge feature.
-func ComplianceBadgeURL(compliance, threshold float64) string {
-	pct := fmt.Sprintf("%.1f%%", compliance)
-	color := "red"
-	if compliance >= threshold {
-		color = "brightgreen"
-	}
-	message := strings.ReplaceAll(pct, "%", "%25")
-	return fmt.Sprintf("https://img.shields.io/badge/Plumber-%s-%s", message, color)
-}
-
 // ScoreBadgeURL builds a Shields.io badge URL showing the Plumber letter score (A–E).
 func ScoreBadgeURL(letter string) string {
 	color := "red"
@@ -131,23 +121,18 @@ func ScoreBadgeURL(letter string) string {
 
 // generateMRComment builds the Markdown body for the merge request comment
 // based on the analysis result.
-func generateMRComment(result *AnalysisResult, pc *configuration.PlumberConfig, compliance, threshold float64, score *PlumberScoreResult, scoreMode, scorePointMode bool, controlsFilterList, skipControlsList []string) string {
+func generateMRComment(result *AnalysisResult, pc *configuration.PlumberConfig, passed bool, gateLine string, score *PlumberScoreResult, scoreMode, scorePointMode bool, controlsFilterList, skipControlsList []string) string {
 	var b strings.Builder
 
 	// Hidden identifier so we can find this comment later
 	b.WriteString(MRCommentIdentifier + "\n")
 
-	// Compliance badge (green if passed, red if failed)
-	passed := compliance >= threshold
-	badgeURL := ComplianceBadgeURL(compliance, threshold)
+	// Letter-score badge linking to the score documentation
 	if scoreMode && score != nil {
-		badgeURL = ScoreBadgeURL(score.Score)
-		fmt.Fprintf(&b, "[![Plumber](%s)](%s)\n\n", badgeURL, PlumberScoreDocURL)
-	} else {
-		fmt.Fprintf(&b, "![Plumber](%s)\n\n", badgeURL)
+		fmt.Fprintf(&b, "[![Plumber](%s)](%s)\n\n", ScoreBadgeURL(score.Score), PlumberScoreDocURL)
 	}
 
-	b.WriteString("*If this merge request is merged, the expected pipeline compliance will be as shown above.*\n\n")
+	b.WriteString("*If this merge request is merged, the expected Plumber Score will be as shown above.*\n\n")
 
 	if scorePointMode && score != nil {
 		b.WriteString("### Plumber Score\n\n")
@@ -167,14 +152,12 @@ func generateMRComment(result *AnalysisResult, pc *configuration.PlumberConfig, 
 	}
 
 	// Gather controls from the config-driven catalog joined with the
-	// Rego Findings list. Compliance is binary per control (100% when
-	// no finding matches, 0% otherwise); skipped status comes from
-	// .plumber.yaml.
+	// Rego Findings list. A control passes when no finding matches;
+	// skipped status comes from .plumber.yaml.
 	type controlEntry struct {
-		name       string
-		compliance float64
-		issues     int
-		skipped    bool
+		name    string
+		issues  int
+		skipped bool
 	}
 
 	findingsByControl := FindingsByControl(result.Findings)
@@ -185,11 +168,7 @@ func generateMRComment(result *AnalysisResult, pc *configuration.PlumberConfig, 
 	MarkSkippedByFilter(mrEntries, controlsFilterList, skipControlsList)
 	for _, e := range mrEntries {
 		count := len(findingsByControl[e.ControlName])
-		ctrlCompliance := 100.0
-		if !e.Skipped && count > 0 {
-			ctrlCompliance = 0.0
-		}
-		controls = append(controls, controlEntry{e.DisplayName, ctrlCompliance, count, e.Skipped})
+		controls = append(controls, controlEntry{e.DisplayName, count, e.Skipped})
 		if !e.Skipped {
 			totalIssues += count
 		}
@@ -197,26 +176,24 @@ func generateMRComment(result *AnalysisResult, pc *configuration.PlumberConfig, 
 
 	// Controls summary table
 	b.WriteString("### Controls\n\n")
-	b.WriteString("| Control | Compliance | Issues |\n")
-	b.WriteString("|---------|-----------|--------|\n")
+	b.WriteString("| Control | Status | Issues |\n")
+	b.WriteString("|---------|--------|--------|\n")
 	for _, c := range controls {
 		if c.skipped {
 			fmt.Fprintf(&b, "| %s | _skipped_ | — |\n", c.name)
+		} else if c.issues > 0 {
+			fmt.Fprintf(&b, "| :x: %s | failed | %d |\n", c.name, c.issues)
 		} else {
-			icon := ":white_check_mark:"
-			if c.compliance < 100 {
-				icon = ":x:"
-			}
-			fmt.Fprintf(&b, "| %s %s | %.1f%% | %d |\n", icon, c.name, c.compliance, c.issues)
+			fmt.Fprintf(&b, "| :white_check_mark: %s | passed | 0 |\n", c.name)
 		}
 	}
 	b.WriteString("\n")
 
 	// Status line after the table
 	if passed {
-		fmt.Fprintf(&b, ":white_check_mark: **Compliance: %.1f%%** meets threshold (%.0f%%)\n\n", compliance, threshold)
+		fmt.Fprintf(&b, ":white_check_mark: **Plumber check passed** (%s)\n\n", gateLine)
 	} else {
-		fmt.Fprintf(&b, ":warning: **Compliance: %.1f%%** is below threshold (%.0f%%)\n\n", compliance, threshold)
+		fmt.Fprintf(&b, ":warning: **Plumber check failed** — %s\n\n", gateLine)
 	}
 
 	// Issue details as a normal section

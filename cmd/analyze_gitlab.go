@@ -37,7 +37,16 @@ var (
 	printOutput       bool
 	configFile        string
 	threshold         float64
-	pbomFile          string
+	// thresholdSet is true when the deprecated --threshold was supplied
+	// explicitly (flag or PLUMBER_ANALYZE_THRESHOLD); it switches the gate
+	// back to the legacy passing-controls percentage.
+	thresholdSet bool
+	minScore     string
+	minPoints    float64
+	// minPointsSet distinguishes an explicit --min-points from its default:
+	// when only --min-score is given, the points gate is off.
+	minPointsSet bool
+	pbomFile     string
 	pbomCycloneDXFile string
 	sarifFile         string
 	glsastFile        string
@@ -64,7 +73,7 @@ var analyzeCmd = &cobra.Command{
 	Use:          "analyze",
 	Short:        "Analyze CI/CD configuration (GitLab via API, or local GitHub Actions when origin is GitHub)",
 	SilenceUsage: true, // Don't print usage on errors (e.g., threshold failures)
-	Long: `Analyze CI/CD configuration for compliance issues.
+	Long: `Analyze CI/CD configuration for security issues.
 
 GitLab path (when the git remote is GitLab, or when you pass --gitlab-url and --project):
   Connects to GitLab, retrieves CI/CD configuration and project settings, and runs
@@ -81,14 +90,16 @@ Flags (auto-detected from git remote if not specified):
 
 Optional flags:
   --config           Path to .plumber.yaml config file (default: .plumber.yaml)
-  --threshold        Minimum compliance percentage to pass, 0-100 (default: 100)
+  --min-points       Minimum Plumber Score points to pass, 0-100 (default: 100 — any finding fails)
+  --min-score        Minimum Plumber Score letter to pass, A-E (e.g. B fails on C, D, E)
+  --threshold        Deprecated: minimum percentage of passing controls, 0-100; use --min-points / --min-score
   --branch           Branch to analyze (defaults to project's default branch)
   --print            Print text output to stdout (default: true)
   --output           Write JSON results to file (optional)
   --pbom             Write PBOM (Pipeline Bill of Materials) to file (optional)
   --pbom-cyclonedx   Write PBOM in CycloneDX format for integration with security tools
-  --mr-comment       Post/update a compliance comment on the merge request (requires api scope, merge request pipeline only)
-  --badge            Create/update a Plumber compliance badge on the project (requires api scope; only runs on default branch)
+  --mr-comment       Post/update a Plumber comment on the merge request (requires api scope, merge request pipeline only)
+  --badge            Create/update a Plumber letter-score badge on the project (requires api scope; only runs on default branch)
   --score            Letter score, points, bar, and counts in stdout (banner only); points + score in JSON/PBOM/CycloneDX; badge/MR use letter when set (optional)
   --score-point      Same as --score plus full points breakdown in stdout and MR comment (optional; wins if both set)
   --score-push       Publish this repo's Plumber Score to the hosted badge service (CI only; a local run is a no-op) (optional)
@@ -99,8 +110,8 @@ Optional flags:
   --ci-config-path   Override the CI configuration file path (default: auto-detected from GitLab project settings, usually .gitlab-ci.yml)
 
 Exit codes:
-  0  Analysis passed (compliance >= threshold)
-  1  Compliance failure (compliance < threshold)
+  0  Analysis passed (score gate met)
+  1  Gate failure (Plumber Score below --min-points / --min-score, or deprecated --threshold not met)
   2  Runtime error (configuration error, network failure, missing token, etc.)
 
 Examples:
@@ -113,8 +124,8 @@ Examples:
   # Analyze a specific project
   plumber analyze --gitlab-url https://gitlab.com --project mygroup/myproject
 
-  # Analyze with custom config and threshold
-  plumber analyze --gitlab-url https://gitlab.com --project mygroup/myproject --config custom.yaml --threshold 80
+  # Analyze with custom config and a relaxed score gate
+  plumber analyze --gitlab-url https://gitlab.com --project mygroup/myproject --config custom.yaml --min-points 80
 
   # Analyze and save JSON to file (no stdout)
   plumber analyze --gitlab-url https://gitlab.com --project mygroup/myproject --print=false --output results.json
@@ -147,7 +158,9 @@ func init() {
 
 	// Optional flags with defaults
 	analyzeCmd.Flags().StringVar(&configFile, "config", ".plumber.yaml", "Path to .plumber.yaml config file")
-	analyzeCmd.Flags().Float64Var(&threshold, "threshold", 100, "Minimum compliance percentage to pass, 0-100")
+	analyzeCmd.Flags().Float64Var(&threshold, "threshold", 100, "Deprecated: minimum percentage of passing controls, 0-100; use --min-points / --min-score instead")
+	analyzeCmd.Flags().StringVar(&minScore, "min-score", "", "Minimum Plumber Score letter to pass, A-E (e.g. B fails on C, D, E)")
+	analyzeCmd.Flags().Float64Var(&minPoints, "min-points", 100, "Minimum Plumber Score points to pass, 0-100 (default 100: any finding fails)")
 	analyzeCmd.Flags().StringVar(&defaultBranch, "branch", "", "Branch to analyze (defaults to project's default branch)")
 	analyzeCmd.Flags().BoolVar(&printOutput, "print", true, "Print text output to stdout")
 	analyzeCmd.Flags().StringVarP(&outputFile, "output", "o", "", "Write JSON results to file")
@@ -503,6 +516,8 @@ var envKeys = map[string]string{
 	"branch":         "PLUMBER_ANALYZE_BRANCH",
 	"config":         "PLUMBER_ANALYZE_CONFIG",
 	"threshold":      "PLUMBER_ANALYZE_THRESHOLD",
+	"min-score":      "PLUMBER_ANALYZE_MIN_SCORE",
+	"min-points":     "PLUMBER_ANALYZE_MIN_POINTS",
 	"print":          "PLUMBER_ANALYZE_PRINT",
 	"output":         "PLUMBER_ANALYZE_OUTPUT",
 	"pbom":           "PLUMBER_ANALYZE_PBOM",
@@ -552,6 +567,41 @@ func envBoolFallback(cmd *cobra.Command, flag, envKey string, dest *bool) error 
 	return nil
 }
 
+// resolveGateFlags validates the pass/fail gate flags after the env fallbacks
+// ran and records which gate is active. The default gate is the Plumber Score
+// (--min-points 100: any finding fails, exactly the behavior the old default
+// --threshold 100 had). Supplying the deprecated --threshold switches back to
+// the legacy passing-controls percentage and warns; combining it with the
+// score gate flags is an error.
+func resolveGateFlags(cmd *cobra.Command) error {
+	thresholdSet = cmd.Flags().Changed("threshold") || os.Getenv(envKeys["threshold"]) != ""
+	minPointsSet = cmd.Flags().Changed("min-points") || os.Getenv(envKeys["min-points"]) != ""
+
+	if thresholdSet && (minPointsSet || minScore != "") {
+		return fmt.Errorf("the deprecated --threshold cannot be combined with --min-points / --min-score; drop --threshold")
+	}
+	if thresholdSet {
+		fmt.Fprintf(os.Stderr, "Warning: --threshold is deprecated and will be removed in a future release; gate on the Plumber Score with --min-points (0-100) or --min-score (A-E) instead. See https://getplumber.io/docs/plumber-score\n")
+		// Inverted comparison so NaN fails closed: ParseFloat accepts "nan",
+		// which every ordered comparison answers false — `< 0 || > 100` would
+		// let it through and the gate could then never fail.
+		if !(threshold >= 0 && threshold <= 100) {
+			return fmt.Errorf("threshold must be between 0 and 100")
+		}
+		return nil
+	}
+	if !(minPoints >= 0 && minPoints <= 100) {
+		return fmt.Errorf("min-points must be between 0 and 100")
+	}
+	if minScore != "" {
+		minScore = strings.ToUpper(strings.TrimSpace(minScore))
+		if control.ScoreLetterRank(minScore) == 0 {
+			return fmt.Errorf("min-score must be one of A, B, C, D, E")
+		}
+	}
+	return nil
+}
+
 func envFloat64Fallback(cmd *cobra.Command, flag, envKey string, dest *float64) error {
 	if !cmd.Flags().Changed(flag) {
 		if v := os.Getenv(envKey); v != "" {
@@ -595,6 +645,8 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		func() error { return envStringFallback(cmd, "skip-controls", envKeys["skip-controls"], &skipControls) },
 		func() error { return envStringFallback(cmd, "ci-config-path", envKeys["ci-config-path"], &ciConfigPath) },
 		func() error { return envFloat64Fallback(cmd, "threshold", envKeys["threshold"], &threshold) },
+		func() error { return envStringFallback(cmd, "min-score", envKeys["min-score"], &minScore) },
+		func() error { return envFloat64Fallback(cmd, "min-points", envKeys["min-points"], &minPoints) },
 		func() error { return envBoolFallback(cmd, "print", envKeys["print"], &printOutput) },
 		func() error { return envBoolFallback(cmd, "mr-comment", envKeys["mr-comment"], &mrComment) },
 		func() error { return envBoolFallback(cmd, "badge", envKeys["badge"], &badge) },
@@ -611,6 +663,10 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	flags := readAnalyzeFlags(cmd)
 
 	if err := validateProviderFlags(flags); err != nil {
+		return err
+	}
+
+	if err := resolveGateFlags(cmd); err != nil {
 		return err
 	}
 
@@ -635,10 +691,6 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	remote, err := resolveGitLabTarget(flags, remoteInfo)
 	if err != nil {
 		return err
-	}
-
-	if threshold < 0 || threshold > 100 {
-		return fmt.Errorf("threshold must be between 0 and 100")
 	}
 
 	gitlabToken, err := resolveGitLabToken(flags)
@@ -738,14 +790,14 @@ func parseControlsFilter(raw string) ([]string, error) {
 // same bytes are written to --output and pushed to the score service, so the
 // stored badge record and the file on disk can never diverge.
 func buildAnalysisJSONReport(result *control.AnalysisResult, pc *configuration.PlumberConfig, s complianceSummary, p jsonOutputParams) ([]byte, error) {
-	threshold, compliance, score, scoreMode, provider, includeOnly, skip :=
-		s.threshold, s.compliance, s.score, s.scoreMode, p.provider, p.includeOnly, p.skip
+	score, scoreMode, provider, includeOnly, skip :=
+		s.score, s.scoreMode, p.provider, p.includeOnly, p.skip
 	// Marshal AnalysisResult into a generic map so the per-control
 	// `*Result` legacy blocks can sit alongside its existing fields
 	// without forcing every consumer to follow the dev's flat-findings
 	// shape. The legacy keys (imageForbiddenTagsResult, …) carry the
-	// same issues + metrics + compliance triplet v0.2.x emitted, so
-	// downstream tooling parses the dev output unchanged.
+	// same issues + metrics pair v0.2.x emitted, so downstream tooling
+	// parses the dev output unchanged.
 	raw, err := json.Marshal(result)
 	if err != nil {
 		return nil, fmt.Errorf("marshal result: %w", err)
@@ -754,9 +806,21 @@ func buildAnalysisJSONReport(result *control.AnalysisResult, pc *configuration.P
 	if err := json.Unmarshal(raw, &output); err != nil {
 		return nil, fmt.Errorf("unmarshal result: %w", err)
 	}
-	output["threshold"] = threshold
-	output["compliance"] = compliance
-	output["passed"] = compliance >= threshold
+	// The gate that produced `passed` is spelled out next to it: the score
+	// gate emits minPoints / minScore; the deprecated --threshold gate emits
+	// threshold for the pipelines still supplying it. The compliance
+	// percentage itself is gone (#320) — plumberScore is the grade.
+	if s.thresholdSet {
+		output["threshold"] = s.threshold
+	} else {
+		if s.pointsGateActive() {
+			output["minPoints"] = s.minPoints
+		}
+		if s.minScore != "" {
+			output["minScore"] = s.minScore
+		}
+	}
+	output["passed"] = s.passed()
 	if scoreMode && score != nil {
 		output["plumberScore"] = score
 	}
@@ -902,7 +966,7 @@ func writeJSONToFile(result *control.AnalysisResult, pc *configuration.PlumberCo
 // partialControlEntries lists controls whose evaluation was partial —
 // some inputs reachable, others not. CI gates parse this to decide
 // whether to fail loud ("we never actually checked your protection
-// rules") even when compliance is 100%.
+// rules") even when the run passed its gate.
 func partialControlEntries(result *control.AnalysisResult) []map[string]any {
 	if result == nil || result.GitHubStats == nil {
 		return nil
@@ -927,7 +991,7 @@ var analysisJSONLegacyKeyHead = []string{
 	"projectPath", "projectId", "defaultBranch",
 	"ciConfigSource", "ciValid", "ciMissing", "ciErrors",
 	"pipelineOriginMetrics", "pipelineImageMetrics",
-	"compliance", "threshold", "passed", "plumberScore",
+	"minPoints", "minScore", "threshold", "passed", "plumberScore",
 }
 
 // analysisJSONLegacyKeyTail lists keys pinned to the END of the object, after
@@ -1170,20 +1234,104 @@ type jsonOutputParams struct {
 	skip        []string
 }
 
-// complianceSummary bundles the computed compliance values passed to outputText.
+// complianceSummary bundles the computed gate values passed to outputText.
 type complianceSummary struct {
+	// compliance is the legacy passing-controls percentage, computed only to
+	// serve the deprecated --threshold gate. It is never emitted anymore.
 	compliance   float64
 	controlCount int
 	threshold    float64
+	thresholdSet bool
+	minPoints    float64
+	minPointsSet bool
+	minScore     string
 	score        *control.PlumberScoreResult
 	scoreMode    bool
 	scorePoint   bool
+	// ciMissing / ciInvalid: nothing was scoreable. Zero findings on an
+	// absent or unparseable CI configuration must not pass the score gate.
+	ciMissing bool
+	ciInvalid bool
+}
+
+// pointsGateActive reports whether the points gate applies: either it was set
+// explicitly, or nothing was set at all (the default gate is min-points 100).
+// When only --min-score is given, the letter alone gates.
+func (s complianceSummary) pointsGateActive() bool {
+	return s.minPointsSet || s.minScore == ""
+}
+
+// gateErr returns nil when the active gate passes, or the exit-code-1 error
+// describing the failure. The deprecated --threshold gate wins when supplied;
+// otherwise the Plumber Score gates the run.
+func (s complianceSummary) gateErr() error {
+	if s.thresholdSet {
+		if s.compliance < s.threshold {
+			return &ComplianceError{Compliance: s.compliance, Threshold: s.threshold}
+		}
+		return nil
+	}
+	if s.ciMissing {
+		return &ScoreGateError{CiMissing: true}
+	}
+	if s.ciInvalid {
+		return &ScoreGateError{CiInvalid: true}
+	}
+	// Zero controls evaluated (provider-mismatched or empty .plumber.yaml,
+	// skip-all filter): zero findings score 100 pts, but nothing was checked,
+	// so fail closed exactly like the missing/invalid-CI cases above.
+	if s.controlCount == 0 {
+		return &ScoreGateError{NoControls: true}
+	}
+	if s.score == nil {
+		return nil
+	}
+	if s.minScore != "" && control.ScoreLetterRank(s.score.Score) < control.ScoreLetterRank(s.minScore) {
+		return &ScoreGateError{Letter: s.score.Score, MinLetter: s.minScore, Points: s.score.FinalPoints}
+	}
+	if s.pointsGateActive() && s.score.FinalPoints < s.minPoints {
+		return &ScoreGateError{Points: s.score.FinalPoints, MinPoints: s.minPoints, PointsGate: true, Letter: s.score.Score}
+	}
+	return nil
+}
+
+// passed reports whether the active gate is met. It is the value written to
+// the JSON `passed` field and shown by the MR comment and job summaries.
+func (s complianceSummary) passed() bool {
+	return s.gateErr() == nil
+}
+
+// gateLine renders the active gate and its outcome as one human-readable
+// sentence fragment, e.g. "score A — 100.0/100 pts, required ≥ 100 pts".
+func (s complianceSummary) gateLine() string {
+	if s.thresholdSet {
+		return fmt.Sprintf("%.1f%% of controls passing, deprecated threshold %.0f%%", s.compliance, s.threshold)
+	}
+	if s.ciMissing {
+		return "no CI configuration found, nothing to score"
+	}
+	if s.ciInvalid {
+		return "invalid CI configuration, nothing to score"
+	}
+	if s.controlCount == 0 {
+		return "no controls evaluated, nothing to score"
+	}
+	if s.score == nil {
+		return ""
+	}
+	requirements := []string{}
+	if s.pointsGateActive() {
+		requirements = append(requirements, fmt.Sprintf("≥ %.0f pts", s.minPoints))
+	}
+	if s.minScore != "" {
+		requirements = append(requirements, fmt.Sprintf("≥ %s", s.minScore))
+	}
+	return fmt.Sprintf("score %s — %.1f/100 pts, required %s", s.score.Score, s.score.FinalPoints, strings.Join(requirements, " and "))
 }
 
 // controlSummary holds summary data for a control
 type controlSummary struct {
 	name       string
-	compliance float64
 	issues     int
 	skipped    bool
 	codes      []string
@@ -1233,28 +1381,6 @@ func compareSeverityWorstFirst(a, b control.SeverityCounts) int {
 		return 1
 	}
 	return 0
-}
-
-func sortControlSummariesForComplianceTable(s []controlSummary) {
-	sort.SliceStable(s, func(i, j int) bool {
-		a, b := s[i], s[j]
-		if a.skipped != b.skipped {
-			return !a.skipped && b.skipped
-		}
-		if a.skipped {
-			return a.name < b.name
-		}
-		if a.compliance != b.compliance {
-			return a.compliance < b.compliance
-		}
-		if cmp := compareSeverityWorstFirst(a.bySeverity, b.bySeverity); cmp != 0 {
-			return cmp < 0
-		}
-		if a.issues != b.issues {
-			return a.issues > b.issues
-		}
-		return a.name < b.name
-	})
 }
 
 func sortControlSummariesForIssuesTable(s []controlSummary) {
@@ -1489,20 +1615,18 @@ func printScoreBreakdown(score *control.PlumberScoreResult) {
 	fmt.Println()
 }
 
-func printControlHeader(name string, compliance float64, skipped bool) {
+func printControlHeader(name string, issues int, skipped bool) {
 	line := strings.Repeat("─", 50)
 	fmt.Printf(fmtColored, colorDim, line, colorReset)
-	if skipped {
+	switch {
+	case skipped:
 		fmt.Printf("%s%s%s %s(skipped)%s\n", colorBold, name, colorReset, colorDim, colorReset)
-	} else {
-		compColor := colorGreen
-		if compliance < 100 {
-			compColor = colorYellow
-		}
-		if compliance == 0 {
-			compColor = colorRed
-		}
-		fmt.Printf("%s%s%s %s(%.1f%% compliant)%s\n", colorBold, name, colorReset, compColor, compliance, colorReset)
+	case issues == 0:
+		fmt.Printf("%s%s%s %s(passed)%s\n", colorBold, name, colorReset, colorGreen, colorReset)
+	case issues == 1:
+		fmt.Printf("%s%s%s %s(1 issue)%s\n", colorBold, name, colorReset, colorRed, colorReset)
+	default:
+		fmt.Printf("%s%s%s %s(%d issues)%s\n", colorBold, name, colorReset, colorRed, issues, colorReset)
 	}
 	fmt.Printf(fmtColored, colorDim, line, colorReset)
 }
@@ -1678,91 +1802,3 @@ func indentBlock(s, prefix string) string {
 	return strings.Join(lines, "\n")
 }
 
-// complianceTableRow is a single row in the compliance summary table.
-type complianceTableRow struct {
-	isTotal bool
-	name    string
-	compStr string
-	status  string
-	compOK  bool
-}
-
-func complianceStatusEmoji(ok bool) string {
-	if ok {
-		return "🟢"
-	}
-	return "🔴"
-}
-
-func buildComplianceRows(controls []controlSummary, overallCompliance, threshold float64) []complianceTableRow {
-	sorted := append([]controlSummary(nil), controls...)
-	sortControlSummariesForComplianceTable(sorted)
-
-	rows := make([]complianceTableRow, 0, len(sorted)+1)
-	for _, ctrl := range sorted {
-		r := complianceTableRow{name: ctrl.name, compStr: "-", status: "-"}
-		if !ctrl.skipped {
-			r.compOK = ctrl.compliance >= 100
-			r.compStr = fmt.Sprintf("%.1f%%", ctrl.compliance)
-			r.status = complianceStatusEmoji(r.compOK)
-		}
-		rows = append(rows, r)
-	}
-	totalOK := overallCompliance >= threshold
-	rows = append(rows, complianceTableRow{
-		isTotal: true,
-		name:    fmt.Sprintf("Total (required: %.0f%%)", threshold),
-		compStr: fmt.Sprintf("%.1f%%", overallCompliance),
-		compOK:  totalOK,
-		status:  complianceStatusEmoji(totalOK),
-	})
-	return rows
-}
-
-func complianceValueStyle(base lipgloss.Style, r complianceTableRow) lipgloss.Style {
-	if r.compStr == "-" {
-		return base.Faint(true)
-	}
-	if r.compOK {
-		return base.Inherit(styleSuccess)
-	}
-	return base.Inherit(styleError)
-}
-
-func complianceTableStyleFunc(rows []complianceTableRow) func(int, int) lipgloss.Style {
-	return func(row, col int) lipgloss.Style {
-		if row == table.HeaderRow {
-			return styleHeader
-		}
-		if row < 0 || row >= len(rows) {
-			return styleCell
-		}
-		r := rows[row]
-		style := styleCell
-		if r.isTotal {
-			style = style.Bold(true)
-		}
-		if col == 1 || col == 2 {
-			return complianceValueStyle(style, r)
-		}
-		return style
-	}
-}
-
-func printComplianceTable(controls []controlSummary, overallCompliance, threshold float64) {
-	fmt.Printf(fmtIndentLine, styleTitle.Render("Compliance"))
-
-	rows := buildComplianceRows(controls, overallCompliance, threshold)
-
-	tbl := table.New().
-		Border(lipgloss.RoundedBorder()).
-		BorderStyle(styleAccent).
-		Headers("Control", "Compliance", "Status").
-		StyleFunc(complianceTableStyleFunc(rows))
-
-	for _, r := range rows {
-		tbl.Row(r.name, r.compStr, r.status)
-	}
-
-	fmt.Println(indentBlock(tbl.String(), "  "))
-}

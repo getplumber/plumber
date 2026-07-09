@@ -18,15 +18,10 @@ import (
 // caller skips it so we don't pollute the JSON with empty placeholder
 // blocks (the bug the GitLab-only legacyResultsByName had).
 func buildLegacyResultGitHub(e control.ControlEntry, result *control.AnalysisResult, pc *configuration.PlumberConfig, findings []opaengine.Finding) (string, any) {
-	compliance := 100.0
-	if !e.Skipped && len(findings) > 0 {
-		compliance = 0
-	}
 	common := legacyCommon{
-		Compliance: compliance,
-		CiValid:    result.CiValid,
-		CiMissing:  result.CiMissing,
-		Skipped:    e.Skipped,
+		CiValid:   result.CiValid,
+		CiMissing: result.CiMissing,
+		Skipped:   e.Skipped,
 	}
 
 	switch e.ControlName {
@@ -100,11 +95,10 @@ func buildActionPinningBlock(c legacyCommon, result *control.AnalysisResult, fin
 			"actionRefsUnpinned": s.ActionRefsUnpinned,
 			"actionRefsExempt":   s.ActionRefsExempt,
 		},
-		"compliance": c.Compliance,
-		"version":    "0.1.0",
-		"ciValid":    c.CiValid,
-		"ciMissing":  c.CiMissing,
-		"skipped":    c.Skipped,
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
 	}
 }
 
@@ -137,7 +131,6 @@ func buildImageForbiddenTagsBlockGitHub(c legacyCommon, result *control.Analysis
 			"ciInvalid":          0,
 			"ciMissing":          0,
 		},
-		"compliance":           c.Compliance,
 		"version":              "0.4.0",
 		"ciValid":              c.CiValid,
 		"ciMissing":            c.CiMissing,
@@ -239,10 +232,9 @@ func buildBranchProtectionBlockGitHub(c legacyCommon, result *control.AnalysisRe
 	}
 
 	block := map[string]any{
-		"enabled":    !c.Skipped,
-		"compliance": c.Compliance,
-		"version":    "0.2.0",
-		"data":       data,
+		"enabled": !c.Skipped,
+		"version": "0.2.0",
+		"data":    data,
 		"metrics": map[string]any{
 			"branches":                   len(branches),
 			"branchesToProtect":          totalToProtect,
@@ -295,11 +287,10 @@ func buildDockerInDockerBlockGitHub(c legacyCommon, result *control.AnalysisResu
 			"dindServicesFound":   s.JobsWithDinD,
 			"insecureDaemonFound": insecure,
 		},
-		"compliance": c.Compliance,
-		"version":    "0.1.0",
-		"ciValid":    c.CiValid,
-		"ciMissing":  c.CiMissing,
-		"skipped":    c.Skipped,
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
 	}
 }
 
@@ -315,11 +306,10 @@ func buildSecurityJobsBlockGitHub(c legacyCommon, result *control.AnalysisResult
 			"securityJobsFound": s.SecurityJobsTotal,
 			"weakenedJobs":      len(findings),
 		},
-		"compliance": c.Compliance,
-		"version":    "0.1.0",
-		"ciValid":    c.CiValid,
-		"ciMissing":  c.CiMissing,
-		"skipped":    c.Skipped,
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
 	}
 }
 
@@ -333,11 +323,10 @@ func buildReusableSecretsBlock(c legacyCommon, result *control.AnalysisResult, f
 			"reusableCalls":               s.ReusableCalls,
 			"reusableCallsSecretsInherit": s.ReusableCallsSecretsInherit,
 		},
-		"compliance": c.Compliance,
-		"version":    "0.1.0",
-		"ciValid":    c.CiValid,
-		"ciMissing":  c.CiMissing,
-		"skipped":    c.Skipped,
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
 	}
 }
 
@@ -352,11 +341,10 @@ func buildTemplateInjectionBlock(c legacyCommon, result *control.AnalysisResult,
 			"scriptLinesChecked":      s.ScriptLinesTotal,
 			"templateInjectionsFound": len(findings),
 		},
-		"compliance": c.Compliance,
-		"version":    "0.1.0",
-		"ciValid":    c.CiValid,
-		"ciMissing":  c.CiMissing,
-		"skipped":    c.Skipped,
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
 	}
 }
 
@@ -369,11 +357,10 @@ func buildGitHubEnvInjectionBlock(c legacyCommon, result *control.AnalysisResult
 			"scriptLinesChecked":       s.ScriptLinesTotal,
 			"githubEnvInjectionsFound": len(findings),
 		},
-		"compliance": c.Compliance,
-		"version":    "0.1.0",
-		"ciValid":    c.CiValid,
-		"ciMissing":  c.CiMissing,
-		"skipped":    c.Skipped,
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
 	}
 }
 
@@ -388,11 +375,10 @@ func buildOverprovisionedSecretsBlock(c legacyCommon, result *control.AnalysisRe
 			"workflowsScanned":           s.WorkflowsTotal,
 			"secretsContextExportsFound": len(findings),
 		},
-		"compliance": c.Compliance,
-		"version":    "0.1.0",
-		"ciValid":    c.CiValid,
-		"ciMissing":  c.CiMissing,
-		"skipped":    c.Skipped,
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
 	}
 }
 
@@ -406,11 +392,10 @@ func buildCachePoisoningBlock(c legacyCommon, result *control.AnalysisResult, fi
 			"workflowsScanned":          s.WorkflowsTotal,
 			"unscopedCacheRestoreFound": len(findings),
 		},
-		"compliance": c.Compliance,
-		"version":    "0.1.0",
-		"ciValid":    c.CiValid,
-		"ciMissing":  c.CiMissing,
-		"skipped":    c.Skipped,
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
 	}
 }
 
@@ -425,11 +410,10 @@ func buildDangerousTriggersBlock(c legacyCommon, result *control.AnalysisResult,
 			"workflowsScanned":              s.WorkflowsTotal,
 			"workflowsWithDangerousTrigger": s.WorkflowsWithDangerousTrigger,
 		},
-		"compliance": c.Compliance,
-		"version":    "0.1.0",
-		"ciValid":    c.CiValid,
-		"ciMissing":  c.CiMissing,
-		"skipped":    c.Skipped,
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
 	}
 }
 
@@ -448,11 +432,10 @@ func buildPullRequestTargetHeadCheckoutBlock(c legacyCommon, result *control.Ana
 			"workflowsScanned":           s.WorkflowsTotal,
 			"headCheckoutsUnderPrTarget": len(findings),
 		},
-		"compliance": c.Compliance,
-		"version":    "0.1.0",
-		"ciValid":    c.CiValid,
-		"ciMissing":  c.CiMissing,
-		"skipped":    c.Skipped,
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
 	}
 }
 
@@ -466,11 +449,10 @@ func buildPermissionsBlock(c legacyCommon, result *control.AnalysisResult, findi
 			"workflowsTotal":              s.WorkflowsTotal,
 			"workflowsMissingPermissions": s.WorkflowsMissingPermissions,
 		},
-		"compliance": c.Compliance,
-		"version":    "0.1.0",
-		"ciValid":    c.CiValid,
-		"ciMissing":  c.CiMissing,
-		"skipped":    c.Skipped,
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
 	}
 }
 
@@ -498,11 +480,10 @@ func buildRequiredActionsBlock(c legacyCommon, cfg *configuration.RequiredAction
 			"satisfiedGroups":   satisfied,
 			"anySatisfiedGroup": len(requirementGroups) > 0 && satisfied > 0,
 		},
-		"compliance": c.Compliance,
-		"version":    "0.1.0",
-		"ciValid":    c.CiValid,
-		"ciMissing":  c.CiMissing,
-		"skipped":    c.Skipped,
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
 	}
 }
 
@@ -584,11 +565,10 @@ func buildExcessivePermissionsBlock(c legacyCommon, result *control.AnalysisResu
 			"jobsTotal":        s.JobsTotal,
 			"jobsWithWriteAll": len(findings),
 		},
-		"compliance": c.Compliance,
-		"version":    "0.1.0",
-		"ciValid":    c.CiValid,
-		"ciMissing":  c.CiMissing,
-		"skipped":    c.Skipped,
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
 	}
 }
 
@@ -610,11 +590,10 @@ func buildAuthorizedActionSourcesBlock(c legacyCommon, result *control.AnalysisR
 			"actionRefsTotal":        s.ActionRefsTotal + s.ActionRefsExempt,
 			"actionRefsUnauthorized": len(findings),
 		},
-		"compliance": c.Compliance,
-		"version":    "0.1.0",
-		"ciValid":    c.CiValid,
-		"ciMissing":  c.CiMissing,
-		"skipped":    c.Skipped,
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
 	}
 }
 
@@ -631,11 +610,10 @@ func buildRefConfusionBlock(c legacyCommon, result *control.AnalysisResult, find
 			"actionRefsTotal":     s.ActionRefsTotal,
 			"actionRefsAmbiguous": len(findings),
 		},
-		"compliance": c.Compliance,
-		"version":    "0.1.0",
-		"ciValid":    c.CiValid,
-		"ciMissing":  c.CiMissing,
-		"skipped":    c.Skipped,
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
 	}
 }
 
@@ -652,11 +630,10 @@ func buildArchivedActionsBlock(c legacyCommon, result *control.AnalysisResult, f
 			"actionRefsTotal":    s.ActionRefsTotal,
 			"actionRefsArchived": len(findings),
 		},
-		"compliance": c.Compliance,
-		"version":    "0.1.0",
-		"ciValid":    c.CiValid,
-		"ciMissing":  c.CiMissing,
-		"skipped":    c.Skipped,
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
 	}
 }
 
@@ -681,11 +658,10 @@ func buildDebugTraceBlockGitHub(c legacyCommon, result *control.AnalysisResult, 
 			"totalVariablesChecked": total,
 			"forbiddenFound":        len(findings),
 		},
-		"compliance": c.Compliance,
-		"version":    "0.1.0",
-		"ciValid":    c.CiValid,
-		"ciMissing":  c.CiMissing,
-		"skipped":    c.Skipped,
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
 	}
 }
 
@@ -703,11 +679,10 @@ func buildKnownVulnerableActionsBlock(c legacyCommon, result *control.AnalysisRe
 			"actionRefsTotal":      s.ActionRefsTotal,
 			"actionRefsVulnerable": len(findings),
 		},
-		"compliance": c.Compliance,
-		"version":    "0.1.0",
-		"ciValid":    c.CiValid,
-		"ciMissing":  c.CiMissing,
-		"skipped":    c.Skipped,
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
 	}
 }
 
@@ -720,11 +695,10 @@ func buildUnverifiedScriptsBlockGitHub(c legacyCommon, result *control.AnalysisR
 			"totalScriptLinesChecked": s.ScriptLinesTotal,
 			"unverifiedScriptsFound":  len(findings),
 		},
-		"compliance": c.Compliance,
-		"version":    "0.1.0",
-		"ciValid":    c.CiValid,
-		"ciMissing":  c.CiMissing,
-		"skipped":    c.Skipped,
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
 	}
 }
 
@@ -739,10 +713,9 @@ func buildLeakedSecretsBlock(c legacyCommon, _ *control.AnalysisResult, findings
 		"metrics": map[string]any{
 			"hitsFound": len(findings),
 		},
-		"compliance": c.Compliance,
-		"version":    "0.1.0",
-		"ciValid":    c.CiValid,
-		"ciMissing":  c.CiMissing,
-		"skipped":    c.Skipped,
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
 	}
 }

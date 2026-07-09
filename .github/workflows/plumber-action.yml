@@ -1,6 +1,6 @@
 # Runs Plumber on this repository the same way a user would: it analyzes the
 # repo's own workflows, uploads findings to Code Scanning (Security tab), and
-# fails the job when compliance is below threshold. Findings are uploaded even
+# fails the job when the Plumber Score is below the gate. Findings are uploaded even
 # when the scan fails, so the Security tab always reflects the latest state.
 #
 # Plumber is built from source so the gate tracks the code in this repo (the
@@ -56,7 +56,6 @@ jobs:
             --output plumber-report.json \
             --score-point \
             --score-push \
-            --threshold 100 \
             --fail-warnings
 
       - name: Upload SARIF to Code Scanning
@@ -79,8 +78,8 @@ jobs:
             plumber-report.json
           if-no-files-found: warn
 
-      - name: Enforce compliance threshold
+      - name: Enforce score gate
         if: ${{ always() && steps.analyze.outcome == 'failure' }}
         run: |
-          echo "::error::Plumber failed: compliance below threshold, or a check could not be verified with --fail-warnings (exit 3). See the analyze step log and the Security tab."
+          echo "::error::Plumber failed: the Plumber Score is below the gate, or a check could not be verified with --fail-warnings (exit 3). See the analyze step log and the Security tab."
           exit 1

@@ -194,61 +194,6 @@ func TestComputeGitLabCompliance_WithFinding(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// buildComplianceRows
-// ---------------------------------------------------------------------------
-
-func TestBuildComplianceRows_SkippedShowsDash(t *testing.T) {
-	controls := []controlSummary{
-		{name: "ctrl", compliance: 100, skipped: true},
-	}
-	rows := buildComplianceRows(controls, 100.0, 100.0)
-	// rows[0] = the control; rows[1] = total
-	if rows[0].compStr != "-" || rows[0].status != "-" {
-		t.Fatalf("skipped row: want compStr='-' status='-', got %q %q", rows[0].compStr, rows[0].status)
-	}
-}
-
-func TestBuildComplianceRows_PassingControl(t *testing.T) {
-	controls := []controlSummary{
-		{name: "ctrl", compliance: 100, skipped: false},
-	}
-	rows := buildComplianceRows(controls, 100.0, 100.0)
-	if rows[0].compStr != "100.0%" {
-		t.Fatalf("passing row: want '100.0%%', got %q", rows[0].compStr)
-	}
-	if !rows[0].compOK {
-		t.Fatal("passing row: compOK should be true")
-	}
-	if rows[0].status != "🟢" {
-		t.Fatalf("passing row: status want 🟢, got %q", rows[0].status)
-	}
-}
-
-func TestBuildComplianceRows_FailingControl(t *testing.T) {
-	controls := []controlSummary{
-		{name: "ctrl", compliance: 0, skipped: false},
-	}
-	rows := buildComplianceRows(controls, 0.0, 100.0)
-	if rows[0].status != "🔴" {
-		t.Fatalf("failing row: status want 🔴, got %q", rows[0].status)
-	}
-}
-
-func TestBuildComplianceRows_TotalRow(t *testing.T) {
-	rows := buildComplianceRows(nil, 75.0, 80.0)
-	total := rows[len(rows)-1]
-	if !total.isTotal {
-		t.Fatal("last row should be the total row")
-	}
-	if total.compStr != "75.0%" {
-		t.Fatalf("total compStr: got %q", total.compStr)
-	}
-	if total.status != "🔴" {
-		t.Fatalf("total below threshold: want 🔴, got %q", total.status)
-	}
-}
-
-// ---------------------------------------------------------------------------
 // issueTableCells
 // ---------------------------------------------------------------------------
 

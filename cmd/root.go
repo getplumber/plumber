@@ -49,10 +49,13 @@ func Execute() {
 	}
 
 	if err != nil {
+		var gateErr *ScoreGateError
 		var complianceErr *ComplianceError
 		var degradedErr *DegradedError
 		var incompleteErr *IncompleteDataError
 		switch {
+		case errors.As(err, &gateErr):
+			os.Exit(1)
 		case errors.As(err, &complianceErr):
 			os.Exit(1)
 		case errors.As(err, &degradedErr):

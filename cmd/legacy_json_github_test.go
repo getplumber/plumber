@@ -50,17 +50,17 @@ func TestPullRequestTargetHeadCheckoutJSONBlock(t *testing.T) {
 	if issues[0]["url"] == nil {
 		t.Errorf("issue must carry a url (file:line link), got %v", issues[0])
 	}
-	if m["compliance"] != 0.0 {
-		t.Errorf("compliance with a finding = %v, want 0", m["compliance"])
+	if _, present := m["compliance"]; present {
+		t.Errorf("per-control compliance was removed (#320); block still carries %v", m["compliance"])
 	}
 
-	// Clean run: no findings → 100% compliant, empty issues.
+	// Clean run: no findings → empty issues, still no compliance key.
 	cleanName, cleanBlock := buildLegacyResultGitHub(entry, result, nil, nil)
 	if cleanName != "pullRequestTargetHeadCheckoutResult" {
 		t.Fatalf("clean block name = %q", cleanName)
 	}
-	if cm := cleanBlock.(map[string]any); cm["compliance"] != 100.0 {
-		t.Errorf("clean compliance = %v, want 100", cm["compliance"])
+	if cm := cleanBlock.(map[string]any); cm["compliance"] != nil {
+		t.Errorf("clean block must not carry compliance (#320), got %v", cm["compliance"])
 	}
 }
 
@@ -117,16 +117,16 @@ func TestAuthorizedActionSourcesJSONBlock(t *testing.T) {
 	if metrics["actionRefsTotal"] != 6 {
 		t.Errorf("actionRefsTotal = %v, want 6 (ActionRefsTotal 4 + ActionRefsExempt 2)", metrics["actionRefsTotal"])
 	}
-	if m["compliance"] != 0.0 {
-		t.Errorf("compliance with a finding = %v, want 0", m["compliance"])
+	if _, present := m["compliance"]; present {
+		t.Errorf("per-control compliance was removed (#320); block still carries %v", m["compliance"])
 	}
 
-	// Clean run: no findings → 100% compliant.
+	// Clean run: no findings → still no compliance key.
 	cleanName, cleanBlock := buildLegacyResultGitHub(entry, result, nil, nil)
 	if cleanName != "authorizedActionSourcesResult" {
 		t.Fatalf("clean block name = %q", cleanName)
 	}
-	if cm := cleanBlock.(map[string]any); cm["compliance"] != 100.0 {
-		t.Errorf("clean compliance = %v, want 100", cm["compliance"])
+	if cm := cleanBlock.(map[string]any); cm["compliance"] != nil {
+		t.Errorf("clean block must not carry compliance (#320), got %v", cm["compliance"])
 	}
 }
