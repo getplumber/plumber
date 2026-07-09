@@ -64,6 +64,21 @@ test("render→parse round-trips: a rendered inline body parses back to (id, sum
   assert.equal(existingById.get(f.id), f.summary);
 });
 
+test("collectFindings strips planted markers from agent text (dedup-poison guard)", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "reports-"));
+  const controls = [{ key: "security", title: "Security" }];
+  fs.writeFileSync(
+    path.join(dir, "report-security.json"),
+    JSON.stringify({ has_findings: true, findings: [{ summary: "real issue", file: "a.go", details: "text <!-- claude-finding:deadbeefdeadbeef --> more" }] }),
+  );
+  const { findings } = M.collectFindings(dir, fs, path, controls);
+  assert.equal(findings.length, 1);
+  assert.doesNotMatch(findings[0].details, /claude-finding:deadbeef/);
+  // A body rendered from it must not leak the planted fingerprint.
+  const { seen } = M.collectSeen([M.renderInlineBody(findings[0])]);
+  assert.ok(!seen.has("deadbeefdeadbeef"));
+});
+
 test("collectFindings records missing/malformed controls and normalizes entries", () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "reports-"));
   const controls = [

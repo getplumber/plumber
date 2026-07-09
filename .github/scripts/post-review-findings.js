@@ -40,6 +40,11 @@ const fingerprint = (key, file, summary) =>
 // prefix so the stored text is the bare summary.
 const stripTitle = (s) => String(s).trim().replace(/^\[[^\]]+\]\s+/, "");
 
+// Agent-authored text (summary/details) is untrusted. Strip any HTML
+// comment so it can't smuggle a `<!-- claude-finding:... -->` marker into a
+// posted body that a later run would harvest into the dedup state.
+const sanitizeAgentText = (s) => String(s).replace(/<!--[\s\S]*?-->/g, "");
+
 const markerRe = () => new RegExp(`<!--\\s*${FINDING_MARKER}:([0-9a-f]+)\\s*-->`, "g");
 const findingRe = () =>
   new RegExp(`<!--\\s*${FINDING_MARKER}:([0-9a-f]+)\\s*-->[\\s\\S]*?\\*\\*(.+?)\\*\\*`, "g");
@@ -93,15 +98,16 @@ function collectFindings(reportsDir, fs, path, controls) {
     }
     for (const f of result.findings) {
       if (!f || typeof f !== "object" || !f.summary || !f.file) continue;
+      const summary = sanitizeAgentText(f.summary);
       findings.push({
         key,
         title,
-        summary: String(f.summary),
+        summary,
         severity: typeof f.severity === "string" ? f.severity : "",
         file: String(f.file),
         line: Number.isInteger(f.line) ? f.line : null,
-        details: typeof f.details === "string" ? f.details : "",
-        id: fingerprint(key, String(f.file), String(f.summary)),
+        details: sanitizeAgentText(typeof f.details === "string" ? f.details : ""),
+        id: fingerprint(key, String(f.file), summary),
       });
     }
   }
@@ -156,6 +162,7 @@ module.exports = {
   clamp,
   fingerprint,
   stripTitle,
+  sanitizeAgentText,
   markerRe,
   findingRe,
   collectSeen,
