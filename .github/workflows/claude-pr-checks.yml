@@ -137,8 +137,7 @@ jobs:
   # the only thing that can post. It creates one resolvable review-comment
   # thread per finding and skips any finding already posted (open OR
   # resolved) — both by exact fingerprint and, for reworded repeats, by a
-  # conservative Haiku semantic-dedup pass — so re-runs never duplicate a
-  # comment.
+  # Sonnet semantic-dedup pass — so re-runs never duplicate a comment.
   comment:
     name: post-review-comment
     needs: review
@@ -165,7 +164,7 @@ jobs:
       - name: Post finding comments
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
-          # Used only for the deterministic Haiku dedup pass below. This step
+          # Used only for the semantic dedup pass below. This step
           # never handles untrusted PR content directly (the review agents do,
           # in a separate job with no pull-requests write access).
           ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -302,10 +301,11 @@ jobs:
             // 2b. Semantic dedup. The fingerprint above only catches a
             // byte-identical summary; the review agent routinely rewords the
             // same issue between runs, giving a reworded-but-identical finding
-            // a fresh fingerprint. A single conservative Haiku pass matches new
-            // findings to already-posted ones by meaning. It merges only when
-            // clearly the same issue — a wrong merge would silently drop a real
-            // finding — and any failure falls back to posting (fail-open).
+            // a fresh fingerprint. A single Sonnet pass matches new findings to
+            // already-posted ones by meaning, to keep re-runs from adding
+            // near-duplicate threads. It still guards against merging genuinely
+            // distinct issues (a wrong merge would silently drop a real
+            // finding), and any failure falls back to posting (fail-open).
             const candidates = findings.filter((f) => !seen.has(f.id));
             const priorSummaries = [...existingById.entries()].map(([id, summary]) => ({ id, summary }));
             if (candidates.length > 0 && priorSummaries.length > 0 && process.env.ANTHROPIC_API_KEY) {
@@ -318,9 +318,11 @@ jobs:
                   "\n\nNEW candidate findings (index — summary):\n" +
                   candidates.map((c, i) => `${i} — ${c.summary}`).join("\n") +
                   "\n\nFor each NEW candidate, decide whether it describes the SAME underlying issue " +
-                  "(same defect, same location or mechanism) as one of the already-posted findings — " +
-                  "not merely the same category or the same file. Be conservative: only mark a duplicate " +
-                  "when you are confident it is the same issue. When unsure, it is NOT a duplicate.";
+                  "(same defect, same root cause, same location or mechanism) as one of the " +
+                  "already-posted findings. Reworded, reordered, or re-summarized versions of the " +
+                  "same issue ARE duplicates — merge them. Do NOT merge findings that are merely the " +
+                  "same category or the same file but a different defect; when two findings could " +
+                  "plausibly be different bugs, keep them separate.";
                 const schema = {
                   type: "object",
                   additionalProperties: false,
@@ -349,7 +351,7 @@ jobs:
                     "content-type": "application/json",
                   },
                   body: JSON.stringify({
-                    model: "claude-haiku-4-5",
+                    model: "claude-sonnet-5",
                     // Scale with the candidate count (~25-35 output tokens per
                     // result) so a large run's JSON isn't truncated mid-object,
                     // which would make dedup fail open exactly when it matters.
