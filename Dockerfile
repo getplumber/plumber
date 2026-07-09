@@ -1,8 +1,17 @@
 # Build stage
-FROM golang:1.26-alpine@sha256:f23e8b227fb4493eabe03bede4d5a32d04092da71962f1fb79b5f7d1e6c2a17f AS builder
+# golang:1.26-alpine — pinned to a digest shipping Go 1.26.5 (fixes stdlib
+# advisory GO-2026-4970, High). Bump this digest when go.mod's `toolchain`
+# is raised so the bundled compiler carries stdlib security fixes.
+FROM golang:1.26-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS builder
 
 # Set working directory
 WORKDIR /app
+
+# The golang image pins GOTOOLCHAIN=local, which makes `go` ignore the
+# `toolchain` directive in go.mod. Force auto so a go.mod toolchain bump is
+# honored (downloaded) here too, matching ci.yml — otherwise the compiled
+# binary keeps the base image's stdlib even after go.mod is patched.
+ENV GOTOOLCHAIN=auto
 
 # Copy go mod files first for better caching
 COPY go.mod go.sum ./
