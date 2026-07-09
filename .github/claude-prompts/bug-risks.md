@@ -19,8 +19,8 @@ Review the diff for:
 ## Regressions and behavior changes
 
 For each modified function, compare the new behavior with the previous one
-(use the diff, and `git show <base>:<path>` when you need the full previous
-version of a file). Flag:
+(the unified diff shows both the removed old lines and the added new lines).
+Flag:
 
 - Outputs or return values that change for inputs the old code handled.
 - Removed or altered handling of edge cases the old code covered.
