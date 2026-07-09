@@ -27,12 +27,15 @@ const clamp = (s, max = MAX_BODY) =>
     ? s.slice(0, max).replace(/[\uD800-\uDBFF]$/, "") + "\n\n*(truncated)*"
     : s;
 
-// Fingerprint excludes the line number so line drift across pushes does not
-// turn one finding into a "new" one.
-const fingerprint = (key, file, summary) =>
+// Fingerprint includes the line so two distinct defects that share a
+// one-sentence summary in the same file (e.g. the same lint at lines 40 and
+// 80) stay distinct instead of collapsing to one. Line drift across pushes
+// changes the exact fingerprint, but the semantic-dedup pass catches the
+// reworded/drifted repeat, so we don't re-post it.
+const fingerprint = (key, file, line, summary) =>
   crypto
     .createHash("sha1")
-    .update(`${key}\n${file}\n${String(summary).trim().replace(/\s+/g, " ").toLowerCase()}`)
+    .update(`${key}\n${file}\n${line == null ? "" : line}\n${String(summary).trim().replace(/\s+/g, " ").toLowerCase()}`)
     .digest("hex")
     .slice(0, 16);
 
@@ -40,14 +43,26 @@ const fingerprint = (key, file, summary) =>
 // prefix so the stored text is the bare summary.
 const stripTitle = (s) => String(s).trim().replace(/^\[[^\]]+\]\s+/, "");
 
-// Agent-authored text (summary/details) is untrusted. Strip any HTML
-// comment so it can't smuggle a `<!-- claude-finding:... -->` marker into a
-// posted body that a later run would harvest into the dedup state.
-const sanitizeAgentText = (s) => String(s).replace(/<!--[\s\S]*?-->/g, "");
+// Agent-authored text is untrusted. Strip HTML comments so it can't smuggle
+// a `<!-- claude-finding:... -->` marker into a posted body that a later run
+// would harvest into the dedup state. Loop until stable so nested/overlapping
+// comments can't reassemble a marker after a single pass.
+const sanitizeAgentText = (s) => {
+  let out = String(s);
+  let prev;
+  do {
+    prev = out;
+    out = out.replace(/<!--[\s\S]*?-->/g, "");
+  } while (out !== prev);
+  return out;
+};
 
 const markerRe = () => new RegExp(`<!--\\s*${FINDING_MARKER}:([0-9a-f]+)\\s*-->`, "g");
+// Greedy (.+) — bounded to the summary line since `.` excludes newlines — so
+// a summary that itself contains `**bold**` is recovered whole instead of
+// being truncated at the first inner `**`.
 const findingRe = () =>
-  new RegExp(`<!--\\s*${FINDING_MARKER}:([0-9a-f]+)\\s*-->[\\s\\S]*?\\*\\*(.+?)\\*\\*`, "g");
+  new RegExp(`<!--\\s*${FINDING_MARKER}:([0-9a-f]+)\\s*-->[\\s\\S]*?\\*\\*(.+)\\*\\*`, "g");
 
 // From a list of comment bodies (already filtered to our own comments),
 // collect every posted fingerprint (`seen`) and a fingerprint->summary map
@@ -107,16 +122,21 @@ function collectFindings(reportsDir, fs, path, controls) {
       continue;
     }
     for (const f of valid) {
+      // Sanitize every agent-authored field that gets rendered into a
+      // comment body — summary, details, severity, and file — so none can
+      // smuggle a marker into the dedup state.
       const summary = sanitizeAgentText(f.summary);
+      const file = sanitizeAgentText(f.file);
+      const line = Number.isInteger(f.line) ? f.line : null;
       findings.push({
         key,
         title,
         summary,
-        severity: typeof f.severity === "string" ? f.severity : "",
-        file: String(f.file),
-        line: Number.isInteger(f.line) ? f.line : null,
+        severity: sanitizeAgentText(typeof f.severity === "string" ? f.severity : ""),
+        file,
+        line,
         details: sanitizeAgentText(typeof f.details === "string" ? f.details : ""),
-        id: fingerprint(key, String(f.file), summary),
+        id: fingerprint(key, file, line, summary),
       });
     }
   }
