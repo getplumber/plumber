@@ -1,0 +1,28 @@
+name: Scripts tests
+
+# Unit tests for the extracted finding-posting helpers used by
+# claude-pr-checks.yml. Keeps that dedup/redaction/marker logic verified.
+
+on:
+  pull_request:
+    paths:
+      - .github/scripts/**
+  push:
+    branches: [main]
+    paths:
+      - .github/scripts/**
+
+permissions: {}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      - name: Run unit tests
+        run: node --test .github/scripts/

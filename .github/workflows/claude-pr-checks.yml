@@ -174,8 +174,18 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 10
     permissions:
+      contents: read # checkout, to require the poster module
       pull-requests: write
     steps:
+      # Needed so the poster step can require .github/scripts. Must run BEFORE
+      # download-artifact — checkout's clean step would otherwise wipe the
+      # downloaded reports/ directory.
+      - name: Checkout
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
       # Zero matching artifacts is NOT an error for pattern-based downloads;
       # continue-on-error additionally keeps a transient download failure from
       # skipping the comment script, which already treats missing reports as
@@ -199,7 +209,12 @@ jobs:
           script: |
             const fs = require("fs");
             const path = require("path");
-            const crypto = require("crypto");
+            // Pure logic (fingerprint/redact/clamp/marker parsing/report
+            // collection/body rendering) lives in a unit-tested module — see
+            // .github/scripts/post-review-findings.test.js. This step keeps
+            // only the GitHub/Anthropic I/O. Requires the checkout above.
+            const M = require(`${process.env.GITHUB_WORKSPACE}/.github/scripts/post-review-findings.js`);
+            const UNANCHORED_MARKER = "<!-- claude-pr-checks-unanchored -->";
 
             // key = matrix control id (file/artifact names); title = the
             // category heading shown on each finding comment.
@@ -209,85 +224,19 @@ jobs:
               { key: "test-coverage", title: "Test coverage" },
               { key: "new-control-check", title: "New control check" },
             ];
-            const FINDING_MARKER = "claude-finding"; // <!-- claude-finding:<id> -->
-            const UNANCHORED_MARKER = "<!-- claude-pr-checks-unanchored -->";
-            const MAX_BODY = 65000; // GitHub comment limit is 65536 chars
 
             const owner = context.repo.owner;
             const repo = context.repo.repo;
             const pull_number = context.issue.number;
             const headSha = context.payload.pull_request.head.sha;
 
-            // Comment bodies posted via the API are NOT covered by GitHub
-            // secret masking, so scrub key-shaped strings defensively. Covers
-            // Anthropic keys plus GitHub tokens/PATs, since the finding text
-            // comes from an agent that reads untrusted, injection-prone input.
-            const redact = (s) =>
-              String(s)
-                .replace(/sk-ant-[A-Za-z0-9_-]{8,}/g, "sk-ant-[REDACTED]")
-                .replace(/gh[pousr]_[A-Za-z0-9]{20,}/g, "gh_[REDACTED]")
-                .replace(/github_pat_[A-Za-z0-9_]{20,}/g, "github_pat_[REDACTED]");
-            const clamp = (s) =>
-              s.length > MAX_BODY
-                ? s.slice(0, MAX_BODY).replace(/[\uD800-\uDBFF]$/, "") + "\n\n*(truncated)*"
-                : s;
-            // Fingerprint excludes the line number so line drift across pushes
-            // does not turn one finding into a "new" one.
-            const fingerprint = (key, file, summary) =>
-              crypto
-                .createHash("sha1")
-                .update(`${key}\n${file}\n${summary.trim().replace(/\s+/g, " ").toLowerCase()}`)
-                .digest("hex")
-                .slice(0, 16);
-
             // 1. Collect findings from each control's report.
-            const findings = [];
-            const missing = [];
-            for (const { key, title } of CONTROLS) {
-              const file = path.join("reports", `report-${key}.json`);
-              if (!fs.existsSync(file)) {
-                missing.push(title);
-                continue;
-              }
-              let result;
-              try {
-                result = JSON.parse(fs.readFileSync(file, "utf8"));
-              } catch (e) {
-                core.warning(`Could not parse ${file}: ${e}`);
-                missing.push(title);
-                continue;
-              }
-              if (result === null || typeof result !== "object") {
-                core.warning(`Malformed report in ${file}: not an object`);
-                missing.push(title);
-                continue;
-              }
-              if (!result.has_findings) continue;
-              if (!Array.isArray(result.findings) || result.findings.length === 0) {
-                // Claimed findings but delivered none: a failed report.
-                core.warning(`Malformed report in ${file}: has_findings with no findings`);
-                missing.push(title);
-                continue;
-              }
-              for (const f of result.findings) {
-                if (!f || typeof f !== "object" || !f.summary || !f.file) continue;
-                findings.push({
-                  key,
-                  title,
-                  summary: String(f.summary),
-                  severity: typeof f.severity === "string" ? f.severity : "",
-                  file: String(f.file),
-                  line: Number.isInteger(f.line) ? f.line : null,
-                  details: typeof f.details === "string" ? f.details : "",
-                  id: fingerprint(key, String(f.file), String(f.summary)),
-                });
-              }
-            }
+            const { findings, missing } = M.collectFindings("reports", fs, path, CONTROLS);
 
-            // 2. Every fingerprint already posted anywhere — inline review
+            // 2. Fingerprints already posted anywhere on the PR — inline review
             //    threads (open OR resolved) and the unanchored-fallback issue
-            //    comment (which holds many fingerprints) — so a re-run never
-            //    posts the same finding twice, in either mechanism.
+            //    comment — restricted to OUR comments so nobody else can plant
+            //    marker-shaped text to suppress future findings.
             const reviewComments = await github.paginate(github.rest.pulls.listReviewComments, {
               owner,
               repo,
@@ -300,30 +249,11 @@ jobs:
               issue_number: pull_number,
               per_page: 100,
             });
-            const seen = new Set();
-            // fingerprint -> the summary text of an already-posted finding,
-            // for the semantic dedup pass below.
-            const existingById = new Map();
-            const reFp = new RegExp(`<!--\\s*${FINDING_MARKER}:([0-9a-f]+)\\s*-->`, "g");
-            const reFinding = new RegExp(
-              `<!--\\s*${FINDING_MARKER}:([0-9a-f]+)\\s*-->[\\s\\S]*?\\*\\*(.+?)\\*\\*`,
-              "g",
-            );
-            // Only trust markers written by this workflow. Harvesting them
-            // from arbitrary commenters would let anyone plant marker-shaped
-            // text to suppress future findings (exact or semantic dedup).
             const isOurComment = (c) => c.user && c.user.login === "github-actions[bot]";
-            for (const c of [...reviewComments, ...issueComments]) {
-              if (!c.body || !isOurComment(c)) continue;
-              for (const m of c.body.matchAll(reFp)) seen.add(m[1]);
-              for (const m of c.body.matchAll(reFinding)) {
-                // Unanchored entries render as **[Title] summary**; strip the
-                // "[Title] " prefix so the stored text is the bare summary the
-                // semantic-dedup prompt compares against.
-                const summary = m[2].trim().replace(/^\[[^\]]+\]\s+/, "");
-                if (!existingById.has(m[1])) existingById.set(m[1], summary);
-              }
-            }
+            const ourBodies = [...reviewComments, ...issueComments]
+              .filter((c) => isOurComment(c) && c.body)
+              .map((c) => c.body);
+            const { seen, existingById } = M.collectSeen(ourBodies);
 
             // 2b. Semantic dedup. The fingerprint above only catches a
             // byte-identical summary; the review agent routinely rewords the
@@ -432,16 +362,7 @@ jobs:
             for (const f of findings) {
               if (seen.has(f.id)) continue; // already posted or resolved
               seen.add(f.id);
-              const sev = f.severity ? ` _(${f.severity})_` : "";
-              const body = clamp(
-                redact(
-                  `<!-- ${FINDING_MARKER}:${f.id} -->\n` +
-                    `### 🔴 ${f.title}\n\n` +
-                    `**${f.summary}**${sev}\n\n` +
-                    `${f.details}\n\n` +
-                    `<sub>Control: \`.github/claude-prompts/${f.key}.md\` · resolve this conversation once addressed.</sub>`,
-                ),
-              );
+              const body = M.renderInlineBody(f);
               const base = { owner, repo, pull_number, commit_id: headSha, path: f.file, body };
               try {
                 const params = { ...base };
@@ -474,33 +395,13 @@ jobs:
             //    while under MAX_BODY, so the size guard never cuts a marker
             //    mid-body (which would have the same effect).
             if (unanchored.length > 0) {
-              const header = `${UNANCHORED_MARKER}\n# Claude PR review — findings not anchorable to the diff`;
-              // Reuse the issue comments fetched for dedupe above.
+              // Reuse the issue comments fetched for dedupe above. MERGE into
+              // the prior body (never replace) so earlier findings' markers —
+              // the only record of their fingerprints — survive.
               const prev = issueComments.find(
                 (c) => isOurComment(c) && c.body && c.body.startsWith(UNANCHORED_MARKER),
               );
-              // Prior body already contains earlier findings + their markers
-              // (and was itself redacted when written). Start from it.
-              let body = prev ? prev.body : header;
-              let omitted = 0;
-              for (const f of unanchored) {
-                const sev = f.severity ? ` _(${f.severity})_` : "";
-                const loc = `${f.file}${f.line ? ":" + f.line : ""}`;
-                const entry = redact(
-                  `\n\n<!-- ${FINDING_MARKER}:${f.id} -->\n` +
-                    `- [ ] **[${f.title}] ${f.summary}**${sev} — \`${loc}\`\n\n  ` +
-                    `${f.details.replace(/\n/g, "\n  ")}`,
-                );
-                if (body.length + entry.length > MAX_BODY - 120) {
-                  omitted++;
-                  continue;
-                }
-                body += entry;
-              }
-              if (omitted > 0) {
-                body += `\n\n> *(${omitted} further finding(s) omitted — comment size limit.)*`;
-              }
-              body = clamp(body); // final guard for an oversized prior body
+              const body = M.buildUnanchoredBody(UNANCHORED_MARKER, prev ? prev.body : null, unanchored);
               if (prev) {
                 await github.rest.issues.updateComment({ owner, repo, comment_id: prev.id, body });
               } else {
