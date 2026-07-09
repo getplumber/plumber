@@ -16,6 +16,15 @@ on:
     # `synchronize` re-reviews on every push; the concurrency group below
     # cancels in-progress runs so rapid pushes only pay for the latest.
     types: [opened, ready_for_review, synchronize]
+    # Don't review the review system's own machinery. A PR that only changes
+    # these files (like this one) would otherwise re-review itself on every
+    # push forever. Product-code PRs are unaffected; changes here are
+    # human-reviewed instead.
+    paths-ignore:
+      - .github/workflows/claude-pr-checks.yml
+      - .github/workflows/scripts-test.yml
+      - .github/scripts/**
+      - .github/claude-prompts/**
 
 # Deny-all by default; each job declares exactly what it needs.
 permissions: {}
