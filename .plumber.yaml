@@ -1024,11 +1024,15 @@ github:
         - ncipollo/release-action
         - goreleaser/goreleaser-action
         - crazy-max/ghaction-docker-buildx
+        - changesets/action
       # Full inventory of cache-restoring actions AND their per-action
       # semantics (the rego hardcodes none of this). mode:
       #   always  — restores whenever present (actions/cache, rust-cache)
       #   default — restores unless disableInput holds disableValue
       #   opt-in  — restores only when enableInput names a package manager
+      #             (enableContains further requires that substring in the
+      #             value, e.g. build-push-action only caches via GHA when
+      #             cache-from mentions type=gha)
       # Add your org's own cache actions with the matching mode.
       cacheActions:
         - {action: actions/cache, mode: always}
@@ -1040,6 +1044,7 @@ github:
         - {action: actions/setup-python, mode: opt-in, enableInput: cache}
         - {action: actions/setup-java, mode: opt-in, enableInput: cache}
         - {action: pnpm/action-setup, mode: opt-in, enableInput: cache}
+        - {action: docker/build-push-action, mode: opt-in, enableInput: cache-from, enableContains: type=gha}
       # Shell commands (regex) that mark a job as release intent even under a
       # plain push/tag trigger with no publish action.
       publishScriptPatterns:
@@ -1049,6 +1054,17 @@ github:
         - '(?i)poetry\s+publish'
         - '(?i)gh\s+release\s+create'
         - '(?i)goreleaser\s+release'
+        - '(?i)semantic-release'
+        - '(?i)gradlew?\b[^\n]*\bpublish'
+        - '(?i)\bmvnw?\b[^\n]*\bdeploy\b'
+        - '(?i)dotnet\s+nuget\s+push'
+        - '(?i)gem\s+push'
+        - '(?i)docker\s+push'
+      # Verification-only forms that veto a publish-script match on the same
+      # run block — they never publish anything.
+      publishScriptExcludePatterns:
+        - '(?i)--dry-run'
+        - '(?i)publishToMavenLocal'
       # Jobs to exempt from this control (glob on `<workflow-file>/<job-id>`).
       # The escape hatch for release jobs you have reviewed and accepted —
       # e.g. a lint job that caches but ships nothing.

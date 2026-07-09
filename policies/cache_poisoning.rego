@@ -39,11 +39,18 @@ _publish_actions := object.get(input, ["config", "cachePoisoning", "publishActio
 
 _publish_script_patterns := object.get(input, ["config", "cachePoisoning", "publishScriptPatterns"], [])
 
+_publish_script_exclude_patterns := object.get(input, ["config", "cachePoisoning", "publishScriptExcludePatterns"], [])
+
 _cache_action_specs := object.get(input, ["config", "cachePoisoning", "cacheActions"], [])
 
-# A release-scoped reference weaves the ref, tag, or release version into
-# a string.
-release_scope_pattern := `github\.(ref(_name)?|sha|event\.release|event\.pull_request\.head\.sha)`
+# A release-scoped reference weaves the ref, tag, sha, or a run-unique
+# token into the key as a real `${{ ... }}` expression. The literal text
+# "github.ref_name" outside an expression is a constant string (never
+# expanded, same key every run), and `github.ref_type` is just
+# "branch"/"tag" (shared by every release) — the `\$\{\{` anchor and the
+# trailing `\b` reject both. run_id / run_number are unique per run, so
+# a key woven with them can never restore another run's cache.
+release_scope_pattern := `\$\{\{[^}]*\bgithub\.(ref(_name)?|sha|run_id|run_number|event\.release|event\.pull_request\.head\.sha)\b[^}]*\}\}`
 
 deny contains finding if {
 	some i, j
@@ -77,6 +84,14 @@ _is_release_context(job) if {
 	some k
 	some pat in _publish_script_patterns
 	regex.match(pat, job.scripts[k])
+	not _script_excluded(job.scripts[k])
+}
+
+# A script that matches an exclude pattern is not publish intent — e.g.
+# `npm publish --dry-run` pack checks or gradle publishToMavenLocal.
+_script_excluded(script) if {
+	some pat in _publish_script_exclude_patterns
+	regex.match(pat, script)
 }
 
 _is_publish_action(uses) if {
@@ -111,12 +126,20 @@ _cache_disabled(action, spec) if {
 }
 
 # An opt-in action caches only when its enableInput names a manager.
+# When the spec carries enableContains, the input value must also
+# contain that substring (e.g. build-push-action restores a poisonable
+# cache only when cache-from mentions type=gha, not type=registry).
 _cache_enabled(action, spec) if {
 	c := action.with[spec.enableInput]
 	is_string(c)
 	c != ""
 	lower(c) != "false"
+	_enable_value_matches(c, spec)
 }
+
+_enable_value_matches(_, spec) if not spec.enableContains
+
+_enable_value_matches(c, spec) if contains(lower(c), lower(spec.enableContains))
 
 # Normalise a with-value to a bool: a real bool as-is, or a "true"/"false"
 # string (any case) to its bool. Anything else is undefined (no match).
@@ -171,6 +194,8 @@ _job_allowed(job) if {
 }
 
 # ── helpers ──────────────────────────────────────────────────────────
-_uses_prefix(uses, p) if uses == p
+# GitHub resolves owner/repo case-insensitively, so the inventory match
+# must too (swatinem/rust-cache == Swatinem/rust-cache).
+_uses_prefix(uses, p) if lower(uses) == lower(p)
 
-_uses_prefix(uses, p) if startswith(uses, sprintf("%s@", [p]))
+_uses_prefix(uses, p) if startswith(lower(uses), lower(sprintf("%s@", [p])))

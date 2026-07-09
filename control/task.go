@@ -201,12 +201,18 @@ func buildEngineConfig(controls *configuration.ControlsConfig) map[string]any {
 				if s.EnableInput != "" {
 					m["enableInput"] = s.EnableInput
 				}
+				if s.EnableContains != "" {
+					m["enableContains"] = s.EnableContains
+				}
 				specs = append(specs, m)
 			}
 			entry["cacheActions"] = specs
 		}
 		if len(c.PublishScriptPatterns) > 0 {
 			entry["publishScriptPatterns"] = c.PublishScriptPatterns
+		}
+		if len(c.PublishScriptExcludePatterns) > 0 {
+			entry["publishScriptExcludePatterns"] = c.PublishScriptExcludePatterns
 		}
 		if len(c.AllowedJobs) > 0 {
 			entry["allowedJobs"] = c.AllowedJobs

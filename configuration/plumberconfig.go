@@ -102,7 +102,7 @@ var validControlSchema = map[string][]string{
 		"enabled",
 	},
 	"releaseWorkflowsMustNotRestoreUntrustedCache": {
-		"enabled", "publishActions", "cacheActions", "publishScriptPatterns", "allowedJobs",
+		"enabled", "publishActions", "cacheActions", "publishScriptPatterns", "publishScriptExcludePatterns", "allowedJobs",
 	},
 	"workflowMustIncludeRequiredActions": {
 		"enabled", "required", "requiredGroups",
@@ -431,6 +431,12 @@ type CachePoisoningControlConfig struct {
 	// mark a job as release intent (e.g. `cargo publish`).
 	PublishScriptPatterns []string `yaml:"publishScriptPatterns,omitempty"`
 
+	// PublishScriptExcludePatterns are regexes that veto a
+	// PublishScriptPatterns match on the same `run:` block —
+	// verification-only forms that never publish (e.g.
+	// `npm publish --dry-run`, gradle `publishToMavenLocal`).
+	PublishScriptExcludePatterns []string `yaml:"publishScriptExcludePatterns,omitempty"`
+
 	// AllowedJobs are glob patterns matched against the namespaced job
 	// name (`<workflow>/<job>`). A job that matches is exempt from this
 	// control — the escape hatch for reviewed/accepted release jobs.
@@ -454,6 +460,11 @@ type CacheActionSpec struct {
 	// EnableInput applies to mode "opt-in": the `with:` input that, when
 	// set to a package manager, turns caching on (e.g. cache=npm).
 	EnableInput string `yaml:"enableInput,omitempty"`
+	// EnableContains additionally requires EnableInput's value to contain
+	// this substring (case-insensitive) for the cache to count as active —
+	// e.g. build-push-action restores a GitHub Actions cache only when
+	// cache-from contains "type=gha".
+	EnableContains string `yaml:"enableContains,omitempty"`
 }
 
 // IsEnabled reports whether the control is enabled.
