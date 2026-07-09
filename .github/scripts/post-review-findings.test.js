@@ -101,6 +101,40 @@ test("collectFindings records missing/malformed controls and normalizes entries"
   assert.deepEqual(missing.sort(), ["Bug risks", "New control check", "Test coverage"]);
 });
 
+test("collectFindings marks a control missing when it claims findings but delivers none usable", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "reports-"));
+  const controls = [{ key: "security", title: "Security" }];
+  // has_findings true but every entry lacks file -> not silently dropped
+  fs.writeFileSync(path.join(dir, "report-security.json"), JSON.stringify({ has_findings: true, findings: [{ summary: "no file here" }] }));
+  const { findings, missing } = M.collectFindings(dir, fs, path, controls);
+  assert.equal(findings.length, 0);
+  assert.deepEqual(missing, ["Security"]);
+});
+
+test("collectFindings surfaces has_findings:false-but-findings-present as incomplete", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "reports-"));
+  const controls = [
+    { key: "security", title: "Security" },
+    { key: "bug-risks", title: "Bug risks" },
+  ];
+  // contradictory: has_findings false yet includes a real finding
+  fs.writeFileSync(path.join(dir, "report-security.json"), JSON.stringify({ has_findings: false, findings: [{ summary: "s", file: "a.go" }] }));
+  // genuinely clean
+  fs.writeFileSync(path.join(dir, "report-bug-risks.json"), JSON.stringify({ has_findings: false, findings: [] }));
+  const { findings, missing } = M.collectFindings(dir, fs, path, controls);
+  assert.equal(findings.length, 0);
+  assert.deepEqual(missing, ["Security"]); // bug-risks is a genuine clean pass, not missing
+});
+
+test("buildUnanchoredBody keeps the marker (drops details) when the entry won't fit", () => {
+  const MARK = "<!-- claude-pr-checks-unanchored -->";
+  const big = { key: "bug-risks", title: "Bug risks", summary: "short", severity: "", file: "b.go", line: 9, details: "D".repeat(70000), id: "3333333333333333" };
+  const body = M.buildUnanchoredBody(MARK, null, [big]);
+  const { seen } = M.collectSeen([body]);
+  assert.ok(seen.has("3333333333333333")); // fingerprint recorded despite oversized details
+  assert.ok(body.length <= M.MAX_BODY);
+});
+
 test("buildUnanchoredBody merges into prior body and never truncates a marker mid-body", () => {
   const MARK = "<!-- claude-pr-checks-unanchored -->";
   const prev = `${MARK}\n# Claude PR review — findings not anchorable to the diff\n\n<!-- ${M.FINDING_MARKER}:1111111111111111 -->\n- [ ] **[Old] prior finding** — z\n\n  detail`;

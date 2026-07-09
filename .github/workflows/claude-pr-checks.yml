@@ -53,6 +53,10 @@ jobs:
       - name: Checkout
         uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
         with:
+          # Check out the PR head (not the default merge ref) so the files and
+          # line numbers the agent sees match head.sha, which review comments
+          # anchor to — otherwise findings can target the wrong lines.
+          ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
           persist-credentials: false
 
@@ -250,10 +254,15 @@ jobs:
               per_page: 100,
             });
             const isOurComment = (c) => c.user && c.user.login === "github-actions[bot]";
-            const ourBodies = [...reviewComments, ...issueComments]
+            // Inline-thread fingerprints only (NOT the unanchored issue
+            // comment): a currently-unanchored finding must be re-processed so
+            // it can upgrade to a resolvable inline thread once its line
+            // becomes anchorable, and so the unanchored comment is rebuilt
+            // fresh each run (dropping fixed/upgraded entries).
+            const reviewBodies = reviewComments
               .filter((c) => isOurComment(c) && c.body)
               .map((c) => c.body);
-            const { seen, existingById } = M.collectSeen(ourBodies);
+            const { seen, existingById } = M.collectSeen(reviewBodies);
 
             // 2b. Semantic dedup. The fingerprint above only catches a
             // byte-identical summary; the review agent routinely rewords the
@@ -394,27 +403,54 @@ jobs:
             //    re-post forever. Entries are appended one at a time and only
             //    while under MAX_BODY, so the size guard never cuts a marker
             //    mid-body (which would have the same effect).
+            // 4. Rebuild the unanchored-findings comment from THIS run's set
+            //    (prevBody = null), so findings that were fixed, or upgraded to
+            //    an inline thread once anchorable, drop out and none accumulate.
+            const prevUnanchored = issueComments.find(
+              (c) => isOurComment(c) && c.body && c.body.startsWith(UNANCHORED_MARKER),
+            );
             if (unanchored.length > 0) {
-              // Reuse the issue comments fetched for dedupe above. MERGE into
-              // the prior body (never replace) so earlier findings' markers —
-              // the only record of their fingerprints — survive.
-              const prev = issueComments.find(
-                (c) => isOurComment(c) && c.body && c.body.startsWith(UNANCHORED_MARKER),
-              );
-              const body = M.buildUnanchoredBody(UNANCHORED_MARKER, prev ? prev.body : null, unanchored);
-              if (prev) {
-                await github.rest.issues.updateComment({ owner, repo, comment_id: prev.id, body });
+              const body = M.buildUnanchoredBody(UNANCHORED_MARKER, null, unanchored);
+              if (prevUnanchored) {
+                await github.rest.issues.updateComment({ owner, repo, comment_id: prevUnanchored.id, body });
               } else {
                 await github.rest.issues.createComment({ owner, repo, issue_number: pull_number, body });
               }
+            } else if (prevUnanchored) {
+              // Nothing unanchored this run — clear the stale checklist.
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: prevUnanchored.id,
+                body: `${UNANCHORED_MARKER}\n# Claude PR review — findings not anchorable to the diff\n\n_None on the latest revision._`,
+              });
             }
 
-            core.info(
-              `Detected ${findings.length} finding(s); posted ${postedCount} new comment(s).`,
+            // 5. Surface an incomplete run on the PR itself — a log warning is
+            //    invisible, so missing/failed controls could otherwise look
+            //    like a clean advisory pass.
+            const INCOMPLETE_MARKER = "<!-- claude-pr-checks-incomplete -->";
+            const prevIncomplete = issueComments.find(
+              (c) => isOurComment(c) && c.body && c.body.startsWith(INCOMPLETE_MARKER),
             );
             if (missing.length > 0) {
               core.warning(`No report from: ${missing.join(", ")}.`);
+              const body = `${INCOMPLETE_MARKER}\n> ⚠️ **Incomplete Claude review** — these controls did not complete on the latest revision, so their absence is not a clean pass: ${missing.join(", ")}.`;
+              if (prevIncomplete) {
+                await github.rest.issues.updateComment({ owner, repo, comment_id: prevIncomplete.id, body });
+              } else {
+                await github.rest.issues.createComment({ owner, repo, issue_number: pull_number, body });
+              }
+            } else if (prevIncomplete) {
+              await github.rest.issues.updateComment({
+                owner,
+                repo,
+                comment_id: prevIncomplete.id,
+                body: `${INCOMPLETE_MARKER}\n_All Claude review controls completed on the latest revision._`,
+              });
             }
-            // The job does not fail on findings: each is now an independent,
-            // resolvable review thread, so a red aggregate check would stay
-            // red until every thread is resolved and carries no extra signal.
+
+            core.info(`Detected ${findings.length} finding(s); posted ${postedCount} new comment(s).`);
+            // The job does not fail on findings: each is an independent,
+            // resolvable review thread, and incompleteness is surfaced as the
+            // PR comment above rather than a red check.

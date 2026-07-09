@@ -91,13 +91,22 @@ function collectFindings(reportsDir, fs, path, controls) {
       missing.push(title);
       continue;
     }
-    if (!result.has_findings) continue;
-    if (!Array.isArray(result.findings) || result.findings.length === 0) {
+    const arr = Array.isArray(result.findings) ? result.findings : [];
+    const valid = arr.filter((f) => f && typeof f === "object" && f.summary && f.file);
+    if (!result.has_findings) {
+      // A clean pass only if it truly reported nothing. Findings present
+      // while has_findings is false is a contradictory/malformed report —
+      // surface it as incomplete rather than silently dropping the entries.
+      if (valid.length > 0) missing.push(title);
+      continue;
+    }
+    // has_findings is true: it must deliver at least one usable finding,
+    // otherwise the model claimed issues it never actually reported.
+    if (valid.length === 0) {
       missing.push(title);
       continue;
     }
-    for (const f of result.findings) {
-      if (!f || typeof f !== "object" || !f.summary || !f.file) continue;
+    for (const f of valid) {
       const summary = sanitizeAgentText(f.summary);
       findings.push({
         key,
@@ -138,16 +147,15 @@ function buildUnanchoredBody(unanchoredMarker, prevBody, unanchored) {
   for (const f of unanchored) {
     const sev = f.severity ? ` _(${f.severity})_` : "";
     const loc = `${f.file}${f.line ? ":" + f.line : ""}`;
-    const entry = redact(
-      `\n\n<!-- ${FINDING_MARKER}:${f.id} -->\n` +
-        `- [ ] **[${f.title}] ${f.summary}**${sev} — \`${loc}\`\n\n  ` +
-        `${f.details.replace(/\n/g, "\n  ")}`,
-    );
-    if (body.length + entry.length > MAX_BODY - 120) {
-      omitted++;
-      continue;
-    }
-    body += entry;
+    // The marker + summary line carries the fingerprint; keep it even when
+    // the details don't fit, so the finding is still recorded (and deduped)
+    // instead of churning as "new" on every run.
+    const head = `\n\n<!-- ${FINDING_MARKER}:${f.id} -->\n- [ ] **[${f.title}] ${f.summary}**${sev} — \`${loc}\``;
+    const full = redact(head + `\n\n  ${f.details.replace(/\n/g, "\n  ")}`);
+    const compact = redact(head);
+    if (body.length + full.length <= MAX_BODY - 120) body += full;
+    else if (body.length + compact.length <= MAX_BODY - 120) body += compact;
+    else omitted++;
   }
   if (omitted > 0) {
     body += `\n\n> *(${omitted} further finding(s) omitted — comment size limit.)*`;
