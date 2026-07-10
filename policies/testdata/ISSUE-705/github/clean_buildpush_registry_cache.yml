@@ -1,0 +1,15 @@
+# docker/build-push-action with a registry cache (cache-from: type=registry)
+# does not restore the poisonable GitHub Actions cache — the enableContains
+# "type=gha" requirement is not met — so it is not treated as a cache
+# restore. Expected: 0. (PR #300 bot review — enableContains)
+name: Release
+on: [release]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/build-push-action@v6
+        with:
+          cache-from: type=registry,ref=example.com/cache
+          push: true

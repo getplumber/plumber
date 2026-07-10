@@ -2874,6 +2874,11 @@ func TestIssue705_CachePoisoning(t *testing.T) {
 		{"violation_rust_cache.yml", []string{"violation_rust_cache/publish"}},
 		// PR #300 review: FN — inert cache: false on always-restore actions/cache.
 		{"violation_inert_cache_false.yml", []string{"violation_inert_cache_false/publish"}},
+		// PR #300 bot review: publishScriptExcludePatterns vetoes `npm publish --dry-run`.
+		{"clean_publish_dry_run.yml", nil},
+		// PR #300 bot review: enableContains — build-push-action GHA cache flags, registry cache does not.
+		{"violation_buildpush_gha_cache.yml", []string{"violation_buildpush_gha_cache/publish"}},
+		{"clean_buildpush_registry_cache.yml", nil},
 	}
 
 	engine := opaengine.New()
@@ -2934,6 +2939,7 @@ func issue705DefaultConfig() map[string]any {
 				"ncipollo/release-action",
 				"goreleaser/goreleaser-action",
 				"crazy-max/ghaction-docker-buildx",
+				"changesets/action",
 			},
 			"cacheActions": []map[string]any{
 				{"action": "actions/cache", "mode": "always"},
@@ -2945,6 +2951,7 @@ func issue705DefaultConfig() map[string]any {
 				{"action": "actions/setup-python", "mode": "opt-in", "enableInput": "cache"},
 				{"action": "actions/setup-java", "mode": "opt-in", "enableInput": "cache"},
 				{"action": "pnpm/action-setup", "mode": "opt-in", "enableInput": "cache"},
+				{"action": "docker/build-push-action", "mode": "opt-in", "enableInput": "cache-from", "enableContains": "type=gha"},
 			},
 			"publishScriptPatterns": []string{
 				`(?i)(npm|pnpm|yarn|bun)\s+publish`,
@@ -2953,9 +2960,81 @@ func issue705DefaultConfig() map[string]any {
 				`(?i)poetry\s+publish`,
 				`(?i)gh\s+release\s+create`,
 				`(?i)goreleaser\s+release`,
+				`(?i)semantic-release`,
+				`(?i)gradlew?\b[^\n]*\bpublish`,
+				`(?i)\bmvnw?\b[^\n]*\bdeploy\b`,
+				`(?i)dotnet\s+nuget\s+push`,
+				`(?i)gem\s+push`,
+				`(?i)docker\s+push`,
+			},
+			"publishScriptExcludePatterns": []string{
+				`(?i)--dry-run`,
+				`(?i)publishToMavenLocal`,
 			},
 		},
 	}
+}
+
+// TestIssue705_CachePoisoning_ExcludeVeto proves publishScriptExcludePatterns
+// is what silences a `--dry-run` verification job: without the exclude the
+// same job flags, with it the job is clean. Guards the _script_excluded veto.
+func TestIssue705_CachePoisoning_ExcludeVeto(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFS(policies.FS); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	tmp := t.TempDir()
+	wfDir := filepath.Join(tmp, ".github", "workflows")
+	if err := os.MkdirAll(wfDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(filepath.Join("testdata", "ISSUE-705", "github", "clean_publish_dry_run.yml"))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(wfDir, "clean_publish_dry_run.yml"), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pipeline, _, err := githubpkg.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	count := func(t *testing.T, cfg map[string]any) int {
+		t.Helper()
+		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		n := 0
+		for _, f := range findings {
+			if f.Code == "ISSUE-705" {
+				n++
+			}
+		}
+		return n
+	}
+	cache := []map[string]any{{"action": "actions/cache", "mode": "always"}}
+
+	t.Run("without exclude the dry-run job flags", func(t *testing.T) {
+		cfg := map[string]any{"cachePoisoning": map[string]any{
+			"publishScriptPatterns": []string{`(?i)npm\s+publish`},
+			"cacheActions":          cache,
+		}}
+		if n := count(t, cfg); n != 1 {
+			t.Fatalf("expected 1 finding without exclude, got %d", n)
+		}
+	})
+
+	t.Run("with --dry-run exclude the job is silent", func(t *testing.T) {
+		cfg := map[string]any{"cachePoisoning": map[string]any{
+			"publishScriptPatterns":        []string{`(?i)npm\s+publish`},
+			"publishScriptExcludePatterns": []string{`(?i)--dry-run`},
+			"cacheActions":                 cache,
+		}}
+		if n := count(t, cfg); n != 0 {
+			t.Fatalf("expected 0 findings with exclude, got %d", n)
+		}
+	})
 }
 
 // TestIssue705_CachePoisoning_Configurable proves the action inventory is

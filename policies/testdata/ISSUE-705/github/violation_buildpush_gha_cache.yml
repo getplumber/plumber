@@ -1,0 +1,15 @@
+# docker/build-push-action restores the GitHub Actions cache when its
+# cache-from names `type=gha`. On a release, with no ref-scoped key, that
+# cache is poisonable across branches. Expected: 1 finding on publish.
+# (PR #300 bot review — enableContains)
+name: Release
+on: [release]
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/build-push-action@v6
+        with:
+          cache-from: type=gha
+          push: true

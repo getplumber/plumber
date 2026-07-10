@@ -742,6 +742,7 @@ func defaultCachePoisoningPublishActions() []string {
 		"ncipollo/release-action",
 		"goreleaser/goreleaser-action",
 		"crazy-max/ghaction-docker-buildx",
+		"changesets/action",
 	}
 }
 
@@ -757,6 +758,7 @@ func defaultCachePoisoningCacheActions() []configuration.CacheActionSpec {
 		{Action: "actions/setup-python", Mode: "opt-in", EnableInput: "cache"},
 		{Action: "actions/setup-java", Mode: "opt-in", EnableInput: "cache"},
 		{Action: "pnpm/action-setup", Mode: "opt-in", EnableInput: "cache"},
+		{Action: "docker/build-push-action", Mode: "opt-in", EnableInput: "cache-from", EnableContains: "type=gha"},
 	}
 }
 
@@ -768,6 +770,19 @@ func defaultCachePoisoningPublishScriptPatterns() []string {
 		`(?i)poetry\s+publish`,
 		`(?i)gh\s+release\s+create`,
 		`(?i)goreleaser\s+release`,
+		`(?i)semantic-release`,
+		`(?i)gradlew?\b[^\n]*\bpublish`,
+		`(?i)\bmvnw?\b[^\n]*\bdeploy\b`,
+		`(?i)dotnet\s+nuget\s+push`,
+		`(?i)gem\s+push`,
+		`(?i)docker\s+push`,
+	}
+}
+
+func defaultCachePoisoningPublishScriptExcludePatterns() []string {
+	return []string{
+		`(?i)--dry-run`,
+		`(?i)publishToMavenLocal`,
 	}
 }
 
@@ -1290,10 +1305,11 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 			}
 			if compSelected(st, compCachePoisoning) {
 				gh.Controls.ReleaseWorkflowsMustNotRestoreUntrustedCache = &configuration.CachePoisoningControlConfig{
-					Enabled:               boolPtrInit(true),
-					PublishActions:        defaultCachePoisoningPublishActions(),
-					CacheActions:          defaultCachePoisoningCacheActions(),
-					PublishScriptPatterns: defaultCachePoisoningPublishScriptPatterns(),
+					Enabled:                      boolPtrInit(true),
+					PublishActions:               defaultCachePoisoningPublishActions(),
+					CacheActions:                 defaultCachePoisoningCacheActions(),
+					PublishScriptPatterns:        defaultCachePoisoningPublishScriptPatterns(),
+					PublishScriptExcludePatterns: defaultCachePoisoningPublishScriptExcludePatterns(),
 				}
 			}
 			if compSelected(st, compDebugTraceGitHub) {
