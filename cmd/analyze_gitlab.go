@@ -1248,10 +1248,6 @@ type complianceSummary struct {
 	score        *control.PlumberScoreResult
 	scoreMode    bool
 	scorePoint   bool
-	// ciMissing / ciInvalid: nothing was scoreable. Zero findings on an
-	// absent or unparseable CI configuration must not pass the score gate.
-	ciMissing bool
-	ciInvalid bool
 }
 
 // pointsGateActive reports whether the points gate applies: either it was set
@@ -1271,15 +1267,14 @@ func (s complianceSummary) gateErr() error {
 		}
 		return nil
 	}
-	if s.ciMissing {
-		return &ScoreGateError{CiMissing: true}
-	}
-	if s.ciInvalid {
-		return &ScoreGateError{CiInvalid: true}
-	}
-	// Zero controls evaluated (provider-mismatched or empty .plumber.yaml,
-	// skip-all filter): zero findings score 100 pts, but nothing was checked,
-	// so fail closed exactly like the missing/invalid-CI cases above.
+	// Zero controls evaluated: zero findings score 100 pts, but nothing was
+	// checked, so fail closed. This is the ONLY nothing-scoreable case that
+	// fails: a provider-mismatched or empty .plumber.yaml, a skip-all
+	// filter, and — on GitLab, whose ComputeCompliance zeroes the control
+	// count on a missing/invalid CI — a CI-less project. On GitHub a repo
+	// with no (or unparseable) workflows keeps its control count and PASSES
+	// on a clean score: the pre-0.4.0 behavior, restored on purpose so
+	// fleet scanners (plumber radar) don't fail on CI-less repositories.
 	if s.controlCount == 0 {
 		return &ScoreGateError{NoControls: true}
 	}
@@ -1306,12 +1301,6 @@ func (s complianceSummary) passed() bool {
 func (s complianceSummary) gateLine() string {
 	if s.thresholdSet {
 		return fmt.Sprintf("%.1f%% of controls passing, deprecated threshold %.0f%%", s.compliance, s.threshold)
-	}
-	if s.ciMissing {
-		return "no CI configuration found, nothing to score"
-	}
-	if s.ciInvalid {
-		return "invalid CI configuration, nothing to score"
 	}
 	if s.controlCount == 0 {
 		return "no controls evaluated, nothing to score"

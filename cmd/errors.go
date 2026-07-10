@@ -20,32 +20,22 @@ type ScoreGateError struct {
 	PointsGate bool
 	Letter     string
 	MinLetter  string
-	// CiMissing / CiInvalid mark a run with nothing scoreable: no findings
-	// means a perfect score, but an absent or unparseable CI configuration
-	// must not read as a clean pass. The old GitLab default gate failed this
-	// too (compliance zeroed on missing/invalid CI); on GitHub, whose
-	// compliance ignored CiMissing, this is an intentional tightening — a
-	// repo with no workflows used to pass and now fails.
-	CiMissing bool
-	CiInvalid bool
-	// NoControls marks the config-side variant of nothing-scoreable: the CI
-	// was read but zero controls were evaluated (a .plumber.yaml that only
-	// configures the other provider, all controls disabled, or a skip-all
-	// filter). Zero findings then means "nothing was checked", not "clean" —
-	// the old GitLab default failed this too (compliance 0 when no control
-	// is considered); on GitHub it is the same intentional tightening as
-	// CiMissing.
+	// NoControls marks a run where zero controls were evaluated: a
+	// .plumber.yaml that only configures the other provider, all controls
+	// disabled, a skip-all filter, or — on GitLab, whose compliance zeroes
+	// the control count on a missing/invalid CI — a project with no usable
+	// CI configuration. Zero findings then means "nothing was checked",
+	// not "clean", so the gate fails. On GitHub, a repository with no (or
+	// unparseable) workflows keeps its control count and passes on a clean
+	// score — the pre-0.4.0 behavior, restored on purpose so fleet
+	// scanners don't fail on CI-less repositories.
 	NoControls bool
 }
 
 func (e *ScoreGateError) Error() string {
 	switch {
-	case e.CiMissing:
-		return "no CI configuration was found to score; the gate fails rather than passing an empty pipeline"
-	case e.CiInvalid:
-		return "the CI configuration is invalid and could not be scored; the gate fails rather than passing an unevaluated pipeline"
 	case e.NoControls:
-		return "no controls were evaluated (none enabled for this provider in .plumber.yaml, or all skipped); the gate fails rather than passing an unchecked pipeline"
+		return "no controls were evaluated (no usable CI configuration, none enabled for this provider in .plumber.yaml, or all skipped); the gate fails rather than passing an unchecked run"
 	case e.PointsGate:
 		return fmt.Sprintf("Plumber Score %.1f pts (%s) is below the required %.1f pts", e.Points, e.Letter, e.MinPoints)
 	default:

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
 	"github.com/getplumber/plumber/provider"
 	"github.com/spf13/cobra"
@@ -108,38 +109,16 @@ func TestGate_BothGatesMustPass(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
-// gateErr — nothing scoreable (missing / invalid CI)
+// gateErr — nothing scoreable (zero controls evaluated)
 // ---------------------------------------------------------------------------
 
-func TestGate_MissingCIFailsDespitePerfectScore(t *testing.T) {
-	// No CI configuration → zero findings → 100 pts, but the gate must fail.
-	// The old GitLab default (--threshold 100 on compliance 0) failed this
-	// case too; on GitHub, whose compliance ignored CiMissing, this is an
-	// intentional tightening (a CI-less repo used to pass).
-	s := complianceSummary{minPoints: 100, score: scoreWithPoints(100), ciMissing: true}
-	var gateErr *ScoreGateError
-	if !errors.As(s.gateErr(), &gateErr) || !gateErr.CiMissing {
-		t.Fatalf("missing CI must fail the score gate, got %v", s.gateErr())
-	}
-	if !strings.Contains(s.gateLine(), "no CI configuration") {
-		t.Fatalf("gateLine %q must explain the missing CI", s.gateLine())
-	}
-}
-
-func TestGate_InvalidCIFailsDespitePerfectScore(t *testing.T) {
-	s := complianceSummary{minPoints: 100, score: scoreWithPoints(100), ciInvalid: true}
-	var gateErr *ScoreGateError
-	if !errors.As(s.gateErr(), &gateErr) || !gateErr.CiInvalid {
-		t.Fatalf("invalid CI must fail the score gate, got %v", s.gateErr())
-	}
-}
-
 func TestGate_NoControlsFailsDespitePerfectScore(t *testing.T) {
-	// Valid CI but zero controls evaluated (a .plumber.yaml that only
-	// configures the other provider, all controls disabled, or a skip-all
-	// filter): zero findings score 100 pts, but nothing was checked, so the
-	// gate must fail. The old GitLab default failed this too (compliance 0
-	// when no control is considered).
+	// Zero controls evaluated (a .plumber.yaml that only configures the
+	// other provider, all controls disabled, a skip-all filter, or a GitLab
+	// project with no usable CI — GitLab compliance zeroes the count): zero
+	// findings score 100 pts, but nothing was checked, so the gate must
+	// fail. The old GitLab default failed this too (compliance 0 when no
+	// control is considered).
 	s := complianceSummary{minPoints: 100, score: scoreWithPoints(100), controlCount: 0}
 	var gateErr *ScoreGateError
 	if !errors.As(s.gateErr(), &gateErr) || !gateErr.NoControls {
@@ -369,34 +348,69 @@ func mustSetFlag(t *testing.T, cmd *cobra.Command, name, value string) {
 }
 
 // ---------------------------------------------------------------------------
-// buildComplianceSummary — ciMissing / ciInvalid wiring from AnalysisResult
+// buildComplianceSummary — per-provider gate wiring from AnalysisResult
 // ---------------------------------------------------------------------------
 
 func TestBuildComplianceSummary_CiWiring(t *testing.T) {
 	newGateFlagsCmd(t) // reset gate globals: default points gate (min-points 100)
-	p := &provider.GitLabProvider{}
+	gl := &provider.GitLabProvider{}
 	conf := confWithDebugTrace()
 
-	t.Run("missing CI fails the gate", func(t *testing.T) {
-		s := buildComplianceSummary(p, &control.AnalysisResult{CiMissing: true, CiValid: true}, conf)
+	t.Run("GitLab missing CI fails via zero controls", func(t *testing.T) {
+		// GitLab compliance zeroes the control count on a missing CI, so a
+		// CI-less GitLab project keeps failing (its historical verdict).
+		s := buildComplianceSummary(gl, &control.AnalysisResult{CiMissing: true, CiValid: true}, conf)
 		var gateErr *ScoreGateError
-		if !errors.As(s.gateErr(), &gateErr) || !gateErr.CiMissing {
-			t.Fatalf("CiMissing result must fail with ScoreGateError{CiMissing}, got %v", s.gateErr())
+		if !errors.As(s.gateErr(), &gateErr) || !gateErr.NoControls {
+			t.Fatalf("GitLab CiMissing must fail with ScoreGateError{NoControls}, got %v", s.gateErr())
 		}
 	})
 
-	t.Run("invalid CI fails the gate", func(t *testing.T) {
-		s := buildComplianceSummary(p, &control.AnalysisResult{CiValid: false, CiMissing: false}, conf)
+	t.Run("GitLab invalid CI fails via zero controls", func(t *testing.T) {
+		s := buildComplianceSummary(gl, &control.AnalysisResult{CiValid: false, CiMissing: false}, conf)
 		var gateErr *ScoreGateError
-		if !errors.As(s.gateErr(), &gateErr) || !gateErr.CiInvalid {
-			t.Fatalf("invalid-CI result must fail with ScoreGateError{CiInvalid}, got %v", s.gateErr())
+		if !errors.As(s.gateErr(), &gateErr) || !gateErr.NoControls {
+			t.Fatalf("GitLab invalid CI must fail with ScoreGateError{NoControls}, got %v", s.gateErr())
 		}
 	})
 
 	t.Run("valid CI with no findings passes", func(t *testing.T) {
-		s := buildComplianceSummary(p, &control.AnalysisResult{CiValid: true}, conf)
+		s := buildComplianceSummary(gl, &control.AnalysisResult{CiValid: true}, conf)
 		if !s.passed() {
 			t.Fatalf("clean run on valid CI must pass, got %v", s.gateErr())
+		}
+	})
+
+	t.Run("GitHub missing CI passes (pre-0.4.0 behavior restored)", func(t *testing.T) {
+		// GitHub compliance counts enabled controls regardless of CiMissing,
+		// so a repo with no workflows scores clean and passes the default
+		// gate — restored on purpose (fleet scanners must not fail on
+		// CI-less repositories). 0.4.0's unconditional CiMissing fail is
+		// reverted.
+		gh := &provider.GitHubProvider{}
+		enabled := true
+		ghConf := configuration.NewDefaultConfiguration()
+		ghConf.PlumberConfig = &configuration.PlumberConfig{
+			GitHub: &configuration.ProviderConfig{
+				Controls: configuration.ControlsConfig{
+					BranchMustBeProtected: &configuration.BranchProtectionControlConfig{Enabled: &enabled},
+				},
+			},
+		}
+		s := buildComplianceSummary(gh, &control.AnalysisResult{CiMissing: true}, ghConf)
+		if !s.passed() {
+			t.Fatalf("GitHub CI-less repo must pass the default gate again, got %v", s.gateErr())
+		}
+	})
+
+	t.Run("GitHub with zero enabled controls still fails", func(t *testing.T) {
+		gh := &provider.GitHubProvider{}
+		emptyConf := configuration.NewDefaultConfiguration()
+		emptyConf.PlumberConfig = &configuration.PlumberConfig{}
+		s := buildComplianceSummary(gh, &control.AnalysisResult{CiMissing: true}, emptyConf)
+		var gateErr *ScoreGateError
+		if !errors.As(s.gateErr(), &gateErr) || !gateErr.NoControls {
+			t.Fatalf("zero enabled controls must keep failing, got %v", s.gateErr())
 		}
 	})
 }

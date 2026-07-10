@@ -26,13 +26,13 @@ inputs:
     description: "GitHub Enterprise Server host, e.g. ghes.example.com. Default: github.com."
     default: ""
   min-points:
-    description: "Minimum Plumber Score points to pass (0-100). Default: 100 — any finding fails, same as the previous default on repos with workflows. Note: a repo with no workflows now fails the gate (nothing scoreable) where the old compliance gate passed it."
+    description: "Minimum Plumber Score points to pass (0-100). Default: 100 — any finding fails, same as the previous default behavior. A repo with no workflows passes when its enabled controls report no findings; the gate only force-fails when zero controls are enabled."
     default: ""
   min-score:
     description: "Minimum Plumber Score letter to pass (A-E), e.g. B fails on C, D, E. When set without min-points, the letter alone gates."
     default: ""
   threshold:
-    description: "Deprecated: minimum percentage of passing controls (0-100). Use min-points / min-score to gate on the Plumber Score instead. The value 100 is treated as unset (same as the GitLab component): the default score gate also fails on any finding, and additionally fails a repo with no workflows."
+    description: "Deprecated: minimum percentage of passing controls (0-100). Use min-points / min-score to gate on the Plumber Score instead. The value 100 is treated as unset (same as the GitLab component): the default score gate also fails on any finding."
     default: ""
   config-file:
     description: "Path to a .plumber.yaml config. Default: the repo's .plumber.yaml (required — the run fails if absent; generate one with 'plumber config generate')."
@@ -184,9 +184,9 @@ runs:
         # The default gate is the Plumber Score (min-points 100: any finding
         # fails). threshold is deprecated and only forwarded when set to a
         # custom value: an explicit 100 is treated as unset and gates on the
-        # score instead (mirrors the GitLab component). The score gate also
-        # fails a repo with no workflows — nothing scoreable — which the old
-        # GitHub compliance gate passed.
+        # score instead (mirrors the GitLab component). A repo with no
+        # workflows passes when its enabled controls report no findings; the
+        # gate only force-fails when zero controls are enabled.
         [ -n "$IN_MIN_POINTS" ] && args+=(--min-points "$IN_MIN_POINTS")
         [ -n "$IN_MIN_SCORE" ]  && args+=(--min-score "$IN_MIN_SCORE")
         if [ -n "$IN_THRESHOLD" ] && [ "$IN_THRESHOLD" != "100" ]; then

@@ -141,7 +141,9 @@ The score is also the pass/fail gate for `plumber analyze` (exit code 1 on failu
 - `--min-score <A-E>`: fail when the letter is below the given one (e.g. `--min-score B` fails on C, D, E). When set without `--min-points`, the letter alone gates.
 - Both set: both must pass.
 
-A run with **nothing scoreable** fails the score gate rather than passing as an empty 100-point pipeline. This covers three cases: no CI configuration found, a CI configuration that could not be parsed, and **zero controls evaluated** (a `.plumber.yaml` that enables no controls for the scanned provider — e.g. a `github:`-only config on a GitLab project — or a filter that skips them all). On GitLab this matches the old default (compliance was 0 in all three cases); **on GitHub it is a behavior change**: the old compliance gate passed a repository with no workflows or no enabled controls, the score gate fails it. Skip Plumber (or use `soft-fail`) on repositories that intentionally have no CI.
+A run where **zero controls were evaluated** fails the score gate rather than passing as an empty 100-point pipeline: a `.plumber.yaml` that enables no controls for the scanned provider (e.g. a `github:`-only config on a GitLab project), a filter that skips them all, and — on GitLab, where a missing or unparseable CI configuration leaves no control evaluated — a project with no usable CI. On GitLab this matches the historical default (compliance was 0 in those cases).
+
+**On GitHub, a repository with no workflows (or workflows Plumber cannot parse) passes the default gate** when its enabled controls report no findings — the pre-0.4.0 behavior, deliberately restored so fleet scanners can sweep repositories that have no CI without failing on them. Note the score is then computed over what could be checked; gate on findings, not on CI presence.
 
 The legacy `--threshold` flag (percentage of passing controls) is **deprecated**: it still works, with a warning, and cannot be combined with the score gate flags. Its old default (100) matches the default score gate on any repository with CI to score, since any finding drops both below 100.
 

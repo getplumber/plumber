@@ -79,8 +79,6 @@ func buildComplianceSummary(p provider.Provider, result *control.AnalysisResult,
 		score:        computeScoreResult(result, scoreMode),
 		scoreMode:    scoreMode,
 		scorePoint:   showScorePoint,
-		ciMissing:    result.CiMissing,
-		ciInvalid:    !result.CiValid && !result.CiMissing,
 	}
 }
 
