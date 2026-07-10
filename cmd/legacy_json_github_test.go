@@ -207,3 +207,77 @@ func TestImpostorCommitJSONBlock(t *testing.T) {
 		t.Errorf("clean block must not carry compliance (#320), got %v", cm["compliance"])
 	}
 }
+
+// TestMutableRemoteExecJSONBlock locks the ISSUE-714/715/716 JSON export
+// for actionsMustNotExecuteMutableRemoteCode: the dispatch must return a
+// mutableRemoteExecResult block whose issues[] carry each finding's
+// code/job/uses/url, not just a plumberScore.codeLosses line. This is the
+// same dropped-findings regression the sibling blocks guard against — the
+// PR shipped the control's rego + collector but no JSON wiring, so every
+// mutable-exec finding was silently absent from --output.
+func TestMutableRemoteExecJSONBlock(t *testing.T) {
+	entry := control.ControlEntry{
+		DisplayName: "Actions must not execute mutable remote code",
+		ControlName: "actionsMustNotExecuteMutableRemoteCode",
+	}
+	findings := []opaengine.Finding{{
+		Code: "ISSUE-714",
+		Job:  "ci/scan",
+		File: ".github/workflows/ci.yml",
+		Line: 9,
+		URL:  ".github/workflows/ci.yml:9",
+		Data: map[string]any{"uses": "anchore/scan-action@229edc86a0f0a8c34ea883607b5fa8310b1c35d8"},
+	}}
+	result := &control.AnalysisResult{
+		CiValid:     true,
+		GitHubStats: &control.GitHubAnalysisStats{ActionRefsTotal: 5},
+	}
+
+	name, block := buildLegacyResultGitHub(entry, result, nil, findings)
+	if name != "mutableRemoteExecResult" {
+		t.Fatalf("block name = %q, want mutableRemoteExecResult", name)
+	}
+	m, ok := block.(map[string]any)
+	if !ok {
+		t.Fatalf("block is %T, want map[string]any", block)
+	}
+	issues, ok := m["issues"].([]map[string]any)
+	if !ok || len(issues) != 1 {
+		t.Fatalf("issues = %v, want exactly 1 entry", m["issues"])
+	}
+	if issues[0]["code"] != "ISSUE-714" {
+		t.Errorf("issue code = %v, want ISSUE-714", issues[0]["code"])
+	}
+	if issues[0]["job"] != "ci/scan" {
+		t.Errorf("issue job = %v, want ci/scan", issues[0]["job"])
+	}
+	if issues[0]["uses"] != "anchore/scan-action@229edc86a0f0a8c34ea883607b5fa8310b1c35d8" {
+		t.Errorf("issue must carry the offending uses, got %v", issues[0]["uses"])
+	}
+	if issues[0]["url"] == nil {
+		t.Errorf("issue must carry a url (file:line link), got %v", issues[0])
+	}
+	metrics := m["metrics"].(map[string]any)
+	if metrics["actionsWithMutableRemoteExec"] != 1 {
+		t.Errorf("actionsWithMutableRemoteExec = %v, want 1", metrics["actionsWithMutableRemoteExec"])
+	}
+	if metrics["actionRefsTotal"] != 5 {
+		t.Errorf("actionRefsTotal = %v, want 5", metrics["actionRefsTotal"])
+	}
+	if _, present := m["compliance"]; present {
+		t.Errorf("per-control compliance was removed (#320); block still carries %v", m["compliance"])
+	}
+
+	// Clean run: no findings → empty issues, zero numerator.
+	cleanName, cleanBlock := buildLegacyResultGitHub(entry, result, nil, nil)
+	if cleanName != "mutableRemoteExecResult" {
+		t.Fatalf("clean block name = %q", cleanName)
+	}
+	cm := cleanBlock.(map[string]any)
+	if ci, _ := cm["issues"].([]map[string]any); len(ci) != 0 {
+		t.Errorf("clean issues = %v, want empty", cm["issues"])
+	}
+	if cmm := cm["metrics"].(map[string]any); cmm["actionsWithMutableRemoteExec"] != 0 {
+		t.Errorf("clean actionsWithMutableRemoteExec = %v, want 0", cmm["actionsWithMutableRemoteExec"])
+	}
+}

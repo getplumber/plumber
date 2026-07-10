@@ -427,6 +427,11 @@ func buildGitHubControlStats(controlName string, stats *control.GitHubAnalysisSt
 			{Label: statActionRefsChecked, Value: fmt.Sprintf("%d", stats.ActionRefsTotal+stats.ActionRefsExempt)},
 			{Label: "Refs With Advisories", Value: fmt.Sprintf("%d", stats.ActionRefsVulnerable)},
 		}
+	case "actionsMustNotExecuteMutableRemoteCode":
+		return []statLine{
+			{Label: statActionRefsChecked, Value: fmt.Sprintf("%d", stats.ActionRefsTotal)},
+			{Label: "Mutable Remote Exec Found", Value: fmt.Sprintf("%d", len(findings))},
+		}
 	case "releaseWorkflowsMustNotRestoreUntrustedCache":
 		return []statLine{
 			{Label: "Workflows Scanned", Value: fmt.Sprintf("%d", stats.WorkflowsTotal)},
@@ -697,6 +702,15 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 		return []statLine{
 			{Label: statActionRefsChecked, Value: fmt.Sprintf("%d", actionRefs)},
 			{Label: "Refs With Advisories", Value: fmt.Sprintf("%d", findingsCount)},
+		}
+	case "actionsMustNotExecuteMutableRemoteCode":
+		actionRefs := 0
+		if result.GitHubStats != nil {
+			actionRefs = result.GitHubStats.ActionRefsTotal
+		}
+		return []statLine{
+			{Label: statActionRefsChecked, Value: fmt.Sprintf("%d", actionRefs)},
+			{Label: "Mutable Remote Exec Found", Value: fmt.Sprintf("%d", findingsCount)},
 		}
 	case "branchMustBeProtected":
 		total, toProtect, protected, unprotected := _branchProtectionCounts(result, pc)

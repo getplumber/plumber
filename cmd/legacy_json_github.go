@@ -63,6 +63,8 @@ func buildLegacyResultGitHub(e control.ControlEntry, result *control.AnalysisRes
 		return "impostorCommitResult", buildImpostorCommitBlock(common, result, findings)
 	case "actionsMustNotCarryKnownCVEs":
 		return "knownVulnerableActionsResult", buildKnownVulnerableActionsBlock(common, result, findings)
+	case "actionsMustNotExecuteMutableRemoteCode":
+		return "mutableRemoteExecResult", buildMutableRemoteExecBlock(common, result, findings)
 	case "releaseWorkflowsMustNotRestoreUntrustedCache":
 		return "cachePoisoningResult", buildCachePoisoningBlock(common, result, findings)
 	case "pipelineMustNotEnableDebugTrace":
@@ -629,6 +631,28 @@ func buildArchivedActionsBlock(c legacyCommon, result *control.AnalysisResult, f
 		"metrics": map[string]any{
 			"actionRefsTotal":    s.ActionRefsTotal,
 			"actionRefsArchived": len(findings),
+		},
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
+	}
+}
+
+// buildMutableRemoteExecBlock — ISSUE-714/715/716. Surfaces each action
+// whose own source fetches and runs mutable remote code (plus the
+// producer-side self-action signal) with its code/job/uses/url, so the
+// JSON export carries the finding and its location rather than only a
+// plumberScore.codeLosses line. Denominator is the action-ref count
+// scanned; numerator is the finding count across all three tiers
+// (obfuscated / exec / unverified).
+func buildMutableRemoteExecBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	s := statsOf(result)
+	return map[string]any{
+		"issues": projectFindings(_sortedFindings(findings), "job"),
+		"metrics": map[string]any{
+			"actionRefsTotal":              s.ActionRefsTotal,
+			"actionsWithMutableRemoteExec": len(findings),
 		},
 		"version":   "0.1.0",
 		"ciValid":   c.CiValid,
