@@ -1,3 +1,29 @@
+## [0.3.100](https://github.com/getplumber/plumber/compare/v0.3.99...v0.3.100) (2026-07-09)
+
+
+### 🐛 Bug Fixes
+
+* **docker:** build with Go 1.26.5 to clear GO-2026-4970 (Container Scan) ([7d7921d](https://github.com/getplumber/plumber/commit/7d7921d79f195eef8c0eb39360977f0783956850))
+
+
+### 👷 CI/CD
+
+* add advisory Claude PR review automation ([3d2dca6](https://github.com/getplumber/plumber/commit/3d2dca6b45445ec7f9b93806203c3d919f1e9bd4))
+* **claude:** close review-agent secret-exfil surface + dedup/reliability ([e0d4057](https://github.com/getplumber/plumber/commit/e0d40577752eb1e1ddcd59c2f4fe91239021d4de))
+* **claude:** extract poster logic to a unit-tested module ([ad39721](https://github.com/getplumber/plumber/commit/ad39721b8c87cdf4cc945ca6a9d1d05a0bf14e84))
+* **claude:** fix dedup/redaction/sandbox issues from self-review ([26ae307](https://github.com/getplumber/plumber/commit/26ae3074c503261c1370fca8ae4eb496bbd5b537))
+* **claude:** fix fingerprint/sanitize/parse bugs + add a relevance bar ([c370371](https://github.com/getplumber/plumber/commit/c3703715fdfbacaa83917418f177c4bc963b7b4b))
+* **claude:** fix stateful posting bugs from cursor review ([897d3d1](https://github.com/getplumber/plumber/commit/897d3d11357e552702fb64271758bf025578ade2))
+* **claude:** harden dedup fence, unanchored-on-failure, multi-line summary ([7748dd9](https://github.com/getplumber/plumber/commit/7748dd9ae40ee73536cf189a623c245d182c7628))
+* **claude:** post each finding as a resolvable review comment ([5f6c56b](https://github.com/getplumber/plumber/commit/5f6c56b6f8c286e9b2eab0ce2f59e1a84f0652c0))
+* **claude:** prompt for whole-system, cross-run review ([c079b1a](https://github.com/getplumber/plumber/commit/c079b1ada13e2594eedff96e11894c27992d2595))
+* **claude:** semantic dedup of reworded findings via Haiku ([f23ee28](https://github.com/getplumber/plumber/commit/f23ee28a2c14371995b4af479d430f19a35f6e41))
+* **claude:** stop the review from reviewing its own machinery ([ab52069](https://github.com/getplumber/plumber/commit/ab520695521f454e07d6a3dedbaa2db8e2be6598))
+* **claude:** strip planted markers from untrusted finding text ([5a3d334](https://github.com/getplumber/plumber/commit/5a3d334398c855fcfb7044f0649c8bfc392a3614))
+* **claude:** use Sonnet for semantic dedup to cut duplicate comments ([902f900](https://github.com/getplumber/plumber/commit/902f900f1602980f7bfce0a9d9fc3e8d34d235a8))
+* fix scripts-test to pass the test file explicitly ([ffd7b4c](https://github.com/getplumber/plumber/commit/ffd7b4c4ae2794d7f39ab9c6bc58b1ea66718abe))
+* **release:** pin v0.3.99 refs [skip ci] ([8f851d5](https://github.com/getplumber/plumber/commit/8f851d55f1c95afd107da5c521be00d9a63eab52))
+
 ## [0.3.99](https://github.com/getplumber/plumber/compare/v0.3.98...v0.3.99) (2026-07-08)
 
 

@@ -1,0 +1,32 @@
+name: Scripts tests
+
+# Unit tests for the extracted finding-posting helpers used by
+# claude-pr-checks.yml. Keeps that dedup/redaction/marker logic verified.
+
+on:
+  pull_request:
+    paths:
+      - .github/scripts/**
+      - .github/workflows/scripts-test.yml
+  push:
+    branches: [main]
+    paths:
+      - .github/scripts/**
+      - .github/workflows/scripts-test.yml
+
+permissions: {}
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          persist-credentials: false
+      # Pass the test file explicitly — `node --test <dir>` tries to load the
+      # directory as a module on newer Node instead of discovering test files.
+      - name: Run unit tests
+        run: node --test .github/scripts/post-review-findings.test.js

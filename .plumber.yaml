@@ -608,6 +608,7 @@ github:
       # exact `owner/repo` or an `owner/*` wildcard for a whole org.
       trustedGithubActions:
         - getplumber/plumber # Plumber's own GitHub Action
+        - anthropics/claude-code-action # Claude PR review workflow (claude-pr-checks.yml)
         - docker/setup-qemu-action
         - docker/setup-buildx-action
         - docker/login-action
