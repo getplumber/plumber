@@ -169,7 +169,7 @@ jobs:
                 control name, a heading, or a checkbox — those are added when
                 the finding is posted.
           claude_args: |
-            --model claude-fable-5
+            --model claude-opus-4-8
             --allowedTools "Read,Grep,Glob"
             --disallowedTools "Read(/proc/**),Read(//proc/**),Read(/sys/**),Read(//sys/**),Read(/etc/**),Read(//etc/**),Read(/home/runner/work/_temp/**),Read(//home/runner/work/_temp/**),Grep(/proc/**),Grep(//proc/**),Grep(/sys/**),Grep(//sys/**),Grep(/etc/**),Grep(//etc/**),Grep(/home/runner/work/_temp/**),Grep(//home/runner/work/_temp/**)"
             --json-schema '{"type":"object","properties":{"has_findings":{"type":"boolean"},"findings":{"type":"array","items":{"type":"object","properties":{"summary":{"type":"string"},"severity":{"type":"string"},"file":{"type":"string"},"line":{"type":"integer"},"details":{"type":"string"}},"required":["summary","file","details"]}}},"required":["has_findings","findings"]}'
