@@ -29,7 +29,10 @@ deny contains finding if {
 	action.metadata
 	action.metadata.commentVersion != ""
 	action.metadata.commentTagSha != ""
-	ref := _ref_of(action.uses)
+	# SHAs are case-insensitive in git / the API; lowercase both the
+	# match and the comparison so an uppercase pin is handled like its
+	# lowercase equivalent (API SHAs are lowercase hex).
+	ref := lower(_ref_of(action.uses))
 	regex.match(sha_pattern, ref)
 	action.metadata.commentTagSha != ref
 	finding := {

@@ -968,6 +968,36 @@ github:
       enabled: true
 
     # ===========================================
+    # Actions must pin commits that exist upstream
+    # ===========================================
+    # Flags `uses: owner/repo@<sha>` references pinned to a 40-character
+    # commit SHA that the upstream repository confirms does not exist:
+    # either a typo (the runner silently falls back to the default
+    # branch) or a commit that was removed or never pushed upstream.
+    #
+    # Scope note: this does NOT detect a fork-network "impostor commit"
+    # (one pushed to a fork of the upstream repo). GitHub serves those
+    # with HTTP 200 from the parent, so they read as present; the control
+    # flags only SHAs the API reports as absent.
+    #
+    # Fires ONLY when the GitHub API confirms the commit is absent from a
+    # repository Plumber can read. A SHA it could not verify
+    # (private/missing repo, rate limit, network error) stays silent, so
+    # a valid pin is never flagged. Non-SHA refs (tags, branches) are out
+    # of scope here; mutable-ref concerns are
+    # actionsMustBePinnedByCommitSha's job.
+    #
+    # Scope: committed `.github/workflows/*.{yml,yaml}` only; step-level
+    # `uses: owner/repo@<sha>`. Job-level reusable-workflow refs are not
+    # yet covered: the collector does not enrich them with API metadata
+    # for ANY metadata control (also affects archived / known-CVE /
+    # ref-confusion); extending all four together is tracked upstream.
+    # Requires GitHub API auth (`gh` / GH_TOKEN); without it the rule
+    # abstains (no finding).
+    actionRefsMustExistUpstream:
+      enabled: true
+
+    # ===========================================
     # Actions must not carry known CVEs
     # ===========================================
     # Cross-references every `uses: owner/repo@ref` against the GitHub

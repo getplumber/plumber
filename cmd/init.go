@@ -58,6 +58,7 @@ const (
 	compRefConfusion       = "Flag third-party actions whose ref is both a tag and a branch"
 	compArchivedActions    = "Flag third-party actions from archived repositories"
 	compKnownCVEs          = "Flag third-party actions with known CVEs (GitHub Advisory DB)"
+	compImpostorCommit     = "Flag third-party actions pinned to a commit SHA absent upstream (impostor commit)"
 	compCachePoisoning     = "Flag release/publish jobs restoring an unscoped build cache"
 	compDebugTraceGitHub   = "Flag Actions debug logging (ACTIONS_STEP_DEBUG / ACTIONS_RUNNER_DEBUG)"
 )
@@ -716,6 +717,7 @@ func compositionOptionsForProviders(providers []string) []string {
 			compRefConfusion,
 			compArchivedActions,
 			compKnownCVEs,
+			compImpostorCommit,
 			compCachePoisoning,
 			compDebugTraceGitHub,
 		)
@@ -1303,6 +1305,9 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 			if compSelected(st, compKnownCVEs) {
 				gh.Controls.ActionsMustNotCarryKnownCVEs = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
 			}
+			if compSelected(st, compImpostorCommit) {
+				gh.Controls.ActionRefsMustExistUpstream = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
+			}
 			if compSelected(st, compCachePoisoning) {
 				gh.Controls.ReleaseWorkflowsMustNotRestoreUntrustedCache = &configuration.CachePoisoningControlConfig{
 					Enabled:                      boolPtrInit(true),
@@ -1360,7 +1365,7 @@ func starterPlumberConfig() *configuration.PlumberConfig {
 		CompositionChoices: []string{
 			compHardcoded, compUpToDate, compForbidden, compRefCollision, compSecurity, compScripts, compJobVars, compDinD,
 			compActionPin, compAuthorizedActions, compDangerousTriggers, compPRTargetHead, compDeclarePermissions, compReusableSecrets, compOverprovSecrets, compTemplateInjection,
-			compEnvInjection, compWriteAllPerms, compRefConfusion, compArchivedActions, compKnownCVEs, compCachePoisoning, compDebugTraceGitHub,
+			compEnvInjection, compWriteAllPerms, compRefConfusion, compArchivedActions, compKnownCVEs, compImpostorCommit, compCachePoisoning, compDebugTraceGitHub,
 		},
 		ActionPinTrustedOwnersMultiline:        strings.Join(defaultGitHubTrustedActionOwners(), "\n"),
 		SecurityJobPatternsGitHubMultiline:     strings.Join(defaultGitHubSecurityJobPatterns(), "\n"),

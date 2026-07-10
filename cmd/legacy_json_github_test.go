@@ -130,3 +130,77 @@ func TestAuthorizedActionSourcesJSONBlock(t *testing.T) {
 		t.Errorf("clean block must not carry compliance (#320), got %v", cm["compliance"])
 	}
 }
+
+// TestImpostorCommitJSONBlock locks the ISSUE-707 JSON export: the
+// dispatch must return an impostorCommitResult block whose issues[]
+// carry the finding's code/job/url and whose metrics expose
+// actionRefsAbsentUpstream alongside the shared actionRefsTotal
+// denominator. Same dropped-findings regression the two blocks above
+// guard against: a removed case or mis-wired key would silently drop
+// every critical ISSUE-707 from the JSON export while the suite stays
+// green.
+func TestImpostorCommitJSONBlock(t *testing.T) {
+	entry := control.ControlEntry{
+		DisplayName: "Actions must pin commits that exist upstream",
+		ControlName: "actionRefsMustExistUpstream",
+	}
+	findings := []opaengine.Finding{{
+		Code: "ISSUE-707",
+		Job:  "ci/build",
+		File: ".github/workflows/ci.yml",
+		Line: 21,
+		URL:  ".github/workflows/ci.yml:21",
+	}}
+	result := &control.AnalysisResult{
+		CiValid:     true,
+		GitHubStats: &control.GitHubAnalysisStats{ActionRefsTotal: 8},
+	}
+
+	name, block := buildLegacyResultGitHub(entry, result, nil, findings)
+	if name != "impostorCommitResult" {
+		t.Fatalf("block name = %q, want impostorCommitResult", name)
+	}
+	m, ok := block.(map[string]any)
+	if !ok {
+		t.Fatalf("block is %T, want map[string]any", block)
+	}
+	issues, ok := m["issues"].([]map[string]any)
+	if !ok || len(issues) != 1 {
+		t.Fatalf("issues = %v, want exactly 1 entry", m["issues"])
+	}
+	if issues[0]["code"] != "ISSUE-707" {
+		t.Errorf("issue code = %v, want ISSUE-707", issues[0]["code"])
+	}
+	if issues[0]["job"] != "ci/build" {
+		t.Errorf("issue job = %v, want ci/build", issues[0]["job"])
+	}
+	if issues[0]["url"] == nil {
+		t.Errorf("issue must carry a url (file:line link), got %v", issues[0])
+	}
+	metrics := m["metrics"].(map[string]any)
+	if metrics["actionRefsAbsentUpstream"] != 1 {
+		t.Errorf("actionRefsAbsentUpstream = %v, want 1", metrics["actionRefsAbsentUpstream"])
+	}
+	if metrics["actionRefsTotal"] != 8 {
+		t.Errorf("actionRefsTotal = %v, want 8", metrics["actionRefsTotal"])
+	}
+	if _, present := m["compliance"]; present {
+		t.Errorf("per-control compliance was removed (#320); block still carries %v", m["compliance"])
+	}
+
+	// Clean run: no findings → empty issues, zero numerator, no compliance.
+	cleanName, cleanBlock := buildLegacyResultGitHub(entry, result, nil, nil)
+	if cleanName != "impostorCommitResult" {
+		t.Fatalf("clean block name = %q", cleanName)
+	}
+	cm := cleanBlock.(map[string]any)
+	if ci, _ := cm["issues"].([]map[string]any); len(ci) != 0 {
+		t.Errorf("clean issues = %v, want empty", cm["issues"])
+	}
+	if cmm := cm["metrics"].(map[string]any); cmm["actionRefsAbsentUpstream"] != 0 {
+		t.Errorf("clean actionRefsAbsentUpstream = %v, want 0", cmm["actionRefsAbsentUpstream"])
+	}
+	if cm["compliance"] != nil {
+		t.Errorf("clean block must not carry compliance (#320), got %v", cm["compliance"])
+	}
+}

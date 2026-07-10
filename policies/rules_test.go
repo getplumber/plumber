@@ -2702,6 +2702,9 @@ func TestIssue104_ActionUnpinned(t *testing.T) {
 	}{
 		{"violation_tag_ref.yml", map[string]any{"actionsMustBePinnedByCommitSha": map[string]any{}}, 3},
 		{"clean_sha_pinned.yml", map[string]any{"actionsMustBePinnedByCommitSha": map[string]any{}}, 0},
+		// SHAs are case-insensitive in git/the API: an uppercase pin is
+		// still immutable and must not be reported as a mutable ref.
+		{"clean_sha_pinned_uppercase.yml", map[string]any{"actionsMustBePinnedByCommitSha": map[string]any{}}, 0},
 		{"trusted_owner_tag.yml", map[string]any{"actionsMustBePinnedByCommitSha": map[string]any{"trustedOwners": []any{"actions", "github"}}}, 1},
 		{"violation_tag_ref.yml", nil, 0},
 		// Regression: reusable workflows called via job-level `uses:`
@@ -3603,6 +3606,210 @@ func TestIssue402_RefConfusion(t *testing.T) {
 			}
 			if hits != tc.wantHits {
 				t.Fatalf("%s: expected %d ISSUE-402 finding(s), got %d", tc.name, tc.wantHits, hits)
+			}
+		})
+	}
+}
+
+// TestIssue707_ImpostorCommit flags a 40-hex SHA pin whose commit the
+// upstream API DEFINITIVELY reports as absent (metadata.refKnownAbsent).
+// A SHA that resolves, a SHA that merely could-not-be-verified (private,
+// rate-limited, network error — refKnownAbsent stays false), a non-SHA
+// ref, and missing metadata all stay silent.
+func TestIssue707_ImpostorCommit(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFS(policies.FS); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	const deadSHA = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" // 40 hex, does not exist
+
+	cases := []struct {
+		name     string
+		action   ir.Action
+		wantHits int
+	}{
+		{
+			name:     "SHA confirmed absent flagged",
+			action:   ir.Action{Uses: "actions/checkout@" + deadSHA, Metadata: &ir.ActionMetadata{RefKnownAbsent: true}},
+			wantHits: 1,
+		},
+		{
+			// Git / the API resolve SHAs case-insensitively, so an
+			// uppercase pin must not dodge the check.
+			name:     "uppercase SHA confirmed absent flagged",
+			action:   ir.Action{Uses: "actions/checkout@DEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEF", Metadata: &ir.ActionMetadata{RefKnownAbsent: true}},
+			wantHits: 1,
+		},
+		{
+			name:     "SHA that resolves is silent",
+			action:   ir.Action{Uses: "actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683", Metadata: &ir.ActionMetadata{RefKind: "commit", RefExists: true}},
+			wantHits: 0,
+		},
+		{
+			name:     "SHA that could not be verified is silent",
+			action:   ir.Action{Uses: "private-org/action@" + deadSHA, Metadata: &ir.ActionMetadata{}},
+			wantHits: 0,
+		},
+		{
+			name:     "non-SHA tag ref is silent",
+			action:   ir.Action{Uses: "owner/repo@v99", Metadata: &ir.ActionMetadata{RefKnownAbsent: true}},
+			wantHits: 0,
+		},
+		{
+			name:     "missing metadata abstains",
+			action:   ir.Action{Uses: "owner/repo@" + deadSHA},
+			wantHits: 0,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pipeline := &ir.NormalizedPipeline{
+				Provider: ir.ProviderGitHub,
+				Jobs:     []ir.Job{{Name: "build", Uses: []ir.Action{tc.action}}},
+			}
+			findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+			if err != nil {
+				t.Fatalf("evaluate: %v", err)
+			}
+			hits := 0
+			for _, f := range findings {
+				if f.Code == "ISSUE-707" {
+					hits++
+				}
+			}
+			if hits != tc.wantHits {
+				t.Fatalf("%s: expected %d ISSUE-707 finding(s), got %d", tc.name, tc.wantHits, hits)
+			}
+		})
+	}
+}
+
+// TestIssue709_StaleActionRef locks the case-insensitive SHA handling
+// in stale_action_ref.rego (_pinned_sha lowercases before matching AND
+// returns the lowercased SHA). An uppercase pin that IS the latest
+// release must not be reported as stale: without the lower(), the
+// uppercase ref would never string-equal the API's lowercase
+// latestReleaseSha and an up-to-date pin would fire a spurious
+// ISSUE-709. (PR #332 review — case-insensitive SHA parity)
+func TestIssue709_StaleActionRef(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFS(policies.FS); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	const latestSHA = "11bd71901bbe5b1630ceea73d27597364c9af683"
+
+	cases := []struct {
+		name     string
+		action   ir.Action
+		wantHits int
+	}{
+		{
+			name: "uppercase pin at the latest release is not stale",
+			action: ir.Action{
+				Uses:     "actions/checkout@" + strings.ToUpper(latestSHA),
+				Metadata: &ir.ActionMetadata{LatestReleaseSha: latestSHA, LatestTag: "v4"},
+			},
+			wantHits: 0,
+		},
+		{
+			name: "pin behind the latest release is stale",
+			action: ir.Action{
+				Uses:     "actions/checkout@deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+				Metadata: &ir.ActionMetadata{LatestReleaseSha: latestSHA, LatestTag: "v4"},
+			},
+			wantHits: 1,
+		},
+		{
+			name:     "missing metadata abstains",
+			action:   ir.Action{Uses: "actions/checkout@" + latestSHA},
+			wantHits: 0,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pipeline := &ir.NormalizedPipeline{
+				Provider: ir.ProviderGitHub,
+				Jobs:     []ir.Job{{Name: "build", Uses: []ir.Action{tc.action}}},
+			}
+			findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+			if err != nil {
+				t.Fatalf("evaluate: %v", err)
+			}
+			hits := 0
+			for _, f := range findings {
+				if f.Code == "ISSUE-709" {
+					hits++
+				}
+			}
+			if hits != tc.wantHits {
+				t.Fatalf("%s: expected %d ISSUE-709 finding(s), got %d", tc.name, tc.wantHits, hits)
+			}
+		})
+	}
+}
+
+// TestIssue708_RefVersionMismatch locks the same case-insensitive SHA
+// parity in ref_version_mismatch.rego: the rule lowercases the pinned
+// ref before both the pattern match and the commentTagSha comparison,
+// so an uppercase pin whose trailing comment names the right tag is
+// not reported as a lying comment.
+func TestIssue708_RefVersionMismatch(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFS(policies.FS); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	const taggedSHA = "11bd71901bbe5b1630ceea73d27597364c9af683"
+
+	cases := []struct {
+		name     string
+		action   ir.Action
+		wantHits int
+	}{
+		{
+			name: "uppercase pin with a truthful comment is silent",
+			action: ir.Action{
+				Uses:     "actions/checkout@" + strings.ToUpper(taggedSHA),
+				Comment:  "# v4.1.7",
+				Metadata: &ir.ActionMetadata{CommentVersion: "4.1.7", CommentTagSha: taggedSHA},
+			},
+			wantHits: 0,
+		},
+		{
+			name: "pin whose comment names a different tag's SHA is flagged",
+			action: ir.Action{
+				Uses:     "actions/checkout@deadbeefdeadbeefdeadbeefdeadbeefdeadbeef",
+				Comment:  "# v4.1.7",
+				Metadata: &ir.ActionMetadata{CommentVersion: "4.1.7", CommentTagSha: taggedSHA},
+			},
+			wantHits: 1,
+		},
+		{
+			name:     "missing metadata abstains",
+			action:   ir.Action{Uses: "actions/checkout@" + taggedSHA, Comment: "# v4.1.7"},
+			wantHits: 0,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pipeline := &ir.NormalizedPipeline{
+				Provider: ir.ProviderGitHub,
+				Jobs:     []ir.Job{{Name: "build", Uses: []ir.Action{tc.action}}},
+			}
+			findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+			if err != nil {
+				t.Fatalf("evaluate: %v", err)
+			}
+			hits := 0
+			for _, f := range findings {
+				if f.Code == "ISSUE-708" {
+					hits++
+				}
+			}
+			if hits != tc.wantHits {
+				t.Fatalf("%s: expected %d ISSUE-708 finding(s), got %d", tc.name, tc.wantHits, hits)
 			}
 		})
 	}

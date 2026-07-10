@@ -98,6 +98,9 @@ var validControlSchema = map[string][]string{
 	"actionsMustNotBeArchived": {
 		"enabled",
 	},
+	"actionRefsMustExistUpstream": {
+		"enabled",
+	},
 	"actionsMustNotCarryKnownCVEs": {
 		"enabled",
 	},
@@ -340,6 +343,15 @@ type ControlsConfig struct {
 	// archived on GitHub. Driven by per-action API metadata enriched at
 	// collect time. Config-free; toggle via `enabled`.
 	ActionsMustNotBeArchived *EnabledOnlyControlConfig `yaml:"actionsMustNotBeArchived,omitempty"`
+
+	// ActionRefsMustExistUpstream control configuration (GitHub Actions
+	// only). Flags `uses: owner/repo@<sha>` references pinned to a 40-char
+	// commit SHA that the upstream repository confirms does not exist — a
+	// typo or an impostor-commit attack. Fires only on a definitive 404
+	// from a readable repo; a SHA that could not be verified stays silent.
+	// Driven by per-action API metadata enriched at collect time.
+	// Config-free; toggle via `enabled`.
+	ActionRefsMustExistUpstream *EnabledOnlyControlConfig `yaml:"actionRefsMustExistUpstream,omitempty"`
 
 	// ActionsMustNotCarryKnownCVEs control configuration (GitHub Actions
 	// only). Flags `uses: owner/repo@ref` references whose upstream

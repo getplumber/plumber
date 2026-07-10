@@ -302,6 +302,7 @@ func enrichActionsWithAPIMetadata(pipeline *ir.NormalizedPipeline, apiHost strin
 			amd := &ir.ActionMetadata{
 				RepoArchived:     meta.RepoArchived,
 				RefExists:        meta.RefExists,
+				RefKnownAbsent:   meta.RefKnownAbsent,
 				RefKind:          meta.RefKind,
 				TagSha:           meta.TagSha,
 				LatestTag:        meta.LatestTag,

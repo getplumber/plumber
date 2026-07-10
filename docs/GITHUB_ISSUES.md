@@ -405,11 +405,25 @@ The SHA the workflow pins does not exist in the action's upstream
 repository. Two possible roots:
 
 1. A typo — the runner silently falls back to the default branch.
-2. The `impostor commit` attack class documented in academic supply
-   chain research: a SHA visible in a PR comment or stargazer URL,
-   never merged upstream.
+2. A commit that was removed or never pushed to the upstream repo, so
+   the pin resolves nowhere.
 
 Either way, the review trusted a SHA the repository never approved.
+
+Fires only when the GitHub API confirms the commit is absent from a
+repository Plumber can read. A SHA it could not verify (private/missing
+repo, rate limit, network error) stays silent, so a valid pin is never
+flagged.
+
+This does not detect a fork-network impostor commit (one pushed to a
+fork of the upstream repo). GitHub serves those with HTTP 200 from the
+parent, so they read as present; the control flags only SHAs the API
+reports as absent.
+
+Job-level reusable-workflow refs (`jobs.<id>.uses`) are not yet
+covered: the collector does not enrich them with API metadata for any
+metadata control (the same gap affects the archived, known-CVE, and
+ref-confusion rules). Extending all four together is tracked upstream.
 
 ```yaml
 # ❌ before — SHA does not resolve in actions/checkout

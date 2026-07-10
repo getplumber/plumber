@@ -78,6 +78,73 @@ func TestAggregate_ReusableWorkflowRefsCountTowardActionPinning(t *testing.T) {
 	}
 }
 
+// TestAggregate_UppercaseShaCountsAsPinned locks case-insensitive SHA
+// parity between the Go counters and the regos. Git / the GitHub API
+// resolve SHAs regardless of case, so an uppercase 40-hex pin is
+// immutable: action_unpinned.rego lowercases before matching and stays
+// silent, and isShaPinned must agree — otherwise the ActionRefsUnpinned
+// metric drifts from the ISSUE-701 findings (the counter-vs-findings
+// mismatch TestAggregate_ReusableWorkflowRefsCountTowardActionPinning
+// exists to prevent).
+func TestAggregate_UppercaseShaCountsAsPinned(t *testing.T) {
+	pipeline := &ir.NormalizedPipeline{
+		Jobs: []ir.Job{
+			{
+				Name: "build",
+				Uses: []ir.Action{
+					{Uses: "someowner/somerepo@DEADBEEFDEADBEEFDEADBEEFDEADBEEFDEADBEEF"},
+					{Uses: "someowner/somerepo@v4"}, // mutable, the only unpinned ref
+				},
+			},
+		},
+	}
+	pc := &configuration.PlumberConfig{GitHub: &configuration.ProviderConfig{}}
+	stats := AggregateGitHubStats(pipeline, pc)
+
+	if stats.ActionRefsUnpinned != 1 {
+		t.Fatalf("ActionRefsUnpinned = %d, want 1 (only @v4; the uppercase SHA is an immutable pin and must not count as unpinned)", stats.ActionRefsUnpinned)
+	}
+}
+
+// TestAggregate_ActionRefsAbsentUpstreamCounter locks the ISSUE-707
+// "Impostor Refs Found" metric to what the rego actually flags. The
+// counter is deliberately guarded by isShaPinned — unlike its sibling
+// counters (archived / vulnerable / ambiguous) which count every ref
+// with metadata — because resolveUncached sets RefKnownAbsent=true for
+// ANY confirmed-absent ref, including a non-SHA typo like owner/repo@v99
+// (not a tag, not a branch, commits/v99 → 404), whereas
+// policies/impostor_commit.rego additionally requires a 40-char SHA. If
+// the guard regressed, the metric would render a count the control never
+// produced as findings. A single want==1 assertion over the three refs
+// below locks all three behaviours: positive, non-SHA guard, and abstain.
+func TestAggregate_ActionRefsAbsentUpstreamCounter(t *testing.T) {
+	pipeline := &ir.NormalizedPipeline{
+		Jobs: []ir.Job{
+			{
+				Name: "demo",
+				Uses: []ir.Action{
+					// SHA-pinned + confirmed absent → counts (the impostor / typo SHA).
+					{Uses: "owner/repo@abcdef0123456789abcdef0123456789abcdef01", Metadata: &ir.ActionMetadata{RefKnownAbsent: true}},
+					// Non-SHA ref, also confirmed absent. The rego's sha_pattern
+					// guard keeps it silent, so the counter must NOT tick — this
+					// is the case the isShaPinned guard exists for.
+					{Uses: "owner/repo@v99", Metadata: &ir.ActionMetadata{RefKnownAbsent: true}},
+					// SHA-pinned but the ref could not be verified (RefKnownAbsent
+					// stays false) → the abstain path, no count.
+					{Uses: "owner/repo@0123456789abcdef0123456789abcdef01234567", Metadata: &ir.ActionMetadata{RefKnownAbsent: false}},
+				},
+			},
+		},
+	}
+
+	pc := &configuration.PlumberConfig{GitHub: &configuration.ProviderConfig{}}
+	stats := AggregateGitHubStats(pipeline, pc)
+
+	if stats.ActionRefsAbsentUpstream != 1 {
+		t.Fatalf("ActionRefsAbsentUpstream = %d, want 1 (only the SHA-pinned confirmed-absent ref; the non-SHA ref is guarded out and the unverified ref abstains)", stats.ActionRefsAbsentUpstream)
+	}
+}
+
 // TestDangerousTriggerMetricFollowsFindings locks the
 // workflowsWithDangerousTrigger metric to the ISSUE-802 findings the rule
 // actually emits, rather than a structural scan of trigger names. The

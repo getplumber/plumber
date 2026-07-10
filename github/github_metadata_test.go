@@ -352,6 +352,68 @@ func Test_fetchAllTags_anonymousFallbackOn403(t *testing.T) {
 	}
 }
 
+// Test_commitResolves_triState is the ISSUE-707 correctness guard: a
+// commit lookup must distinguish a definitive answer (the SHA is absent
+// upstream) from an unverifiable error (403, rate limit, network). Only
+// the confirmed-absent case may drive impostor-commit; every other
+// failure must leave checked=false so a valid SHA we could not reach is
+// never flagged. GitHub answers a well-formed but nonexistent 40-char
+// SHA with 422 "No commit found for SHA" (NOT 404) — that 422 case is
+// the exact real-world signal this control depends on. The old
+// bool-only commitExists conflated 403 with a real absence.
+func Test_commitResolves_triState(t *testing.T) {
+	const (
+		presentSHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+		absent422  = "dddddddddddddddddddddddddddddddddddddddd"
+		absent404  = "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+		gatedSHA   = "ffffffffffffffffffffffffffffffffffffffff"
+	)
+	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		body, status := `{}`, http.StatusOK
+		switch {
+		case strings.HasSuffix(r.URL.Path, "/commits/"+absent422):
+			body, status = `{"message":"No commit found for SHA: `+absent422+`"}`, http.StatusUnprocessableEntity
+		case strings.HasSuffix(r.URL.Path, "/commits/"+absent404):
+			body, status = `{"message":"Not Found"}`, http.StatusNotFound
+		case strings.HasSuffix(r.URL.Path, "/commits/"+gatedSHA):
+			body, status = `{"message":"API rate limit exceeded"}`, http.StatusForbidden
+		}
+		return &http.Response{
+			StatusCode: status,
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Header:     make(http.Header),
+			Request:    r,
+		}, nil
+	})
+	c := NewGitHubMetadataClient()
+	rest, err := api.NewRESTClient(api.ClientOptions{AuthToken: "x", Transport: rt})
+	if err != nil {
+		t.Fatalf("new rest client: %v", err)
+	}
+	c.rest = rest
+
+	cases := []struct {
+		name        string
+		sha         string
+		wantExists  bool
+		wantChecked bool
+	}{
+		{"present SHA resolves", presentSHA, true, true},
+		{"absent full SHA is a confirmed 422", absent422, false, true},
+		{"absent ref is a confirmed 404", absent404, false, true},
+		{"rate-limited lookup is unverified", gatedSHA, false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			exists, checked := c.commitResolves("actions", "checkout", tc.sha)
+			if exists != tc.wantExists || checked != tc.wantChecked {
+				t.Fatalf("commitResolves = (exists=%v, checked=%v), want (exists=%v, checked=%v)",
+					exists, checked, tc.wantExists, tc.wantChecked)
+			}
+		})
+	}
+}
+
 // Test_isZeroMetadata_stargazers guards the ISSUE-713 minimumStars path:
 // a resolved star count must keep the metadata even when the ref itself
 // could not be resolved, otherwise enrichment drops it and a popular
@@ -363,4 +425,85 @@ func Test_isZeroMetadata_stargazers(t *testing.T) {
 	if !isZeroMetadata(GitHubMetadata{}) {
 		t.Error("fully zero metadata must be treated as zero")
 	}
+}
+
+// Test_isZeroMetadata_refKnownAbsent guards the ISSUE-707 enrichment
+// linchpin. For an impostor commit on a readable but zero/low-star repo
+// the resolved metadata is all-zero EXCEPT RefKnownAbsent=true. If
+// isZeroMetadata dropped that clause, enrichment
+// (`if isZeroMetadata(meta) && action.Comment == "" { continue }`) would
+// discard the metadata, action.Metadata would stay nil, and the rego
+// would never fire — silently disabling the control for the exact case
+// it targets.
+func Test_isZeroMetadata_refKnownAbsent(t *testing.T) {
+	if isZeroMetadata(GitHubMetadata{RefKnownAbsent: true}) {
+		t.Error("metadata carrying only RefKnownAbsent must not be treated as zero, or ISSUE-707 metadata is dropped at enrichment")
+	}
+}
+
+// Test_resolveUncached_refKnownAbsentGuard is the ISSUE-707 critical-FP
+// guard test. commitResolves alone cannot prove the repo was readable —
+// that gate (`checked && info.err == nil`) lives in resolveUncached — so
+// we drive the whole method through an httptest transport. A
+// private/missing repo whose commits endpoint also 404s must NOT be
+// reported as an impostor: that would be a critical false positive on a
+// legitimately unreachable action. The readable-repo positive path is
+// locked too, so a broken guard cannot silently disable the control.
+func Test_resolveUncached_refKnownAbsentGuard(t *testing.T) {
+	const (
+		owner = "acme"
+		repo  = "widget"
+		sha   = "abcdef0123456789abcdef0123456789abcdef01"
+	)
+	// The tag / branch / commit lookups are all absent so the ref falls
+	// through to the commit probe; repoStatus decides whether the
+	// repository object itself reads (info.err == nil) or errors.
+	newClient := func(t *testing.T, repoStatus, commitStatus int) *GitHubMetadataClient {
+		rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			p := r.URL.Path
+			body, status := `{}`, http.StatusNotFound
+			switch {
+			case p == "/repos/"+owner+"/"+repo:
+				body, status = `{"archived":false,"stargazers_count":0}`, repoStatus
+			case strings.Contains(p, "/releases"):
+				body, status = `[]`, http.StatusOK
+			case strings.HasPrefix(p, "/advisories"):
+				body, status = `[]`, http.StatusOK
+			case strings.Contains(p, "/commits/"):
+				body, status = `{"message":"No commit found for SHA"}`, commitStatus
+			}
+			return &http.Response{
+				StatusCode: status,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     make(http.Header),
+				Request:    r,
+			}, nil
+		})
+		c := NewGitHubMetadataClient()
+		rest, err := api.NewRESTClient(api.ClientOptions{AuthToken: "x", Transport: rt})
+		if err != nil {
+			t.Fatalf("new rest client: %v", err)
+		}
+		c.rest = rest
+		return c
+	}
+
+	t.Run("readable repo + absent commit is a confirmed impostor", func(t *testing.T) {
+		c := newClient(t, http.StatusOK, http.StatusUnprocessableEntity)
+		m := c.resolveUncached(owner, repo, sha)
+		if !m.RefKnownAbsent {
+			t.Fatal("readable repo whose commit 422s must set RefKnownAbsent=true")
+		}
+		if m.RefExists {
+			t.Fatal("RefExists must stay false for an absent commit")
+		}
+	})
+
+	t.Run("unreadable repo does not become an impostor", func(t *testing.T) {
+		c := newClient(t, http.StatusNotFound, http.StatusNotFound)
+		m := c.resolveUncached(owner, repo, sha)
+		if m.RefKnownAbsent {
+			t.Fatal("a private/missing repo (repoInfo errors) must NOT be reported as an impostor; RefKnownAbsent must stay false")
+		}
+	})
 }

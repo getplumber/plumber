@@ -1,0 +1,18 @@
+# Third-party actions pinned by 40-character commit SHA written in
+# UPPERCASE / mixed case. Git and the GitHub API resolve SHAs
+# case-insensitively, so these are immutable pins and must not be
+# flagged as mutable refs — and must count as pinned in the stats so
+# the ActionRefsUnpinned counter stays aligned with the findings.
+# Expected: 0 findings. (PR #332 review — case-insensitive SHA parity)
+name: Release
+on: [push]
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11BD71901BBE5B1630CEEA73D27597364C9AF683
+      - uses: peaceiris/actions-gh-pages@4F9cc6602B3c52E6dd3fF78e1A74bBf0D0a45C9a
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: ./public

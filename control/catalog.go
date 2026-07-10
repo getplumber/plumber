@@ -252,6 +252,11 @@ func GitHubControls(pc *configuration.PlumberConfig) []ControlEntry {
 		Skipped:     c.ActionsMustNotBeArchived == nil || !c.ActionsMustNotBeArchived.IsEnabled(),
 	})
 	entries = append(entries, ControlEntry{
+		DisplayName: "Actions must pin commits that exist upstream",
+		ControlName: "actionRefsMustExistUpstream",
+		Skipped:     c.ActionRefsMustExistUpstream == nil || !c.ActionRefsMustExistUpstream.IsEnabled(),
+	})
+	entries = append(entries, ControlEntry{
 		DisplayName: "Actions must not carry known CVEs",
 		ControlName: "actionsMustNotCarryKnownCVEs",
 		Skipped:     c.ActionsMustNotCarryKnownCVEs == nil || !c.ActionsMustNotCarryKnownCVEs.IsEnabled(),

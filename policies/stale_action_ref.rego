@@ -33,10 +33,12 @@ deny contains finding if {
 }
 
 # _pinned_sha returns the SHA the current ref resolves to. For a SHA
-# pin, that's the ref itself; for a tag pin, metadata.tagSha carries
-# the resolved value.
-_pinned_sha(ref, meta) := ref if {
-	regex.match(sha_pattern, ref)
+# pin, that's the ref itself, lowercased so the comparison against the
+# API's lowercase latestReleaseSha treats an uppercase pin like its
+# lowercase equivalent; for a tag pin, metadata.tagSha carries the
+# resolved value.
+_pinned_sha(ref, meta) := lower(ref) if {
+	regex.match(sha_pattern, lower(ref))
 }
 
 _pinned_sha(_, meta) := meta.tagSha if {

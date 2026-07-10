@@ -317,6 +317,7 @@ func TestValidControlNames(t *testing.T) {
 	names := ValidControlNames()
 
 	expected := []string{
+		"actionRefsMustExistUpstream",
 		"actionsMustBePinnedByCommitSha",
 		"actionsMustNotBeArchived",
 		"actionsMustNotCarryKnownCVEs",

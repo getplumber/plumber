@@ -76,9 +76,13 @@ _ref_of(uses) := ref if {
 	ref := substring(uses, idx + 1, -1)
 } else := ""
 
-# _is_sha is true when ref is exactly 40 lowercase hex characters.
+# _is_sha is true when ref is exactly 40 hex characters. Git and the
+# GitHub API resolve SHAs case-insensitively, so an uppercase pin is
+# still an immutable pin; lowercase before matching so it is not
+# misreported as a mutable ref (keeps ISSUE-701 findings aligned with
+# the Go isShaPinned counter, which also matches case-insensitively).
 _is_sha(ref) if {
-	regex.match(`^[0-9a-f]{40}$`, ref)
+	regex.match(`^[0-9a-f]{40}$`, lower(ref))
 }
 
 # Local actions ("./.github/actions/foo", "./foo") live in the

@@ -149,6 +149,9 @@ func AggregateGitHubStats(pipeline *ir.NormalizedPipeline, pc *configuration.Plu
 				if use.Metadata.RefIsAmbiguous {
 					stats.ActionRefsAmbiguous++
 				}
+				if use.Metadata.RefKnownAbsent && isShaPinned(ref) {
+					stats.ActionRefsAbsentUpstream++
+				}
 			}
 			if ownerOf(ref) != "" && isTrustedOwner(ref, trustedOwners) {
 				stats.ActionRefsExempt++
@@ -302,9 +305,13 @@ var defaultSecurityJobPatterns = []string{
 	"*_dependency_scanning", "gemnasium-*", "dast", "dast_*", "license_scanning",
 }
 
-// shaRefRegex matches a 40-character lowercase hex SHA at the end of
-// an action ref ("owner/repo@<sha>").
-var shaRefRegex = regexp.MustCompile(`@[0-9a-f]{40}$`)
+// shaRefRegex matches a 40-character hex SHA at the end of an action
+// ref ("owner/repo@<sha>"). Case-insensitive: git / the GitHub API
+// resolve SHAs regardless of case, so an uppercase pin is still a SHA
+// pin. Matching both keeps this aligned with impostor_commit.rego (which
+// lowercases before matching) so the ActionRefsAbsentUpstream counter
+// cannot drift from the findings.
+var shaRefRegex = regexp.MustCompile(`@[0-9a-fA-F]{40}$`)
 
 func ownerOf(ref string) string {
 	if i := strings.IndexByte(ref, '/'); i > 0 {

@@ -381,6 +381,9 @@ func TestStarterPlumberConfigGitHubMatchesCuratedDefaults(t *testing.T) {
 	if gh.ActionsMustNotCarryKnownCVEs == nil || !*gh.ActionsMustNotCarryKnownCVEs.Enabled {
 		t.Error("known-CVE control should be present and enabled")
 	}
+	if gh.ActionRefsMustExistUpstream == nil || !*gh.ActionRefsMustExistUpstream.Enabled {
+		t.Error("impostor-commit control should be present and enabled")
+	}
 	if gh.PipelineMustNotEnableDebugTrace == nil || !*gh.PipelineMustNotEnableDebugTrace.Enabled {
 		t.Fatal("github debug-trace control should be present and enabled")
 	}
@@ -402,6 +405,32 @@ func TestStarterPlumberConfigGitHubMatchesCuratedDefaults(t *testing.T) {
 		gh.BranchMustBeProtected.CodeOwnerApprovalRequired == nil ||
 		!*gh.BranchMustBeProtected.CodeOwnerApprovalRequired {
 		t.Error("github branch.codeOwnerApprovalRequired should default true")
+	}
+}
+
+// TestInitWizardEnablesImpostorCommit locks the compImpostorCommit ->
+// ActionRefsMustExistUpstream mapping in toPlumberConfig: selecting the
+// composition option must enable the control, and a run that does not
+// select it must leave the control unset. Without this a mis-wired or
+// dropped case in the wizard would silently stop enabling an ISSUE-707
+// security control while the suite stayed green.
+func TestInitWizardEnablesImpostorCommit(t *testing.T) {
+	on := &initWizardState{
+		Providers:          []string{"github"},
+		Categories:         []string{catComposition},
+		CompositionChoices: []string{compImpostorCommit},
+	}
+	if c := on.toPlumberConfig().GitHub.Controls.ActionRefsMustExistUpstream; c == nil || c.Enabled == nil || !*c.Enabled {
+		t.Fatal("selecting compImpostorCommit must enable ActionRefsMustExistUpstream")
+	}
+
+	off := &initWizardState{
+		Providers:          []string{"github"},
+		Categories:         []string{catComposition},
+		CompositionChoices: []string{compArchivedActions},
+	}
+	if c := off.toPlumberConfig().GitHub.Controls.ActionRefsMustExistUpstream; c != nil {
+		t.Fatal("not selecting compImpostorCommit must leave ActionRefsMustExistUpstream unset")
 	}
 }
 

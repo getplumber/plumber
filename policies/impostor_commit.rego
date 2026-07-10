@@ -1,14 +1,20 @@
 # impostor-commit — flag workflow steps pinned to a 40-character
-# SHA that does not resolve in the action's upstream repository.
-# Either a typo (the runner silently falls back to the default
-# branch) or the literal `impostor commit` attack vector: a commit
-# that looks legitimate in a PR comment / stargazer URL but was
-# never merged upstream.
+# SHA that does not resolve in the action's upstream repository:
+# a typo (the runner silently falls back to the default branch), or
+# a commit that was removed or never pushed upstream.
+#
+# Scope note: this does NOT detect a fork-network "impostor commit"
+# (one pushed to a fork of the upstream repo). GitHub serves those
+# with HTTP 200 from the parent, so they read as present; this rule
+# flags only SHAs the API reports as absent (404 / 422).
 #
 # Requires the collector to have resolved the action's GitHub
-# metadata. When metadata is missing we stay silent — verifying a
-# SHA against the upstream repo needs an API call and we refuse to
-# guess.
+# metadata. The rule fires only on refKnownAbsent, which the collector
+# sets ONLY when the upstream API confirms the commit is absent (a
+# 404 / 422 for a readable repo). A SHA that could not be verified
+# (private repo, rate limit, network error) leaves refKnownAbsent false
+# (omitted) and stays silent, so we never flag a valid SHA we merely
+# failed to reach.
 package impostor_commit
 
 import rego.v1
@@ -20,13 +26,16 @@ deny contains finding if {
 	job := input.pipeline.jobs[i]
 	action := job.uses[j]
 	ref := _ref_of(action.uses)
-	regex.match(sha_pattern, ref)
-	action.metadata
-	action.metadata.refExists == false
+	# Git / the GitHub API resolve SHAs case-insensitively, so an
+	# uppercase or mixed-case 40-hex pin is still a SHA. Lowercase before
+	# matching so it cannot dodge the check (the collector already
+	# confirmed the commit absent regardless of case).
+	regex.match(sha_pattern, lower(ref))
+	action.metadata.refKnownAbsent == true
 	finding := {
 		"code":     "ISSUE-707",
 		"severity": "critical",
-		"message":  sprintf("job %q pins action %q to a commit SHA that does not exist in the upstream repository — typo or impostor-commit attack", [job.name, action.uses]),
+		"message":  sprintf("job %q pins action %q to a commit SHA that does not exist in the upstream repository (typo, or a commit removed or never pushed upstream)", [job.name, action.uses]),
 		"job":      job.name,
 		"line":     object.get(action, "line", 0),
 	}

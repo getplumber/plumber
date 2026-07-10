@@ -292,6 +292,12 @@ type Action struct {
 type ActionMetadata struct {
 	RepoArchived     bool     `json:"repoArchived,omitempty"`
 	RefExists        bool     `json:"refExists,omitempty"`
+	// RefKnownAbsent is true ONLY when the upstream API definitively
+	// answered that the ref does not exist (a 404 / 422 on a readable
+	// repo). It stays false when the ref could not be verified (private
+	// repo, rate limit, network error) so impostor-commit (ISSUE-707)
+	// never flags a valid SHA it merely failed to reach.
+	RefKnownAbsent   bool     `json:"refKnownAbsent,omitempty"`
 	RefKind          string   `json:"refKind,omitempty"`
 	TagSha           string   `json:"tagSha,omitempty"`
 	LatestTag        string   `json:"latestTag,omitempty"`

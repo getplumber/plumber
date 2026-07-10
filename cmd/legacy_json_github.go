@@ -59,6 +59,8 @@ func buildLegacyResultGitHub(e control.ControlEntry, result *control.AnalysisRes
 		return "refConfusionResult", buildRefConfusionBlock(common, result, findings)
 	case "actionsMustNotBeArchived":
 		return "archivedActionsResult", buildArchivedActionsBlock(common, result, findings)
+	case "actionRefsMustExistUpstream":
+		return "impostorCommitResult", buildImpostorCommitBlock(common, result, findings)
 	case "actionsMustNotCarryKnownCVEs":
 		return "knownVulnerableActionsResult", buildKnownVulnerableActionsBlock(common, result, findings)
 	case "releaseWorkflowsMustNotRestoreUntrustedCache":
@@ -629,6 +631,27 @@ func buildArchivedActionsBlock(c legacyCommon, result *control.AnalysisResult, f
 		"metrics": map[string]any{
 			"actionRefsTotal":    s.ActionRefsTotal,
 			"actionRefsArchived": len(findings),
+		},
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
+	}
+}
+
+// buildImpostorCommitBlock — ISSUE-707. Denominator is the number of
+// action refs scanned (the same denominator the action-pinning block
+// uses); numerator is the finding count, one per (job, SHA) pinned to a
+// commit the upstream repo confirmed does not exist. Only a definitive
+// absence answer (404 / 422) from a readable repo reaches here — refs
+// the API could not verify never become findings (see commitResolves).
+func buildImpostorCommitBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	s := statsOf(result)
+	return map[string]any{
+		"issues": projectFindings(findings, "job"),
+		"metrics": map[string]any{
+			"actionRefsTotal":          s.ActionRefsTotal,
+			"actionRefsAbsentUpstream": len(findings),
 		},
 		"version":   "0.1.0",
 		"ciValid":   c.CiValid,

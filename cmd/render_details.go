@@ -417,6 +417,11 @@ func buildGitHubControlStats(controlName string, stats *control.GitHubAnalysisSt
 			{Label: statActionRefsChecked, Value: fmt.Sprintf("%d", stats.ActionRefsTotal+stats.ActionRefsExempt)},
 			{Label: "Archived Refs Found", Value: fmt.Sprintf("%d", stats.ActionRefsArchived)},
 		}
+	case "actionRefsMustExistUpstream":
+		return []statLine{
+			{Label: statActionRefsChecked, Value: fmt.Sprintf("%d", stats.ActionRefsTotal+stats.ActionRefsExempt)},
+			{Label: "Impostor Refs Found", Value: fmt.Sprintf("%d", stats.ActionRefsAbsentUpstream)},
+		}
 	case "actionsMustNotCarryKnownCVEs":
 		return []statLine{
 			{Label: statActionRefsChecked, Value: fmt.Sprintf("%d", stats.ActionRefsTotal+stats.ActionRefsExempt)},
@@ -708,6 +713,15 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 		return []statLine{
 			{Label: statActionRefsChecked, Value: fmt.Sprintf("%d", actionRefs)},
 			{Label: "Archived Refs Found", Value: fmt.Sprintf("%d", findingsCount)},
+		}
+	case "actionRefsMustExistUpstream":
+		actionRefs := 0
+		if result.GitHubStats != nil {
+			actionRefs = result.GitHubStats.ActionRefsTotal
+		}
+		return []statLine{
+			{Label: statActionRefsChecked, Value: fmt.Sprintf("%d", actionRefs)},
+			{Label: "Impostor Refs Found", Value: fmt.Sprintf("%d", findingsCount)},
 		}
 	case "actionsMustNotCarryKnownCVEs":
 		actionRefs := 0

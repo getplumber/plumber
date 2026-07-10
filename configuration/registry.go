@@ -123,7 +123,6 @@ var benchedControls = map[string]map[string]struct{}{
 		// API-backed action checks (need integration tests).
 		"actionPinCommentsMustMatchSha":         {},
 		"actionPinsMustNotBeStale":              {},
-		"actionRefsMustExistUpstream":           {},
 		"actionsMustNotDuplicateRunnerBuiltins": {},
 
 		// Repo-artifact / setup-side controls (need fixture coverage).

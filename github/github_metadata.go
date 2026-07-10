@@ -53,8 +53,14 @@ const EnvMetadataToken = "PLUMBER_METADATA_TOKEN"
 // is also what the policies see when the API call failed. They
 // should treat zero value as "I don't know" and stay silent.
 type GitHubMetadata struct {
-	RepoArchived     bool
-	RefExists        bool
+	RepoArchived bool
+	RefExists    bool
+	// RefKnownAbsent is true ONLY when the upstream API definitively
+	// answered that the ref does not exist (a 404 / 422 on a readable
+	// repo). It stays false when the ref could not be verified (private
+	// repo, rate limit, network error) so impostor-commit (ISSUE-707)
+	// never flags a valid SHA it merely failed to reach.
+	RefKnownAbsent   bool
 	RefKind          string
 	TagSha           string
 	LatestTag        string
@@ -263,10 +269,19 @@ func (c *GitHubMetadataClient) resolveUncached(owner, repo, ref string) GitHubMe
 		m.RefExists = true
 		return m
 	}
-	if c.commitExists(owner, repo, ref) {
+	if exists, checked := c.commitResolves(owner, repo, ref); exists {
 		m.RefKind = "commit"
 		m.RefExists = true
 		return m
+	} else if checked && info.err == nil {
+		// A definitive absence answer (404 / 422) on a repo we CAN read
+		// means the SHA is not tag, branch, nor commit upstream — a
+		// genuine impostor commit or typo. We require info.err == nil so
+		// a private / missing repo (whose commits endpoint also 404s) is
+		// never mistaken for an absent commit. Left false when the repo
+		// itself is unreadable so ISSUE-707 stays silent (see
+		// commitResolves).
+		m.RefKnownAbsent = true
 	}
 	// Unknown ref — keep RefKind empty, RefExists false.
 	return m
@@ -429,7 +444,10 @@ func (c *GitHubMetadataClient) resolveRefToVersion(owner, repo, ref string) *ver
 	return nil
 }
 
-var _shaOnly = regexp.MustCompile(`^[0-9a-f]{40}$`)
+// Case-insensitive: git / the GitHub API resolve SHAs regardless of
+// case, so an uppercase pin must take the same code paths (degraded
+// warnings, advisory abstains) as a lowercase one.
+var _shaOnly = regexp.MustCompile(`^[0-9a-fA-F]{40}$`)
 
 func _isCommitSha(ref string) bool {
 	return _shaOnly.MatchString(ref)
@@ -862,21 +880,43 @@ func (c *GitHubMetadataClient) branchExists(owner, repo, ref string) bool {
 	return err == nil
 }
 
-func (c *GitHubMetadataClient) commitExists(owner, repo, ref string) bool {
+// commitResolves reports whether ref resolves to a commit upstream.
+// The second return value, checked, is true ONLY when the API gave a
+// definitive answer: exists=true on success, or exists=false on a 404 /
+// 422. On any other error (403, rate limit, private repo, network)
+// checked is false and the caller must not conclude the commit is
+// absent — impostor-commit (ISSUE-707) fires only on a confirmed
+// absence, never on a SHA it merely failed to reach.
+func (c *GitHubMetadataClient) commitResolves(owner, repo, ref string) (exists, checked bool) {
 	// GitHub's commits endpoint accepts short SHAs too, but for
 	// impostor-commit we specifically want to know if a full 40-
-	// char SHA resolves. Narrower form than resolveTag — we only
-	// need success vs failure.
+	// char SHA resolves.
 	var resp json.RawMessage
 	err := c.rest.Get(fmt.Sprintf("repos/%s/%s/commits/%s", owner, repo, ref), &resp)
-	return err == nil
+	if err == nil {
+		return true, true
+	}
+	var httpErr *api.HTTPError
+	if errors.As(err, &httpErr) {
+		switch httpErr.StatusCode {
+		// 404: the ref (short SHA / branch form) is not present. 422
+		// "No commit found for SHA": a well-formed 40-char SHA the repo
+		// does not contain — the endpoint's answer for the exact case
+		// impostor-commit cares about. Both are definitive "does not
+		// exist" answers for a repo we can read (resolveUncached only
+		// trusts this after repoInfo succeeded).
+		case http.StatusNotFound, http.StatusUnprocessableEntity:
+			return false, true
+		}
+	}
+	return false, false
 }
 
 // isZeroMetadata reports whether meta has no content. GitHubMetadata
 // now carries a slice field, which Go refuses to compare with `==`,
 // so we spell the zero-check out field by field.
 func isZeroMetadata(meta GitHubMetadata) bool {
-	if meta.RepoArchived || meta.RefExists || meta.RefIsAmbiguous {
+	if meta.RepoArchived || meta.RefExists || meta.RefIsAmbiguous || meta.RefKnownAbsent {
 		return false
 	}
 	if meta.RefKind != "" || meta.TagSha != "" || meta.LatestTag != "" || meta.LatestReleaseSha != "" {

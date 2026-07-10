@@ -126,6 +126,11 @@ type GitHubAnalysisStats struct {
 	ActionRefsArchived   int
 	ActionRefsVulnerable int
 	ActionRefsAmbiguous  int
+	// ActionRefsAbsentUpstream (ISSUE-707) counts SHA-pinned refs the
+	// upstream repo confirmed do not exist. Guarded on isShaPinned so it
+	// stays aligned with the impostor-commit rego, which only fires on a
+	// 40-char SHA.
+	ActionRefsAbsentUpstream int
 
 	// Container images (ISSUE-102 / ISSUE-103).
 	ImagesTotal          int
