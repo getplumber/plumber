@@ -1,12 +1,11 @@
 ---
 name: Feature request
 about: Suggest a new feature or improvement for Plumber
-title: "[FEAT]"
-labels: 'enhancement'
+title: ''
+type: Feature
 assignees: ''
 
 ---
-
 ## **Is your feature request related to a problem? Please describe.**
 
 <!-- 
