@@ -28,6 +28,7 @@ deny contains finding if {
 		"severity": "low",
 		"message":  sprintf("job %q pins %q behind the latest release %q — refresh to pick up upstream security fixes", [job.name, action.uses, action.metadata.latestTag]),
 		"job":      job.name,
+		"uses":     action.uses,
 		"line":     object.get(action, "line", 0),
 	}
 }

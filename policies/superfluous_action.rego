@@ -41,6 +41,7 @@ deny contains finding if {
 		"severity": "low",
 		"message":  sprintf("job %q uses %q — same effect as %q from the runner, drop the third-party dependency", [job.name, action.uses, reason]),
 		"job":      job.name,
+		"uses":     action.uses,
 		"line":     object.get(action, "line", 0),
 	}
 }

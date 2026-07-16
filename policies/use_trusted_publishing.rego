@@ -34,6 +34,7 @@ deny contains finding if {
 		"severity": "high",
 		"message":  sprintf("job %q publishes to %s via %q with a static token — migrate to OIDC trusted publishing", [job.name, ecosystem, action.uses]),
 		"job":      job.name,
+		"uses":     action.uses,
 		"line":     object.get(action, "line", 0),
 	}
 }

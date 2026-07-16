@@ -44,8 +44,11 @@ func TestPullRequestTargetHeadCheckoutJSONBlock(t *testing.T) {
 	if issues[0]["code"] != "ISSUE-804" {
 		t.Errorf("issue code = %v, want ISSUE-804", issues[0]["code"])
 	}
-	if issues[0]["jobName"] != "ci/build" {
-		t.Errorf("issue jobName = %v, want ci/build", issues[0]["jobName"])
+	if issues[0]["job"] != "ci/build" {
+		t.Errorf("issue job = %v, want ci/build", issues[0]["job"])
+	}
+	if alias, present := issues[0]["jobName"]; present {
+		t.Errorf("the jobName alias was retired in favour of job; block still carries %v", alias)
 	}
 	if issues[0]["url"] == nil {
 		t.Errorf("issue must carry a url (file:line link), got %v", issues[0])

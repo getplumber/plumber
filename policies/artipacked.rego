@@ -26,6 +26,7 @@ deny contains finding if {
 		"severity": "high",
 		"message":  sprintf("job %q runs %q without `persist-credentials: false` — GITHUB_TOKEN lingers in .git/config and is exfiltrable by later steps", [job.name, action.uses]),
 		"job":      job.name,
+		"uses":     action.uses,
 		"line":     object.get(action, "line", 0),
 	}
 }

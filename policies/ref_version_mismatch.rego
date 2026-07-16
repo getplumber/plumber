@@ -40,6 +40,8 @@ deny contains finding if {
 		"severity": "medium",
 		"message":  sprintf("job %q pins %q but comment %q names tag %q which resolves to %q — reviewers will misread the version", [job.name, action.uses, action.comment, action.metadata.commentVersion, action.metadata.commentTagSha]),
 		"job":      job.name,
+		"uses":     action.uses,
+		"comment":  action.comment,
 		"line":     object.get(action, "line", 0),
 	}
 }
@@ -60,6 +62,8 @@ deny contains finding if {
 		"severity": "medium",
 		"message":  sprintf("job %q pins tag %q with comment %q — ref and comment name different versions", [job.name, action.uses, action.comment]),
 		"job":      job.name,
+		"uses":     action.uses,
+		"comment":  action.comment,
 		"line":     object.get(action, "line", 0),
 	}
 }

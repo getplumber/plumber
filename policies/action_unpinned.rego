@@ -38,6 +38,7 @@ deny contains finding if {
 		"severity": "high",
 		"message":  sprintf("job %q references action %q with a mutable ref — pin by commit SHA instead", [job.name, use.uses]),
 		"job":      job.name,
+		"uses":     use.uses,
 		"line":     object.get(use, "line", 0),
 	}
 }
@@ -63,6 +64,7 @@ deny contains finding if {
 		"severity": "high",
 		"message":  sprintf("job %q calls reusable workflow %q with a mutable ref — pin by commit SHA instead", [job.name, use]),
 		"job":      job.name,
+		"uses":     use,
 	}
 }
 

@@ -37,6 +37,7 @@ deny contains finding if {
 		"severity": "critical",
 		"message":  sprintf("job %q pins action %q to a commit SHA that does not exist in the upstream repository (typo, or a commit removed or never pushed upstream)", [job.name, action.uses]),
 		"job":      job.name,
+		"uses":     action.uses,
 		"line":     object.get(action, "line", 0),
 	}
 }

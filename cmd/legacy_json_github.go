@@ -89,7 +89,7 @@ func statsOf(result *control.AnalysisResult) control.GitHubAnalysisStats {
 func buildActionPinningBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
 	s := statsOf(result)
 	return map[string]any{
-		"issues": projectFindings(_sortedFindings(findings), "jobName"),
+		"issues": projectFindings(_sortedFindings(findings), "job"),
 		"metrics": map[string]any{
 			"actionRefsTotal":    s.ActionRefsTotal,
 			"actionRefsUnpinned": s.ActionRefsUnpinned,
@@ -281,7 +281,7 @@ func buildDockerInDockerBlockGitHub(c legacyCommon, result *control.AnalysisResu
 		}
 	}
 	return map[string]any{
-		"issues": projectFindings(findings, "jobName"),
+		"issues": projectFindings(findings, "job"),
 		"metrics": map[string]any{
 			"totalJobsChecked":    s.JobsTotal,
 			"dindServicesFound":   s.JobsWithDinD,
@@ -301,7 +301,7 @@ func buildDockerInDockerBlockGitHub(c legacyCommon, result *control.AnalysisResu
 func buildSecurityJobsBlockGitHub(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
 	s := statsOf(result)
 	return map[string]any{
-		"issues": projectFindings(findings, "jobName"),
+		"issues": projectFindings(findings, "job"),
 		"metrics": map[string]any{
 			"securityJobsFound": s.SecurityJobsTotal,
 			"weakenedJobs":      len(findings),
@@ -318,7 +318,7 @@ func buildSecurityJobsBlockGitHub(c legacyCommon, result *control.AnalysisResult
 func buildReusableSecretsBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
 	s := statsOf(result)
 	return map[string]any{
-		"issues": projectFindings(findings, "jobName"),
+		"issues": projectFindings(findings, "job"),
 		"metrics": map[string]any{
 			"reusableCalls":               s.ReusableCalls,
 			"reusableCallsSecretsInherit": s.ReusableCallsSecretsInherit,
@@ -335,7 +335,7 @@ func buildReusableSecretsBlock(c legacyCommon, result *control.AnalysisResult, f
 func buildTemplateInjectionBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
 	s := statsOf(result)
 	return map[string]any{
-		"issues": projectFindings(findings, "jobName"),
+		"issues": projectFindings(findings, "job"),
 		"metrics": map[string]any{
 			"workflowsScanned":        s.WorkflowsTotal,
 			"scriptLinesChecked":      s.ScriptLinesTotal,
@@ -351,7 +351,7 @@ func buildTemplateInjectionBlock(c legacyCommon, result *control.AnalysisResult,
 func buildGitHubEnvInjectionBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
 	s := statsOf(result)
 	return map[string]any{
-		"issues": projectFindings(findings, "jobName"),
+		"issues": projectFindings(findings, "job"),
 		"metrics": map[string]any{
 			"workflowsScanned":         s.WorkflowsTotal,
 			"scriptLinesChecked":       s.ScriptLinesTotal,
@@ -370,7 +370,7 @@ func buildGitHubEnvInjectionBlock(c legacyCommon, result *control.AnalysisResult
 func buildOverprovisionedSecretsBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
 	s := statsOf(result)
 	return map[string]any{
-		"issues": projectFindings(findings, "jobName"),
+		"issues": projectFindings(findings, "job"),
 		"metrics": map[string]any{
 			"workflowsScanned":           s.WorkflowsTotal,
 			"secretsContextExportsFound": len(findings),
@@ -387,7 +387,7 @@ func buildOverprovisionedSecretsBlock(c legacyCommon, result *control.AnalysisRe
 func buildCachePoisoningBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
 	s := statsOf(result)
 	return map[string]any{
-		"issues": projectFindings(findings, "jobName"),
+		"issues": projectFindings(findings, "job"),
 		"metrics": map[string]any{
 			"workflowsScanned":          s.WorkflowsTotal,
 			"unscopedCacheRestoreFound": len(findings),
@@ -405,7 +405,7 @@ func buildCachePoisoningBlock(c legacyCommon, result *control.AnalysisResult, fi
 func buildDangerousTriggersBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
 	s := statsOf(result)
 	return map[string]any{
-		"issues": projectFindings(findings, "jobName"),
+		"issues": projectFindings(findings, "job"),
 		"metrics": map[string]any{
 			"workflowsScanned":              s.WorkflowsTotal,
 			"workflowsWithDangerousTrigger": s.WorkflowsWithDangerousTrigger,
@@ -427,7 +427,7 @@ func buildDangerousTriggersBlock(c legacyCommon, result *control.AnalysisResult,
 func buildPullRequestTargetHeadCheckoutBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
 	s := statsOf(result)
 	return map[string]any{
-		"issues": projectFindings(_sortedFindings(findings), "jobName"),
+		"issues": projectFindings(_sortedFindings(findings), "job"),
 		"metrics": map[string]any{
 			"workflowsScanned":           s.WorkflowsTotal,
 			"headCheckoutsUnderPrTarget": len(findings),
@@ -444,7 +444,7 @@ func buildPullRequestTargetHeadCheckoutBlock(c legacyCommon, result *control.Ana
 func buildPermissionsBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
 	s := statsOf(result)
 	return map[string]any{
-		"issues": projectFindings(findings, "jobName"),
+		"issues": projectFindings(findings, "job"),
 		"metrics": map[string]any{
 			"workflowsTotal":              s.WorkflowsTotal,
 			"workflowsMissingPermissions": s.WorkflowsMissingPermissions,

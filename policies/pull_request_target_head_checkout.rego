@@ -41,6 +41,8 @@ deny contains finding if {
 		"severity": "critical",
 		"message":  sprintf("job %q runs under pull_request_target AND checks out the PR head (ref=%q) — base-repo secrets and fork-controlled code in the same run (tj-actions / CVE-2025-30066 pattern)", [job.name, ref]),
 		"job":      job.name,
+		"uses":     action.uses,
+		"ref":      ref,
 		"line":     object.get(action, "line", 0),
 	}
 }

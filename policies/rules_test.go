@@ -2529,13 +2529,13 @@ func TestIssue209_GitHubEnvInjection(t *testing.T) {
 		{"clean_env_binding.yml", nil},          // env-bound title (single-line) to $GITHUB_ENV
 		{"clean_env_bound_ref_to_env.yml", nil}, // env-bound ref (single-line) to $GITHUB_ENV
 		{"clean_env_base64.yml", nil},           // env-bound body, but base64-encoded
-		{"clean_literal.yml", nil},          // static value
-		{"clean_pr_number.yml", nil},        // numeric field, not injectable
-		{"clean_head_sha.yml", nil},         // SHA, not injectable
-		{"clean_action_enum.yml", nil},      // enum, not injectable
-		{"clean_base_default_branch.yml", nil}, // base repo metadata (#230), not the fork's
-		{"clean_tojson.yml", nil},           // toJSON escapes the newline
-		{"clean_cross_line.yml", nil},       // sink and expression on different lines
+		{"clean_literal.yml", nil},              // static value
+		{"clean_pr_number.yml", nil},            // numeric field, not injectable
+		{"clean_head_sha.yml", nil},             // SHA, not injectable
+		{"clean_action_enum.yml", nil},          // enum, not injectable
+		{"clean_base_default_branch.yml", nil},  // base repo metadata (#230), not the fork's
+		{"clean_tojson.yml", nil},               // toJSON escapes the newline
+		{"clean_cross_line.yml", nil},           // sink and expression on different lines
 	}
 
 	engine := opaengine.New()
@@ -4659,4 +4659,175 @@ func TestIssue416_RequiredActionMissing(t *testing.T) {
 	})
 }
 
+// TestIssue323_FindingsCarryStructuredEvidence — issue #323: every
+// line-anchored finding must expose its offending content as a
+// structured Data field (the action ref as `uses`, the Dockerfile base
+// as `image`, the checkout ref as `ref`, …), not only interpolated into
+// the human-readable message. The per-control JSON issues[] projection
+// strips message/file/line, so Data is the only channel through which
+// machine consumers (Radar, dashboards) receive the evidence.
+func TestIssue323_FindingsCarryStructuredEvidence(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFS(policies.FS); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
 
+	const oldSHA = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+	const deadSHA = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+
+	cases := []struct {
+		name     string
+		pipeline *ir.NormalizedPipeline
+		cfg      map[string]any
+		code     string
+		want     map[string]string
+	}{
+		{
+			name: "ISSUE-701 step-level action carries uses",
+			pipeline: &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{{
+				Name: "build",
+				Uses: []ir.Action{{Uses: "aquasecurity/trivy-action@0.28.0"}},
+			}}},
+			cfg:  map[string]any{"actionsMustBePinnedByCommitSha": map[string]any{}},
+			code: "ISSUE-701",
+			want: map[string]string{"uses": "aquasecurity/trivy-action@0.28.0"},
+		},
+		{
+			name: "ISSUE-701 reusable workflow carries uses",
+			pipeline: &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{{
+				Name:                 "call",
+				ReusableWorkflowUses: "other/repo/.github/workflows/x.yml@main",
+			}}},
+			cfg:  map[string]any{"actionsMustBePinnedByCommitSha": map[string]any{}},
+			code: "ISSUE-701",
+			want: map[string]string{"uses": "other/repo/.github/workflows/x.yml@main"},
+		},
+		{
+			name: "ISSUE-307 artipacked carries uses",
+			pipeline: &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{{
+				Name: "build",
+				Uses: []ir.Action{{Uses: "actions/checkout@v4"}},
+			}}},
+			code: "ISSUE-307",
+			want: map[string]string{"uses": "actions/checkout@v4"},
+		},
+		{
+			name: "ISSUE-402 ambiguous action ref carries uses",
+			pipeline: &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{{
+				Name: "build",
+				Uses: []ir.Action{{Uses: "owner/repo@v1", Metadata: &ir.ActionMetadata{RefKind: "tag", RefExists: true, RefIsAmbiguous: true}}},
+			}}},
+			code: "ISSUE-402",
+			want: map[string]string{"uses": "owner/repo@v1"},
+		},
+		{
+			name: "ISSUE-421 static publish token carries uses",
+			pipeline: &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{{
+				Name: "publish",
+				Uses: []ir.Action{{Uses: "pypa/gh-action-pypi-publish@v1", With: map[string]any{"password": "${{ secrets.PYPI_TOKEN }}"}}},
+			}}},
+			code: "ISSUE-421",
+			want: map[string]string{"uses": "pypa/gh-action-pypi-publish@v1"},
+		},
+		{
+			name: "ISSUE-705 unscoped cache restore carries uses",
+			pipeline: &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{{
+				Name:     "publish",
+				Triggers: []string{"release"},
+				Uses:     []ir.Action{{Uses: "actions/cache@v4", With: map[string]any{"key": "build-cache"}}},
+			}}},
+			cfg:  issue705DefaultConfig(),
+			code: "ISSUE-705",
+			want: map[string]string{"uses": "actions/cache@v4"},
+		},
+		{
+			name: "ISSUE-706 dockerfile base carries image",
+			pipeline: &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Dockerfiles: []ir.Dockerfile{{
+				Path:  "Dockerfile",
+				Bases: []ir.DockerfileBase{{Image: "golang:1.25", Line: 1}},
+			}}},
+			code: "ISSUE-706",
+			want: map[string]string{"image": "golang:1.25"},
+		},
+		{
+			name: "ISSUE-707 impostor commit carries uses",
+			pipeline: &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{{
+				Name: "build",
+				Uses: []ir.Action{{Uses: "actions/checkout@" + deadSHA, Metadata: &ir.ActionMetadata{RefKnownAbsent: true}}},
+			}}},
+			code: "ISSUE-707",
+			want: map[string]string{"uses": "actions/checkout@" + deadSHA},
+		},
+		{
+			name: "ISSUE-708 sha/comment mismatch carries uses and comment",
+			pipeline: &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{{
+				Name: "build",
+				Uses: []ir.Action{{Uses: "owner/repo@" + oldSHA, Comment: "v4.1.0", Metadata: &ir.ActionMetadata{CommentVersion: "v4.1.0", CommentTagSha: deadSHA}}},
+			}}},
+			code: "ISSUE-708",
+			want: map[string]string{"uses": "owner/repo@" + oldSHA, "comment": "v4.1.0"},
+		},
+		{
+			name: "ISSUE-708 tag/comment mismatch carries uses and comment",
+			pipeline: &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{{
+				Name: "build",
+				Uses: []ir.Action{{Uses: "owner/repo@v3", Comment: "v4.0.0", Metadata: &ir.ActionMetadata{RefKind: "tag"}}},
+			}}},
+			code: "ISSUE-708",
+			want: map[string]string{"uses": "owner/repo@v3", "comment": "v4.0.0"},
+		},
+		{
+			name: "ISSUE-709 stale pin carries uses",
+			pipeline: &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{{
+				Name: "build",
+				Uses: []ir.Action{{Uses: "owner/repo@" + oldSHA, Metadata: &ir.ActionMetadata{LatestReleaseSha: deadSHA, LatestTag: "v5"}}},
+			}}},
+			code: "ISSUE-709",
+			want: map[string]string{"uses": "owner/repo@" + oldSHA},
+		},
+		{
+			name: "ISSUE-711 superfluous action carries uses",
+			pipeline: &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{{
+				Name: "build",
+				Uses: []ir.Action{{Uses: "nick-invision/retry@v2"}},
+			}}},
+			code: "ISSUE-711",
+			want: map[string]string{"uses": "nick-invision/retry@v2"},
+		},
+		{
+			name: "ISSUE-804 pull_request_target head checkout carries uses and ref",
+			pipeline: &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{{
+				Name:     "pwn",
+				Triggers: []string{"pull_request_target"},
+				Uses:     []ir.Action{{Uses: "actions/checkout@v4", With: map[string]any{"ref": "${{ github.event.pull_request.head.sha }}"}}},
+			}}},
+			code: "ISSUE-804",
+			want: map[string]string{"uses": "actions/checkout@v4", "ref": "${{ github.event.pull_request.head.sha }}"},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			findings, err := engine.Evaluate(context.Background(), tc.pipeline, tc.cfg)
+			if err != nil {
+				t.Fatalf("evaluate: %v", err)
+			}
+			var hit *opaengine.Finding
+			for i := range findings {
+				if findings[i].Code == tc.code {
+					hit = &findings[i]
+					break
+				}
+			}
+			if hit == nil {
+				t.Fatalf("expected a %s finding, got none", tc.code)
+			}
+			for key, want := range tc.want {
+				got, _ := hit.Data[key].(string)
+				if got != want {
+					t.Errorf("Data[%q] = %q, want %q", key, got, want)
+				}
+			}
+		})
+	}
+}

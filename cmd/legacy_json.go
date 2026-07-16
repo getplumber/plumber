@@ -98,7 +98,7 @@ func buildLegacyResult(e control.ControlEntry, result *control.AnalysisResult, p
 		return "includeRefConfusionResult", buildIncludeRefConfusionBlock(common, result, findings)
 	case "includesMustBeUpToDate":
 		return "outdatedIncludesResult", buildOutdatedIncludesBlock(common, result, findings)
-	// (jobNameKey is dropped for the outdated builder — the legacy
+	// (jobKey is dropped for the outdated builder — the legacy
 	// shape replaces `job` with `gitlabIncludeLocation`.)
 	case "includesMustNotUseForbiddenVersions":
 		return "forbiddenVersionsIncludesResult", buildForbiddenVersionsBlock(common, result, findings)
@@ -134,13 +134,13 @@ type legacyCommon struct {
 // message, file, line) so the returned issue keeps only what the
 // legacy format documented: code, docUrl, plus whatever structured
 // payload the rule emitted (link/tag/variableName/…).
-func projectFinding(f opaengine.Finding, jobNameKey string) map[string]any {
+func projectFinding(f opaengine.Finding, jobKey string) map[string]any {
 	out := map[string]any{
 		"code":   f.Code,
 		"docUrl": "https://getplumber.io/docs/cli/issues/" + f.Code,
 	}
-	if f.Job != "" && jobNameKey != "" {
-		out[jobNameKey] = f.Job
+	if f.Job != "" && jobKey != "" {
+		out[jobKey] = f.Job
 	}
 	// `url` is the per-finding clickable pointer populated by the
 	// location linker. Emitted on every per-control issue block so
@@ -159,10 +159,10 @@ func projectFinding(f opaengine.Finding, jobNameKey string) map[string]any {
 	return out
 }
 
-func projectFindings(findings []opaengine.Finding, jobNameKey string) []map[string]any {
+func projectFindings(findings []opaengine.Finding, jobKey string) []map[string]any {
 	out := make([]map[string]any, 0, len(findings))
 	for _, f := range findings {
-		out = append(out, projectFinding(f, jobNameKey))
+		out = append(out, projectFinding(f, jobKey))
 	}
 	return out
 }
@@ -574,7 +574,7 @@ func buildHardcodedJobsBlock(c legacyCommon, result *control.AnalysisResult, fin
 		hardcoded = result.PipelineOriginMetrics.JobHardcoded
 	}
 	return map[string]any{
-		"issues": projectFindings(_sortedFindings(findings), "jobName"),
+		"issues": projectFindings(_sortedFindings(findings), "job"),
 		"metrics": map[string]any{
 			"total":         total,
 			"hardcodedJobs": hardcoded,
@@ -847,7 +847,7 @@ func buildVariableInjectionBlock(c legacyCommon, result *control.AnalysisResult,
 		jobs = int(result.PipelineOriginMetrics.JobTotal)
 	}
 	return map[string]any{
-		"issues": projectFindings(findings, "jobName"),
+		"issues": projectFindings(findings, "job"),
 		"metrics": map[string]any{
 			"jobsChecked":             jobs,
 			"totalScriptLinesChecked": _countScriptLines(result),
@@ -862,7 +862,7 @@ func buildVariableInjectionBlock(c legacyCommon, result *control.AnalysisResult,
 
 func buildSecurityJobsBlock(c legacyCommon, result *control.AnalysisResult, pc *configuration.PlumberConfig, findings []opaengine.Finding) map[string]any {
 	return map[string]any{
-		"issues": projectFindings(findings, "jobName"),
+		"issues": projectFindings(findings, "job"),
 		"metrics": map[string]any{
 			"securityJobsFound": _countSecurityJobs(result, pc),
 			"weakenedJobs":      len(findings),
@@ -880,7 +880,7 @@ func buildUnverifiedScriptsBlock(c legacyCommon, result *control.AnalysisResult,
 		jobs = int(result.PipelineOriginMetrics.JobTotal)
 	}
 	return map[string]any{
-		"issues": projectFindings(findings, "jobName"),
+		"issues": projectFindings(findings, "job"),
 		"metrics": map[string]any{
 			"jobsChecked":             jobs,
 			"totalScriptLinesChecked": _countScriptLines(result),
@@ -928,7 +928,7 @@ func buildDockerInDockerBlock(c legacyCommon, result *control.AnalysisResult, fi
 		}
 	}
 	return map[string]any{
-		"issues": projectFindings(findings, "jobName"),
+		"issues": projectFindings(findings, "job"),
 		"metrics": map[string]any{
 			"totalJobsChecked":    jobs,
 			"dindServicesFound":   _countDinDServices(result),

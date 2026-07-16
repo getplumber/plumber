@@ -65,6 +65,7 @@ deny contains finding if {
 		"severity": "high",
 		"message":  sprintf("job %q restores a cache via %q on a release-type trigger — scope the key (and any restore-keys) to the release ref or disable caching on publish paths", [job.name, action.uses]),
 		"job":      job.name,
+		"uses":     action.uses,
 		"line":     object.get(action, "line", 0),
 	}
 }
