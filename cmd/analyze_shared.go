@@ -9,6 +9,7 @@ import (
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	"github.com/getplumber/plumber/provider"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 func init() {
@@ -263,7 +264,7 @@ func joinStrings(ss []string) string {
 // not in verbose mode, starts it, and returns it so the caller can stop it.
 func installSpinner(conf *configuration.Configuration) *progressSpinner {
 	sp := newSpinner()
-	if printOutput && !verbose {
+	if shouldShowProgress(printOutput, verbose, term.IsTerminal(int(os.Stderr.Fd()))) {
 		conf.ProgressFunc = func(step, total int, message string) {
 			sp.Update(step, total, message)
 		}
@@ -271,6 +272,17 @@ func installSpinner(conf *configuration.Configuration) *progressSpinner {
 		sp.Start()
 	}
 	return sp
+}
+
+// shouldShowProgress decides whether the interactive progress bar is
+// rendered. It requires a real terminal on stderr: the bar redraws
+// in place with `\r`, and a non-TTY consumer (CI job logs, a file, a
+// pipe) renders every redraw as its own line — hundreds of junk
+// lines per run (#309). CI runs therefore get no progress frames at
+// all; --verbose replaces the bar with debug logs; --print=false
+// disables all human-oriented output.
+func shouldShowProgress(printOutput, verbose, stderrIsTerminal bool) bool {
+	return printOutput && !verbose && stderrIsTerminal
 }
 
 // computeScoreResult computes the Plumber score when score mode is active.

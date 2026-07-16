@@ -44,7 +44,7 @@ spec:
 
     # Output configuration
     print_output:
-      description: Print text output to stdout
+      description: Print the human-readable analysis report in the job log. Does not affect log verbosity (see verbose) or file outputs (output_file, sarif_file, ...).
       type: boolean
       default: true
     output_file:
@@ -72,7 +72,7 @@ spec:
       default: false
       type: boolean
     verbose:
-      description: Enable verbose/debug output for troubleshooting
+      description: Enable debug logging (level=debug lines on stderr) for troubleshooting. Independent of print_output, which controls the report.
       default: false
       type: boolean
     mr_comment:

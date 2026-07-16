@@ -94,7 +94,7 @@ Optional flags:
   --min-score        Minimum Plumber Score letter to pass, A-E (e.g. B fails on C, D, E)
   --threshold        Deprecated: minimum percentage of passing controls, 0-100; use --min-points / --min-score
   --branch           Branch to analyze (defaults to project's default branch)
-  --print            Print text output to stdout (default: true)
+  --print            Print the human-readable report and, on a terminal, the progress bar (default: true). Log verbosity is controlled by --verbose, file outputs by --output/--sarif/...
   --output           Write JSON results to file (optional)
   --pbom             Write PBOM (Pipeline Bill of Materials) to file (optional)
   --pbom-cyclonedx   Write PBOM in CycloneDX format for integration with security tools
@@ -162,7 +162,7 @@ func init() {
 	analyzeCmd.Flags().StringVar(&minScore, "min-score", "", "Minimum Plumber Score letter to pass, A-E (e.g. B fails on C, D, E)")
 	analyzeCmd.Flags().Float64Var(&minPoints, "min-points", 100, "Minimum Plumber Score points to pass, 0-100 (default 100: any finding fails)")
 	analyzeCmd.Flags().StringVar(&defaultBranch, "branch", "", "Branch to analyze (defaults to project's default branch)")
-	analyzeCmd.Flags().BoolVar(&printOutput, "print", true, "Print text output to stdout")
+	analyzeCmd.Flags().BoolVar(&printOutput, "print", true, "Print the human-readable report (and, on a terminal, the progress bar); JSON/SARIF file outputs are unaffected")
 	analyzeCmd.Flags().StringVarP(&outputFile, "output", "o", "", "Write JSON results to file")
 	analyzeCmd.Flags().StringVar(&pbomFile, "pbom", "", "Write PBOM (Pipeline Bill of Materials) to file")
 	analyzeCmd.Flags().StringVar(&pbomCycloneDXFile, "pbom-cyclonedx", "", "Write PBOM in CycloneDX format (for security tool integration)")
@@ -465,9 +465,6 @@ func buildGitLabConf(
 			remote.projectPath == projectPath
 	}
 
-	if verbose {
-		conf.LogLevel = logrus.DebugLevel
-	}
 	return conf
 }
 

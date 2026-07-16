@@ -2,8 +2,6 @@ package configuration
 
 import (
 	"time"
-
-	"github.com/sirupsen/logrus"
 )
 
 // Configuration represents the simplified CLI configuration options
@@ -44,9 +42,6 @@ type Configuration struct {
 	GitRepoRoot          string // Root of the git repository (empty if not in a git repo)
 	IsLocalProject       bool   // True when the local git repo matches the project being analyzed
 
-	// Logging
-	LogLevel logrus.Level
-
 	// Version info
 	Version string
 
@@ -73,7 +68,6 @@ func NewDefaultConfiguration() *Configuration {
 		GitlabRetryInitialBackoff: 1 * time.Second,
 		GitlabRetryMaxBackoff:     30 * time.Second,
 		GitlabRetryBackoffFactor:  2.0,
-		LogLevel:                  logrus.WarnLevel,
 		Version:                   "0.1.0",
 	}
 }

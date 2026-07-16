@@ -15,7 +15,6 @@ import (
 	"github.com/getplumber/plumber/pbom"
 	plumberprovider "github.com/getplumber/plumber/provider"
 	"github.com/getplumber/plumber/utils"
-	"github.com/sirupsen/logrus"
 )
 
 const githubDotCom = "github.com"
@@ -85,9 +84,6 @@ func runGitHubAnalyze(info *utils.GitRemoteInfo, controlsFilterList, skipControl
 		apiHost = info.Host
 	}
 	conf.GithubAPIHost = apiHost
-	if verbose {
-		conf.LogLevel = logrus.DebugLevel
-	}
 
 	fmt.Fprintf(os.Stderr, "Scanning workflows under: %s\n", info.RepoRoot)
 	printGitHubAuthBanner(apiHost, false)
@@ -142,9 +138,6 @@ func runGitHubAnalyzeRemote(host, project, ref string, controlsFilterList, skipC
 	conf.GithubAPIHost = apiHost
 	conf.ControlsFilter = controlsFilterList
 	conf.SkipControlsFilter = skipControlsList
-	if verbose {
-		conf.LogLevel = logrus.DebugLevel
-	}
 
 	p, ok := plumberprovider.Get("github")
 	if !ok {
