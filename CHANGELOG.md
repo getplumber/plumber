@@ -1,3 +1,15 @@
+## [0.4.7](https://github.com/getplumber/plumber/compare/v0.4.6...v0.4.7) (2026-07-16)
+
+
+### 🔧 Chores
+
+* **ci:** bump docker/metadata-action from 6.1.0 to 6.2.0 ([dfaef4f](https://github.com/getplumber/plumber/commit/dfaef4f3d6875a84d4f5e42ba6c7f5e62c394f57))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.6 refs [skip ci] ([89d5b1d](https://github.com/getplumber/plumber/commit/89d5b1daab297cd72e370b38e23dcef0bd708754))
+
 ## [0.4.6](https://github.com/getplumber/plumber/compare/v0.4.5...v0.4.6) (2026-07-16)
 
 
