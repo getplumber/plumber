@@ -114,8 +114,6 @@ func buildLegacyResult(e control.ControlEntry, result *control.AnalysisResult, p
 		return "securityJobsWeakenedResult", buildSecurityJobsBlock(common, result, pc, findings)
 	case "pipelineMustNotExecuteUnverifiedScripts":
 		return "unverifiedScriptsResult", buildUnverifiedScriptsBlock(common, result, findings)
-	case "pipelineMustNotLeakSecretsInConfig":
-		return "leakedSecretsResult", buildLeakedSecretsBlock(common, result, findings)
 	case "pipelineMustNotOverrideJobVariables":
 		return "jobVariablesOverrideResult", buildJobVariablesOverrideBlock(common, result, findings)
 	case "pipelineMustNotUseDockerInDocker":

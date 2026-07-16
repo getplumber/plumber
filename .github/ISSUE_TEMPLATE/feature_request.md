@@ -58,11 +58,11 @@ pre-Rego Go-function pattern has been fully phased out.
 Consider covering (briefly):
 1. Data source: which IR field would the rule read? If the data isn't
    on the IR yet, does it need collector enrichment (GitLab/GitHub API
-   call, external binary like gitleaks, …)?
+   call, repo-artifact scan, …)? Note: Plumber executes no external
+   binaries during analysis (#310).
 2. Logic: a one-liner of what the rule flags.
 3. Severity + ISSUE code suggestion (or "next available").
-4. Default state: opt-in or default-on? Any external dependency the
-   user would need to install first (e.g., gitleaks for secret detection)?
+4. Default state: opt-in or default-on?
 -->
 
 ## **Why It's Valuable**

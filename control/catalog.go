@@ -18,29 +18,10 @@ type ControlEntry struct {
 	// SkipReason is the human-friendly explanation rendered next to
 	// the "(skipped)" header and in the Status: SKIPPED (…) line. Left
 	// empty for the default "disabled in configuration" case; callers
-	// that flip Skipped for a different reason (e.g. the gitleaks
-	// scan could not complete) set this so the operator sees why.
+	// that flip Skipped for a different reason (e.g. a required data
+	// source was unavailable) set this so the operator sees why.
 	SkipReason string
 	Compliance float64
-}
-
-// leakSecretsControlEntry builds the catalog entry for
-// pipelineMustNotLeakSecretsInConfig (ISSUE-301). gitleaks secret scanning
-// is currently disabled, so the control never runs: it is always rendered as
-// skipped rather than reported as compliant, which would be a misleading
-// green for a security control that did not execute. When the config enables
-// it, SkipReason explains that scanning is off; otherwise the default
-// "disabled in configuration" reason applies.
-func leakSecretsControlEntry(displayName string, cfg *configuration.SecretDetectionControlConfig) ControlEntry {
-	e := ControlEntry{
-		DisplayName: displayName,
-		ControlName: "pipelineMustNotLeakSecretsInConfig",
-		Skipped:     true,
-	}
-	if cfg != nil && cfg.IsEnabled() {
-		e.SkipReason = "gitleaks secret scanning is temporarily disabled"
-	}
-	return e
 }
 
 func GitLabControls(pc *configuration.PlumberConfig) []ControlEntry {
@@ -121,10 +102,6 @@ func GitLabControls(pc *configuration.PlumberConfig) []ControlEntry {
 		ControlName: "pipelineMustNotExecuteUnverifiedScripts",
 		Skipped:     c.PipelineMustNotExecuteUnverifiedScripts == nil || !c.PipelineMustNotExecuteUnverifiedScripts.IsEnabled(),
 	})
-	entries = append(entries, leakSecretsControlEntry(
-		"Pipeline must not leak secrets in configuration",
-		c.PipelineMustNotLeakSecretsInConfig,
-	))
 	entries = append(entries, ControlEntry{
 		DisplayName: "Pipeline must not override job variables",
 		ControlName: "pipelineMustNotOverrideJobVariables",
@@ -192,10 +169,6 @@ func GitHubControls(pc *configuration.PlumberConfig) []ControlEntry {
 		ControlName: "pipelineMustNotExecuteUnverifiedScripts",
 		Skipped:     c.PipelineMustNotExecuteUnverifiedScripts == nil || !c.PipelineMustNotExecuteUnverifiedScripts.IsEnabled(),
 	})
-	entries = append(entries, leakSecretsControlEntry(
-		"Workflow must not leak secrets in configuration",
-		c.PipelineMustNotLeakSecretsInConfig,
-	))
 	entries = append(entries, ControlEntry{
 		DisplayName: "Reusable workflows must not inherit secrets",
 		ControlName: "reusableWorkflowsMustNotInheritSecrets",

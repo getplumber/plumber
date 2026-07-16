@@ -624,71 +624,10 @@ func TestCompositionOptionsForProviders(t *testing.T) {
 	for _, c := range github {
 		hMenu[c] = true
 	}
-	for _, c := range []string{compSecurity, compDinD, compLeaks} {
+	for _, c := range []string{compSecurity, compDinD} {
 		if !gMenu[c] || !hMenu[c] {
 			t.Fatalf("cross-provider check %q missing from one side (gitlab: %v, github: %v)", c, gMenu[c], hMenu[c])
 		}
 	}
 }
 
-// injectGitleaksHints must surface the two override knobs as commented
-// keys under every pipelineMustNotLeakSecretsInConfig block the wizard
-// emitted, and must leave files that do not contain that block
-// completely untouched. The hint serves as discoverability for users
-// who would otherwise need to read the docs to learn the overrides
-// exist; the unchanged-when-absent half guards against accidentally
-// rewriting unrelated YAML.
-func TestInjectGitleaksHints(t *testing.T) {
-	t.Run("block present once -> hints inserted", func(t *testing.T) {
-		in := []byte("gitlab:\n  controls:\n    pipelineMustNotLeakSecretsInConfig:\n      enabled: true\n    other:\n      enabled: true\n")
-		got := string(injectGitleaksHints(in))
-		for _, want := range []string{
-			"# gitleaksPath: /usr/local/bin/gitleaks",
-			"# gitleaksConfigPath: .gitleaks.toml",
-			"# Optional. Defaults to looking up `gitleaks` on $PATH.",
-			"# Optional. Defaults to gitleaks's built-in rule catalogue.",
-		} {
-			if !strings.Contains(got, want) {
-				t.Fatalf("output missing %q\n---\n%s", want, got)
-			}
-		}
-		// Hints must come immediately after the enabled line, not somewhere else.
-		if !strings.Contains(got, "      enabled: true\n      # Optional. Defaults to looking up `gitleaks` on $PATH.") {
-			t.Fatalf("hint not placed immediately after enabled line:\n%s", got)
-		}
-		// The other unrelated control must remain intact and unannotated.
-		if !strings.Contains(got, "    other:\n      enabled: true\n") {
-			t.Fatalf("unrelated control was modified:\n%s", got)
-		}
-	})
-
-	t.Run("block present in both provider sections -> hints in both", func(t *testing.T) {
-		in := []byte(
-			"gitlab:\n  controls:\n    pipelineMustNotLeakSecretsInConfig:\n      enabled: true\n" +
-				"github:\n  controls:\n    pipelineMustNotLeakSecretsInConfig:\n      enabled: true\n",
-		)
-		got := string(injectGitleaksHints(in))
-		if c := strings.Count(got, "# gitleaksPath:"); c != 2 {
-			t.Fatalf("expected exactly 2 gitleaksPath hints, got %d:\n%s", c, got)
-		}
-	})
-
-	t.Run("block absent -> bytes unchanged", func(t *testing.T) {
-		in := []byte("gitlab:\n  controls:\n    branchMustBeProtected:\n      enabled: true\n")
-		got := injectGitleaksHints(in)
-		if string(got) != string(in) {
-			t.Fatalf("expected unchanged output when no leak block present:\nin=%q\ngot=%q", in, got)
-		}
-	})
-
-	t.Run("block present but disabled -> no hint (avoids cluttering the disabled-by-default ship config)", func(t *testing.T) {
-		// .plumber.yaml's shipped form has enabled: false. We do not
-		// want the wizard's hint to leak into that path; the helper
-		// keys off `enabled: true` deliberately.
-		in := []byte("gitlab:\n  controls:\n    pipelineMustNotLeakSecretsInConfig:\n      enabled: false\n")
-		got := injectGitleaksHints(in)
-		if string(got) != string(in) {
-			t.Fatalf("expected unchanged output for disabled leak block:\n%s", got)
-		}
-	})
-}

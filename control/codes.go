@@ -81,11 +81,12 @@ const (
 
 // Issue codes for secret and credential handling controls (3xx)
 const (
-	// ISSUE-301: Pipeline configuration contains hardcoded secrets detected by gitleaks.
-	// Reconciled with the existing downstream mapping (jobs platform), which has
-	// recorded "Secret leak in pipeline configuration" under ISSUE-301 since
-	// before the gitleaks rule was implemented in the CLI.
-	CodePipelineLeaksSecrets ErrorCode = "ISSUE-301"
+	// ISSUE-301 is RETIRED — do not reuse. It carried the gitleaks-based
+	// "secret leak in pipeline configuration" rule until the integration
+	// was removed (#310, advisory GHSA-w2xj-4v44-6rqr), and the
+	// downstream jobs platform has mapped that meaning to 301 since
+	// before the CLI rule existed, so the slot must stay vacant forever.
+
 	// ISSUE-302: Reusable workflow called with `secrets: inherit`
 	CodeSecretsInherit ErrorCode = "ISSUE-302"
 	// ISSUE-303: Secret dereferenced via fromJSON bypasses log redaction
@@ -632,27 +633,6 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Declare the narrowest permissions explicitly: `permissions: { contents: read }` at the workflow level and widen per-job only when a step needs to push, comment on issues, etc. This enforces the principle of least privilege regardless of the repo default setting.",
 		DocURL:      docsBaseURL + string(CodeUndocumentedPermissions),
 		ControlName: "workflowsMustDeclarePermissions",
-	},
-	CodePipelineLeaksSecrets: {
-		Code:        CodePipelineLeaksSecrets,
-		Severity:    SeverityCritical,
-		Title:       "Secret leak in pipeline configuration",
-		Description: "The resolved pipeline configuration contains a pattern that matches a hardcoded secret (API token, private key, password, or other credential) embedded directly in the YAML. Secrets committed to pipeline configuration are exposed to everyone with read access to the repository, appear in version history, and are forwarded to every runner that executes the pipeline.",
-		Remediation: "Remove the hardcoded value and store it as a masked, protected CI/CD variable. Reference it in the pipeline as `$MY_SECRET` rather than embedding the value directly.",
-		DocURL:      docsBaseURL + string(CodePipelineLeaksSecrets),
-		ControlName: "pipelineMustNotLeakSecretsInConfig",
-		// Per-provider overrides for SARIF / JSON / GLSAST output. The
-		// terminal renderer already gets per-provider naming via the
-		// catalog DisplayName. The GitLab default above mirrors the
-		// downstream jobs-platform mapping; the GitHub override mirrors
-		// the workflow-flavoured naming used in the rest of the GitHub
-		// catalog entries.
-		TitleByProvider: map[string]string{
-			"github": "Secret leak in workflow configuration",
-		},
-		DescriptionByProvider: map[string]string{
-			"github": "A file under `.github/workflows/` contains a pattern that matches a hardcoded secret (API token, private key, password, or other credential) embedded directly in the YAML. Workflows committed to a repository are exposed to every collaborator, every fork, and the entire commit history, and are forwarded to every runner that executes the workflow.",
-		},
 	},
 	CodeSecretsDynamicIndex: {
 		Code:        CodeSecretsDynamicIndex,

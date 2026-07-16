@@ -197,6 +197,22 @@ controls:
 			expectWarnings: 1,
 		},
 		{
+			// pipelineMustNotLeakSecretsInConfig shipped until the
+			// gitleaks integration was removed (#310). Configs that
+			// still carry it must get the explicit "removed and
+			// ignored" message, not the unknown-key suggestion path.
+			name: "removed control key - explicit removal warning",
+			yamlContent: `
+version: "2.0"
+gitlab:
+  controls:
+    pipelineMustNotLeakSecretsInConfig:
+      enabled: true
+`,
+			expectWarnings: 1,
+			wantContains:   "was removed and is now ignored",
+		},
+		{
 			name: "unknown sub-key - tags typo",
 			yamlContent: `
 version: "1"
@@ -333,7 +349,6 @@ func TestValidControlNames(t *testing.T) {
 		"pipelineMustNotEnableDebugTrace",
 		"pipelineMustNotExecuteUnverifiedScripts",
 		"pipelineMustNotIncludeHardcodedJobs",
-		"pipelineMustNotLeakSecretsInConfig",
 		"pipelineMustNotOverrideJobVariables",
 		"pipelineMustNotUseDockerInDocker",
 		"pipelineMustNotUseUnsafeVariableExpansion",
