@@ -69,8 +69,6 @@ func buildLegacyResultGitHub(e control.ControlEntry, result *control.AnalysisRes
 		return "debugTraceResult", buildDebugTraceBlockGitHub(common, result, findings)
 	case "pipelineMustNotExecuteUnverifiedScripts":
 		return "unverifiedScriptsResult", buildUnverifiedScriptsBlockGitHub(common, result, findings)
-	case "pipelineMustNotLeakSecretsInConfig":
-		return "leakedSecretsResult", buildLeakedSecretsBlock(common, result, findings)
 	}
 	return "", nil
 }
@@ -725,20 +723,3 @@ func buildUnverifiedScriptsBlockGitHub(c legacyCommon, result *control.AnalysisR
 	}
 }
 
-// buildLeakedSecretsBlock — ISSUE-301. Each finding is one redacted
-// gitleaks hit. There is no meaningful "X of Y" denominator (a hit is
-// either present or it isn't), so the block surfaces only the hit
-// count alongside the standard compliance fields. issues carries the
-// raw finding list including the redacted preview.
-func buildLeakedSecretsBlock(c legacyCommon, _ *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
-	return map[string]any{
-		"issues": projectFindings(findings, "file"),
-		"metrics": map[string]any{
-			"hitsFound": len(findings),
-		},
-		"version":   "0.1.0",
-		"ciValid":   c.CiValid,
-		"ciMissing": c.CiMissing,
-		"skipped":   c.Skipped,
-	}
-}

@@ -1,3 +1,20 @@
+## [0.4.4](https://github.com/getplumber/plumber/compare/v0.4.3...v0.4.4) (2026-07-16)
+
+
+### 🔧 Chores
+
+* **cleanup:** Remove gitleaks fully ([a2ad6fb](https://github.com/getplumber/plumber/commit/a2ad6fb31a299c7ef102840a721f0dd45b1b36c4))
+
+
+### 📚 Documentation
+
+* **template:** Update commented version in template ([dace2c4](https://github.com/getplumber/plumber/commit/dace2c4e72445925e70764dd53c5632d301f41cb))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.3 refs [skip ci] ([3e7d693](https://github.com/getplumber/plumber/commit/3e7d6933189432f9a2ebcc2f6ba813bef7916179))
+
 ## [0.4.3](https://github.com/getplumber/plumber/compare/v0.4.2...v0.4.3) (2026-07-14)
 
 

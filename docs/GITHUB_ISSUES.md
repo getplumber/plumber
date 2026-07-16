@@ -45,7 +45,7 @@ reading the upstream docs.
 
 | Code | Name | Severity |
 | :--- | :--- | :--- |
-| [ISSUE-301](#issue-301--leaked-secrets) | `leaked-secrets` | **critical** _(opt-in)_ |
+| [ISSUE-301](#issue-301--retired) | _retired (gitleaks removal, #310 — slot must not be reused)_ | — |
 | [ISSUE-302](#issue-302--secrets-inherit) | `secrets-inherit` | high |
 | [ISSUE-303](#issue-303--unredacted-secrets) | `unredacted-secrets` | high |
 | [ISSUE-801](#issue-304--undocumented-permissions) | `undocumented-permissions` | medium |
@@ -1226,45 +1226,20 @@ reviewability.
 
 ---
 
-## ISSUE-301 — `leaked-secrets`
+## ISSUE-301 — RETIRED
 
-**Severity:** `critical` • **Control:** `pipelineMustNotLeakSecretsInConfig`
+**Control:** `pipelineMustNotLeakSecretsInConfig` (removed)
 
-A high-confidence secret pattern (Slack token, AWS access key, GCP
-service-account JSON, …) appears inside committed pipeline YAML.
-Maps to OWASP CICD-SEC-6 (Insufficient Credential Hygiene): once a
-secret is checked into the repo it is in every clone, every fork,
-every CI cache, and every old branch — rotation is the only fix.
-
-The check is opt-in and requires
-[gitleaks](https://github.com/gitleaks/gitleaks) on `PATH`. Plumber
-shells out to it, parses the JSON report, redacts each match to
-`first4***last4` before recording it on the IR, and emits one
-finding per match. The raw secret value never leaves the collector.
-
-```yaml
-# .github/workflows/release.yml
-jobs:
-  publish:
-    env:
-      SLACK_WEBHOOK: xoxb-EXAMPLE-EXAMPLE-redactedfortestingonly
-```
-
-Enable in `.plumber.yaml`:
-
-```yaml
-github:
-  controls:
-    pipelineMustNotLeakSecretsInConfig:
-      enabled: true
-      # Optional overrides:
-      # gitleaksPath: /opt/bin/gitleaks       # default: $PATH lookup
-      # gitleaksConfigPath: .gitleaks.toml    # default: gitleaks's built-ins
-```
-
-When the binary is missing, the control logs a warning and abstains
-(rather than failing the run) so a missing tool never blocks an
-unrelated analyze.
+The gitleaks-based secret scanning integration was removed in
+[#310](https://github.com/getplumber/plumber/issues/310) — secret
+detection is out of scope for Plumber and the integration meant
+shelling out to an external binary; see security advisory
+[GHSA-w2xj-4v44-6rqr](https://github.com/getplumber/plumber/security/advisories/GHSA-w2xj-4v44-6rqr).
+The ISSUE-301 slot is retired
+and must never be reused: the downstream jobs platform has mapped
+"secret leak in pipeline configuration" to 301 since before the CLI
+rule existed. Configs still carrying the control key get a
+"removed and ignored" warning.
 
 ---
 
@@ -1898,7 +1873,6 @@ and in `.plumber.yaml`) is declared in
 | ISSUE-214 | `workflowMustPinPackageInstalls` |
 | ISSUE-215 | `workflowMustNotInjectVarsInScripts` |
 | ISSUE-308 | `workflowMustNotIndexSecretsDynamically` |
-| ISSUE-301 | `pipelineMustNotLeakSecretsInConfig` _(opt-in; requires gitleaks)_ |
 | ISSUE-309 | `workflowMustNotExportEntireSecretsContext` |
 | ISSUE-802 / 415 | `workflowMustNotUseDangerousTriggers`, `pullRequestTargetMustNotCheckoutHead` |
 | ISSUE-902 | `dependabotEcosystemsMustHaveCooldown` |

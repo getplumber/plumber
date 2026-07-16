@@ -66,7 +66,7 @@ spec:
       default: .pre
     image:
       description: "Docker image to use for the job"
-      default: "getplumber/plumber@sha256:c4ca65d19f8c784a3c36f256df237de3570ec7e66758488f24b941c322c2430e" #v0.4.3
+      default: "getplumber/plumber@sha256:23868047b30f2bb79c6bdf129ebf6e1da128231622b12e2533392638beee9cdb" #v0.4.4
     allow_failure:
       description: Allow the job to fail without failing the pipeline
       default: false
@@ -132,19 +132,19 @@ spec:
 #
 # With custom config file:
 #   include:
-#     - component: gitlab.com/getplumber/plumber/plumber@v0.3.4
+#     - component: gitlab.com/getplumber/plumber/plumber@v0.4.3
 #       inputs:
 #         config_file: "configs/my-plumber.yaml"  # relative to repo root
 #
 # With a custom CI configuration file path (or override $CI_CONFIG_PATH in project CI/CD variables):
 #   include:
-#     - component: gitlab.com/getplumber/plumber/plumber@v0.3.4
+#     - component: gitlab.com/getplumber/plumber/plumber@v0.4.3
 #       inputs:
 #         ci_config_path: "my-custom-ci.yml"
 #
 # With other custom inputs:
 #   include:
-#     - component: gitlab.com/getplumber/plumber/plumber@v0.3.4
+#     - component: gitlab.com/getplumber/plumber/plumber@v0.4.3
 #       inputs:
 #         min_points: 80
 #         output_file: results.json

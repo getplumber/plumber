@@ -224,7 +224,7 @@ plumber/
 │   └── rules_test.go          # In-process OPA evaluation against hand-built or fixture pipelines
 │
 ├── internal/ir/               # The provider-agnostic IR every rego rule reads from
-│   └── pipeline.go            # NormalizedPipeline, Job, Action, GitleaksHit, ... types
+│   └── pipeline.go            # NormalizedPipeline, Job, Action, Dockerfile, ... types
 │
 ├── control/                   # Bookkeeping (NOT detection — that lives in policies/)
 │   ├── types.go               # AnalysisResult + result/metric types
@@ -321,7 +321,7 @@ For a control with **new IR data** also touch: `internal/ir/pipeline.go` plus th
 
 Skip if your rule only reads fields the IR already exposes (jobs, scripts, triggers, permissions, action `uses`, image refs, …).
 
-- [ ] **IR field** — `internal/ir/pipeline.go`. Add the field to the right struct (`NormalizedPipeline`, `Job`, `Action`, `GitleaksHit`, …) with a JSON tag and a comment explaining what populates it. Every Rego rule reads from `input.pipeline.*`, so this is the contract.
+- [ ] **IR field** — `internal/ir/pipeline.go`. Add the field to the right struct (`NormalizedPipeline`, `Job`, `Action`, `Dockerfile`, …) with a JSON tag and a comment explaining what populates it. Every Rego rule reads from `input.pipeline.*`, so this is the contract.
   ```go
   // Job is the provider-agnostic view of a single CI/CD job.
   type Job struct {
@@ -336,8 +336,9 @@ Skip if your rule only reads fields the IR already exposes (jobs, scripts, trigg
   - **GitLab API** → extend `gitlab/dataCollectionGitlab*.go` or write a new collector file in `gitlab/`. All REST/GraphQL calls live in `gitlab/`; collectors USE that, never call the API directly.
   - **GitHub workflow YAML parsing** → extend `github/github_workflows.go`.
   - **GitHub repo metadata / Advisory DB / archived flag etc.** → extend `github/github_metadata.go` (REST via `go-gh`) — reference: `advisoriesForRepo`, `resolveCommitToTag`.
-  - **External binary** (gitleaks-style) → write a `<tool>_scan.go` collector in `gitlab/` or `github/`. **Redact any sensitive payload BEFORE it reaches the IR** — the raw secret value must never leave the collector.
   - **Repo-artifact scan** (Dockerfile bases, dependabot config) → extend `github/github_repo_artifacts.go`.
+
+  Plumber deliberately executes **no external binaries** during analysis (see #310) — collectors are API calls, YAML parsing, and on-disk file reads only.
 - [ ] **Wiring** — call the collector from `control/task.go`'s `RunAnalysis` (GitLab) or `control/task_github.go`'s `RunGitHubAnalysis` (GitHub), after the pipeline is built and before the rego engine runs.
 
 ### 2. Rule layer (Rego)
@@ -365,7 +366,7 @@ Skip if your rule only reads fields the IR already exposes (jobs, scripts, trigg
   }
   ```
   **Reference rules** by complexity:
-  - simplest (no parameters, single pattern): `policies/leaked_secrets.rego`
+  - simplest (no parameters, single pattern): `policies/artipacked.rego`
   - parametrized (reads from `input.config.<controlName>.*`): `policies/excessive_permissions.rego`, `policies/dangerous_triggers.rego`
   - with helpers + FP guards (regex, quote-stripping, exemptions): `policies/unverified_scripts.rego`, `policies/template_injection.rego`
 - [ ] **Engine input shape** — the OPA engine receives `{"pipeline": <NormalizedPipeline>, "config": <controlsCfg>}`. The `config` block is built by `control/task.go` / `control/task_github.go` from the user's `.plumber.yaml` — see the `cfg["<controlName>"] = map[string]any{...}` blocks. If your control needs parameters in Rego, add them to the corresponding `cfg[...]` builder.

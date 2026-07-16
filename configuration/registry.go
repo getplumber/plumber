@@ -40,7 +40,6 @@ var controlsMeta = map[string]ControlMeta{
 	"pipelineMustIncludeTemplate":                 {Providers: []string{ProviderGitLab, ProviderGitHub}},
 	"pipelineMustNotEnableDebugTrace":             {Providers: []string{ProviderGitLab, ProviderGitHub}},
 	"pipelineMustNotExecuteUnverifiedScripts":     {Providers: []string{ProviderGitLab, ProviderGitHub}},
-	"pipelineMustNotLeakSecretsInConfig":          {Providers: []string{ProviderGitLab, ProviderGitHub}},
 	"pipelineMustNotIncludeHardcodedJobs":         {Providers: []string{ProviderGitLab, ProviderGitHub}},
 	"pipelineMustNotOverrideJobVariables":         {Providers: []string{ProviderGitLab, ProviderGitHub}},
 	"pipelineMustNotUseDockerInDocker":            {Providers: []string{ProviderGitLab, ProviderGitHub}},
@@ -91,6 +90,32 @@ var controlsMeta = map[string]ControlMeta{
 	"workflowsMustDeclareConcurrency":                     {Providers: []string{ProviderGitHub}},
 	"workflowsMustDeclarePermissions":                     {Providers: []string{ProviderGitHub}},
 	"workflowsMustHaveExplicitName":                       {Providers: []string{ProviderGitHub}},
+}
+
+// removedControls maps control names that shipped in earlier releases
+// but have since been removed from the product to a short explanation.
+// A config that still carries one of these keys gets a clear
+// "removed and ignored" warning instead of the generic unknown-key
+// path (whose Levenshtein suggestion would be misleading), and the
+// key never fails a --fail-warnings run into the unknown-key lane by
+// accident of history.
+var removedControls = map[string]string{
+	// The gitleaks-based secret scanning integration was removed in
+	// https://github.com/getplumber/plumber/issues/310 — Plumber no
+	// longer shells out to external binaries and secret detection is
+	// out of scope for the product. Its ISSUE-301 slot is retired and
+	// must never be reused (the downstream jobs platform has mapped
+	// "secret leak in pipeline configuration" to 301 since before the
+	// CLI rule existed).
+	"pipelineMustNotLeakSecretsInConfig": "secret detection (gitleaks) is no longer part of Plumber — delete this block from .plumber.yaml; see the security advisory https://github.com/getplumber/plumber/security/advisories/GHSA-w2xj-4v44-6rqr and issue https://github.com/getplumber/plumber/issues/310",
+}
+
+// IsRemovedControl reports whether the named control existed in an
+// earlier release and has been removed, with the user-facing
+// explanation as the second return.
+func IsRemovedControl(controlName string) (string, bool) {
+	msg, ok := removedControls[controlName]
+	return msg, ok
 }
 
 // benchedControls is the dev-side gate for controls that are NOT yet
