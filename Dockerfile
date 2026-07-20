@@ -23,7 +23,7 @@ RUN go mod download
 COPY . .
 
 # Copy default config for embedding
-RUN cp .plumber.yaml internal/defaultconfig/default.yaml
+RUN cp defaultConfig/.plumber.yaml internal/defaultconfig/default.yaml
 
 # Build static binary
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o plumber .
@@ -54,8 +54,10 @@ COPY --from=builder /app/plumber /plumber
 # via the ENTRYPOINT below. /usr/local/bin may not exist on alpine, so create it.
 RUN mkdir -p /usr/local/bin && ln -s /plumber /usr/local/bin/plumber
 
-# Copy default config file
-COPY .plumber.yaml /.plumber.yaml
+# No default config is baked into the image: the binary carries the embedded
+# default (see the cp into internal/defaultconfig above), so a scan with no
+# local .plumber.yaml falls back to it. Shipping a second copy at /.plumber.yaml
+# was redundant and confusing (getplumber/plumber#326).
 
 # Create non-root user for security
 RUN adduser -D -u 65532 plumber

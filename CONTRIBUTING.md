@@ -108,15 +108,21 @@ Before opening an issue, please:
 
 ### Building
 
-Always use `make build` instead of `go build` directly. The Makefile embeds the default `.plumber.yaml` configuration into the binary (required for `plumber config generate` to work):
+Always use `make build` instead of `go build` directly. The Makefile embeds the shipped default config (`defaultConfig/.plumber.yaml`) into the binary (required for `plumber config generate` to work):
 
 ```bash
 make build
 ```
 
 This runs two steps:
-1. Copies `.plumber.yaml` into `internal/defaultconfig/default.yaml` (with a build header)
+1. Copies `defaultConfig/.plumber.yaml` into `internal/defaultconfig/default.yaml` (with a build header)
 2. Compiles the Go binary
+
+Two independent config artifacts, do not confuse them ([#352](https://github.com/getplumber/plumber/pull/352)):
+- **`.plumber.yaml`** (repo root) — Plumber's *own* self-scan config. It carries project-specific trust (own images, `anthropics/claude-code-action`, org registries) and is what the Plumber workflow analyzes this repo with. Maintainers edit it freely.
+- **`defaultConfig/.plumber.yaml`** — the conservative universal baseline embedded in the binary and used by every zero-config user, and what all "default config" links point to. Changes here are deliberate, reviewed policy decisions, not a side effect of tweaking the self-scan config.
+
+They must declare the same *set* of control blocks (values may differ); `configuration.TestSelfScanConfigControlsMatchDefault` enforces it.
 
 ### Make Targets
 
@@ -203,7 +209,9 @@ If a fuzz test finds a crash, Go saves the failing input in `testdata/fuzz/` ins
 plumber/
 ├── main.go                    # Entry point
 ├── Makefile                   # Build, test, install targets
-├── .plumber.yaml              # Source-of-truth default configuration
+├── .plumber.yaml              # Plumber's own self-scan config (this repo)
+├── defaultConfig/
+│   └── .plumber.yaml          # Shipped default, embedded in the binary (make build)
 │
 ├── cmd/                       # CLI commands (Cobra)
 │   ├── root.go                # Root command + global flags
@@ -310,7 +318,7 @@ For a typical "new GitHub-side control with simple `enabled` config, no new IR f
 | **Stats** (GitHub only) | `control/types.go`, `control/github_stats.go` |
 | **Terminal** | `cmd/render_details.go` |
 | **JSON** | `cmd/legacy_json.go` (GitLab) or `cmd/legacy_json_github.go` (GitHub) |
-| **Default config** | `.plumber.yaml` (then `make embed`) |
+| **Default config** | `defaultConfig/.plumber.yaml` + `.plumber.yaml` (self-scan), then `make embed` |
 | **Init wizard** | `cmd/init.go`, `cmd/init_test.go` |
 | **Docs in-repo** | `README.md`, `docs/GITHUB_ISSUES.md` (GitHub side), `docs/PBOM.md` (if applicable), `docs/scoring.md` (if severity changes) |
 | **Website** | `getplumber.io/src/data/issues.ts` (per-provider sub-blocks), the relevant `cli/<provider>/index.mdx` if the control needs a tutorial section |
@@ -369,6 +377,7 @@ Skip if your rule only reads fields the IR already exposes (jobs, scripts, trigg
   - simplest (no parameters, single pattern): `policies/artipacked.rego`
   - parametrized (reads from `input.config.<controlName>.*`): `policies/excessive_permissions.rego`, `policies/dangerous_triggers.rego`
   - with helpers + FP guards (regex, quote-stripping, exemptions): `policies/unverified_scripts.rego`, `policies/template_injection.rego`
+- [ ] **Single-provider rule reading generic IR fields? Add a provider guard.** If your control applies to only one provider (`controlsMeta` lists just `gitlab` or just `github`) but the rego reads fields the OTHER provider also populates (`job.scripts`, `job.variables`, image refs), make `input.pipeline.provider == "<provider>"` the first expression of the `deny` block. Without it the rule fires on the other provider's pipelines too. This bit us in [#349](https://github.com/getplumber/plumber/issues/349): the GitHub-only `workflowMustPinPackageInstalls` matched a bare `pip install` in a GitLab `script:` and inflated the GitLab score. The catalog applicability gate (`control.FilterFindingsByEnabledControls` → `configuration.IsControlApplicableTo`) now drops such cross-provider findings before any output, so the guard is defense-in-depth, but guard at the source anyway: it makes intent explicit and skips wasted evaluation. Reference: `policies/unpinned_package_install.rego`, `policies/workflow_obfuscation.rego`. Rules that read only provider-specific fields (`job.uses`, GitLab includes/components, the `CI_DEBUG_TRACE` variable) don't need the guard — they can't match on the other provider.
 - [ ] **Engine input shape** — the OPA engine receives `{"pipeline": <NormalizedPipeline>, "config": <controlsCfg>}`. The `config` block is built by `control/task.go` / `control/task_github.go` from the user's `.plumber.yaml` — see the `cfg["<controlName>"] = map[string]any{...}` blocks. If your control needs parameters in Rego, add them to the corresponding `cfg[...]` builder.
 
 ### 3. Test fixtures + rego tests
@@ -470,6 +479,7 @@ Skip if your rule only reads fields the IR already exposes (jobs, scripts, trigg
       "yourControlName": {Providers: []string{ProviderGitLab, ProviderGitHub}}, // or one of them
   }
   ```
+  > **This list is load-bearing, not just for validation.** `control.FilterFindingsByEnabledControls` drops any finding whose control is not applicable to the run's provider ([#349](https://github.com/getplumber/plumber/issues/349)). Get the `Providers` wrong and the gate either leaks the finding (too broad) or hides it from every surface (too narrow). `control/provider_applicability_test.go::TestEveryCatalogControlIsApplicableToItsProvider` fails if a control in `GitLabControls`/`GitHubControls` is not marked applicable to that provider here.
 - [ ] **`GitLabControls` and/or `GitHubControls` entry** — `control/catalog.go`. Each provider has its own catalog function returning `[]ControlEntry`:
   ```go
   // In GitHubControls:
@@ -568,9 +578,9 @@ Skip unless your control marks per-action or per-image attributes (`archived`, `
 - [ ] **CycloneDX property** — `pbom/cyclonedx.go`. Add a `plumber:<your-field>` property entry on the relevant component.
 - [ ] **Document the new fields** — `docs/PBOM.md`. Both the JSON field on `Include` and the CycloneDX property; readers consume the PBOM as a contract, so the doc IS the spec.
 
-### 12. Default config (`.plumber.yaml`) + embed
+### 12. Default config (`defaultConfig/.plumber.yaml`) + embed
 
-- [ ] **`.plumber.yaml`** — add a `<controlName>:` block under the right provider section (`gitlab.controls.*` or `github.controls.*`):
+- [ ] **`defaultConfig/.plumber.yaml`** — add a `<controlName>:` block under the right provider section (`gitlab.controls.*` or `github.controls.*`). This is the shipped default embedded in the binary:
   ```yaml
   # ===========================================
   # Your control display name
@@ -586,7 +596,8 @@ Skip unless your control marks per-action or per-image attributes (`archived`, `
     yourParam: []
   ```
   Use the banner-comment style other blocks use (`# ===` header lines). Keep config keys and the explanation in sync with the rego rule's actual behaviour.
-- [ ] **`make embed`** regenerates `internal/defaultconfig/default.yaml` from the source `.plumber.yaml`. **Don't edit the generated file directly** — it's overwritten on every build.
+- [ ] **`make embed`** regenerates `internal/defaultconfig/default.yaml` from `defaultConfig/.plumber.yaml`. **Don't edit the generated file directly** — it's overwritten on every build.
+- [ ] **`.plumber.yaml`** (repo root) — add the same `<controlName>:` block here too. This is Plumber's own self-scan config, independent of the shipped default ([#352](https://github.com/getplumber/plumber/pull/352)). The two files' *values* may diverge freely (trust lists, `enabled` flags — e.g. disable a noisy control on our own repo), but they must declare the same *set* of control blocks: `configuration.TestSelfScanConfigControlsMatchDefault` fails if a control is present in one file and missing from the other.
 
 ### 13. Source links (location linker — automatic)
 

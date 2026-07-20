@@ -330,18 +330,38 @@ func TestLoadGitHubConfig_FileExists(t *testing.T) {
 	}
 }
 
-func TestLoadGitHubConfig_MissingFile(t *testing.T) {
+func TestLoadGitHubConfig_ExplicitMissingFile(t *testing.T) {
 	t.Setenv("CI", "true")
-	orig := configFile
+	orig, origExplicit := configFile, configExplicitlySet
 	configFile = t.TempDir() + "/nonexistent.yaml"
-	defer func() { configFile = orig }()
+	configExplicitlySet = true // user named this --config; absence is an error
+	defer func() { configFile, configExplicitlySet = orig, origExplicit }()
 
 	_, _, err := loadGitHubConfig()
 	if err == nil {
-		t.Fatal("expected error for missing config")
+		t.Fatal("expected error for an explicitly-requested missing config")
 	}
 	if !strings.Contains(err.Error(), "configuration file not found") {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestLoadGitHubConfig_MissingDefault_FallsBack(t *testing.T) {
+	t.Setenv("CI", "true")
+	orig, origExplicit := configFile, configExplicitlySet
+	configFile = t.TempDir() + "/.plumber.yaml" // absent, and not explicit
+	configExplicitlySet = false
+	defer func() { configFile, configExplicitlySet = orig, origExplicit }()
+
+	pc, path, err := loadGitHubConfig()
+	if err != nil {
+		t.Fatalf("expected fallback to the embedded default, got: %v", err)
+	}
+	if pc == nil {
+		t.Fatal("expected non-nil config from the embedded default")
+	}
+	if path != builtinDefaultConfigSource {
+		t.Errorf("path: got %q, want %q", path, builtinDefaultConfigSource)
 	}
 }
 

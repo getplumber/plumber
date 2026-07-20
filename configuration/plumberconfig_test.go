@@ -1,9 +1,31 @@
 package configuration
 
 import (
+	"errors"
+	"path/filepath"
 	"strings"
 	"testing"
 )
+
+// A missing config file must wrap ErrConfigNotFound so callers can detect the
+// "no file" case with errors.Is and fall back to the embedded default. This
+// locks the contract the zero-config fallback (analyze + config view) depends
+// on: if the not-found path stops wrapping the sentinel, this test fails rather
+// than the fallback silently regressing to an error.
+func TestLoadPlumberConfig_MissingFileWrapsErrConfigNotFound(t *testing.T) {
+	_, _, _, err := LoadPlumberConfig(filepath.Join(t.TempDir(), "nonexistent.yaml"))
+	if err == nil {
+		t.Fatal("expected an error for a missing config file")
+	}
+	if !errors.Is(err, ErrConfigNotFound) {
+		t.Fatalf("missing file must wrap ErrConfigNotFound, got: %v", err)
+	}
+	// A parse/validation failure must NOT look like "not found".
+	_, _, _, perr := LoadPlumberConfigFromBytes([]byte(":\tnot: valid: ["), "test")
+	if perr == nil || errors.Is(perr, ErrConfigNotFound) {
+		t.Fatalf("a parse error must not match ErrConfigNotFound, got: %v", perr)
+	}
+}
 
 func TestLevenshteinDistance(t *testing.T) {
 	tests := []struct {

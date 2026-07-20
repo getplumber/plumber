@@ -32,7 +32,7 @@ jobs:
           go-version: '1.26.4'
 
       - name: Prepare embedded config
-        run: cp .plumber.yaml internal/defaultconfig/default.yaml
+        run: cp defaultConfig/.plumber.yaml internal/defaultconfig/default.yaml
 
       - name: Initialize CodeQL
         uses: github/codeql-action/init@99df26d4f13ea111d4ec1a7dddef6063f76b97e9 # v4.37.0

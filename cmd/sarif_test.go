@@ -2,8 +2,12 @@ package cmd
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/getplumber/plumber/control"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 )
 
@@ -118,4 +122,46 @@ func TestBuildSARIF_CleanRunIsValidEmpty(t *testing.T) {
 	if _, err := json.Marshal(doc); err != nil {
 		t.Fatalf("clean SARIF does not marshal: %v", err)
 	}
+}
+
+// #352 review: writeSARIFToFile must not anchor a repo-level (file-less)
+// finding to a config path that does not exist on disk. A zero-config run
+// loads the embedded default and writes no .plumber.yaml, so anchoring to
+// that phantom path would emit a Code Scanning URI mapping to no committed
+// file. With no real config present the finding gets no physical location;
+// with one present it anchors to it (unchanged behaviour).
+func TestWriteSARIFToFile_FilelessAnchorGuardedOnConfigExistence(t *testing.T) {
+	result := &control.AnalysisResult{Findings: []opaengine.Finding{
+		{Code: "ISSUE-501", Severity: "critical", Message: "branch not protected"}, // no File
+	}}
+	orig := configFile
+	defer func() { configFile = orig }()
+
+	t.Run("absent config -> no phantom location", func(t *testing.T) {
+		dir := t.TempDir()
+		configFile = filepath.Join(dir, ".plumber.yaml") // does not exist
+		out := filepath.Join(dir, "out.sarif")
+		if err := writeSARIFToFile(result, out, "github"); err != nil {
+			t.Fatalf("writeSARIFToFile: %v", err)
+		}
+		if sb := mustRead(t, out); strings.Contains(sb, "artifactLocation") {
+			t.Errorf("file-less finding must not anchor to a non-existent config:\n%s", sb)
+		}
+	})
+
+	t.Run("present config -> anchored to it", func(t *testing.T) {
+		dir := t.TempDir()
+		cfg := filepath.Join(dir, ".plumber.yaml")
+		if err := os.WriteFile(cfg, []byte("version: \"2.0\"\n"), 0o644); err != nil {
+			t.Fatalf("write cfg: %v", err)
+		}
+		configFile = cfg
+		out := filepath.Join(dir, "out.sarif")
+		if err := writeSARIFToFile(result, out, "github"); err != nil {
+			t.Fatalf("writeSARIFToFile: %v", err)
+		}
+		if sb := mustRead(t, out); !strings.Contains(sb, "artifactLocation") {
+			t.Errorf("file-less finding should anchor to the existing config:\n%s", sb)
+		}
+	})
 }

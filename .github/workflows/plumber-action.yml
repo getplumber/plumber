@@ -35,7 +35,7 @@ jobs:
 
       - name: Build Plumber from source
         run: |
-          cp .plumber.yaml internal/defaultconfig/default.yaml
+          cp defaultConfig/.plumber.yaml internal/defaultconfig/default.yaml
           go build -o plumber .
 
       - name: Run Plumber analyze
@@ -51,6 +51,11 @@ jobs:
           # run, and the score service keeps only the default-branch result for
           # the public badge (it reads the verified branch from the OIDC token
           # claim, which the CLI cannot forge).
+          # No --config: analyze auto-discovers the repo-root .plumber.yaml,
+          # which is Plumber's own self-scan config. That is a separate artifact
+          # from the shipped default (defaultConfig/.plumber.yaml, embedded in
+          # the binary for zero-config users), so editing our self-scan trust
+          # list never changes the shipped default (getplumber/plumber#352).
           ./plumber analyze \
             --sarif plumber.sarif \
             --output plumber-report.json \

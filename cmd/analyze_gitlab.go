@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -12,7 +13,6 @@ import (
 	"strings"
 	"unicode/utf8"
 
-	"github.com/AlecAivazis/survey/v2"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/lipgloss/table"
 	"github.com/getplumber/plumber/configuration"
@@ -36,7 +36,12 @@ var (
 	outputFile        string
 	printOutput       bool
 	configFile        string
-	threshold         float64
+	// configExplicitlySet is true when --config (or PLUMBER_ANALYZE_CONFIG)
+	// was supplied. It gates the zero-config fallback: a missing DEFAULT
+	// config path falls back to the embedded default, but a missing
+	// EXPLICITLY-requested path is a user error and still fails.
+	configExplicitlySet bool
+	threshold           float64
 	// thresholdSet is true when the deprecated --threshold was supplied
 	// explicitly (flag or PLUMBER_ANALYZE_THRESHOLD); it switches the gate
 	// back to the legacy passing-controls percentage.
@@ -263,77 +268,49 @@ func renderRunHeader(p plumberprovider.Provider, result *control.AnalysisResult,
 	fmt.Println()
 }
 
-// loadConfigOrOffer loads the Plumber config file. When the file is missing and
-// the terminal is interactive, it prompts the user to generate a config on the
-// spot (via the wizard or the default template) and then reloads it so the
-// calling analyze command can continue uninterrupted.
-func loadConfigOrOffer(cfgFile string) (*configuration.PlumberConfig, string, []string, error) {
+// builtinDefaultConfigSource labels a config loaded from the binary's embedded
+// default (no local file, no explicit --config). It shows up as the
+// `plumberConfig.source` in the JSON report and after "Using configuration:".
+const builtinDefaultConfigSource = "built-in default"
+
+// loadConfigOrOffer loads the Plumber config. If the file exists it is used.
+// If it is missing:
+//   - configExplicit (a --config path the user asked for) is a hard error —
+//     we do not silently swap in the default for a file they named.
+//   - otherwise this is a zero-config run: fall back to the embedded default
+//     so the scan runs with no setup. No prompt, so a terminal and a CI job
+//     behave identically (a wizard prompt would hang a non-interactive run).
+func loadConfigOrOffer(cfgFile string, configExplicit bool) (*configuration.PlumberConfig, string, []string, error) {
 	pc, path, warnings, err := configuration.LoadPlumberConfig(cfgFile)
 	if err == nil {
 		return pc, path, warnings, nil
 	}
 
-	if !strings.Contains(err.Error(), "config file not found") {
+	if !errors.Is(err, configuration.ErrConfigNotFound) {
 		return nil, "", nil, fmt.Errorf("configuration error: %w", err)
 	}
 
-	// Config file not found — in non-interactive mode just show the hint.
-	if !isInteractiveInit() {
+	// A specific --config path was requested but is absent: user error, fail.
+	if configExplicit {
 		return nil, "", nil, fmt.Errorf(errConfigFileNotFound, err)
 	}
 
-	fmt.Fprintf(os.Stderr, "\nNo configuration file found at %q.\n\n", cfgFile)
-
-	const (
-		choiceWizard   = "Interactive wizard  (plumber config init)"
-		choiceGenerate = "Default template    (plumber config generate)"
-		choiceNo       = "No, exit"
-	)
-
-	var choice string
-	if surveyErr := survey.AskOne(&survey.Select{
-		Message: "Would you like to generate a configuration file now?",
-		Options: []string{choiceWizard, choiceGenerate, choiceNo},
-		Default: choiceWizard,
-	}, &choice); surveyErr != nil || choice == choiceNo {
-		return nil, "", nil, fmt.Errorf(errConfigFileNotFound, err)
-	}
-
-	if genErr := handleConfigGeneration(choice, cfgFile, choiceWizard, choiceGenerate); genErr != nil {
-		return nil, "", nil, genErr
-	}
-
-	// Reload after generation.
-	pc, path, warnings, err = configuration.LoadPlumberConfig(cfgFile)
-	if err != nil {
-		return nil, "", nil, fmt.Errorf("failed to reload config after generation: %w", err)
-	}
-	return pc, path, warnings, nil
+	return loadEmbeddedDefaultConfig()
 }
 
-// handleConfigGeneration runs the wizard or default-template generation path
-// chosen by the user in loadConfigOrOffer.
-func handleConfigGeneration(choice, cfgFile, choiceWizard, choiceGenerate string) error {
-	switch choice {
-	case choiceWizard:
-		state, wizErr := runInitWizard(true) // skip "run analyze after?" — we're already in analyze
-		if wizErr != nil {
-			return fmt.Errorf("config init failed: %w", wizErr)
-		}
-		cfg := state.toPlumberConfig()
-		if writeErr := writeInitConfig(cfg, cfgFile, false, true, "plumber analyze"); writeErr != nil {
-			return fmt.Errorf("config init failed: %w", writeErr)
-		}
-		printInitNextSteps(cfgFile, state.Providers)
-	case choiceGenerate:
-		if writeErr := os.WriteFile(cfgFile, defaultconfig.Get(), 0644); writeErr != nil {
-			return fmt.Errorf("failed to write config file: %w", writeErr)
-		}
-		fmt.Fprintf(os.Stderr, "Generated %s\n", cfgFile)
-	default:
-		return fmt.Errorf("unexpected choice: %s", choice)
+// loadEmbeddedDefaultConfig parses the default .plumber.yaml compiled into the
+// binary and notes on stderr that it is in use, pointing at the commands to
+// author a project-specific config. This is the zero-config path: no local
+// .plumber.yaml and no explicit --config, so Plumber scans with its shipped
+// defaults instead of prompting or refusing to run.
+func loadEmbeddedDefaultConfig() (*configuration.PlumberConfig, string, []string, error) {
+	pc, path, warnings, err := configuration.LoadPlumberConfigFromBytes(defaultconfig.Get(), builtinDefaultConfigSource)
+	if err != nil {
+		return nil, "", nil, fmt.Errorf("failed to load built-in default config: %w", err)
 	}
-	return nil
+	fmt.Fprintln(os.Stderr, "No .plumber.yaml found; using Plumber's built-in default configuration.")
+	fmt.Fprintln(os.Stderr, "Generate your own with 'plumber config generate' ('plumber config init' for the interactive wizard); see the default with 'plumber config view'.")
+	return pc, path, warnings, nil
 }
 
 // analyzeFlags bundles the parsed flag-changed booleans so they don't have to
@@ -697,6 +674,10 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		}
 	}
 
+	// envStringFallback marks --config as changed when PLUMBER_ANALYZE_CONFIG
+	// is set, so this one check covers both an explicit flag and the env var.
+	configExplicitlySet = cmd.Flags().Changed("config")
+
 	flags := readAnalyzeFlags(cmd)
 
 	if err := validateProviderFlags(flags); err != nil {
@@ -736,7 +717,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 
 	cleanGitlabURL := strings.TrimSuffix(gitlabURL, "/")
 
-	plumberConfig, configPath, configWarnings, err := loadConfigOrOffer(configFile)
+	plumberConfig, configPath, configWarnings, err := loadConfigOrOffer(configFile, configExplicitlySet)
 	if err != nil {
 		return err
 	}

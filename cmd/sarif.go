@@ -270,12 +270,21 @@ func buildSARIF(findings []opaengine.Finding, fallbackURI, provider string) sari
 func writeSARIFToFile(result *control.AnalysisResult, filePath, provider string) error {
 	// Anchor repo-level (file-less) findings to the effective config file so
 	// every result has a location that resolves to a committed file, which
-	// GitHub Code Scanning requires. configFile is the resolved --config path
-	// the run used (its own --config flag, default .plumber.yaml); it is
-	// always set and the file exists, since LoadPlumberConfig errors earlier
-	// otherwise. provider routes per-provider Title/Description overrides
-	// from the codes registry into the rendered SARIF document.
-	log := buildSARIF(result.Findings, reportFilePath(configFile), provider)
+	// GitHub Code Scanning requires. configFile holds the effective config
+	// path (its own --config flag / PLUMBER_ANALYZE_CONFIG, default
+	// .plumber.yaml). Only anchor to it when it actually exists on disk: a
+	// zero-config run loads the embedded default and never writes a
+	// .plumber.yaml, so anchoring to that phantom path would emit a URI that
+	// maps to no committed file — Code Scanning silently drops or mis-maps it.
+	// When there is no real config file we drop the fallback location instead;
+	// a locationless result is valid SARIF, a phantom-path one is not.
+	// provider routes per-provider Title/Description overrides from the codes
+	// registry into the rendered SARIF document.
+	fallbackURI := ""
+	if _, statErr := os.Stat(configFile); statErr == nil {
+		fallbackURI = reportFilePath(configFile)
+	}
+	log := buildSARIF(result.Findings, fallbackURI, provider)
 	if len(log.Runs) > 0 {
 		notifs := make([]sarifNotification, 0, len(result.DegradedReasons)+len(result.Warnings))
 		// Error-level notifications for incomplete collection (#220), so the

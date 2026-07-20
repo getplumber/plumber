@@ -30,7 +30,7 @@ const githubDotCom = "github.com"
 // the config and its path. It is the shared setup step for both GitHub analyze
 // paths.
 func loadGitHubConfig() (*configuration.PlumberConfig, string, error) {
-	plumberConfig, configPath, configWarnings, err := loadConfigOrOffer(configFile)
+	plumberConfig, configPath, configWarnings, err := loadConfigOrOffer(configFile, configExplicitlySet)
 	if err != nil {
 		return nil, "", err
 	}

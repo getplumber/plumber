@@ -10,6 +10,7 @@ import (
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
+	"github.com/spf13/cobra"
 )
 
 // loadConfigOrOffer — non-interactive paths (no TTY in CI or test runner).
@@ -308,7 +309,7 @@ func TestLoadConfigOrOffer_FileExists(t *testing.T) {
 		t.Fatalf("write temp config: %v", err)
 	}
 
-	pc, path, warnings, err := loadConfigOrOffer(cfgPath)
+	pc, path, warnings, err := loadConfigOrOffer(cfgPath, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -321,16 +322,18 @@ func TestLoadConfigOrOffer_FileExists(t *testing.T) {
 	_ = warnings // may be non-empty for a minimal config, that's fine
 }
 
-func TestLoadConfigOrOffer_MissingFile_NonInteractive(t *testing.T) {
-	// Ensure non-interactive mode: CI env var forces isInteractiveInit to false.
+func TestLoadConfigOrOffer_ExplicitMissingFile_Errors(t *testing.T) {
+	// A --config path the user named explicitly (configExplicit=true) must
+	// still fail when absent — we don't silently swap in the default for a
+	// file they asked for.
 	t.Setenv("CI", "true")
 
 	dir := t.TempDir()
 	cfgPath := filepath.Join(dir, "nonexistent.yaml")
 
-	_, _, _, err := loadConfigOrOffer(cfgPath)
+	_, _, _, err := loadConfigOrOffer(cfgPath, true)
 	if err == nil {
-		t.Fatal("expected an error for missing config file")
+		t.Fatal("expected an error for an explicitly-requested missing config file")
 	}
 	msg := err.Error()
 	if !strings.Contains(msg, "configuration file not found") {
@@ -338,6 +341,69 @@ func TestLoadConfigOrOffer_MissingFile_NonInteractive(t *testing.T) {
 	}
 	if !strings.Contains(msg, "plumber config generate") || !strings.Contains(msg, "plumber config init") {
 		t.Errorf("error should include generation hint, got: %s", msg)
+	}
+}
+
+func TestLoadConfigOrOffer_MissingDefault_FallsBackToEmbedded(t *testing.T) {
+	// No local file and no explicit --config (configExplicit=false), non-
+	// interactive: instead of failing, fall back to the binary's embedded
+	// default so a zero-config scan still runs (getplumber/plumber#326).
+	t.Setenv("CI", "true")
+
+	dir := t.TempDir()
+	cfgPath := filepath.Join(dir, ".plumber.yaml") // does not exist
+
+	pc, path, _, err := loadConfigOrOffer(cfgPath, false)
+	if err != nil {
+		t.Fatalf("expected fallback to the embedded default, got error: %v", err)
+	}
+	if pc == nil {
+		t.Fatal("expected non-nil PlumberConfig from the embedded default")
+	}
+	if path != builtinDefaultConfigSource {
+		t.Errorf("path: got %q, want %q", path, builtinDefaultConfigSource)
+	}
+	// The embedded default is a real config: it should carry provider sections.
+	if pc.GitHub == nil && pc.GitLab == nil {
+		t.Error("embedded default should populate at least one provider section")
+	}
+}
+
+// The GitLab CI component passes the config path via PLUMBER_ANALYZE_CONFIG,
+// not a --config flag. That env value must count as an EXPLICIT config, so a
+// missing path hard-fails instead of silently falling back to the embedded
+// default. This drives the exact wiring runAnalyze uses — apply the env
+// fallback, then derive configExplicitlySet from cmd.Flags().Changed("config")
+// — so a refactor that drops the Flags().Set side effect in envStringFallback
+// (or reorders the assignment) is caught here rather than shipping a
+// misconfigured CI job that scans with default rules.
+func TestConfigExplicit_FromEnvVar_MissingPathHardFails(t *testing.T) {
+	origFile, origExplicit := configFile, configExplicitlySet
+	defer func() { configFile, configExplicitlySet = origFile, origExplicit }()
+
+	missing := filepath.Join(t.TempDir(), "from-env.yaml")
+	t.Setenv(envKeys["config"], missing) // PLUMBER_ANALYZE_CONFIG=<missing>
+
+	cmd := &cobra.Command{Use: "analyze"}
+	cmd.Flags().StringVar(&configFile, "config", ".plumber.yaml", "")
+
+	if err := envStringFallback(cmd, "config", envKeys["config"], &configFile); err != nil {
+		t.Fatalf("envStringFallback: %v", err)
+	}
+	configExplicitlySet = cmd.Flags().Changed("config")
+	if !configExplicitlySet {
+		t.Fatal("PLUMBER_ANALYZE_CONFIG must make --config count as explicit")
+	}
+	if configFile != missing {
+		t.Fatalf("configFile = %q, want %q", configFile, missing)
+	}
+
+	_, _, _, err := loadConfigOrOffer(configFile, configExplicitlySet)
+	if err == nil {
+		t.Fatal("an env-provided missing config must hard-fail, not fall back to the default")
+	}
+	if !strings.Contains(err.Error(), "configuration file not found") {
+		t.Errorf("want 'configuration file not found', got: %v", err)
 	}
 }
 
@@ -350,7 +416,7 @@ func TestLoadConfigOrOffer_InvalidYAML_NonInteractive(t *testing.T) {
 		t.Fatalf("write temp config: %v", err)
 	}
 
-	_, _, _, err := loadConfigOrOffer(cfgPath)
+	_, _, _, err := loadConfigOrOffer(cfgPath, false)
 	if err == nil {
 		t.Fatal("expected an error for invalid YAML")
 	}

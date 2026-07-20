@@ -35,7 +35,7 @@ inputs:
     description: "Deprecated: minimum percentage of passing controls (0-100). Use min-points / min-score to gate on the Plumber Score instead. The value 100 is treated as unset (same as the GitLab component): the default score gate also fails on any finding."
     default: ""
   config-file:
-    description: "Path to a .plumber.yaml config. Default: the repo's .plumber.yaml (required — the run fails if absent; generate one with 'plumber config generate')."
+    description: "Path to a .plumber.yaml config. Default: the repo's .plumber.yaml if present, otherwise the default config embedded in the binary (zero-config runs work out of the box; see it with 'plumber config view')."
     default: ""
   controls:
     description: "Run only these controls (comma-separated). Mutually exclusive with skip-controls."

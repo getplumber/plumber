@@ -32,7 +32,7 @@ jobs:
           go-version: ${{ matrix.go-version }}
 
       - name: Prepare embedded config
-        run: cp .plumber.yaml internal/defaultconfig/default.yaml
+        run: cp defaultConfig/.plumber.yaml internal/defaultconfig/default.yaml
 
       - name: Build
         run: go build ./...
@@ -50,7 +50,7 @@ jobs:
           go-version: '1.26.5'
 
       - name: Prepare embedded config
-        run: cp .plumber.yaml internal/defaultconfig/default.yaml
+        run: cp defaultConfig/.plumber.yaml internal/defaultconfig/default.yaml
 
       - name: Run tests
         run: go test ./... -race -coverprofile=coverage.out -covermode=atomic
@@ -75,7 +75,7 @@ jobs:
           go-version: '1.26.5'
 
       - name: Prepare embedded config
-        run: cp .plumber.yaml internal/defaultconfig/default.yaml
+        run: cp defaultConfig/.plumber.yaml internal/defaultconfig/default.yaml
 
       # Run golangci-lint via `go install` instead of the third-party
       # golangci-lint-action wrapper — no external action is trusted, and
@@ -100,7 +100,7 @@ jobs:
           go-version: '1.26.5'
 
       - name: Prepare embedded config
-        run: cp .plumber.yaml internal/defaultconfig/default.yaml
+        run: cp defaultConfig/.plumber.yaml internal/defaultconfig/default.yaml
 
       - name: Install and run govulncheck
         # setup-go pins GOTOOLCHAIN=local, which makes `go` ignore the

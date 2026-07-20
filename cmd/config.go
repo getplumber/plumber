@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"reflect"
@@ -189,7 +190,16 @@ func runConfigView(cmd *cobra.Command, args []string) error {
 
 	config, _, _, err := configuration.LoadPlumberConfig(configViewFile)
 	if err != nil {
-		return err
+		// Zero-config parity with `analyze`: when the user didn't point
+		// --config at a specific file and none exists locally, show the
+		// binary's embedded default (what a no-config scan would use)
+		// rather than erroring. An explicit missing --config still errors.
+		if !cmd.Flags().Changed("config") && errors.Is(err, configuration.ErrConfigNotFound) {
+			config, _, _, err = configuration.LoadPlumberConfigFromBytes(defaultconfig.Get(), builtinDefaultConfigSource)
+		}
+		if err != nil {
+			return err
+		}
 	}
 
 	// Marshal to clean YAML (this strips comments)

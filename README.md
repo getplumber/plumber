@@ -59,7 +59,7 @@ plumber config generate # generates default configuration yaml file
 plumber analyze
 ```
 
-See the generated default config in this repo: [`.plumber.yaml`](./.plumber.yaml).
+See the generated default config in this repo: [`defaultConfig/.plumber.yaml`](./defaultConfig/.plumber.yaml).
 
 Plumber auto-detects the provider from your git remote. Use explicit flags when scanning a repo that is not the current checkout.
 
@@ -223,7 +223,7 @@ Create a config interactively:
 plumber config init
 ```
 
-Generate the full commented [default template](./.plumber.yaml):
+Generate the full commented [default template](./defaultConfig/.plumber.yaml):
 
 ```bash
 plumber config generate
@@ -259,7 +259,7 @@ plumber explain ISSUE-411
 
 Full config reference:
 
-- Default config: [`.plumber.yaml`](./.plumber.yaml)
+- Default config: [`defaultConfig/.plumber.yaml`](./defaultConfig/.plumber.yaml)
 - CLI docs: [getplumber.io/docs/cli](https://getplumber.io/docs/cli)
 - Issue reference: [getplumber.io/docs/use-plumber/issues](https://getplumber.io/docs/use-plumber/issues)
 

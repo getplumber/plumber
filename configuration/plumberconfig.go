@@ -1,6 +1,7 @@
 package configuration
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"sort"
@@ -9,6 +10,12 @@ import (
 	"github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v2"
 )
+
+// ErrConfigNotFound is returned (wrapped) by LoadPlumberConfig when the config
+// file does not exist. Callers that fall back to the embedded default on a
+// missing file test for it with errors.Is, rather than substring-matching the
+// error text, so a reworded message can never silently break the fallback.
+var ErrConfigNotFound = errors.New("config file not found")
 
 // maxConfigFileBytes bounds a .plumber.yaml read. The config is read from the
 // analyzed repository, so its size is not trusted.
@@ -864,29 +871,41 @@ func LoadPlumberConfig(configPath string) (*PlumberConfig, string, []string, err
 	data, err := utils.ReadFileLimit(configPath, maxConfigFileBytes)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, configPath, nil, fmt.Errorf("config file not found: %s", configPath)
+			return nil, configPath, nil, fmt.Errorf("%w: %s", ErrConfigNotFound, configPath)
 		}
 		l.WithError(err).Error("Failed to read config file")
 		return nil, configPath, nil, err
 	}
 
+	return LoadPlumberConfigFromBytes(data, configPath)
+}
+
+// LoadPlumberConfigFromBytes parses configuration from raw bytes, recording
+// `source` as its origin — a file path when called via LoadPlumberConfig, or a
+// label such as "built-in default" when a caller falls back to the embedded
+// config. It runs the same key validation, schema migration (v1 → v2) and
+// version normalisation as loading from a file, so a fallback config is held to
+// exactly the same contract as a user-supplied one.
+func LoadPlumberConfigFromBytes(data []byte, source string) (*PlumberConfig, string, []string, error) {
+	l := logrus.WithField("action", "LoadPlumberConfigFromBytes").WithField("source", source)
+
 	warnings := ValidateKnownKeys(data)
 
 	config := &PlumberConfig{}
 	if err := yaml.Unmarshal(data, config); err != nil {
-		l.WithError(err).Error("Failed to parse config file")
-		return nil, configPath, warnings, err
+		l.WithError(err).Error("Failed to parse config")
+		return nil, source, warnings, err
 	}
 	// Capture the verbatim config + its source so the JSON report can carry
 	// a self-describing `plumberConfig` block (what produced this grade).
 	config.Raw = string(data)
-	config.Source = configPath
+	config.Source = source
 
 	// Reject explicitly-set unsupported versions early. Empty version is
 	// allowed (legacy default behaviour) and gets a deprecation warning
 	// from convertV1ToV2. "1.0" is the legacy schema; "2.0" is current.
 	if config.Version != "" && config.Version != "1.0" && config.Version != "2.0" {
-		return nil, configPath, warnings, fmt.Errorf(
+		return nil, source, warnings, fmt.Errorf(
 			"unsupported config version %q; supported: [\"1.0\" (legacy), \"2.0\" (current)]", config.Version)
 	}
 
@@ -918,11 +937,11 @@ func LoadPlumberConfig(configPath string) (*PlumberConfig, string, []string, err
 	}
 
 	if err := config.validate(); err != nil {
-		return nil, configPath, warnings, fmt.Errorf("configuration validation error: %w", err)
+		return nil, source, warnings, fmt.Errorf("configuration validation error: %w", err)
 	}
 
 	l.WithField("config", config).Debug("Configuration loaded successfully")
-	return config, configPath, warnings, nil
+	return config, source, warnings, nil
 }
 
 // validate checks for configuration errors, including expression syntax

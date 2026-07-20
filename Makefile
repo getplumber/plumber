@@ -3,10 +3,14 @@
 # Binary name
 BINARY=plumber
 
-# Copy the default config for embedding before building
+# Copy the shipped default config for embedding before building.
+# Source is defaultConfig/.plumber.yaml — the universal baseline every
+# zero-config user gets — NOT the repo-root .plumber.yaml, which is Plumber's
+# own self-scan config. The two are independent artifacts (getplumber/plumber
+# #352); defaultConfig/.plumber.yaml changes only via a deliberate, reviewed edit.
 embed:
-	@echo "# DO NOT EDIT - Generated from .plumber.yaml by 'make build'" > internal/defaultconfig/default.yaml
-	@cat .plumber.yaml >> internal/defaultconfig/default.yaml
+	@echo "# DO NOT EDIT - Generated from defaultConfig/.plumber.yaml by 'make build'" > internal/defaultconfig/default.yaml
+	@cat defaultConfig/.plumber.yaml >> internal/defaultconfig/default.yaml
 
 # Build the binary
 build: embed
