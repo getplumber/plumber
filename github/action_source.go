@@ -51,7 +51,16 @@ var (
 	// URL requirement keeps this off legitimate installers that download a
 	// versioned release asset (e.g. releases/download/<version>/…) and
 	// verify a checksum — those are not mutable-remote-exec.
-	reDownloadRun = regexp.MustCompile(`(?s)(?:curl|wget)\b[^\n]*` + ghContent + `/(?:` + movingRefAlt + `)/[^\n]*\s-[oO]\b.*?(?:\n|;)[^\n;]*(?:` + interp + `\s+\S|chmod\s+\+x)`)
+	//
+	// The run clause is anchored to a statement start — a separator
+	// (`\n`, `;`, `&&`, `|`), optional `sudo …`, then an interpreter with
+	// a `\b` word boundary and an argument, OR `source`/`./x`/`chmod +x`.
+	// Without the anchor and boundary the old `interp\s+\S` matched the
+	// "sh" inside `git push` on any line after the download (`\s` also
+	// crossed newlines), so a `-o versions.json` fetch followed by
+	// `git push` was mis-reported as exec. The gap is bounded (`.{0,400}?`)
+	// so the fetch and the run must be near each other.
+	reDownloadRun = regexp.MustCompile(`(?s)(?:curl|wget)\b[^\n]*` + ghContent + `/(?:` + movingRefAlt + `)/[^\n]*\s-[oO]\b.{0,400}?(?:\n|;|&&|\|)[ \t]*(?:sudo\s+(?:-\S+\s+)*)?(?:` + interp + `\b[ \t]+\S|source[ \t]+\S|\./\S|chmod[ \t]+\+x)`)
 
 	// --- obfuscated tier: the fetch/exec is hidden (base64/decode + run) ---
 	// No legitimate action needs to obfuscate what it runs, so this is
@@ -63,7 +72,13 @@ var (
 	reObfPipe = regexp.MustCompile(`(?:base64\s+(?:-d|-D|--decode)|openssl\s+(?:base64|enc)\b[^\n]*-d|xxd\s+-r|rev\b)[^\n|]*\|\s*(?:sudo\s+)?` + interp + `\b`)
 	// reObfEval: eval/exec of a decoded string (eval "$(… base64 -d …)",
 	// eval(atob(…)), new Function(atob(…)), exec(Buffer.from(x,'base64')).
-	reObfEval = regexp.MustCompile(`(?:eval|new\s+Function|child_process[^\n]{0,40}exec)\s*\(?[^\n]{0,60}(?:atob\s*\(|Buffer\.from\s*\([^)]*['"]base64|base64\s+(?:-d|--decode))`)
+	// The window between the sink and the decode is `[^)\n]{0,40}` — it
+	// must stay INSIDE the sink's argument list (no `)`), so the decode is
+	// an argument of the sink, not merely an adjacent statement. A wider
+	// `[^\n]{0,60}` window raised a critical on benign minified bundles
+	// where standard `new Function("return this")()` boilerplate sits next
+	// to a routine `Buffer.from(x,"base64")` input decode on one line.
+	reObfEval = regexp.MustCompile(`(?:eval|new\s+Function|child_process[^\n]{0,40}exec)\s*\(?[^)\n]{0,40}(?:atob\s*\(|Buffer\.from\s*\([^)]*['"]base64|base64\s+(?:-d|--decode))`)
 	reEvalSub = regexp.MustCompile(`\beval\b[^\n]{0,20}\$\([^\n]*(?:base64\s+(?:-d|--decode)|xxd\s+-r)`)
 
 	// reChecksum: an integrity check on a downloaded artifact. Its
@@ -72,6 +87,23 @@ var (
 	// otherwise-flagged exec is downgraded. Best-effort: the check may
 	// cover a different file, but it signals the author cares.
 	reChecksum = regexp.MustCompile(`(?i)\b(?:sha(?:256|512)sum\s+(?:-c|--check)|shasum\s+-a\s+(?:256|512)|openssl\s+dgst\s+-sha(?:256|512)|cosign\s+verify|gpg\s+--verify|--checksum\b|slsa-verifier\s+verify)`)
+
+	// reInterpLocalScript matches a pipe whose interpreter runs a LOCAL
+	// script file as its first argument (`… | python3 scripts/gen.py`).
+	// There the fetched remote content is the interpreter's stdin (data),
+	// and the code actually executed is the committed local script — not
+	// remote exec. `sh -s`, `python3 -`, `| sh` (no arg) do NOT match, so
+	// a genuine `curl … | sh` stays exec.
+	reInterpLocalScript = regexp.MustCompile(`\|\s*(?:sudo\s+(?:-\S+\s+)*)?` + interp + `[ \t]+(?:-\S+[ \t]+)*([^\s|]+\.(?:sh|bash|py|rb|pl|js))\b`)
+	// rePinnedSource matches a fetch URL path segment that pins the
+	// CONTENT: a 40-hex commit SHA, `refs/tags/…`, a `releases/download/…`
+	// asset, or a dotted version segment (`/v1.2.3/`). A bare `/v2/` is NOT
+	// matched — on raw content it is ref-ambiguous with a branch named
+	// `v2` (ISSUE-402), so it stays exec. A pinned pipe is downgraded to
+	// the low `data` tier: it is exactly what the ISSUE-714 remediation
+	// recommends, so surfacing it as high would contradict the fix, and
+	// re-pushable tags/assets stay recorded rather than clean.
+	rePinnedSource = regexp.MustCompile(`(?i)/(?:[0-9a-f]{40}|refs/tags/|releases/download/|v?\d+(?:\.\d+)+)/`)
 
 	// reDataMoving: a DATA manifest pulled from a moving ref that steers
 	// a later binary download (docker/actions-toolkit release manifest).
@@ -123,9 +155,17 @@ func ScanActionSource(files map[string]string) *ir.MutableRemoteExec {
 	// block), the content is pinned, so downgrade to the low "data" tier.
 	// Proximity matters: a `sha256` string elsewhere in a large bundled
 	// dist/index.js is library noise, not integrity of THIS fetch.
+	//
+	// The `curl … | interp` pipe is classified by the URL and the
+	// interpreter's arguments (see classifyPipeMatch): a pipe whose remote
+	// source is content-pinned drops to `data`, and a pipe that merely
+	// feeds a local committed script is skipped entirely.
 	for _, name := range names {
 		content := files[name]
-		for _, re := range []*regexp.Regexp{reExecMoving, rePipeShell, reDownloadRun} {
+		if hit := scanPipeShell(content, name); hit != nil {
+			return hit
+		}
+		for _, re := range []*regexp.Regexp{reExecMoving, reDownloadRun} {
 			loc := re.FindStringIndex(content)
 			if loc == nil {
 				continue
@@ -145,6 +185,57 @@ func ScanActionSource(files map[string]string) *ir.MutableRemoteExec {
 		}
 	}
 	return nil
+}
+
+// scanPipeShell finds the first `curl … | interp` pipe in content that
+// represents remote execution and returns its finding, or nil when every
+// pipe is either a local-script feed (skipped) — the executed code is
+// committed, not remote. A pipe from a content-pinned source, or one
+// verified by a nearby checksum, is downgraded to the low `data` tier;
+// otherwise it is `exec`. FindAll is used so a benign local-script pipe
+// earlier in the file does not mask a real remote-exec pipe after it.
+func scanPipeShell(content, name string) *ir.MutableRemoteExec {
+	for _, loc := range rePipeShell.FindAllStringIndex(content, -1) {
+		line := enclosingLine(content, loc[0])
+		if pipeExecutesLocalScript(line) {
+			continue // remote content is stdin; the run target is a local file
+		}
+		m := content[loc[0]:loc[1]]
+		tier := "exec"
+		if pipeSourcePinned(line) || checksumNear(content, loc[0], loc[1]) {
+			tier = "data"
+		}
+		return &ir.MutableRemoteExec{Tier: tier, URL: snippet(m), Ref: matchedRef(m), File: name}
+	}
+	return nil
+}
+
+// enclosingLine returns the text of the line containing byte index idx,
+// without the surrounding newlines. Used to classify a pipe by its whole
+// command (the URL before the pipe and the interpreter args after it),
+// not just the fragment rePipeShell matched.
+func enclosingLine(content string, idx int) string {
+	start := strings.LastIndexByte(content[:idx], '\n') + 1
+	rest := content[idx:]
+	if end := strings.IndexByte(rest, '\n'); end >= 0 {
+		return content[start : idx+end]
+	}
+	return content[start:]
+}
+
+// pipeExecutesLocalScript reports whether a `… | interp <local-script>`
+// pipe runs a committed local script (the fetched content is data on the
+// interpreter's stdin). A remote script argument (`http…`) does not count.
+func pipeExecutesLocalScript(line string) bool {
+	m := reInterpLocalScript.FindStringSubmatch(line)
+	return m != nil && !strings.Contains(m[1], "://")
+}
+
+// pipeSourcePinned reports whether the fetch URL on this line pins its
+// content (SHA / refs/tags / release asset / dotted version), so piping
+// it to a shell is not MUTABLE remote exec.
+func pipeSourcePinned(line string) bool {
+	return rePinnedSource.MatchString(line)
 }
 
 // checksumNear reports whether an integrity check appears within a small

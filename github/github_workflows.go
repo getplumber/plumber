@@ -132,7 +132,10 @@ func ScanGitHubWorkflows(projectPath, defaultBranch, rootDir, apiHost string, en
 	// kind, tag SHA). Best-effort: if gh is not authenticated, the
 	// client operates in degraded mode and leaves metadata empty.
 	if enrichActionMetadata {
-		enrichActionsWithAPIMetadata(pipeline, apiHost, nil)
+		// Plain variant is the test-only entry point; the mutable-exec
+		// source scan (network) is off here, exercised via its own unit
+		// tests and the progress/remote variants used in production.
+		enrichActionsWithAPIMetadata(pipeline, apiHost, false, nil)
 	}
 	return pipeline, partialErrors, nil
 }
@@ -149,7 +152,7 @@ func ScanGitHubWorkflows(projectPath, defaultBranch, rootDir, apiHost string, en
 // (RunGitHubAnalysis) using the same total so the bar keeps
 // climbing. progressFn may be nil; callers that don't care about
 // progress should call the plain ScanGitHubWorkflows variant.
-func ScanGitHubWorkflowsWithProgress(projectPath, defaultBranch, rootDir, apiHost string, enrichActionMetadata bool, progressFn ProgressFunc) (pipeline *ir.NormalizedPipeline, partialErrors []error, err error) {
+func ScanGitHubWorkflowsWithProgress(projectPath, defaultBranch, rootDir, apiHost string, enrichActionMetadata, scanMutableExec bool, progressFn ProgressFunc) (pipeline *ir.NormalizedPipeline, partialErrors []error, err error) {
 	pipeline = &ir.NormalizedPipeline{
 		Provider:      ir.ProviderGitHub,
 		ProjectPath:   projectPath,
@@ -157,8 +160,11 @@ func ScanGitHubWorkflowsWithProgress(projectPath, defaultBranch, rootDir, apiHos
 	}
 	// Producer-side check: if the scanned repo is itself an action whose
 	// own source fetches mutable remote code, flag it. Read from the
-	// local checkout; computed even when the repo has no workflows.
-	pipeline.SelfActionMutableExec = ScanLocalSelfAction(rootDir)
+	// local checkout; computed even when the repo has no workflows. Gated
+	// on the control being active so a disabled control does no scanning.
+	if scanMutableExec {
+		pipeline.SelfActionMutableExec = ScanLocalSelfAction(rootDir)
+	}
 	jobs, partialErrors, err := collectWorkflowJobs(rootDir)
 	if err != nil {
 		return nil, nil, err
@@ -180,7 +186,7 @@ func ScanGitHubWorkflowsWithProgress(projectPath, defaultBranch, rootDir, apiHos
 	total := n + 3
 	report(progressFn, 1, total, "Scanning workflow files")
 	if enrichActionMetadata {
-		enrichActionsWithAPIMetadata(pipeline, apiHost, wrapProgress(progressFn, total))
+		enrichActionsWithAPIMetadata(pipeline, apiHost, scanMutableExec, wrapProgress(progressFn, total))
 	}
 	return pipeline, partialErrors, nil
 }
@@ -279,7 +285,12 @@ func report(fn ProgressFunc, step, total int, message string) {
 // every unique reference so the caller's spinner can track the
 // long phase. Duplicate refs only emit once because the client
 // caches and the enrichment loop iterates actions left to right.
-func enrichActionsWithAPIMetadata(pipeline *ir.NormalizedPipeline, apiHost string, progressFn ProgressFunc) {
+// scanMutableExec gates the per-action source fetch that powers
+// actionsMustNotExecuteMutableRemoteCode (ISSUE-714). When false, the
+// collector skips resolveMutableExec entirely — up to ~7 sequential HTTP
+// requests per unique action — so disabling the control removes its
+// scan-time and rate-limit cost instead of merely hiding the findings.
+func enrichActionsWithAPIMetadata(pipeline *ir.NormalizedPipeline, apiHost string, scanMutableExec bool, progressFn ProgressFunc) {
 	client := NewGitHubMetadataClientForHost(apiHost)
 	if !client.Available() {
 		return
@@ -305,7 +316,10 @@ func enrichActionsWithAPIMetadata(pipeline *ir.NormalizedPipeline, apiHost strin
 				report(progressFn, done, total, fmt.Sprintf("Resolving action %s", action.Uses))
 			}
 			meta := client.Resolve(action.Uses)
-			mre := resolveMutableExec(action.Uses, mreCache)
+			var mre *ir.MutableRemoteExec
+			if scanMutableExec {
+				mre = resolveMutableExec(action.Uses, mreCache)
+			}
 			if isZeroMetadata(meta) && action.Comment == "" && mre == nil {
 				continue
 			}

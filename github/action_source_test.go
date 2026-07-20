@@ -90,6 +90,53 @@ func TestScanActionSource(t *testing.T) {
 			files:    map[string]string{"action.yml": "runs:\n  using: composite\n  steps:\n    - run: |\n        curl -sSfL https://raw.githubusercontent.com/o/r/main/i.sh -o i.sh\n        echo \"abc123  i.sh\" | sha256sum -c\n        sh i.sh"},
 			wantTier: "data",
 		},
+		// --- #299 review: reObfEval must not fire on benign minified bundles (blocker 1) ---
+		{
+			name:     "minified new Function boilerplate next to a base64 decode is NOT obfuscated",
+			files:    map[string]string{"dist/index.js": `t=new Function("return this")();r=Buffer.from(e.data,"base64");`},
+			wantTier: "",
+		},
+		{
+			name:     "genuine new Function(atob(...)) is still obfuscated",
+			files:    map[string]string{"dist/index.js": `const run = new Function(atob(payload));run();`},
+			wantTier: "obfuscated",
+		},
+		// --- #299 review: pipe classified by URL/args mutability (blocker 2) ---
+		{
+			name:     "SHA-pinned URL piped to sh is data, not high (matches the ISSUE-714 remediation)",
+			files:    map[string]string{"action.yml": "runs:\n  using: composite\n  steps:\n    - run: curl -sSfL https://raw.githubusercontent.com/anchore/grype/8f2a3cd90ff2b3a24e2ba5cbde5a29f3d1b2c4e5/install.sh | sh -s -- -b /usr/local/bin"},
+			wantTier: "data",
+		},
+		{
+			name:     "release-asset URL piped to interpreter is data",
+			files:    map[string]string{"action.yml": "runs:\n  using: composite\n  steps:\n    - run: curl -L https://github.com/org/tool/releases/download/v1.2.3/bootstrap.py | python3 -"},
+			wantTier: "data",
+		},
+		{
+			name:     "remote data piped into a LOCAL committed script is not remote exec",
+			files:    map[string]string{"action.yml": "runs:\n  using: composite\n  steps:\n    - run: curl -s https://api.example.com/matrix.json | python3 scripts/gen_matrix.py >> \"$GITHUB_OUTPUT\""},
+			wantTier: "",
+		},
+		{
+			name:     "moving-ref URL piped to sh stays exec",
+			files:    map[string]string{"action.yml": "runs:\n  using: composite\n  steps:\n    - run: curl -sSfL https://raw.githubusercontent.com/o/r/main/i.sh | sh"},
+			wantTier: "exec",
+		},
+		// --- #299 review: reDownloadRun must anchor the run to a statement (NB-1) ---
+		// The download-then-`git push` case must not be reported as EXEC
+		// (high). The `.json` from a moving ref is still recorded by the
+		// separate data pass (low, not surfaced) — the FP that mattered was
+		// the exec/high verdict, which the statement anchor removes.
+		{
+			name:     "download of a data file followed by git push is NOT exec (recorded as low data)",
+			files:    map[string]string{"action.yml": "runs:\n  using: composite\n  steps:\n    - run: |\n        curl -sSfL https://raw.githubusercontent.com/org/repo/main/versions.json -o versions.json\n        git push origin HEAD"},
+			wantTier: "data",
+		},
+		{
+			name:     "download of a script then && ./run stays exec",
+			files:    map[string]string{"action.yml": "runs:\n  using: composite\n  steps:\n    - run: curl -sSfL https://raw.githubusercontent.com/org/repo/main/x.sh -o x.sh && ./x.sh"},
+			wantTier: "exec",
+		},
 	}
 
 	for _, tc := range cases {

@@ -146,6 +146,7 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 		conf.GitRepoRoot,
 		conf.GithubAPIHost,
 		configuration.ProviderNeedsActionMetadata("github"),
+		shouldScanMutableExec(conf),
 		progressFn,
 	)
 	if err != nil {
@@ -250,6 +251,7 @@ func RunGitHubAnalysisRemote(conf *configuration.Configuration, owner, repo, ref
 		conf.GithubAPIHost,
 		owner, repo, ref,
 		configuration.ProviderNeedsActionMetadata("github"),
+		shouldScanMutableExec(conf),
 		progressFn,
 	)
 	if err != nil {

@@ -32,6 +32,29 @@ const opaEvaluateTimeout = 2 * time.Minute
 // Rego engine. Every other control is config-driven end-to-end through
 // the catalog in catalog.go.
 const controlBranchMustBeProtected = "branchMustBeProtected"
+const controlMutableRemoteExec = "actionsMustNotExecuteMutableRemoteCode"
+
+// shouldScanMutableExec reports whether the collector should fetch and
+// scan action source for actionsMustNotExecuteMutableRemoteCode
+// (ISSUE-714/715). The scan is expensive (up to ~7 sequential HTTP
+// requests per unique action), so it runs only when the control is
+// actually active: not benched in code, enabled in .plumber.yaml, and
+// not excluded by --controls / --skip-controls. When false the collector
+// skips the fetch entirely, so disabling the control removes its
+// scan-time and rate-limit cost — not just its findings.
+func shouldScanMutableExec(conf *configuration.Configuration) bool {
+	if conf == nil || conf.PlumberConfig == nil {
+		return false
+	}
+	if configuration.IsBenched("github", controlMutableRemoteExec) {
+		return false
+	}
+	cfg := conf.PlumberConfig.ControlsFor("github").ActionsMustNotExecuteMutableRemoteCode
+	if cfg == nil || !cfg.IsEnabled() {
+		return false
+	}
+	return shouldRunControl(controlMutableRemoteExec, conf)
+}
 
 // shouldRunControl applies --controls / --skip-controls filtering for a control.
 // If --controls is set, only listed controls are eligible.

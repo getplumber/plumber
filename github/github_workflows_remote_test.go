@@ -69,7 +69,7 @@ jobs:
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	pipeline, partial, err := ScanGitHubWorkflowsRemote("", "owner", "repo", "main", false, nil)
+	pipeline, partial, err := ScanGitHubWorkflowsRemote("", "owner", "repo", "main", false, false, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -107,7 +107,7 @@ func TestScanGitHubWorkflowsRemote_NoWorkflowsDir(t *testing.T) {
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	pipeline, partial, err := ScanGitHubWorkflowsRemote("", "owner", "repo", "main", false, nil)
+	pipeline, partial, err := ScanGitHubWorkflowsRemote("", "owner", "repo", "main", false, false, nil)
 	if err != nil {
 		t.Fatalf("expected nil error on 404, got %v", err)
 	}
@@ -134,7 +134,7 @@ func TestScanGitHubWorkflowsRemote_NonexistentRepoErrors(t *testing.T) {
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	_, _, err := ScanGitHubWorkflowsRemote("", "owner", "repo", "main", false, nil)
+	_, _, err := ScanGitHubWorkflowsRemote("", "owner", "repo", "main", false, false, nil)
 	if err == nil {
 		t.Fatal("expected a hard error for a non-existent repository, got nil (vacuous 100% bug #222)")
 	}
@@ -163,7 +163,7 @@ func TestScanGitHubWorkflowsRemote_NonexistentBranchErrors(t *testing.T) {
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	_, _, err := ScanGitHubWorkflowsRemote("", "owner", "repo", "lolxkdaksjdad", false, nil)
+	_, _, err := ScanGitHubWorkflowsRemote("", "owner", "repo", "lolxkdaksjdad", false, false, nil)
 	if err == nil {
 		t.Fatal("expected a hard error for a non-existent branch, got nil (vacuous 100% bug #222)")
 	}
@@ -201,7 +201,7 @@ jobs:
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	pipeline, partial, err := ScanGitHubWorkflowsRemote("", "owner", "repo", "main", false, nil)
+	pipeline, partial, err := ScanGitHubWorkflowsRemote("", "owner", "repo", "main", false, false, nil)
 	if err != nil {
 		t.Fatalf("unexpected hard error: %v", err)
 	}
@@ -230,7 +230,7 @@ func TestScanGitHubWorkflowsRemote_BadEncoding(t *testing.T) {
 	defer server.Close()
 	swapRESTClient(t, server)
 
-	_, partial, err := ScanGitHubWorkflowsRemote("", "owner", "repo", "", false, nil)
+	_, partial, err := ScanGitHubWorkflowsRemote("", "owner", "repo", "", false, false, nil)
 	if err != nil {
 		t.Fatalf("unexpected hard error: %v", err)
 	}
@@ -240,10 +240,10 @@ func TestScanGitHubWorkflowsRemote_BadEncoding(t *testing.T) {
 }
 
 func TestScanGitHubWorkflowsRemote_RejectsEmptyOwnerOrRepo(t *testing.T) {
-	if _, _, err := ScanGitHubWorkflowsRemote("", "", "repo", "main", false, nil); err == nil {
+	if _, _, err := ScanGitHubWorkflowsRemote("", "", "repo", "main", false, false, nil); err == nil {
 		t.Error("expected error for empty owner")
 	}
-	if _, _, err := ScanGitHubWorkflowsRemote("", "owner", "", "main", false, nil); err == nil {
+	if _, _, err := ScanGitHubWorkflowsRemote("", "owner", "", "main", false, false, nil); err == nil {
 		t.Error("expected error for empty repo")
 	}
 }
