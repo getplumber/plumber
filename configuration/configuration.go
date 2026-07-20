@@ -47,6 +47,9 @@ type Configuration struct {
 
 	// Plumber Configuration (from .plumber.yaml file)
 	PlumberConfig *PlumberConfig
+	// ConfigFilePath is the path the Plumber config was loaded from, shown
+	// in the run header.
+	ConfigFilePath string
 
 	// Values must match .plumber.yaml control keys
 	// ControlsFilter runs only the listed controls when set;

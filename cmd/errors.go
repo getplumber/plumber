@@ -35,11 +35,11 @@ type ScoreGateError struct {
 func (e *ScoreGateError) Error() string {
 	switch {
 	case e.NoControls:
-		return "no controls were evaluated (no usable CI configuration, none enabled for this provider in .plumber.yaml, or all skipped); the gate fails rather than passing an unchecked run"
+		return "no controls were evaluated, so there is nothing to score (no usable CI configuration, no controls enabled for this provider in .plumber.yaml, or all skipped)"
 	case e.PointsGate:
-		return fmt.Sprintf("Plumber Score %.1f pts (%s) is below the required %.1f pts", e.Points, e.Letter, e.MinPoints)
+		return fmt.Sprintf("score %.1f/100 pts (%s) is below the minimum of %.0f pts required to pass", e.Points, e.Letter, e.MinPoints)
 	default:
-		return fmt.Sprintf("Plumber Score %s is below the required minimum score %s", e.Letter, e.MinLetter)
+		return fmt.Sprintf("score %s (%.1f/100 pts) is below the minimum grade %s required to pass", e.Letter, e.Points, e.MinLetter)
 	}
 }
 
@@ -68,7 +68,7 @@ type DegradedError struct {
 }
 
 func (e *DegradedError) Error() string {
-	return fmt.Sprintf("%d check(s) could not be verified and --fail-warnings is set", e.Count)
+	return fmt.Sprintf("%d check(s) could not be verified and --fail-warnings is set; see the warnings above", e.Count)
 }
 
 // IncompleteDataError is returned when a run is data-collection-degraded:
@@ -85,5 +85,5 @@ type IncompleteDataError struct {
 }
 
 func (e *IncompleteDataError) Error() string {
-	return fmt.Sprintf("data collection was incomplete (%d issue(s)); score withheld, re-run when complete", len(e.Reasons))
+	return fmt.Sprintf("data collection was incomplete (%d issue(s)), so the score is withheld; fix the causes listed above and re-run", len(e.Reasons))
 }

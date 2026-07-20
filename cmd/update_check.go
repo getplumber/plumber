@@ -82,7 +82,9 @@ func buildUpdateNotice(currentVer, latestTag string) string {
 	}
 
 	if latest.GreaterThan(current) {
-		return fmt.Sprintf("\nA newer version of plumber is available: %s (you have %s)\nUpgrade instructions: %s\nTo disable this check: export PLUMBER_NO_UPDATE_CHECK=1\n\n", latestTag, currentVer, upgradeDocsURL)
+		// Keep this to a single short line: it prints at the end of every run,
+		// so anything bigger drowns out the actual results.
+		return fmt.Sprintf("\nplumber %s is available (you have %s) → %s\n", latestTag, currentVer, upgradeDocsURL)
 	}
 	return ""
 }

@@ -207,17 +207,60 @@ func resolveProvider(provider string, gitlabURLFromFlag, githubURLFromFlag bool,
 	}
 }
 
-// printProviderDetection tells the user which provider was selected and why,
-// then always shows how to change it — so a wrong guess (e.g. a GitHub
-// Enterprise Server host mistaken for self-hosted GitLab) is both visible and
-// trivially correctable.
-func printProviderDetection(provider, reason string) {
-	name := "GitLab"
+// providerDisplayName maps the canonical provider id to its human-readable
+// name for the report header.
+func providerDisplayName(provider string) string {
 	if provider == "github" {
-		name = "GitHub"
+		return "GitHub"
 	}
-	fmt.Fprintf(os.Stderr, "Provider: %s (%s)\n", name, reason)
-	fmt.Fprintf(os.Stderr, "  To change: --provider github|gitlab, or --github-url <host> / --gitlab-url <url> to also target a specific host/remote.\n")
+	return "GitLab"
+}
+
+// headerRow is one label/value pair in the run header block.
+type headerRow struct{ label, value string }
+
+// buildRunHeaderRows derives the run-header rows from the provider, analysis
+// result, and configuration. It holds all the condition-dependent logic
+// (platform/host selection, optional config path, CI-config-source mapping) so
+// it can be unit-tested without capturing stdout; renderRunHeader only formats
+// what this returns.
+func buildRunHeaderRows(providerName string, result *control.AnalysisResult, conf *configuration.Configuration) []headerRow {
+	rows := []headerRow{{"Project", result.ProjectPath}}
+
+	platform := providerDisplayName(providerName)
+	switch {
+	case providerName == "gitlab" && conf.GitlabURL != "":
+		platform += " · " + conf.GitlabURL
+	case providerName == "github" && conf.GithubAPIHost != "":
+		platform += " · " + conf.GithubAPIHost
+	}
+	rows = append(rows, headerRow{"Platform", platform})
+
+	if conf.ConfigFilePath != "" {
+		rows = append(rows, headerRow{"Config", conf.ConfigFilePath})
+	}
+	switch result.CIConfigSource {
+	case "local":
+		rows = append(rows, headerRow{"CI config", "local file"})
+	case "remote":
+		rows = append(rows, headerRow{"CI config", "fetched from " + providerDisplayName(providerName)})
+	}
+
+	return rows
+}
+
+// renderRunHeader prints the single structured block that identifies the run:
+// project, platform (with instance URL/host), config file, and CI-config
+// source. It is the one place this metadata is shown — the per-step stderr
+// echoes it used to duplicate have been removed.
+func renderRunHeader(p plumberprovider.Provider, result *control.AnalysisResult, conf *configuration.Configuration) {
+	rows := buildRunHeaderRows(p.Name(), result, conf)
+
+	fmt.Println()
+	for _, r := range rows {
+		fmt.Printf("  %s  %s\n", styleMuted.Render(fmt.Sprintf("%-9s", r.label)), styleTitle.Render(r.value))
+	}
+	fmt.Println()
 }
 
 // loadConfigOrOffer loads the Plumber config file. When the file is missing and
@@ -387,11 +430,9 @@ func resolveGitLabTarget(flags analyzeFlags, remoteInfo *utils.GitRemoteInfo) (g
 		} else {
 			gitlabURL = "https://gitlab.com"
 		}
-		fmt.Fprintf(os.Stderr, "GitLab URL: %s\n", gitlabURL)
 	}
 	if !flags.projectFromFlag && remoteInfo != nil {
 		projectPath = remoteInfo.ProjectPath
-		fmt.Fprintf(os.Stderr, "Project: %s\n", projectPath)
 	}
 
 	if gitlabURL == "" {
@@ -432,7 +473,6 @@ func applyConfigWarnings(warnings []string) error {
 	if failWarnings {
 		return fmt.Errorf("configuration has %d warning(s) and --fail-warnings is set", len(warnings))
 	}
-	fmt.Fprintf(os.Stderr, "Please fix the warnings above for best results.\n\n")
 	return nil
 }
 
@@ -674,12 +714,11 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 
 	remoteInfo := utils.DetectGitRemote()
 
-	providerName, reason := resolveProvider(providerFlag, flags.gitlabURLFromFlag, flags.githubURLFromFlag, remoteInfo)
+	providerName, _ := resolveProvider(providerFlag, flags.gitlabURLFromFlag, flags.githubURLFromFlag, remoteInfo)
 	if providerName == "" {
 		return fmt.Errorf("could not determine the provider: not in a git repository and no provider flag set. " +
 			"Pass --provider github|gitlab, or --github-url <host> / --gitlab-url <url> to target a specific instance")
 	}
-	printProviderDetection(providerName, reason)
 
 	if providerName == "github" {
 		return dispatchGitHub(cmd, flags, remoteInfo, controlsFilterList, skipControlsList)
@@ -708,10 +747,9 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	if printOutput {
 		printBanner()
 	}
-	fmt.Fprintf(os.Stderr, "Using configuration: %s\n", configPath)
-	fmt.Fprintf(os.Stderr, "Analyzing project: %s on %s\n", projectPath, cleanGitlabURL)
 
 	conf := buildGitLabConf(cleanGitlabURL, gitlabToken, flags, remote, plumberConfig, controlsFilterList, skipControlsList)
+	conf.ConfigFilePath = configPath
 
 	p, ok := plumberprovider.Get("gitlab")
 	if !ok {
@@ -1423,8 +1461,8 @@ func printNoControlsWarning(result *control.AnalysisResult) {
 		fmt.Printf(fmtIndentPara, styleDim.Render("CI configuration file is missing from the project."))
 		return
 	}
-	fmt.Printf(fmtIndentLine, styleDim.Render("Data collection failed - compliance defaults to 0%."))
-	fmt.Printf(fmtIndentPara, styleDim.Render("Use --verbose for more info."))
+	fmt.Printf(fmtIndentLine, styleDim.Render("Data collection failed — no checks could run."))
+	fmt.Printf(fmtIndentPara, styleDim.Render("Re-run with --verbose for details."))
 }
 
 // findingsToItems converts a slice of OPA findings into the parallel

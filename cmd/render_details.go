@@ -73,7 +73,7 @@ func renderWarnings(warnings []string) {
 	// When a version stays unresolved (the authenticated read was blocked and
 	// the anonymous fallback did not succeed), a user-supplied token resolves
 	// it. Point there rather than leaving the user with a dead end (ISSUE-228).
-	fmt.Printf("    %s↳ if an action above is in an org with an IP allow list, set PLUMBER_METADATA_TOKEN (a token with public-repo read) to resolve its version; see the README \"GitHub Action\" section.%s\n", colorYellow, colorReset)
+	fmt.Printf("    %s↳ set PLUMBER_METADATA_TOKEN (a token with public-repo read) to resolve blocked action versions — see the README.%s\n", colorYellow, colorReset)
 }
 
 // renderDegradedCaveat prints an up-front warning that the run scored

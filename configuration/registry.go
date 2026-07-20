@@ -108,7 +108,7 @@ var removedControls = map[string]string{
 	// must never be reused (the downstream jobs platform has mapped
 	// "secret leak in pipeline configuration" to 301 since before the
 	// CLI rule existed).
-	"pipelineMustNotLeakSecretsInConfig": "secret detection (gitleaks) is no longer part of Plumber — delete this block from .plumber.yaml; see the security advisory https://github.com/getplumber/plumber/security/advisories/GHSA-w2xj-4v44-6rqr and issue https://github.com/getplumber/plumber/issues/310",
+	"pipelineMustNotLeakSecretsInConfig": "secret detection is no longer part of Plumber; remove this block from .plumber.yaml",
 }
 
 // IsRemovedControl reports whether the named control existed in an

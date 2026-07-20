@@ -47,19 +47,17 @@ func loadGitHubConfig() (*configuration.PlumberConfig, string, error) {
 }
 
 func runGitHubAnalyze(info *utils.GitRemoteInfo, controlsFilterList, skipControlsList []string) error {
-	fmt.Fprintf(os.Stderr, "GitHub project: %s (local clone)\n", info.ProjectPath)
-
 	plumberConfig, configPath, err := loadGitHubConfig()
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "Using configuration: %s\n", configPath)
 
 	if printOutput {
 		printBanner()
 	}
 
 	conf := configuration.NewDefaultConfiguration()
+	conf.ConfigFilePath = configPath
 	conf.ProjectPath = info.ProjectPath
 	conf.GitRepoRoot = info.RepoRoot
 	// This command is the local-clone GitHub flow: the working tree
@@ -85,7 +83,6 @@ func runGitHubAnalyze(info *utils.GitRemoteInfo, controlsFilterList, skipControl
 	}
 	conf.GithubAPIHost = apiHost
 
-	fmt.Fprintf(os.Stderr, "Scanning workflows under: %s\n", info.RepoRoot)
 	printGitHubAuthBanner(apiHost, false)
 
 	p, ok := plumberprovider.Get("github")
@@ -117,21 +114,16 @@ func runGitHubAnalyzeRemote(host, project, ref string, controlsFilterList, skipC
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "Using configuration: %s\n", configPath)
 
 	if printOutput {
 		printBanner()
 	}
 
 	apiHost := strings.TrimPrefix(strings.TrimPrefix(host, "https://"), "http://")
-	if apiHost == githubDotCom || apiHost == "" {
-		fmt.Fprintf(os.Stderr, "Analyzing GitHub project: %s/%s (remote fetch)\n", owner, repo)
-	} else {
-		fmt.Fprintf(os.Stderr, "Analyzing GitHub project: %s/%s on %s (remote fetch)\n", owner, repo, apiHost)
-	}
 	printGitHubAuthBanner(apiHost, true)
 
 	conf := configuration.NewDefaultConfiguration()
+	conf.ConfigFilePath = configPath
 	conf.ProjectPath = owner + "/" + repo
 	conf.Branch = ref
 	conf.PlumberConfig = plumberConfig

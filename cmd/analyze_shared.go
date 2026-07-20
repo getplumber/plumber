@@ -86,16 +86,13 @@ func buildComplianceSummary(p provider.Provider, result *control.AnalysisResult,
 // outputTextWithProvider renders terminal output using the provider's catalog
 // and stats builder — the shared path for both GitLab and GitHub.
 func outputTextWithProvider(p provider.Provider, result *control.AnalysisResult, conf *configuration.Configuration, s complianceSummary, controlsFilterList, skipControlsList []string) error {
-	fmt.Printf("\n%s %s\n\n", styleTitle.Render("Project:"), result.ProjectPath)
+	renderRunHeader(p, result, conf)
 
 	if s.controlCount == 0 {
 		printNoControlsWarning(result)
 	}
 	if result.DataCollectionDegraded {
 		renderDegradedCaveat(result.DegradedReasons)
-	}
-	if result.CIConfigSource == "local" {
-		fmt.Printf(fmtIndentPara, styleAccent.Render("CI Config Source: local file"))
 	}
 
 	controls, groups := buildProviderControlSummariesAndGroups(p, result, conf, controlsFilterList, skipControlsList)
@@ -262,6 +259,9 @@ func joinStrings(ss []string) string {
 
 // installSpinner attaches a progress spinner to conf when output is enabled and
 // not in verbose mode, starts it, and returns it so the caller can stop it.
+// The spinner is skipped when stderr is not a terminal (CI logs, redirects):
+// its \r-based redraws would land as garbled progress lines in the captured
+// output.
 func installSpinner(conf *configuration.Configuration) *progressSpinner {
 	sp := newSpinner()
 	if shouldShowProgress(printOutput, verbose, term.IsTerminal(int(os.Stderr.Fd()))) {

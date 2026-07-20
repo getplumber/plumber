@@ -491,9 +491,9 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 		} else if content, err := utils.ReadFileLimit(localCIPath, maxLocalCIConfigBytes); err == nil {
 			conf.LocalCIConfigContent = content
 			conf.UsingLocalCIConfig = true
-			clearProgressLine(conf)
-			fmt.Fprintf(os.Stderr, "Using local CI configuration (specify --branch to force upstream CI config fetch): %s\n", localCIPath)
-			l.WithField("localCIPath", localCIPath).Info("Using local CI configuration file")
+			// The run header reports "CI config: local file"; the path and the
+			// --branch hint stay in the verbose log to keep normal output clean.
+			l.WithField("localCIPath", localCIPath).Info("Using local CI configuration file (pass --branch to fetch the CI config from GitLab instead)")
 		} else if os.IsNotExist(err) {
 			l.WithField("localCIPath", localCIPath).Debug("Local CI config file not found, will use remote")
 		} else {

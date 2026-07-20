@@ -390,7 +390,6 @@ func runConfigValidate(cmd *cobra.Command, args []string) error {
 		if failWarnings {
 			return fmt.Errorf("configuration has %d warning(s) and --fail-warnings is set", len(warnings))
 		}
-		fmt.Fprintf(os.Stderr, "Please fix the warnings above for best results.\n")
 	} else {
 		fmt.Printf("Configuration %s is valid.\n", configValidateFile)
 	}
