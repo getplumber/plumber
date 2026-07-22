@@ -25,6 +25,12 @@ bare_npm_install_pattern := `(?m)^\s*npm\s+install\s+(?:@[a-zA-Z0-9-]+/)?[a-zA-Z
 npm_pinned_pattern := `\bnpm\s+install\s+(?:@[a-zA-Z0-9-]+/)?[a-zA-Z0-9._-]+@[0-9^~>=<]`
 
 deny contains finding if {
+	# GitHub-only control (workflowMustPinPackageInstalls). The rule reads
+	# generic job.scripts, which GitLab pipelines populate too, so without
+	# this guard a bare `pip install`/`npm install` in a GitLab `script:`
+	# would fire it (getplumber/plumber#349). The catalog gate also drops
+	# it, but guarding at the source is defense-in-depth.
+	input.pipeline.provider == "github"
 	some i, j
 	job := input.pipeline.jobs[i]
 	script := job.scripts[j]

@@ -19,6 +19,11 @@ import rego.v1
 invisible_pattern := `[\x{200B}-\x{200F}\x{202A}-\x{202E}\x{2066}-\x{2069}\x{FEFF}]`
 
 deny contains finding if {
+	# GitHub-only control (workflowMustNotContainObfuscation). Reads generic
+	# job.scripts / job.variables, so a stray zero-width or bidi character in
+	# an ordinary GitLab script/variable would fire it (getplumber/plumber
+	# #349). The catalog gate also drops it; this guard stops it at the source.
+	input.pipeline.provider == "github"
 	some i
 	job := input.pipeline.jobs[i]
 	_job_contains_obfuscation(job)

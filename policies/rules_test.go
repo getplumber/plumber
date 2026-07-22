@@ -4404,6 +4404,70 @@ func TestIssue214_UnpinnedPackageInstall(t *testing.T) {
 	runGitHubFixtureCases(t, "ISSUE-214", cases)
 }
 
+// TestProviderGuards_SuppressGitHubOnlyRulesOnGitLab exercises the
+// `input.pipeline.provider == "github"` guards in unpinned_package_install.rego
+// (ISSUE-214) and workflow_obfuscation.rego (ISSUE-420) in isolation
+// (getplumber/plumber#349). Those rules read generic IR fields (job.scripts /
+// job.variables) that GitLab pipelines populate too, so without the guard they
+// fire on a GitLab run. The guard is defense-in-depth: the catalog gate
+// (FilterFindingsByEnabledControls) also drops these GitHub-only findings, so a
+// test routed through evaluatePolicies cannot tell the rego guard from the
+// gate — delete the guard and that path still passes. These cases call
+// engine.Evaluate directly (no catalog filter): the same job shape must FIRE on
+// GitHub (proving the fixture is a genuine violation, so the GitLab assertion
+// is not vacuous) and stay SILENT on GitLab (proving the guard suppresses it).
+func TestProviderGuards_SuppressGitHubOnlyRulesOnGitLab(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFS(policies.FS); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+
+	countCode := func(t *testing.T, provider ir.Provider, job ir.Job, code string) int {
+		t.Helper()
+		pipeline := &ir.NormalizedPipeline{Provider: provider, Jobs: []ir.Job{job}}
+		findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		n := 0
+		for _, f := range findings {
+			if f.Code == code {
+				n++
+			}
+		}
+		return n
+	}
+
+	cases := []struct {
+		name string
+		code string
+		job  ir.Job
+	}{
+		{
+			name: "ISSUE-214 bare pip install (unpinned_package_install.rego)",
+			code: "ISSUE-214",
+			job:  ir.Job{Name: "build", Scripts: []string{"pip install requests"}},
+		},
+		{
+			// \u200b is a U+200B zero-width space embedded in the script line.
+			name: "ISSUE-420 zero-width unicode (workflow_obfuscation.rego)",
+			code: "ISSUE-420",
+			job:  ir.Job{Name: "deploy", Scripts: []string{"echo hello\u200bworld"}},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := countCode(t, ir.ProviderGitHub, tc.job, tc.code); got == 0 {
+				t.Fatalf("%s: expected the shape to fire on a GitHub pipeline (else the GitLab check is vacuous), got 0", tc.code)
+			}
+			if got := countCode(t, ir.ProviderGitLab, tc.job, tc.code); got != 0 {
+				t.Errorf("%s: provider guard missing/broken — fired %d time(s) on a GitLab pipeline, want 0", tc.code, got)
+			}
+		})
+	}
+}
+
 // TestIssue112_ReleaseWorkflowUnsigned flags release jobs that
 // publish artefacts without any signing step.
 func TestIssue112_ReleaseWorkflowUnsigned(t *testing.T) {

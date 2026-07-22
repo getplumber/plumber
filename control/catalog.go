@@ -411,6 +411,20 @@ func FilterFindingsByEnabledControls(findings []opaengine.Finding, provider stri
 			out = append(out, f)
 			continue
 		}
+		// A control that does not apply to this provider must not be scored
+		// or reported here. A GitHub-only rule can still FIRE on a GitLab
+		// pipeline when its rego reads generic IR fields with no provider
+		// guard (e.g. workflowMustPinPackageInstalls matching a bare
+		// `pip install` in a GitLab `script:`). Such a finding is not benched
+		// on GitLab and has no GitLab DisabledControlNames entry, so without
+		// this gate it would survive into result.Findings, inflate
+		// plumberScore.counts and leak into SARIF/PBOM while no GitLab catalog
+		// can render it (getplumber/plumber#349). controlsMeta already
+		// declares each control's providers; honour it. Placed after the
+		// info-nil guard so it only ever evaluates registered controls.
+		if !configuration.IsControlApplicableTo(info.ControlName, provider) {
+			continue
+		}
 		if configuration.IsBenched(provider, info.ControlName) {
 			continue
 		}
