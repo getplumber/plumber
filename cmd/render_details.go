@@ -111,50 +111,190 @@ func filterGroupsForDegraded(groups []findingGroup, degraded bool) []findingGrou
 	return kept
 }
 
-// renderFindingGroups prints each group in the canonical Plumber
-// format used across providers: horizontal separator header with the
-// rule title and pass/issue-count status (or "skipped"), the stat
-// lines, and an "Issues Found" listing with severity tag, code,
-// message and doc URL. Groups with no stats, no findings and not
-// marked skipped are not rendered (they would just be empty noise).
+// renderFindingGroups prints the run's per-control sections, split into
+// three buckets to keep the terminal focused on what needs attention
+// (ISSUE: the old layout printed a full stat block per passing control,
+// forcing the user to scroll past dozens of green sections to reach the
+// failures):
+//
+//  1. Passing controls collapse into a single "N controls passed" block
+//     that lists just the names — no stats, no separators per control.
+//     A control that passed but carries a caveat stat line (something it
+//     could not fully verify) keeps that ⚠ line beneath its name so the
+//     warning is not silently dropped (see renderPassedControlsSummary).
+//  2. Skipped controls collapse the same way, each with its skip reason.
+//  3. Failing controls keep the full detail (stats + "Issues Found"),
+//     rendered least-critical first so the control with the most
+//     critical issues prints LAST — i.e. closest to the terminal prompt,
+//     the first thing the user sees without scrolling up.
+//
+// Groups with no findings, no stats and not marked skipped are dropped
+// (they would just be empty noise).
 func renderFindingGroups(groups []findingGroup) {
+	var passed, skipped, failed []findingGroup
 	for _, g := range groups {
-		if !g.Skipped && len(g.Stats) == 0 && len(g.Findings) == 0 {
-			continue
+		switch {
+		case g.Skipped:
+			skipped = append(skipped, g)
+		case len(g.Findings) > 0:
+			failed = append(failed, g)
+		case len(g.Stats) > 0:
+			passed = append(passed, g)
+			// else: no findings, no stats, not skipped — nothing to show.
 		}
-		printControlHeader(g.Title, len(g.Findings), g.Skipped)
-		if g.Skipped {
-			reason := g.SkipReason
-			if reason == "" {
-				reason = "disabled in configuration"
-			}
-			fmt.Printf("  %sStatus: SKIPPED (%s)%s\n\n", colorDim, reason, colorReset)
-			continue
-		}
-		for _, s := range g.Stats {
-			fmt.Printf("  %s: %s\n", s.Label, s.Value)
-		}
-		if len(g.Findings) > 0 {
-			fmt.Printf("\n  %sIssues Found:%s\n", colorYellow, colorReset)
-			for _, f := range g.Findings {
-				tag := severityTag(f.Code)
-				fmt.Printf("     %s [%s] %s\n", tag, f.Code, sanitizeTerminal(f.Message))
-				for _, line := range f.DetailLines {
-					fmt.Printf("      └─ %s\n", sanitizeTerminal(line))
-				}
-				if f.Location != "" {
-					// The bare path is emitted last so VS Code, iTerm
-					// and similar tools detect it as a clickable
-					// file:line reference and jump straight to the job.
-					fmt.Printf("      %s↳ at %s%s\n", colorDim, sanitizeTerminal(f.Location), colorReset)
-				}
-				if f.DocURL != "" {
-					fmt.Printf("      %s↳ docs: %s%s\n", colorDim, f.DocURL, colorReset)
-				}
-			}
-		}
-		fmt.Println()
 	}
+
+	sortFindingGroupsWorstLast(failed)
+
+	renderPassedControlsSummary(passed)
+	renderSkippedControlsSummary(skipped)
+	renderFailedControlsSection(failed)
+}
+
+// renderPassedControlsSummary prints the "Passed Controls" section: a
+// top-level section header (same visual level as Skipped / Failed /
+// Summary) followed by the passing controls by name only.
+//
+// A control that passed only because part of its data could not be read
+// carries a caveat stat line (⚠-prefixed, e.g. branchMustBeProtected when
+// the token lacks Administration:Read so ISSUE-505 abstained). Collapsing
+// that to a bare ✓ would silently hide "we never actually verified this" —
+// the success-on-incomplete-data footgun the stats builders guard against
+// — so those ⚠ lines are printed beneath the control name.
+func renderPassedControlsSummary(groups []findingGroup) {
+	if len(groups) == 0 {
+		return
+	}
+	printStatusSectionHeader(fmt.Sprintf("Passed Controls (%d)", len(groups)), "✓", colorGreen)
+	fmt.Println()
+	for _, g := range groups {
+		fmt.Printf("  %s✓%s %s\n", colorGreen, colorReset, g.Title)
+		for _, s := range caveatStatLines(g) {
+			fmt.Printf("      %s%s: %s%s\n", colorYellow, s.Label, s.Value, colorReset)
+		}
+	}
+	fmt.Println()
+}
+
+// statCaveatPrefix marks a stat line reporting a partial / could-not-verify
+// condition. It is the same ⚠ convention used by the caveat banners above
+// (renderWarnings / renderDegradedCaveat).
+const statCaveatPrefix = "⚠"
+
+// caveatStatLines returns the group's stat lines flagged as caveats.
+func caveatStatLines(g findingGroup) []statLine {
+	var out []statLine
+	for _, s := range g.Stats {
+		if strings.HasPrefix(s.Label, statCaveatPrefix) {
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// renderSkippedControlsSummary prints the "Skipped Controls" section: a
+// top-level section header followed by each skipped control with its
+// skip reason.
+func renderSkippedControlsSummary(groups []findingGroup) {
+	if len(groups) == 0 {
+		return
+	}
+	printStatusSectionHeader(fmt.Sprintf("Skipped Controls (%d)", len(groups)), "•", colorDim)
+	fmt.Println()
+	for _, g := range groups {
+		reason := g.SkipReason
+		if reason == "" {
+			reason = "disabled in configuration"
+		}
+		fmt.Printf("  %s•%s %s %s(%s)%s\n", colorDim, colorReset, g.Title, colorDim, reason, colorReset)
+	}
+	fmt.Println()
+}
+
+// renderFailedControlsSection prints the "Failed Controls" section: a
+// top-level section header followed by each failing control in full,
+// ordered least-critical first so the worst prints last.
+func renderFailedControlsSection(groups []findingGroup) {
+	if len(groups) == 0 {
+		return
+	}
+	printStatusSectionHeader(fmt.Sprintf("Failed Controls (%d)", len(groups)), "✗", colorRed)
+	fmt.Println()
+	for _, g := range groups {
+		renderFailedControl(g)
+	}
+}
+
+// renderFailedControl prints one failing control in full: a compact,
+// indented sub-header (no rule lines — those are reserved for the
+// top-level section headers so the hierarchy reads section > control),
+// the stat block, and the "Issues Found" listing with severity tag,
+// code, message and doc URL. All content is indented one level under the
+// control title.
+func renderFailedControl(g findingGroup) {
+	n := len(g.Findings)
+	count := fmt.Sprintf("%d issues", n)
+	if n == 1 {
+		count = "1 issue"
+	}
+	fmt.Printf("  %s✗%s %s%s%s %s(%s)%s\n", colorRed, colorReset, colorBold, g.Title, colorReset, colorRed, count, colorReset)
+	for _, s := range g.Stats {
+		fmt.Printf("      %s: %s\n", s.Label, s.Value)
+	}
+	fmt.Printf("\n      %sIssues Found:%s\n", colorYellow, colorReset)
+	for _, f := range g.Findings {
+		tag := severityTag(f.Code)
+		fmt.Printf("        %s [%s] %s\n", tag, f.Code, sanitizeTerminal(f.Message))
+		for _, line := range f.DetailLines {
+			fmt.Printf("         └─ %s\n", sanitizeTerminal(line))
+		}
+		if f.Location != "" {
+			// The bare path is emitted last so VS Code, iTerm
+			// and similar tools detect it as a clickable
+			// file:line reference and jump straight to the job.
+			fmt.Printf("         %s↳ at %s%s\n", colorDim, sanitizeTerminal(f.Location), colorReset)
+		}
+		if f.DocURL != "" {
+			fmt.Printf("         %s↳ docs: %s%s\n", colorDim, f.DocURL, colorReset)
+		}
+	}
+	fmt.Println()
+}
+
+// findingGroupSeverity tallies the severities of a group's findings from
+// their issue codes, the same source of truth the summary table uses.
+func findingGroupSeverity(g findingGroup) control.SeverityCounts {
+	codes := make([]control.ErrorCode, 0, len(g.Findings))
+	for _, f := range g.Findings {
+		codes = append(codes, f.Code)
+	}
+	return control.SeverityCountsFromIssueCodes(codes)
+}
+
+// sortFindingGroupsWorstLast orders failing controls least-critical first
+// so the control carrying the most critical issues prints last — landing
+// next to the terminal prompt where it is seen without scrolling. This is
+// the mirror image of the summary table's worst-first ordering, reusing
+// the same severity comparison (compareSeverityWorstFirst).
+//
+// compareSeverityWorstFirst already accounts for issue counts within each
+// tier (more criticals is worse, then more highs, …), and every code maps
+// to exactly one tier, so a zero result means identical per-tier tallies
+// AND identical totals — no separate issue-count tie-break is reachable.
+// Equal-severity ties therefore fall through to the title for a stable,
+// deterministic order.
+func sortFindingGroupsWorstLast(groups []findingGroup) {
+	if len(groups) < 2 {
+		return
+	}
+	slices.SortStableFunc(groups, func(a, b findingGroup) int {
+		if c := compareSeverityWorstFirst(findingGroupSeverity(a), findingGroupSeverity(b)); c != 0 {
+			// compareSeverityWorstFirst returns negative when a is worse;
+			// invert so the worse group sorts later (prints last).
+			return -c
+		}
+		return cmp.Compare(a.Title, b.Title)
+	})
 }
 
 // sanitizeTerminal strips control characters from repo-controlled text before

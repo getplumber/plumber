@@ -1620,26 +1620,25 @@ func printScoreBreakdown(score *control.PlumberScoreResult) {
 	fmt.Println()
 }
 
-func printControlHeader(name string, issues int, skipped bool) {
-	line := strings.Repeat("─", 50)
-	fmt.Printf(fmtColored, colorDim, line, colorReset)
-	switch {
-	case skipped:
-		fmt.Printf("%s%s%s %s(skipped)%s\n", colorBold, name, colorReset, colorDim, colorReset)
-	case issues == 0:
-		fmt.Printf("%s%s%s %s(passed)%s\n", colorBold, name, colorReset, colorGreen, colorReset)
-	case issues == 1:
-		fmt.Printf("%s%s%s %s(1 issue)%s\n", colorBold, name, colorReset, colorRed, colorReset)
-	default:
-		fmt.Printf("%s%s%s %s(%d issues)%s\n", colorBold, name, colorReset, colorRed, issues, colorReset)
-	}
-	fmt.Printf(fmtColored, colorDim, line, colorReset)
+func printSectionHeader(name string) {
+	printStatusSectionHeader(name, "", "")
 }
 
-func printSectionHeader(name string) {
+// printStatusSectionHeader prints the section band with an optional
+// status glyph and color, so the three control buckets read their state
+// at a glance (✓ green / • dim / ✗ red) instead of three identical bold
+// lines. The glyph echoes the per-item markers used inside the section;
+// the rules stay neutral dim so the one red title in the output is what
+// pulls the eye. Empty glyph/color renders the neutral band (Summary,
+// Points breakdown).
+func printStatusSectionHeader(name, glyph, color string) {
 	line := strings.Repeat("─", 20)
 	fmt.Printf(fmtColored, colorDim, line, colorReset)
-	fmt.Printf(fmtColored, colorBold, name, colorReset)
+	if glyph == "" {
+		fmt.Printf(fmtColored, colorBold, name, colorReset)
+	} else {
+		fmt.Printf("%s%s%s %s%s%s\n", color, glyph, colorReset, colorBold+color, name, colorReset)
+	}
 	fmt.Printf(fmtColored, colorDim, line, colorReset)
 }
 
