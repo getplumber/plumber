@@ -9,8 +9,7 @@ BINARY=plumber
 # own self-scan config. The two are independent artifacts (getplumber/plumber
 # #352); defaultConfig/.plumber.yaml changes only via a deliberate, reviewed edit.
 embed:
-	@echo "# DO NOT EDIT - Generated from defaultConfig/.plumber.yaml by 'make build'" > internal/defaultconfig/default.yaml
-	@cat defaultConfig/.plumber.yaml >> internal/defaultconfig/default.yaml
+	@cp defaultConfig/.plumber.yaml internal/defaultconfig/default.yaml
 
 # Build the binary
 build: embed
