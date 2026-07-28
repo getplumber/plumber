@@ -8,9 +8,11 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/getplumber/plumber/configuration"
+	"github.com/getplumber/plumber/internal/defaultconfig"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -18,9 +20,6 @@ import (
 )
 
 const (
-	defaultForbiddenTags  = "latest, dev, development, staging, main, master"
-	defaultBranchPatterns = "main, master, release/*, production, dev"
-
 	// Provider selection (the first question — drives every later filter).
 	provGitLab = "GitLab (gitlab.com / self-hosted)"
 	provGitHub = "GitHub Actions (github.com / GHES)"
@@ -127,6 +126,14 @@ type initWizardState struct {
 	// CompositionChoices.
 	ActionPinTrustedOwnersMultiline string
 
+	// AuthorizedActionsUsePlumberList decides, when compAuthorizedActions
+	// is selected, whether githubActionMustComeFromAuthorizedSources ships
+	// Plumber's curated trusted-org allowlist + the 20k-star floor (true,
+	// matching the default template) or an empty allowlist the user fills
+	// in from scratch (false). Only meaningful when GitHub is selected and
+	// compAuthorizedActions is in CompositionChoices.
+	AuthorizedActionsUsePlumberList bool
+
 	// SecurityJobPatternsGitHubMultiline is the GitHub-side override
 	// of the security-job pattern list. GitHub job names are
 	// namespaced as `workflow/job`, so the canonical patterns differ
@@ -179,8 +186,8 @@ type initWizardState struct {
 	DinDDetectInsecureDaemon bool
 
 	// branchMustBeProtected (when catAccess). Code-owner approval is
-	// tracked per provider: the curated default is off for GitLab and
-	// on for GitHub, matching .plumber.yaml.
+	// tracked per provider; the curated default is off for both GitLab
+	// and GitHub, matching .plumber.yaml.
 	BranchDefaultMustBeProtected          bool
 	BranchAllowForcePush                  bool
 	BranchCodeOwnerApprovalRequired       bool
@@ -210,7 +217,7 @@ func (st *initWizardState) askImageQuestions() error {
 	if st.ForbiddenTagsEnabled {
 		if err := survey.AskOne(&survey.Input{
 			Message: "Forbidden tags (comma-separated)",
-			Default: defaultForbiddenTags,
+			Default: defaultForbiddenTags(),
 		}, &st.ForbiddenTagsCSV); err != nil {
 			return err
 		}
@@ -248,10 +255,10 @@ func (st *initWizardState) askGitLabSecurityJobQuestions() error {
 	if err := survey.AskOne(&survey.Confirm{Message: "Flag GitLab jobs that set allow_failure: true?", Default: false}, &st.SecuritySubAllowFailure); err != nil {
 		return err
 	}
-	if err := survey.AskOne(&survey.Confirm{Message: "Flag GitLab jobs that redefine rules?", Default: false}, &st.SecuritySubRules); err != nil {
+	if err := survey.AskOne(&survey.Confirm{Message: "Flag GitLab jobs that redefine rules?", Default: true}, &st.SecuritySubRules); err != nil {
 		return err
 	}
-	return survey.AskOne(&survey.Confirm{Message: "Flag GitLab jobs that set when: manual?", Default: false}, &st.SecuritySubWhenNotManual)
+	return survey.AskOne(&survey.Confirm{Message: "Flag GitLab jobs that set when: manual?", Default: true}, &st.SecuritySubWhenNotManual)
 }
 
 func (st *initWizardState) askGitHubSecurityJobQuestions() error {
@@ -338,6 +345,23 @@ func (st *initWizardState) askCompositionFirstHalf() error {
 		}, &st.ActionPinTrustedOwnersMultiline); err != nil {
 			return err
 		}
+	}
+	if compSelected(st, compAuthorizedActions) && hasProvider(st, "github") {
+		fmt.Fprintf(os.Stderr, "\n  › Authorized action sources (GitHub)\n")
+		const (
+			curated = "Include Plumber's curated trusted orgs (recommended)"
+			scratch = "Start from an empty allowlist (add your own orgs)"
+		)
+		choice := curated
+		if err := survey.AskOne(&survey.Select{
+			Message: "Trusted third-party action sources:",
+			Help:    "GitHub-official (actions/*, github/*) and your own org are trusted either way. \"Curated\" also ships Plumber's allowlist of well-known publisher orgs plus a 20,000-star trust floor — the same set as the default template. \"From scratch\" leaves the allowlist empty for you to fill in.",
+			Options: []string{curated, scratch},
+			Default: curated,
+		}, &choice); err != nil {
+			return err
+		}
+		st.AuthorizedActionsUsePlumberList = choice == curated
 	}
 	if compSelected(st, compForbidden) && hasProvider(st, "gitlab") {
 		fmt.Fprintf(os.Stderr, "\n  › Forbidden include refs\n")
@@ -432,7 +456,7 @@ func (st *initWizardState) askAccessQuestions() error {
 	st.BranchEnabled = true
 	if err := survey.AskOne(&survey.Input{
 		Message: "Branch name patterns to protect (comma-separated; wildcards ok)",
-		Default: defaultBranchPatterns,
+		Default: defaultBranchPatterns(),
 	}, &st.BranchPatterns); err != nil {
 		return err
 	}
@@ -470,7 +494,7 @@ func (st *initWizardState) askAccessQuestions() error {
 	if hasProvider(st, "github") {
 		if err := survey.AskOne(&survey.Confirm{
 			Message: "Require code owner approval on protected branches? (GitHub)",
-			Default: true,
+			Default: false,
 		}, &st.BranchCodeOwnerApprovalRequiredGitHub); err != nil {
 			return err
 		}
@@ -728,64 +752,90 @@ func compositionOptionsForProviders(providers []string) []string {
 // defaultGitHubDebugTraceVariables mirrors the .plumber.yaml default for
 // github.controls.pipelineMustNotEnableDebugTrace.forbiddenVariables — the
 // Actions debug toggles that dump masked secrets into job logs.
+// embeddedDefault parses the shipped default config (defaultconfig.Get — the
+// same bytes embedded in the binary and written verbatim by `plumber config
+// generate`) once. The wizard sources every default value from here instead of
+// hand-maintained copies, so `plumber init` and the shipped baseline cannot
+// drift. The embed is a compile-time constant covered by
+// TestConfigFilesLoadAndValidate, so an unparseable/incomplete embed is a
+// build-time bug — hence the panic.
+var embeddedDefault = sync.OnceValue(func() *configuration.PlumberConfig {
+	var cfg configuration.PlumberConfig
+	if err := yaml.Unmarshal(defaultconfig.Get(), &cfg); err != nil {
+		panic(fmt.Sprintf("plumber: embedded default config is unparseable: %v", err))
+	}
+	if cfg.GitLab == nil || cfg.GitHub == nil {
+		panic("plumber: embedded default config is missing a provider section")
+	}
+	return &cfg
+})
+
+func defaultGitLabControls() configuration.ControlsConfig { return embeddedDefault().GitLab.Controls }
+func defaultGitHubControls() configuration.ControlsConfig { return embeddedDefault().GitHub.Controls }
+
+// defaultForbiddenTags is the CSV prompt default for forbidden image tags,
+// sourced from the GitLab containerImageMustNotUseForbiddenTags default.
+func defaultForbiddenTags() string {
+	if c := defaultGitLabControls().ContainerImageMustNotUseForbiddenTags; c != nil {
+		return strings.Join(c.Tags, ", ")
+	}
+	return ""
+}
+
+// defaultBranchPatterns is the CSV prompt default for protected-branch
+// patterns, sourced from the GitLab branchMustBeProtected default.
+func defaultBranchPatterns() string {
+	if c := defaultGitLabControls().BranchMustBeProtected; c != nil {
+		return strings.Join(c.NamePatterns, ", ")
+	}
+	return ""
+}
+
+// defaultTrustedActionsMinimumStars sources the star floor for
+// githubActionMustComeFromAuthorizedSources from the embedded default.
+func defaultTrustedActionsMinimumStars() int {
+	if c := defaultGitHubControls().GithubActionMustComeFromAuthorizedSources; c != nil {
+		return c.MinimumStars
+	}
+	return 0
+}
+
 func defaultGitHubDebugTraceVariables() []string {
-	return []string{"ACTIONS_STEP_DEBUG", "ACTIONS_RUNNER_DEBUG"}
+	if c := defaultGitHubControls().PipelineMustNotEnableDebugTrace; c != nil {
+		return c.ForbiddenVariables
+	}
+	return nil
 }
 
 // defaultCachePoisoning* mirror the shipped .plumber.yaml inventories for
 // releaseWorkflowsMustNotRestoreUntrustedCache. Kept in sync with the
 // embedded default by TestStarterGitHubControlsMatchEmbeddedDefault.
 func defaultCachePoisoningPublishActions() []string {
-	return []string{
-		"pypa/gh-action-pypi-publish",
-		"JS-DevTools/npm-publish",
-		"gradle/publish-plugin",
-		"softprops/action-gh-release",
-		"ncipollo/release-action",
-		"goreleaser/goreleaser-action",
-		"crazy-max/ghaction-docker-buildx",
-		"changesets/action",
+	if c := defaultGitHubControls().ReleaseWorkflowsMustNotRestoreUntrustedCache; c != nil {
+		return c.PublishActions
 	}
+	return nil
 }
 
 func defaultCachePoisoningCacheActions() []configuration.CacheActionSpec {
-	f := func(b bool) *bool { return &b }
-	return []configuration.CacheActionSpec{
-		{Action: "actions/cache", Mode: "always"},
-		{Action: "actions/cache/restore", Mode: "always"},
-		{Action: "Swatinem/rust-cache", Mode: "always"},
-		{Action: "actions/setup-go", Mode: "default", DisableInput: "cache", DisableValue: f(false)},
-		{Action: "gradle/actions/setup-gradle", Mode: "default", DisableInput: "cache-disabled", DisableValue: f(true)},
-		{Action: "actions/setup-node", Mode: "opt-in", EnableInput: "cache"},
-		{Action: "actions/setup-python", Mode: "opt-in", EnableInput: "cache"},
-		{Action: "actions/setup-java", Mode: "opt-in", EnableInput: "cache"},
-		{Action: "pnpm/action-setup", Mode: "opt-in", EnableInput: "cache"},
-		{Action: "docker/build-push-action", Mode: "opt-in", EnableInput: "cache-from", EnableContains: "type=gha"},
+	if c := defaultGitHubControls().ReleaseWorkflowsMustNotRestoreUntrustedCache; c != nil {
+		return c.CacheActions
 	}
+	return nil
 }
 
 func defaultCachePoisoningPublishScriptPatterns() []string {
-	return []string{
-		`(?i)(npm|pnpm|yarn|bun)\s+publish`,
-		`(?i)cargo\s+publish`,
-		`(?i)twine\s+upload`,
-		`(?i)poetry\s+publish`,
-		`(?i)gh\s+release\s+create`,
-		`(?i)goreleaser\s+release`,
-		`(?i)semantic-release`,
-		`(?i)gradlew?\b[^\n]*\bpublish`,
-		`(?i)\bmvnw?\b[^\n]*\bdeploy\b`,
-		`(?i)dotnet\s+nuget\s+push`,
-		`(?i)gem\s+push`,
-		`(?i)docker\s+push`,
+	if c := defaultGitHubControls().ReleaseWorkflowsMustNotRestoreUntrustedCache; c != nil {
+		return c.PublishScriptPatterns
 	}
+	return nil
 }
 
 func defaultCachePoisoningPublishScriptExcludePatterns() []string {
-	return []string{
-		`(?i)--dry-run`,
-		`(?i)publishToMavenLocal`,
+	if c := defaultGitHubControls().ReleaseWorkflowsMustNotRestoreUntrustedCache; c != nil {
+		return c.PublishScriptExcludePatterns
 	}
+	return nil
 }
 
 // defaultGitHubSecurityJobPatterns mirrors the GitHub-side defaults
@@ -793,28 +843,20 @@ func defaultCachePoisoningPublishScriptExcludePatterns() []string {
 // block. GitHub job identifiers are namespaced as `workflow/job`, so
 // every pattern uses leading + trailing wildcards.
 func defaultGitHubSecurityJobPatterns() []string {
-	return []string{
-		"*codeql*",
-		"*dependency-review*",
-		"*trufflehog*",
-		"*gitleaks*",
-		"*osv-scanner*",
-		"*-sast",
-		"*-sast-*",
-		"*-scan",
-		"*scan*",
-		"*-security",
-		"*-security-*",
-		"*-audit",
-		"*-audit-*",
+	if c := defaultGitHubControls().SecurityJobsMustNotBeWeakened; c != nil {
+		return c.SecurityJobPatterns
 	}
+	return nil
 }
 
 // defaultGitHubTrustedActionOwners mirrors the .plumber.yaml default
 // for actionsMustBePinnedByCommitSha.trustedOwners — the first-party
 // owners whose actions the runtime trusts implicitly.
 func defaultGitHubTrustedActionOwners() []string {
-	return []string{"actions", "github"}
+	if c := defaultGitHubControls().ActionsMustBePinnedByCommitSha; c != nil {
+		return c.TrustedOwners
+	}
+	return nil
 }
 
 // runAnalyzeAuthHint composes the auth hint shown alongside the
@@ -836,125 +878,49 @@ func runAnalyzeAuthHint(providers []string) string {
 // Kept in lockstep with the embedded default by
 // TestDefaultTrustedURLsMatchEmbeddedDefault.
 func defaultTrustedURLs() []string {
-	return []string{
-		// Common CI/CD tool images
-		"docker.io/docker:*",
-		"docker.io/getplumber/plumber:*",
-		"getplumber/plumber:*",
-		"docker.io/getplumber/plumber@sha256:*",
-		// GitLab registry patterns
-		"$CI_REGISTRY_IMAGE:*",
-		"$CI_REGISTRY_IMAGE/*",
-		"$CI_REGISTRY/*",
-		"${CI_REGISTRY}/*",
-		"${CI_REGISTRY_IMAGE}:*",
-		"${CI_REGISTRY_IMAGE}/*",
-		// GitLab Dependency Proxy
-		"${CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX}/*",
-		// GitLab official registries
-		"registry.gitlab.com/security-products/*",
-		"registry.gitlab.com/gitlab-org/*",
-		"registry.gitlab.com/pipeline-components/*",
-		// Docker Hub — well-known publishers (DevOps / CI tooling)
-		"docker.io/curlimages/*",
-		"docker.io/alpine/*",
-		"docker.io/golangci/*",
-		"docker.io/koalaman/*",
-		"docker.io/hadolint/*",
-		"docker.io/semgrep/*",
-		"docker.io/sonarsource/*",
-		"docker.io/cypress/*",
-		"docker.io/gittools/*",
-		"docker.io/renovate/*",
-		"docker.io/gitlab/*",
-		"docker.io/lycheeverse/*",
-		"docker.io/hugomods/*",
-		"docker.io/fsfe/*",
-		"docker.io/hashicorp/*",
-		"docker.io/cimg/*",
-		"docker.io/circleci/*",
-		// Docker Hub — cloud vendor official images
-		"docker.io/amazon/*",
-		"docker.io/google/*",
-		"docker.io/nvidia/*",
-		"docker.io/bitnami/*",
-		// Docker Hub — OS / distro official images
-		"docker.io/redhat/*",
-		"docker.io/opensuse/*",
-		"docker.io/gentoo/*",
-		"docker.io/nixos/*",
-		"docker.io/rustlang/*",
-		// Microsoft Container Registry — official Microsoft products
-		"mcr.microsoft.com/dotnet/*",
-		"mcr.microsoft.com/playwright/*",
-		"mcr.microsoft.com/playwright",
-		// Quay.io — well-known projects with their own organisation
-		"quay.io/buildah/*",
-		"quay.io/podman/*",
-		"quay.io/containers/*",
-		"quay.io/centos/*",
-		"quay.io/pypa/*",
-		"quay.io/gnome_infrastructure/*",
-		// GitHub Container Registry — well-known upstream organisations
-		"ghcr.io/astral-sh/*",
-		"ghcr.io/renovatebot/*",
-		"ghcr.io/containerbase/*",
-		"ghcr.io/canonical/*",
-		"ghcr.io/graalvm/*",
-		"ghcr.io/terraform-linters/*",
-		"ghcr.io/prefix-dev/*",
-		// Google Container Registry — Google-owned projects
-		"gcr.io/kaniko-project/*",
-		"gcr.io/go-containerregistry/*",
-		"gcr.io/google.com/cloudsdktool/*",
+	if c := defaultGitLabControls().ContainerImageMustComeFromAuthorizedSources; c != nil {
+		return c.TrustedUrls
 	}
+	return nil
+}
+
+// defaultTrustedGithubActions mirrors the .plumber.yaml default for
+// github.controls.githubActionMustComeFromAuthorizedSources.trustedGithubActions
+// — Plumber's curated allowlist of well-known publisher orgs. Kept in lockstep
+// with the embedded default by TestDefaultTrustedGithubActionsMatchEmbeddedDefault.
+func defaultTrustedGithubActions() []string {
+	if c := defaultGitHubControls().GithubActionMustComeFromAuthorizedSources; c != nil {
+		return c.TrustedGithubActions
+	}
+	return nil
 }
 
 func defaultDangerousVariables() []string {
-	return []string{
-		"CI_MERGE_REQUEST_TITLE",
-		"CI_MERGE_REQUEST_DESCRIPTION",
-		"CI_COMMIT_MESSAGE",
-		"CI_COMMIT_TITLE",
-		"CI_COMMIT_TAG_MESSAGE",
-		"CI_COMMIT_REF_NAME",
-		"CI_COMMIT_REF_SLUG",
-		"CI_COMMIT_BRANCH",
-		"CI_MERGE_REQUEST_SOURCE_BRANCH_NAME",
-		"CI_EXTERNAL_PULL_REQUEST_SOURCE_BRANCH_NAME",
+	if c := defaultGitLabControls().PipelineMustNotUseUnsafeVariableExpansion; c != nil {
+		return c.DangerousVariables
 	}
+	return nil
 }
 
 func defaultJobOverrideVariables() []string {
-	return []string{
-		"SECURE_ANALYZERS_PREFIX",
-		"SAST_DISABLED",
-		"SAST_EXCLUDED_PATHS",
-		"SAST_EXCLUDED_ANALYZERS",
-		"SECRET_DETECTION_DISABLED",
-		"SECRET_DETECTION_EXCLUDED_PATHS",
-		"CONTAINER_SCANNING_DISABLED",
-		"DAST_DISABLED",
-		"DEPENDENCY_SCANNING_DISABLED",
-		"LICENSE_SCANNING_DISABLED",
+	if c := defaultGitLabControls().PipelineMustNotOverrideJobVariables; c != nil {
+		return c.Variables
 	}
+	return nil
 }
 
 func defaultSecurityJobPatterns() []string {
-	return []string{
-		"*-sast",
-		"secret_detection",
-		"container_scanning",
-		"*_dependency_scanning",
-		"gemnasium-*",
-		"dast",
-		"dast_*",
-		"license_scanning",
+	if c := defaultGitLabControls().SecurityJobsMustNotBeWeakened; c != nil {
+		return c.SecurityJobPatterns
 	}
+	return nil
 }
 
 func defaultForbiddenVersions() []string {
-	return []string{"latest", "~latest", "main", "master", "HEAD"}
+	if c := defaultGitLabControls().IncludesMustNotUseForbiddenVersions; c != nil {
+		return c.ForbiddenVersions
+	}
+	return nil
 }
 
 func parseCSVInit(s string) []string {
@@ -1000,7 +966,7 @@ func (st *initWizardState) applyImageControls(gl, gh *configuration.ProviderConf
 	if st.ForbiddenTagsEnabled {
 		tags := parseCSVInit(st.ForbiddenTagsCSV)
 		if len(tags) == 0 {
-			tags = parseCSVInit(defaultForbiddenTags)
+			tags = parseCSVInit(defaultForbiddenTags())
 		}
 		block := &configuration.ImageForbiddenTagsControlConfig{
 			Enabled:                             boolPtrInit(true),
@@ -1031,7 +997,7 @@ func (st *initWizardState) applyImageControls(gl, gh *configuration.ProviderConf
 func (st *initWizardState) applyAccessControls(gl, gh *configuration.ProviderConfig) {
 	patterns := parseCSVInit(st.BranchPatterns)
 	if len(patterns) == 0 {
-		patterns = parseCSVInit(defaultBranchPatterns)
+		patterns = parseCSVInit(defaultBranchPatterns())
 	}
 	if gl != nil {
 		gl.Controls.BranchMustBeProtected = &configuration.BranchProtectionControlConfig{
@@ -1245,15 +1211,20 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 				}
 			}
 			if compSelected(st, compAuthorizedActions) {
-				// Ship with the secure defaults: trust GitHub-official
-				// owners and the repo's own org; the user fills in
-				// trustedGithubActions / minimumStars in the generated
-				// file as needed.
-				gh.Controls.GithubActionMustComeFromAuthorizedSources = &configuration.ActionAuthorizedSourcesControlConfig{
+				// Always trust GitHub-official owners and the repo's own
+				// org. Depending on the wizard choice, either ship Plumber's
+				// curated allowlist + 20k-star floor (matching the default
+				// template) or leave the allowlist empty for the user to fill.
+				block := &configuration.ActionAuthorizedSourcesControlConfig{
 					Enabled:                    boolPtrInit(true),
 					TrustGithubOfficialActions: boolPtrInit(true),
 					TrustSameOrgActions:        boolPtrInit(true),
 				}
+				if st.AuthorizedActionsUsePlumberList {
+					block.MinimumStars = defaultTrustedActionsMinimumStars()
+					block.TrustedGithubActions = defaultTrustedGithubActions()
+				}
+				gh.Controls.GithubActionMustComeFromAuthorizedSources = block
 			}
 			if compSelected(st, compDangerousTriggers) {
 				gh.Controls.WorkflowMustNotUseDangerousTriggers = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
@@ -1340,14 +1311,15 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 
 func starterPlumberConfig() *configuration.PlumberConfig {
 	st := &initWizardState{
-		Providers:              []string{"gitlab", "github"},
-		Categories:             []string{catImages, catComposition, catAccess, catVariables},
-		ForbiddenTagsEnabled:   true,
-		ForbiddenTagsCSV:       defaultForbiddenTags,
-		PinByDigest:            true,
-		AuthorizedEnabled:      true,
-		TrustDockerHubOfficial: true,
-		TrustedURLsText:        strings.Join(defaultTrustedURLs(), "\n"),
+		Providers:                       []string{"gitlab", "github"},
+		Categories:                      []string{catImages, catComposition, catAccess, catVariables},
+		ForbiddenTagsEnabled:            true,
+		ForbiddenTagsCSV:                defaultForbiddenTags(),
+		PinByDigest:                     true,
+		AuthorizedEnabled:               true,
+		TrustDockerHubOfficial:          true,
+		TrustedURLsText:                 strings.Join(defaultTrustedURLs(), "\n"),
+		AuthorizedActionsUsePlumberList: true,
 		CompositionChoices: []string{
 			compHardcoded, compUpToDate, compForbidden, compRefCollision, compSecurity, compScripts, compJobVars, compDinD,
 			compActionPin, compAuthorizedActions, compDangerousTriggers, compPRTargetHead, compDeclarePermissions, compReusableSecrets, compOverprovSecrets, compTemplateInjection,
@@ -1360,19 +1332,19 @@ func starterPlumberConfig() *configuration.PlumberConfig {
 		SecurityJobPatternsMultiline:           strings.Join(defaultSecurityJobPatterns(), "\n"),
 		SecuritySubAllowFailure:                false,
 		SecuritySubAllowFailureGitHub:          true,
-		SecuritySubRules:                       false,
+		SecuritySubRules:                       true,
 		SecuritySubRulesGitHub:                 true,
-		SecuritySubWhenNotManual:               false,
+		SecuritySubWhenNotManual:               true,
 		SecuritySubWhenNotManualGitHub:         true,
 		DebugForbiddenVariablesGitHubMultiline: strings.Join(defaultGitHubDebugTraceVariables(), "\n"),
 		JobOverrideVariablesMultiline:          strings.Join(defaultJobOverrideVariables(), "\n"),
 		DinDDetectInsecureDaemon:               true,
 		BranchEnabled:                          true,
-		BranchPatterns:                         defaultBranchPatterns,
+		BranchPatterns:                         defaultBranchPatterns(),
 		BranchDefaultMustBeProtected:           true,
 		BranchAllowForcePush:                   false,
 		BranchCodeOwnerApprovalRequired:        false,
-		BranchCodeOwnerApprovalRequiredGitHub:  true,
+		BranchCodeOwnerApprovalRequiredGitHub:  false,
 		BranchMinMergeAccessLevel:              "30",
 		BranchMinPushAccessLevel:               "40",
 		DebugTraceEnabled:                      true,

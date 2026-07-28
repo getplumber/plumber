@@ -1,9 +1,9 @@
 package cmd
 
 import (
+	"bytes"
 	"os"
 	"reflect"
-	"sort"
 	"strings"
 	"testing"
 
@@ -53,22 +53,133 @@ func TestStarterCachePoisoningMatchesEmbeddedDefault(t *testing.T) {
 	}
 }
 
-// The wizard's default trusted-registry list must stay in lockstep with the
-// curated .plumber.yaml list, so accepting init defaults reproduces the
-// shipped authorized-sources policy rather than a lean subset.
-func TestDefaultTrustedURLsMatchEmbeddedDefault(t *testing.T) {
+// The wizard now sources its authorized-source defaults directly from the
+// embedded default (no hand-maintained copies), so lockstep drift is
+// impossible by construction. This instead guards that those lists are
+// actually populated in the embedded default — if the block were dropped the
+// wizard would silently offer an empty allowlist.
+func TestWizardDefaultsSourcedFromEmbeddedDefault(t *testing.T) {
+	// Every list/string helper has an empty-value fallback for a missing block.
+	// Guard them all: a renamed/dropped block in defaultConfig/.plumber.yaml must
+	// fail here rather than silently degrade the wizard (e.g. an enabled control
+	// with an empty pattern list that matches nothing).
+	lists := map[string][]string{
+		"defaultTrustedURLs":                            defaultTrustedURLs(),
+		"defaultTrustedGithubActions":                   defaultTrustedGithubActions(),
+		"defaultSecurityJobPatterns":                    defaultSecurityJobPatterns(),
+		"defaultGitHubSecurityJobPatterns":              defaultGitHubSecurityJobPatterns(),
+		"defaultDangerousVariables":                     defaultDangerousVariables(),
+		"defaultJobOverrideVariables":                   defaultJobOverrideVariables(),
+		"defaultForbiddenVersions":                      defaultForbiddenVersions(),
+		"defaultGitHubDebugTraceVariables":              defaultGitHubDebugTraceVariables(),
+		"defaultGitHubTrustedActionOwners":              defaultGitHubTrustedActionOwners(),
+		"defaultCachePoisoningPublishActions":           defaultCachePoisoningPublishActions(),
+		"defaultCachePoisoningPublishScriptPatterns":    defaultCachePoisoningPublishScriptPatterns(),
+		"defaultCachePoisoningPublishScriptExcludePats": defaultCachePoisoningPublishScriptExcludePatterns(),
+	}
+	for name, got := range lists {
+		if len(got) == 0 {
+			t.Errorf("%s() is empty — its block is missing from the embedded default", name)
+		}
+	}
+	strs := map[string]string{
+		"defaultForbiddenTags":  defaultForbiddenTags(),
+		"defaultBranchPatterns": defaultBranchPatterns(),
+	}
+	for name, got := range strs {
+		if got == "" {
+			t.Errorf("%s() is empty — its block is missing from the embedded default", name)
+		}
+	}
+	if len(defaultCachePoisoningCacheActions()) == 0 {
+		t.Error("defaultCachePoisoningCacheActions() is empty — its block is missing from the embedded default")
+	}
+	if defaultTrustedActionsMinimumStars() <= 0 {
+		t.Errorf("defaultTrustedActionsMinimumStars() = %d, want > 0", defaultTrustedActionsMinimumStars())
+	}
+}
+
+// When the wizard emits the authorized-actions control with the curated choice,
+// the trustedGithubActions list and minimumStars it produces must match the
+// shipped default exactly — the end-to-end guard that `init` (curated) and
+// `generate` agree on this policy.
+func TestWizardCuratedAuthorizedActionsMatchDefault(t *testing.T) {
 	var cfg configuration.PlumberConfig
 	if err := yaml.Unmarshal(defaultconfig.Get(), &cfg); err != nil {
 		t.Fatalf("unmarshal embedded default: %v", err)
 	}
-	want := cfg.GitLab.Controls.ContainerImageMustComeFromAuthorizedSources.TrustedUrls
-	got := defaultTrustedURLs()
+	want := cfg.GitHub.Controls.GithubActionMustComeFromAuthorizedSources
+	st := &initWizardState{
+		Providers:                       []string{"github"},
+		Categories:                      []string{catComposition},
+		CompositionChoices:              []string{compAuthorizedActions},
+		AuthorizedActionsUsePlumberList: true,
+	}
+	got := st.toPlumberConfig().GitHub.Controls.GithubActionMustComeFromAuthorizedSources
+	if got == nil {
+		t.Fatal("wizard did not emit the authorized-actions control")
+	}
+	if got.MinimumStars != want.MinimumStars {
+		t.Errorf("minimumStars: wizard=%d default=%d", got.MinimumStars, want.MinimumStars)
+	}
+	if !reflect.DeepEqual(want.TrustedGithubActions, got.TrustedGithubActions) {
+		t.Errorf("trustedGithubActions drift between wizard (curated) and default")
+	}
+}
 
-	ws, gs := append([]string(nil), want...), append([]string(nil), got...)
-	sort.Strings(ws)
-	sort.Strings(gs)
-	if strings.Join(ws, "\n") != strings.Join(gs, "\n") {
-		t.Errorf("defaultTrustedURLs() drifted from embedded default:\nwant (%d): %v\ngot  (%d): %v", len(ws), ws, len(gs), gs)
+// "From scratch" must leave the allowlist empty (and the star floor unset), so
+// the choice is real and not silently overridden.
+func TestWizardScratchAuthorizedActionsEmpty(t *testing.T) {
+	st := &initWizardState{
+		Providers:                       []string{"github"},
+		Categories:                      []string{catComposition},
+		CompositionChoices:              []string{compAuthorizedActions},
+		AuthorizedActionsUsePlumberList: false,
+	}
+	got := st.toPlumberConfig().GitHub.Controls.GithubActionMustComeFromAuthorizedSources
+	if got == nil {
+		t.Fatal("wizard did not emit the authorized-actions control")
+	}
+	if len(got.TrustedGithubActions) != 0 || got.MinimumStars != 0 {
+		t.Errorf("expected empty allowlist and no star floor, got list=%d stars=%d", len(got.TrustedGithubActions), got.MinimumStars)
+	}
+}
+
+// The embedded default (defaultconfig.Get) must be byte-identical to the source
+// defaultConfig/.plumber.yaml. Every build path regenerates the embed from the
+// source (`make embed` / the CI+Docker `cp` step) before build/test; this
+// asserts that link directly, so a stale or skipped regeneration — which would
+// ship a drifted default to `config generate`, the init wizard, and zero-config
+// analyze while every self-consistent test stays green — fails here instead.
+func TestEmbeddedDefaultMatchesSource(t *testing.T) {
+	src, err := os.ReadFile("../defaultConfig/.plumber.yaml")
+	if err != nil {
+		t.Fatalf("read source default: %v", err)
+	}
+	if !bytes.Equal(src, defaultconfig.Get()) {
+		t.Errorf("embedded default (%d bytes) differs from defaultConfig/.plumber.yaml (%d bytes) — run `make embed` to regenerate the embed from source",
+			len(defaultconfig.Get()), len(src))
+	}
+}
+
+// `config generate` must write the embedded default verbatim, so the generated
+// file and the shipped baseline can never diverge.
+func TestConfigGenerateMatchesEmbeddedDefault(t *testing.T) {
+	dir := t.TempDir()
+	out := dir + "/gen.plumber.yaml"
+	prevOut, prevForce := configGenerateOutput, configGenerateForce
+	configGenerateOutput, configGenerateForce = out, true
+	defer func() { configGenerateOutput, configGenerateForce = prevOut, prevForce }()
+
+	if err := runConfigGenerate(nil, nil); err != nil {
+		t.Fatalf("config generate: %v", err)
+	}
+	got, err := os.ReadFile(out)
+	if err != nil {
+		t.Fatalf("read generated file: %v", err)
+	}
+	if !reflect.DeepEqual(got, defaultconfig.Get()) {
+		t.Errorf("config generate output differs from embedded default (%d vs %d bytes)", len(got), len(defaultconfig.Get()))
 	}
 }
 
@@ -403,8 +514,14 @@ func TestStarterPlumberConfigGitHubMatchesCuratedDefaults(t *testing.T) {
 	}
 	if gh.BranchMustBeProtected == nil ||
 		gh.BranchMustBeProtected.CodeOwnerApprovalRequired == nil ||
-		!*gh.BranchMustBeProtected.CodeOwnerApprovalRequired {
-		t.Error("github branch.codeOwnerApprovalRequired should default true")
+		*gh.BranchMustBeProtected.CodeOwnerApprovalRequired {
+		t.Error("github branch.codeOwnerApprovalRequired should default false (matches curated default; many first-run repos have no CODEOWNERS)")
+	}
+
+	if src := gh.GithubActionMustComeFromAuthorizedSources; src == nil {
+		t.Error("authorized-actions control should be present")
+	} else if src.MinimumStars != defaultTrustedActionsMinimumStars() || len(src.TrustedGithubActions) == 0 {
+		t.Errorf("starter authorized-actions should ship the curated allowlist + star floor, got stars=%d list=%d", src.MinimumStars, len(src.TrustedGithubActions))
 	}
 }
 
@@ -436,9 +553,12 @@ func TestInitWizardEnablesImpostorCommit(t *testing.T) {
 
 // The two toggles whose curated default differs per provider must keep
 // the GitLab side at its (looser) shipped value when defaults are accepted.
-func TestStarterPlumberConfigGitLabDefaultsUnchanged(t *testing.T) {
+func TestStarterPlumberConfigGitLabMatchesCuratedDefaults(t *testing.T) {
 	gl := starterPlumberConfig().GitLab.Controls
 
+	// allow_failure stays off on GitLab: stock GitLab security templates ship
+	// allow_failure: true, so flagging it would false-positive on every
+	// template. The wizard must keep the curated default's looser value.
 	if gl.SecurityJobsMustNotBeWeakened == nil ||
 		gl.SecurityJobsMustNotBeWeakened.AllowFailureMustBeFalse == nil ||
 		*gl.SecurityJobsMustNotBeWeakened.AllowFailureMustBeFalse.Enabled {
@@ -449,13 +569,13 @@ func TestStarterPlumberConfigGitLabDefaultsUnchanged(t *testing.T) {
 		*gl.BranchMustBeProtected.CodeOwnerApprovalRequired {
 		t.Error("gitlab branch.codeOwnerApprovalRequired should default false")
 	}
-	// GitLab ships all three security sub-toggles off (templates trip
-	// them); the wizard must match rather than default rules/whenManual on.
+	// rules/when are ON in the curated GitLab default; the wizard must match
+	// so zero-config and init users get the same GitLab security posture.
 	if sj := gl.SecurityJobsMustNotBeWeakened; sj == nil ||
-		sj.RulesMustNotBeRedefined == nil || *sj.RulesMustNotBeRedefined.Enabled {
-		t.Error("gitlab securityJobs.rulesMustNotBeRedefined should default false")
-	} else if *sj.WhenMustNotBeManual.Enabled {
-		t.Error("gitlab securityJobs.whenMustNotBeManual should default false")
+		sj.RulesMustNotBeRedefined == nil || !*sj.RulesMustNotBeRedefined.Enabled {
+		t.Error("gitlab securityJobs.rulesMustNotBeRedefined should default true (matches curated default)")
+	} else if !*sj.WhenMustNotBeManual.Enabled {
+		t.Error("gitlab securityJobs.whenMustNotBeManual should default true (matches curated default)")
 	}
 }
 
@@ -630,4 +750,3 @@ func TestCompositionOptionsForProviders(t *testing.T) {
 		}
 	}
 }
-
