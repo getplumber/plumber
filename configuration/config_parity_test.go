@@ -25,8 +25,20 @@ func TestSelfScanConfigControlsMatchDefault(t *testing.T) {
 		shippedDefault = "../defaultConfig/.plumber.yaml"
 	)
 	for _, provider := range []string{"gitlab", "github"} {
-		def := controlKeys(t, shippedDefault, provider)
-		self := controlKeys(t, selfScan, provider)
+		self, selfHas := controlKeys(t, selfScan, provider)
+		if !selfHas {
+			// Plumber's self-scan config only declares the providers whose CI
+			// the repo actually runs (GitHub-only today — no GitLab CI). A
+			// provider it omits is intentionally out of scope for this drift
+			// guard; the shipped default still declares both.
+			t.Logf("self-scan config declares no %q section; skipping its drift check", provider)
+			continue
+		}
+		def, defHas := controlKeys(t, shippedDefault, provider)
+		if !defHas {
+			t.Errorf("shipped default declares no %q section", provider)
+			continue
+		}
 
 		for name := range def {
 			if _, ok := self[name]; !ok {
@@ -46,6 +58,7 @@ func TestSelfScanConfigControlsMatchDefault(t *testing.T) {
 //     (`plumber analyze --fail-warnings`, auto-discovered from the repo root).
 //   - defaultConfig/.plumber.yaml (shipped default) is embedded in the binary
 //     (make embed) and used by every zero-config user.
+//
 // TestSelfScanConfigControlsMatchDefault only compares control keys via a
 // shallow unmarshal, so a malformed value would pass CI yet break at load.
 // This runs each file through the real LoadPlumberConfig (version check,
@@ -71,9 +84,11 @@ func TestConfigFilesLoadAndValidate(t *testing.T) {
 	}
 }
 
-// controlKeys returns the set of control keys under <provider>.controls in a
-// plumber config YAML file.
-func controlKeys(t *testing.T, path, provider string) map[string]struct{} {
+// controlKeys returns the set of control keys under <provider>.controls, and
+// whether that provider section is present at all. A section that is simply
+// absent (present==false) is a caller decision to skip; a section present but
+// malformed still fails hard.
+func controlKeys(t *testing.T, path, provider string) (map[string]struct{}, bool) {
 	t.Helper()
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -83,9 +98,13 @@ func controlKeys(t *testing.T, path, provider string) map[string]struct{} {
 	if err := yaml.Unmarshal(data, &doc); err != nil {
 		t.Fatalf("parse %s: %v", path, err)
 	}
-	prov, ok := doc[provider].(map[any]any)
+	raw, exists := doc[provider]
+	if !exists || raw == nil {
+		return nil, false
+	}
+	prov, ok := raw.(map[any]any)
 	if !ok {
-		t.Fatalf("%s: missing or malformed %q section", path, provider)
+		t.Fatalf("%s: malformed %q section", path, provider)
 	}
 	controls, ok := prov["controls"].(map[any]any)
 	if !ok {
@@ -97,5 +116,5 @@ func controlKeys(t *testing.T, path, provider string) map[string]struct{} {
 			out[s] = struct{}{}
 		}
 	}
-	return out
+	return out, true
 }

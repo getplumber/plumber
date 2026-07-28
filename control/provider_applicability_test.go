@@ -29,11 +29,21 @@ func TestFilterFindingsByEnabledControls_ProviderApplicability(t *testing.T) {
 		t.Fatalf("load config: %v", err)
 	}
 
+	// Plumber's own self-scan config (../.plumber.yaml) is GitHub-only — the
+	// repo runs no GitLab CI — so it declares no GitLab controls to exercise the
+	// GitLab gate. Build a minimal GitLab controls config with a cross-provider
+	// control enabled to probe the gate directly, independent of the self-scan
+	// file's provider coverage.
+	enabled := true
+	glControls := &configuration.ControlsConfig{
+		PipelineMustNotIncludeHardcodedJobs: &configuration.HardcodedJobsControlConfig{Enabled: &enabled},
+	}
+
 	// ISSUE-214 -> workflowMustPinPackageInstalls (GitHub-only).
 	// ISSUE-401 -> pipelineMustNotIncludeHardcodedJobs (both providers).
 	// ISSUE-701 -> actionsMustBePinnedByCommitSha (GitHub-only, not benched).
 	glFindings := []opaengine.Finding{{Code: "ISSUE-214"}, {Code: "ISSUE-401"}, {Code: "ISSUE-701"}}
-	gl := codeSet(FilterFindingsByEnabledControls(glFindings, "gitlab", pc.ControlsFor("gitlab"), nil, nil))
+	gl := codeSet(FilterFindingsByEnabledControls(glFindings, "gitlab", glControls, nil, nil))
 	if gl["ISSUE-214"] {
 		t.Error("ISSUE-214 (GitHub-only) leaked onto a GitLab run")
 	}
