@@ -60,7 +60,7 @@ jobs:
             prompt_file: .github/claude-prompts/new-control-check.md
     steps:
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           # Check out the PR head (not the default merge ref) so the files and
           # line numbers the agent sees match head.sha, which review comments
@@ -77,7 +77,7 @@ jobs:
 
       - name: Claude review
         id: review
-        uses: anthropics/claude-code-action@ba0aafd4308cbba7165f9f2cdb0cfbed5a3c99ce # v1.0.168
+        uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b # v1.0.183
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           # Without this the action exchanges an OIDC token for a GitHub App
@@ -213,7 +213,7 @@ jobs:
       # download-artifact — checkout's clean step would otherwise wipe the
       # downloaded reports/ directory.
       - name: Checkout
-        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 1
           persist-credentials: false
