@@ -57,7 +57,7 @@ func enrichGitHubBranches(l *logrus.Entry, pipeline *ir.NormalizedPipeline, host
 	// default branch (when defaultMustBeProtected is on). Wildcard
 	// patterns trip the listing fallthrough; on a typical config —
 	// `main`, `master`, `default` — we never list at all.
-	exact := make([]string, 0, len(cfg.NamePatterns)+1)
+	exact := make([]string, 0, len(cfg.NamePatterns))
 	listing := false
 	for _, p := range cfg.NamePatterns {
 		if isBranchGlob(p) {
