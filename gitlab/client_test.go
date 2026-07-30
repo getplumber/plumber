@@ -4,6 +4,7 @@ import (
 	"context"
 	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"testing"
 	"time"
@@ -77,5 +78,43 @@ func TestGetGraphQLClient_UsesInjectedTransport(t *testing.T) {
 	_ = client.Run(context.Background(), graphql.NewRequest("query{__typename}"), &struct{}{})
 	if !spy.called {
 		t.Fatal("the graphql client did not route through the injected transport")
+	}
+}
+
+// recordingTransport delegates to a real transport but records that it ran, so
+// an integration test can prove a full Fetch went through the injected client.
+type recordingTransport struct {
+	inner http.RoundTripper
+	hit   bool
+}
+
+func (r *recordingTransport) RoundTrip(req *http.Request) (*http.Response, error) {
+	r.hit = true
+	return r.inner.RoundTrip(req)
+}
+
+// End-to-end (offline) of the exact path the embedding platform will use: a real
+// Fetch function collecting from a canned GitLab server, routed through the
+// injected client — proving injection + parsing work together, not just that a
+// transport was touched.
+func TestFetchProjectBranches_ThroughInjectedClient(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = io.WriteString(w, `[{"name":"main"},{"name":"dev"}]`) // < perPage → one page
+	}))
+	defer ts.Close()
+
+	rec := &recordingTransport{inner: http.DefaultTransport}
+	conf := &configuration.Configuration{HTTPClient: &http.Client{Transport: rec}}
+
+	branches, err := FetchProjectBranches(42, "glpat-000000000000", ts.URL, conf)
+	if err != nil {
+		t.Fatalf("FetchProjectBranches through injected client: %v", err)
+	}
+	if len(branches) != 2 || branches[0] != "main" || branches[1] != "dev" {
+		t.Fatalf("want [main dev] parsed from the canned server, got %v", branches)
+	}
+	if !rec.hit {
+		t.Fatal("the fetch did not route through the injected client")
 	}
 }
