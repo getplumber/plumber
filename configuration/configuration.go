@@ -1,6 +1,7 @@
 package configuration
 
 import (
+	"net/http"
 	"time"
 )
 
@@ -26,6 +27,14 @@ type Configuration struct {
 
 	// HTTP client settings
 	HTTPClientTimeout time.Duration // Timeout for HTTP clients (REST and GraphQL)
+
+	// HTTPClient, when non-nil, is used verbatim by the GitLab REST/GraphQL/HTTP
+	// client constructors instead of building the default retry-wrapped client.
+	// It exists so an EMBEDDING host (the Plumber platform, ADR-0021) can inject
+	// its single, shared, rate-limited/cached client per (provider, instance)
+	// (INVARIANTS rule J). The CLI's own runs leave this nil and get the default
+	// client unchanged — this field is purely additive and transparent.
+	HTTPClient *http.Client
 
 	// GitLab API retry configuration
 	GitlabRetryMaxRetries     int           // Maximum number of retries for GitLab API requests

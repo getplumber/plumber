@@ -26,10 +26,15 @@ func GetNewGitlabClient(token string, instanceUrl string, conf *configuration.Co
 	// Sanitize the instance URL to remove any trailing slashes
 	sanitizedInstance := strings.TrimSuffix(instanceUrl, "/")
 
-	// Create HTTP client with retry logic and timeout
-	httpClient := &http.Client{
-		Transport: WrapTransportWithRetry(http.DefaultTransport, conf),
-		Timeout:   conf.HTTPClientTimeout,
+	// Use the host-injected client when present (ADR-0021 rule J: one shared,
+	// rate-limited/cached client per provider+instance); otherwise build the
+	// default retry-wrapped client — unchanged behavior for the CLI's own runs.
+	httpClient := conf.HTTPClient
+	if httpClient == nil {
+		httpClient = &http.Client{
+			Transport: WrapTransportWithRetry(http.DefaultTransport, conf),
+			Timeout:   conf.HTTPClientTimeout,
+		}
 	}
 
 	// Initialize the GitLab client depending on the token type
@@ -60,10 +65,14 @@ func GetGraphQLClient(url string, conf *configuration.Configuration) *graphql.Cl
 	// Build GraphQL url
 	url += gitlabGraphQLPath
 
-	// Create HTTP client with retry logic
-	httpClient := &http.Client{
-		Transport: WrapTransportWithRetry(http.DefaultTransport, conf),
-		Timeout:   conf.HTTPClientTimeout,
+	// Use the host-injected client when present (rule J); otherwise build the
+	// default retry-wrapped client — unchanged for the CLI's own runs.
+	httpClient := conf.HTTPClient
+	if httpClient == nil {
+		httpClient = &http.Client{
+			Transport: WrapTransportWithRetry(http.DefaultTransport, conf),
+			Timeout:   conf.HTTPClientTimeout,
+		}
 	}
 
 	// Initialize the GraphQL client
@@ -81,6 +90,11 @@ func GetGraphQLClient(url string, conf *configuration.Configuration) *graphql.Cl
 
 // GetHTTPClient creates a simple HTTP client with retry logic
 func GetHTTPClient(conf *configuration.Configuration) *http.Client {
+	// Use the host-injected client when present (rule J).
+	if conf != nil && conf.HTTPClient != nil {
+		return conf.HTTPClient
+	}
+
 	timeout := 30 * time.Second
 	if conf != nil && conf.HTTPClientTimeout > 0 {
 		timeout = conf.HTTPClientTimeout
