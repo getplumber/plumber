@@ -398,3 +398,37 @@ func TestValidControlNames(t *testing.T) {
 		}
 	}
 }
+
+func TestIsIncludePlumberDefaultsDefaultsTrue(t *testing.T) {
+	var action *ActionAuthorizedSourcesControlConfig
+	if !action.IsIncludePlumberDefaults() {
+		t.Fatal("nil action config should default to true")
+	}
+	f := false
+	action = &ActionAuthorizedSourcesControlConfig{IncludePlumberDefaults: &f}
+	if action.IsIncludePlumberDefaults() {
+		t.Fatal("explicit false should be false")
+	}
+
+	var image *ImageAuthorizedSourcesControlConfig
+	if !image.IsIncludePlumberDefaults() {
+		t.Fatal("nil image config should default to true")
+	}
+}
+
+func TestIncludePlumberDefaultsIsAKnownSubKey(t *testing.T) {
+	cfg := []byte(`github:
+  controls:
+    githubActionMustComeFromAuthorizedSources:
+      enabled: true
+      includePlumberDefaults: false
+      trustedGithubActions:
+        - myorg
+`)
+	warnings := ValidateKnownKeys(cfg)
+	for _, w := range warnings {
+		if strings.Contains(w, "includePlumberDefaults") {
+			t.Fatalf("includePlumberDefaults flagged as unknown: %q", w)
+		}
+	}
+}

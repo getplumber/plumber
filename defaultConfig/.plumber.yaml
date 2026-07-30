@@ -9,6 +9,17 @@
 # calibrated against a large real-world OSS cohort to avoid a flood of false
 # positives. Start here, then tighten (raise thresholds, add required
 # components/actions, enable the opt-in controls) as your policy matures.
+#
+# Customizing: instead of editing this whole file, create a small overlay.
+# Put `extends: plumber:default` at the top of your .plumber.yaml and list
+# only the controls you change; everything else is inherited from this
+# baseline, and new controls Plumber ships appear automatically. Run
+# `plumber config generate --overlay` for a starter, and
+# `plumber config resolve` to see the full effective config.
+#
+# For allowlist controls (trustedGithubActions, trustedUrls) an overlay can
+# set `includePlumberDefaults: true` (the default) to keep this curated list
+# and add its own entries, or `false` to use only its own list.
 
 version: "2.0"
 

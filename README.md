@@ -263,6 +263,26 @@ Full config reference:
 - CLI docs: [getplumber.io/docs/cli](https://getplumber.io/docs/cli)
 - Issue reference: [getplumber.io/docs/use-plumber/issues](https://getplumber.io/docs/use-plumber/issues)
 
+### Overlay configuration
+
+Extend Plumber's baseline and list only what you change:
+
+```yaml
+extends: plumber:default
+version: "2.0"
+github:
+  controls:
+    githubActionMustComeFromAuthorizedSources:
+      includePlumberDefaults: true # keep the curated trusted orgs, default
+      trustedGithubActions:
+        - myorg
+```
+
+Everything else is inherited, and new controls Plumber ships appear automatically. For allowlist
+controls, `includePlumberDefaults: true` unions your entries with Plumber's list, `false` uses
+only your own. Run `plumber config generate --overlay` for a starter, and `plumber config resolve`
+to print the full effective config.
+
 ## Controls
 
 Plumber ships controls for:

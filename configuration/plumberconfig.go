@@ -6,6 +6,7 @@ import (
 	"os"
 	"sort"
 
+	"github.com/getplumber/plumber/internal/defaultconfig"
 	"github.com/getplumber/plumber/utils"
 	"github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v2"
@@ -28,7 +29,7 @@ var validControlSchema = map[string][]string{
 		"enabled", "tags", "containerImagesMustBePinnedByDigest",
 	},
 	"containerImageMustComeFromAuthorizedSources": {
-		"enabled", "trustedUrls", "trustDockerHubOfficialImages",
+		"enabled", "trustedUrls", "trustDockerHubOfficialImages", "includePlumberDefaults",
 	},
 	"branchMustBeProtected": {
 		"enabled", "namePatterns", "defaultMustBeProtected",
@@ -76,7 +77,7 @@ var validControlSchema = map[string][]string{
 		"enabled", "trustedOwners",
 	},
 	"githubActionMustComeFromAuthorizedSources": {
-		"enabled", "trustGithubOfficialActions", "trustSameOrgActions", "minimumStars", "trustedGithubActions",
+		"enabled", "trustGithubOfficialActions", "trustSameOrgActions", "minimumStars", "trustedGithubActions", "includePlumberDefaults",
 	},
 	"workflowMustNotInjectUserInputInScripts": {
 		"enabled",
@@ -168,6 +169,12 @@ type PlumberConfig struct {
 	// "2.0" = current per-provider schema. "1.0" = legacy flat schema.
 	// Missing version is tolerated and treated as legacy.
 	Version string `yaml:"version,omitempty"`
+
+	// Extends selects overlay mode. The only supported value is
+	// "plumber:default": the file is then a sparse overlay merged onto
+	// the embedded baseline. Absent (the default) keeps legacy full
+	// replace behavior. See configuration/resolve.go.
+	Extends string `yaml:"extends,omitempty"`
 
 	// GitLab provider section (v2 schema). Holds GitLab-specific auth,
 	// the enabledControls allowlist, and the per-control configuration map.
@@ -530,6 +537,12 @@ type ActionAuthorizedSourcesControlConfig struct {
 	// Each entry is either an exact `owner/repo` (e.g. `jdx/mise-action`)
 	// or an `owner/*` wildcard trusting a whole org (e.g. `mycompany/*`).
 	TrustedGithubActions []string `yaml:"trustedGithubActions,omitempty"`
+
+	// IncludePlumberDefaults, in overlay mode (extends: plumber:default),
+	// unions Plumber's curated default trusted list with TrustedGithubActions.
+	// Defaults to true. Set false to trust only the entries listed here.
+	// Ignored in legacy (no-extends) mode.
+	IncludePlumberDefaults *bool `yaml:"includePlumberDefaults,omitempty"`
 }
 
 // IsEnabled returns whether the control is enabled
@@ -538,6 +551,15 @@ func (c *ActionAuthorizedSourcesControlConfig) IsEnabled() bool {
 		return false
 	}
 	return *c.Enabled
+}
+
+// IsIncludePlumberDefaults reports whether the curated default trusted
+// list is unioned in. Defaults to true when the config or field is nil.
+func (c *ActionAuthorizedSourcesControlConfig) IsIncludePlumberDefaults() bool {
+	if c == nil || c.IncludePlumberDefaults == nil {
+		return true
+	}
+	return *c.IncludePlumberDefaults
 }
 
 // ImageForbiddenTagsControlConfig configuration for the forbidden image tags control
@@ -571,6 +593,12 @@ type ImageAuthorizedSourcesControlConfig struct {
 
 	// TrustDockerHubOfficialImages trusts official Docker Hub images (e.g., nginx, alpine)
 	TrustDockerHubOfficialImages *bool `yaml:"trustDockerHubOfficialImages,omitempty"`
+
+	// IncludePlumberDefaults, in overlay mode (extends: plumber:default),
+	// unions Plumber's curated default trusted list with TrustedUrls.
+	// Defaults to true. Set false to trust only the entries listed here.
+	// Ignored in legacy (no-extends) mode.
+	IncludePlumberDefaults *bool `yaml:"includePlumberDefaults,omitempty"`
 }
 
 // BranchProtectionControlConfig configuration for the branch protection control
@@ -891,15 +919,35 @@ func LoadPlumberConfigFromBytes(data []byte, source string) (*PlumberConfig, str
 
 	warnings := ValidateKnownKeys(data)
 
+	// Resolve overlay mode (extends: plumber:default) before parsing.
+	// Legacy files with no extends pass through untouched.
+	extendsVal, extErr := detectExtends(data)
+	if extErr != nil {
+		return nil, source, warnings, extErr
+	}
+	effectiveData := data
+	isOverlay := extendsVal == ExtendsPlumberDefault
+	if isOverlay {
+		merged, err := resolveOverlayBytes(data)
+		if err != nil {
+			return nil, source, warnings, err
+		}
+		effectiveData = merged
+	}
+
 	config := &PlumberConfig{}
-	if err := yaml.Unmarshal(data, config); err != nil {
+	if err := yaml.Unmarshal(effectiveData, config); err != nil {
 		l.WithError(err).Error("Failed to parse config")
 		return nil, source, warnings, err
 	}
 	// Capture the verbatim config + its source so the JSON report can carry
 	// a self-describing `plumberConfig` block (what produced this grade).
-	config.Raw = string(data)
+	// In overlay mode, Raw holds the resolved (merged) YAML so the report
+	// reflects what actually ran, and Extends is cleared since resolution
+	// is now complete.
+	config.Raw = string(effectiveData)
 	config.Source = source
+	config.Extends = ""
 
 	// Reject explicitly-set unsupported versions early. Empty version is
 	// allowed (legacy default behaviour) and gets a deprecation warning
@@ -938,6 +986,34 @@ func LoadPlumberConfigFromBytes(data []byte, source string) (*PlumberConfig, str
 
 	if err := config.validate(); err != nil {
 		return nil, source, warnings, fmt.Errorf("configuration validation error: %w", err)
+	}
+
+	// Overlay mode: the merge above list-replaces (no per-element merge in
+	// deepMergeYAML), so a control's allowlist the overlay mentioned holds
+	// only the overlay's own values at this point. Materialize the real
+	// includePlumberDefaults semantics (union with the curated base list,
+	// or user-only when the toggle is false) now that config is fully
+	// built and v2-shaped. Base and overlay are re-parsed independently
+	// (not from effectiveData) so each side reflects only its own values.
+	if isOverlay {
+		baseCfg := &PlumberConfig{}
+		_ = yaml.Unmarshal(defaultconfig.Get(), baseCfg)
+		overlayCfg := &PlumberConfig{}
+		_ = yaml.Unmarshal(data, overlayCfg)
+		materializeAuthorizedSources(config, baseCfg, overlayCfg)
+
+		// config.Raw was captured above from effectiveData, i.e. before this
+		// materialize step ran. deepMergeYAML list-replaces, so at that
+		// point Raw held only the overlay's own (sparse) allowlist entries,
+		// not the union with the curated base list. Re-marshal now that the
+		// resolved struct carries the real materialized allowlists, so Raw
+		// (which feeds the audit report's self-describing `plumberConfig`
+		// block and its hash) reflects what actually ran.
+		if b, err := yaml.Marshal(config); err == nil {
+			config.Raw = string(b)
+		} else {
+			l.WithError(err).Warn("failed to re-marshal resolved config for Raw; report block may understate materialized allowlists")
+		}
 	}
 
 	l.WithField("config", config).Debug("Configuration loaded successfully")
@@ -1035,6 +1111,15 @@ func (c *ImageAuthorizedSourcesControlConfig) IsEnabled() bool {
 		return false
 	}
 	return *c.Enabled
+}
+
+// IsIncludePlumberDefaults reports whether the curated default trusted
+// list is unioned in. Defaults to true when the config or field is nil.
+func (c *ImageAuthorizedSourcesControlConfig) IsIncludePlumberDefaults() bool {
+	if c == nil || c.IncludePlumberDefaults == nil {
+		return true
+	}
+	return *c.IncludePlumberDefaults
 }
 
 // GetBranchMustBeProtectedConfig returns the control configuration

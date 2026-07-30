@@ -20,10 +20,12 @@ var (
 	// config view flags
 	configViewFile    string
 	configViewNoColor bool
+	configViewExplain bool
 
 	// config generate flags
-	configGenerateOutput string
-	configGenerateForce  bool
+	configGenerateOutput  string
+	configGenerateForce   bool
+	configGenerateOverlay bool
 	// config validate flags
 	configValidateFile string
 	// config diff flags
@@ -147,6 +149,8 @@ func init() {
 	configCmd.AddCommand(configValidateCmd)
 	configCmd.AddCommand(configDiffCmd)
 	configCmd.AddCommand(configMigrateCmd)
+	configCmd.AddCommand(configResolveCmd)
+	configCmd.AddCommand(configSlimCmd)
 
 	configMigrateCmd.Flags().BoolVar(&configMigrateInPlace, "in-place", false, "Overwrite the input file in place (the original is backed up to <input>.bak)")
 	configMigrateCmd.Flags().StringVar(&configMigrateInput, "input", "", "Input config path (default: .plumber.yaml)")
@@ -159,10 +163,12 @@ func init() {
 	// config view flags
 	configViewCmd.Flags().StringVarP(&configViewFile, "config", "c", ".plumber.yaml", "Path to configuration file")
 	configViewCmd.Flags().BoolVar(&configViewNoColor, "no-color", false, "Disable colorized output")
+	configViewCmd.Flags().BoolVar(&configViewExplain, "explain", false, "Also show whether each control comes from the base or your overlay")
 
 	// config generate flags
 	configGenerateCmd.Flags().StringVarP(&configGenerateOutput, "output", "o", ".plumber.yaml", "Output file path")
 	configGenerateCmd.Flags().BoolVarP(&configGenerateForce, "force", "f", false, "Overwrite existing file")
+	configGenerateCmd.Flags().BoolVar(&configGenerateOverlay, "overlay", false, "Write a minimal overlay starter (extends: plumber:default) instead of the full template")
 
 	configInitCmd.Flags().StringVarP(&configInitOutput, "output", "o", ".plumber.yaml", "Path to write the generated configuration")
 	configInitCmd.Flags().BoolVarP(&configInitForce, "force", "f", false, "Overwrite existing file without asking")
@@ -170,6 +176,14 @@ func init() {
 	// config diff flags
 	configDiffCmd.Flags().StringVarP(&configDiffFile, "config", "c", ".plumber.yaml", "Path to configuration file")
 	configDiffCmd.Flags().BoolVar(&configDiffNoColor, "no-color", false, "Disable colorized output")
+
+	// config resolve flags
+	configResolveCmd.Flags().StringVarP(&configResolveFile, "config", "c", ".plumber.yaml", "Path to configuration file")
+	configResolveCmd.Flags().StringVarP(&configResolveOutput, "output", "o", "", "Write resolved config to this file (default: stdout)")
+
+	// config slim flags
+	configSlimCmd.Flags().StringVarP(&configSlimFile, "config", "c", ".plumber.yaml", "Path to the full configuration file")
+	configSlimCmd.Flags().StringVarP(&configSlimOutput, "output", "o", "", "Write slim overlay to this file (default: stdout)")
 
 }
 
@@ -220,6 +234,19 @@ func runConfigView(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Print(output)
+
+	if configViewExplain {
+		data, _ := os.ReadFile(configViewFile)
+		prov, err := controlProvenance(data)
+		if err != nil {
+			return err
+		}
+		fmt.Fprintln(os.Stderr, "\nProvenance (base = inherited from plumber:default, overlay = set in your file):")
+		for key, src := range prov {
+			fmt.Fprintf(os.Stderr, "  %-70s %s\n", key, src)
+		}
+	}
+
 	return nil
 }
 
@@ -346,6 +373,26 @@ func formatNestedArrays(input string) string {
 	return strings.Join(result, "\n")
 }
 
+// minimalOverlayStarter returns a tiny overlay config that inherits
+// everything from Plumber's baseline and shows how to override one control.
+func minimalOverlayStarter() string {
+	return `# Plumber overlay config. Inherits every control from Plumber's
+# baseline; you only write what you change. New controls Plumber ships
+# appear automatically. Run 'plumber config resolve' to see the full
+# effective config, or 'plumber config generate' for the commented template.
+extends: plumber:default
+version: "2.0"
+
+# Example overrides (delete or edit):
+# github:
+#   controls:
+#     githubActionMustComeFromAuthorizedSources:
+#       includePlumberDefaults: true   # keep the curated trusted orgs
+#       trustedGithubActions:
+#         - myorg
+`
+}
+
 func runConfigGenerate(cmd *cobra.Command, args []string) error {
 	if !verbose {
 		logrus.SetLevel(logrus.WarnLevel)
@@ -361,6 +408,9 @@ func runConfigGenerate(cmd *cobra.Command, args []string) error {
 
 	// Get embedded default config
 	configContent := defaultconfig.Get()
+	if configGenerateOverlay {
+		configContent = []byte(minimalOverlayStarter())
+	}
 
 	// Write to file
 	if err := os.WriteFile(configGenerateOutput, configContent, 0644); err != nil {
