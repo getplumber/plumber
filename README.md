@@ -113,7 +113,7 @@ Alternative (CI runners, automation):
 export GH_TOKEN=ghp_xxxx
 ```
 
-GitHub local scans can run without a token for workflow-content checks. A token enables repo-level and action-metadata checks.
+Local GitHub scans can run without a token for workflow-content checks. A token enables repo-level and action-metadata checks.
 
 If a workflow uses an action hosted in an org with an IP allow list (which blocks the runner's `GITHUB_TOKEN`), set `PLUMBER_METADATA_TOKEN` to a token with public-repository read so Plumber can still resolve that action's version for the known-CVE check. Without it, Plumber falls back to an anonymous read and, if that is rate-limited too, skips the version check rather than guessing.
 
