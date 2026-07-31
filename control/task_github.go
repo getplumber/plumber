@@ -46,7 +46,9 @@ func enrichGitHubBranches(l *logrus.Entry, pipeline *ir.NormalizedPipeline, host
 	// what to ask for. Best-effort: if the repo metadata fetch fails
 	// we keep whatever the caller pre-populated (the --branch flag
 	// or empty), and the targeted-fetch loop simply skips an empty
-	// name.
+	// name. (An invisible repo is NOT detectable here --
+	// FetchGitHubDefaultBranch folds 404/401 into a silent empty
+	// success by contract; the zero-branch probe below owns that.)
 	if pipeline.DefaultBranch == "" {
 		if def, derr := githubpkg.FetchGitHubDefaultBranch(host, parts[0], parts[1]); derr == nil && def != "" {
 			pipeline.DefaultBranch = def
@@ -105,6 +107,26 @@ func enrichGitHubBranches(l *logrus.Entry, pipeline *ir.NormalizedPipeline, host
 	if err != nil {
 		l.WithError(err).Warn("GitHub branch-protection fetch failed; branchMustBeProtected will see zero branches")
 		return true
+	}
+	if len(branches) == 0 {
+		// Zero branches is ambiguous: legitimately nothing in scope, or
+		// a repo that is nonexistent, renamed, or invisible to the
+		// token, whose per-branch lookups all 404-swallowed (the fetch
+		// correctly treats a 404 as "branch absent" for a real repo).
+		// Disambiguate with the visibility probe: every visible GitHub
+		// repo answers its metadata endpoint. Without this, an
+		// invisible repo reads as a vacuous branch-protection pass
+		// (caught empirically: a scan against an unreachable remote
+		// reported branchMustBeProtected as passed).
+		visible, derr := githubpkg.GitHubRepoVisible(host, parts[0], parts[1])
+		if derr != nil {
+			l.WithError(derr).Warn("GitHub repo visibility probe failed with zero branches fetched; branch protection cannot be evaluated")
+			return true
+		}
+		if !visible {
+			l.Warn("GitHub repo is not visible with the current credentials (nonexistent, renamed, or unauthorized); branch protection cannot be evaluated")
+			return true
+		}
 	}
 	pipeline.Branches = branches
 	return false

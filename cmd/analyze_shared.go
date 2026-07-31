@@ -178,7 +178,7 @@ func writeOutputsWithProvider(p provider.Provider, result *control.AnalysisResul
 	// asked for, and the exit-3 gate, not the file's absence, protects CI).
 	// Each format stamps itself degraded; warn so a partial report is not
 	// mistaken for authoritative (#220).
-	if result.DataCollectionDegraded && (outputFile != "" || pbomFile != "" || pbomCycloneDXFile != "" || sarifFile != "" || glsastFile != "") {
+	if result.DataCollectionDegraded && (outputFile != "" || pbomFile != "" || pbomCycloneDXFile != "" || sarifFile != "" || glsastFile != "" || csvFile != "") {
 		fmt.Fprintf(os.Stderr, "Note: data collection was incomplete — artifacts are written but marked degraded; treat them as partial.\n")
 	}
 	if outputFile != "" {
@@ -211,6 +211,12 @@ func writeOutputsWithProvider(p provider.Provider, result *control.AnalysisResul
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "GitLab SAST report written to: %s\n", glsastFile)
+	}
+	if csvFile != "" {
+		if err := writeCSVToFile(p, result, conf, csvFile); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "CSV written to: %s\n", csvFile)
 	}
 	return nil
 }

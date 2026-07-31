@@ -131,3 +131,29 @@ func TestBuildGLSAST_LocationAlwaysPresent(t *testing.T) {
 		t.Errorf("vulnerability is missing the required 'location' key: %s", b)
 	}
 }
+
+func TestBuildGLSAST_ControlNameSecondIdentifier(t *testing.T) {
+	findings := []opaengine.Finding{
+		{Code: "ISSUE-701", Severity: "high", Message: "unpinned action"},
+	}
+	rep := buildGLSAST(findings, "github")
+	if len(rep.Vulnerabilities) != 1 {
+		t.Fatalf("vulnerabilities = %d, want 1", len(rep.Vulnerabilities))
+	}
+	ids := rep.Vulnerabilities[0].Identifiers
+	if len(ids) != 2 {
+		t.Fatalf("identifiers = %d, want 2", len(ids))
+	}
+	// The first identifier (the ISSUE code) must stay first and untouched --
+	// GitLab treats identifiers[0] as the Primary Identifier for
+	// cross-scan vulnerability tracking.
+	if ids[0].Type != "plumber" || ids[0].Value != "ISSUE-701" {
+		t.Errorf("primary identifier changed: %+v", ids[0])
+	}
+	if ids[1].Type != "plumber_control" || ids[1].Name != "actionsMustBePinnedByCommitSha" || ids[1].Value != "actionsMustBePinnedByCommitSha" {
+		t.Errorf("control-name identifier = %+v, want type=plumber_control name/value=actionsMustBePinnedByCommitSha", ids[1])
+	}
+	if ids[1].URL != "" {
+		t.Errorf("control-name identifier URL = %q, want empty", ids[1].URL)
+	}
+}

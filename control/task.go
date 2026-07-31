@@ -637,7 +637,7 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 				// pass is not trusted (mirrors the GitHub branch path, #220). A
 				// non-network failure stays a soft warn as before.
 				if isNetworkError(pErr) {
-					markDegraded(result, "branch protection could not be fetched (network or timeout)")
+					markDegraded(result, degradedReasonBranchProtectionPrefix+" (network or timeout)")
 				}
 				l.WithError(pErr).Warn("Protection data collection failed; branch policies will see no branches")
 			} else {

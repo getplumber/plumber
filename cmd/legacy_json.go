@@ -59,7 +59,7 @@ func legacyResultsByName(result *control.AnalysisResult, pc *configuration.Plumb
 			if key == "" {
 				continue
 			}
-			out[key] = block
+			out[key] = _withControlMeta(block, e, result, len(fs))
 		}
 	default:
 		entries := control.GitLabControls(pc)
@@ -70,10 +70,36 @@ func legacyResultsByName(result *control.AnalysisResult, pc *configuration.Plumb
 			if key == "" {
 				continue
 			}
-			out[key] = block
+			out[key] = _withControlMeta(block, e, result, len(fs))
 		}
 	}
 	return out
+}
+
+// _withControlMeta stamps the block's stable .plumber.yaml control name
+// and its evaluation status onto the block itself.
+//
+// controlName lives here once rather than on every individual issue --
+// every issue in a block's `issues` array is guaranteed to share the
+// same controlName (FindingsByControl buckets strictly by it), so
+// repeating it per-issue would be pure redundancy.
+//
+// status is the explicit passed/failed/skipped/error verdict
+// (control.StatusFor) so consumers stop inferring pass from "issues is
+// empty" -- an empty list can also mean the control never really
+// evaluated (missing CI config, degraded collection). The existing
+// `skipped` boolean stays untouched for backward compatibility;
+// status: "skipped" mirrors it.
+//
+// Every `buildX...` function returns map[string]any; the type assertion
+// only fails for a hand-built AnalysisResult in a test that skips the
+// real builders.
+func _withControlMeta(block any, e control.ControlEntry, result *control.AnalysisResult, findingCount int) any {
+	if m, ok := block.(map[string]any); ok {
+		m["controlName"] = e.ControlName
+		m["status"] = control.StatusFor(e, result, findingCount)
+	}
+	return block
 }
 
 // buildLegacyResult routes a control entry to its legacy JSON
@@ -134,6 +160,13 @@ type legacyCommon struct {
 // message, file, line) so the returned issue keeps only what the
 // legacy format documented: code, docUrl, plus whatever structured
 // payload the rule emitted (link/tag/variableName/…).
+//
+// controlName is NOT repeated here: it lives once on the parent
+// *Result block (see _withControlMeta in legacyResultsByName), since
+// every issue in a block is guaranteed to share that block's
+// controlName -- FindingsByControl buckets strictly by it. Only code
+// varies within a block (e.g. containerImageMustNotUseForbiddenTags
+// covers both ISSUE-102 and ISSUE-103), so code stays per-issue.
 func projectFinding(f opaengine.Finding, jobKey string) map[string]any {
 	out := map[string]any{
 		"code":   f.Code,

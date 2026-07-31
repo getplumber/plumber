@@ -374,6 +374,30 @@ func FetchGitHubDefaultBranch(host, owner, repo string) (string, error) {
 	return meta.DefaultBranch, nil
 }
 
+// GitHubRepoVisible reports whether repos/{owner}/{repo} is readable with
+// the current credentials. It exists to disambiguate a zero-branch
+// protection fetch: the per-branch endpoints swallow 404s ("branch
+// absent" is legitimate on a real repo), so a repo that is nonexistent,
+// renamed, or invisible to the token yields zero branches with no error
+// anywhere. Every visible GitHub repo answers its metadata endpoint, so
+// false here means the repo cannot be seen at all. Unlike
+// FetchGitHubDefaultBranch this deliberately does NOT fold 404/401 into
+// a silent success -- telling the difference is its whole job.
+func GitHubRepoVisible(host, owner, repo string) (bool, error) {
+	rest, err := newGitHubRESTClient(host)
+	if err != nil {
+		return false, err
+	}
+	var meta remoteRepoMetadata
+	if err := rest.Get(fmt.Sprintf("repos/%s/%s", owner, repo), &meta); err != nil {
+		if isUnauthorized(err) || isNotFound(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return true, nil
+}
+
 // fetchBranchEffectiveRules calls /repos/{o}/{r}/rules/branches/{branch}
 // and returns the effective rules unioned across classic Branch
 // Protection, repo-level Rulesets, and org-level Rulesets the repo

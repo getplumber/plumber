@@ -55,6 +55,7 @@ var (
 	pbomCycloneDXFile string
 	sarifFile         string
 	glsastFile        string
+	csvFile           string
 	mrComment         bool
 	badge             bool
 	showScore         bool
@@ -173,6 +174,7 @@ func init() {
 	analyzeCmd.Flags().StringVar(&pbomCycloneDXFile, "pbom-cyclonedx", "", "Write PBOM in CycloneDX format (for security tool integration)")
 	analyzeCmd.Flags().StringVar(&sarifFile, "sarif", "", "Write SARIF 2.1.0 results to file (for GitHub Code Scanning / GitLab Security Dashboard)")
 	analyzeCmd.Flags().StringVar(&glsastFile, "glsast", "", "Write a GitLab SAST report (gl-sast-report.json) to file (for the GitLab Security Dashboard / MR widget)")
+	analyzeCmd.Flags().StringVar(&csvFile, "csv", "", "Write CSV results to file")
 	analyzeCmd.Flags().BoolVar(&mrComment, "mr-comment", false, "Post/update a compliance comment on the merge request (requires api scope token; only works in merge request pipelines)")
 	analyzeCmd.Flags().BoolVar(&badge, "badge", false, "Create/update a Plumber compliance badge on the project (requires api scope; only runs on default branch)")
 	analyzeCmd.Flags().BoolVar(&showScore, "score", false, "Banner: letter score, points, bar, severity counts on stdout; points + score in JSON, PBOM, CycloneDX; badge shows letter when set")
@@ -538,6 +540,7 @@ var envKeys = map[string]string{
 	"pbom-cyclonedx": "PLUMBER_ANALYZE_PBOM_CYCLONEDX",
 	"sarif":          "PLUMBER_ANALYZE_SARIF",
 	"glsast":         "PLUMBER_ANALYZE_GLSAST",
+	"csv":            "PLUMBER_ANALYZE_CSV",
 	"mr-comment":     "PLUMBER_ANALYZE_MR_COMMENT",
 	"badge":          "PLUMBER_ANALYZE_BADGE",
 	"score":          "PLUMBER_ANALYZE_SCORE",
@@ -654,6 +657,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		func() error { return envStringFallback(cmd, "pbom-cyclonedx", envKeys["pbom-cyclonedx"], &pbomCycloneDXFile) },
 		func() error { return envStringFallback(cmd, "sarif", envKeys["sarif"], &sarifFile) },
 		func() error { return envStringFallback(cmd, "glsast", envKeys["glsast"], &glsastFile) },
+		func() error { return envStringFallback(cmd, "csv", envKeys["csv"], &csvFile) },
 		func() error { return envStringFallback(cmd, "score-endpoint", envKeys["score-endpoint"], &scoreEndpoint) },
 		func() error { return envStringFallback(cmd, "controls", envKeys["controls"], &controlsFilter) },
 		func() error { return envStringFallback(cmd, "skip-controls", envKeys["skip-controls"], &skipControls) },

@@ -55,6 +55,14 @@ func markDegraded(result *AnalysisResult, reason string) {
 	result.DegradedReasons = append(result.DegradedReasons, reason)
 }
 
+// degradedReasonBranchProtectionPrefix is the shared prefix of every
+// branch-protection-fetch degraded reason, on both providers. It is the
+// compile-time contract between the two writers below / in task.go and
+// the StatusFor classifier (degradedReasonIsBranchProtection): rewording
+// a reason without keeping this prefix would silently break per-control
+// status classification, so both writers build their strings from it.
+const degradedReasonBranchProtectionPrefix = "branch protection could not be fetched"
+
 // degradedReasonsFromGitHubCollection builds the human-readable list of
 // collection failures behind a degraded GitHub run (#220). partialCount
 // is the number of workflow files that could not be fetched/parsed and
@@ -67,7 +75,7 @@ func degradedReasonsFromGitHubCollection(partialCount int, branchFetchFailed boo
 		reasons = append(reasons, fmt.Sprintf("%d workflow file(s) could not be fetched and were skipped", partialCount))
 	}
 	if branchFetchFailed {
-		reasons = append(reasons, "branch protection could not be fetched; branch controls were not evaluated")
+		reasons = append(reasons, degradedReasonBranchProtectionPrefix+"; branch controls were not evaluated")
 	}
 	return reasons
 }
