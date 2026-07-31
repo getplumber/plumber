@@ -643,6 +643,7 @@ github:
         - VirtusLab/* # Scala CLI
         - gleam-lang/* # Gleam
         # ── Security vendors & supply-chain projects ─────────────────
+        - getplumber/* # Plumber (this tool's own actions)
         - step-security/* # StepSecurity (harden-runner)
         - ossf/* # OpenSSF / Linux Foundation (scorecard-action)
         - sigstore/* # Sigstore / LF (cosign-installer)
