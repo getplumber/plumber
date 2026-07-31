@@ -309,6 +309,7 @@ Full catalogs:
 | JSON | `--output results.json` | Automation and dashboards |
 | SARIF | `--sarif results.sarif` | GitHub Code Scanning and SARIF-compatible tools |
 | GitLab SAST | `--glsast gl-sast-report.json` | GitLab Security Dashboard / MR widget |
+| CSV | `--csv results.csv` | Spreadsheet tools, ad-hoc analysis |
 | PBOM | `--pbom pbom.json` | Pipeline inventory |
 | CycloneDX | `--pbom-cyclonedx cdx.json` | SBOM tooling |
 
@@ -322,6 +323,7 @@ Example:
 plumber analyze \
   --output results.json \
   --sarif results.sarif \
+  --csv results.csv \
   --pbom pbom.json \
   --pbom-cyclonedx cdx.json
 ```
