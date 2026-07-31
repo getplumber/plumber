@@ -465,6 +465,39 @@ gitlab:
 	}
 }
 
+// TestLoadPlumberConfigFromBytes_OverlayNarrowsTrustedUrls is the GitLab
+// containerImageMustComeFromAuthorizedSources mirror of
+// TestLoadPlumberConfigFromBytes_OverlayNarrowsTrustedActions: the
+// narrowing direction (includePlumberDefaults: false) must resolve to
+// ONLY the user's entries, with the curated base trustedUrls absent.
+// This is the security-critical direction: a regression that unions the
+// curated list back in would silently re-widen container-image trust.
+func TestLoadPlumberConfigFromBytes_OverlayNarrowsTrustedUrls(t *testing.T) {
+	firstBase := firstCuratedTrustedURL(t)
+
+	overlay := []byte(`extends: plumber:default
+gitlab:
+  controls:
+    containerImageMustComeFromAuthorizedSources:
+      includePlumberDefaults: false
+      trustedUrls:
+        - myregistry/*
+`)
+	cfg, _, _, err := LoadPlumberConfigFromBytes(overlay, "narrow-overlay-gitlab")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	got := cfg.GitLab.Controls.ContainerImageMustComeFromAuthorizedSources.TrustedUrls
+	if !reflect.DeepEqual(got, []string{"myregistry/*"}) {
+		t.Fatalf("includePlumberDefaults:false must narrow to only user entries, got %v", got)
+	}
+	for _, u := range got {
+		if u == firstBase {
+			t.Fatalf("curated base entry %q must be absent when includePlumberDefaults is false", firstBase)
+		}
+	}
+}
+
 // TestLoadPlumberConfigFromBytes_NullOverlaySectionInheritsBase is the
 // end-to-end regression guard for the "null overlay wipes base" bug: an
 // overlay that extends plumber:default and leaves gitlab.controls empty
