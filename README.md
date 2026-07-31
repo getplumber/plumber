@@ -55,7 +55,7 @@ Run your first scan before reading the full docs.
 brew tap getplumber/plumber
 brew install plumber
 
-plumber config generate # generates default configuration yaml file
+plumber config generate # generate the default configuration file
 plumber analyze
 ```
 
@@ -101,7 +101,7 @@ GitLab:
 export GITLAB_TOKEN=glpat_xxxx
 ```
 
-GitHub (preferred — uses the gh CLI's keyring):
+GitHub (preferred, uses the gh CLI's keyring):
 
 ```bash
 gh auth login
