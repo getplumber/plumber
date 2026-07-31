@@ -175,6 +175,11 @@ func buildGLSAST(findings []opaengine.Finding, provider string) glsastReport {
 			v.Solution = info.Remediation
 			v.Identifiers[0].Name = "Plumber " + f.Code + ": " + title
 			v.Identifiers[0].URL = info.DocURL
+			v.Identifiers = append(v.Identifiers, glsastIdentifier{
+				Type:  "plumber_control",
+				Name:  info.ControlName,
+				Value: info.ControlName,
+			})
 		}
 		// GitLab's Vulnerability Report UI does not render the deprecated
 		// `message` field, so fold the per-finding detail into `description`

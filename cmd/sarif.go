@@ -104,7 +104,14 @@ type sarifConfig struct {
 }
 
 type sarifResult struct {
-	RuleID     string          `json:"ruleId"`
+	RuleID string `json:"ruleId"`
+	// Kind categorizes the result's evaluation state (SARIF §3.27.9):
+	// "fail" for findings (the spec default when absent), "pass" /
+	// "notApplicable" / "open" for the synthetic per-control status
+	// results — evaluated-clean, skipped-by-config, and
+	// could-not-fully-evaluate respectively. When Kind is anything
+	// other than "fail" the spec requires Level to be "none".
+	Kind       string          `json:"kind,omitempty"`
 	Level      string          `json:"level"`
 	Message    sarifText       `json:"message"`
 	Locations  []sarifLocation `json:"locations,omitempty"`
@@ -166,6 +173,34 @@ func sarifSecuritySeverity(sev string) string {
 // fallbackURI is itself empty the result is emitted location-less (still
 // valid SARIF; only Code Scanning is that strict).
 
+// sarifRuleFor builds the rules[] entry for an issue code from the codes
+// registry (nil info falls back to the bare code). Shared by the finding
+// results and the synthetic per-control status results so a rule renders
+// identically whether the control fired or passed.
+func sarifRuleFor(code, severity, provider string, info *control.ErrorCodeInfo) sarifRule {
+	rule := sarifRule{
+		ID:                   code,
+		ShortDescription:     sarifText{Text: code},
+		DefaultConfiguration: sarifConfig{Level: sarifLevel(severity)},
+		Properties:           map[string]any{"security-severity": sarifSecuritySeverity(severity)},
+	}
+	if info != nil {
+		title := info.TitleFor(provider)
+		description := info.DescriptionFor(provider)
+		rule.Name = title
+		rule.ShortDescription = sarifText{Text: title}
+		if description != "" {
+			rule.FullDescription = &sarifText{Text: description}
+		}
+		if info.Remediation != "" {
+			rule.Help = &sarifText{Text: info.Remediation}
+		}
+		rule.HelpURI = info.DocURL
+		rule.Properties["controlName"] = info.ControlName
+	}
+	return rule
+}
+
 func buildSARIF(findings []opaengine.Finding, fallbackURI, provider string) sarifLog {
 	rulesByID := map[string]sarifRule{}
 	results := make([]sarifResult, 0, len(findings))
@@ -187,30 +222,12 @@ func buildSARIF(findings []opaengine.Finding, fallbackURI, provider string) sari
 		}
 
 		if _, seen := rulesByID[f.Code]; !seen {
-			rule := sarifRule{
-				ID:                   f.Code,
-				ShortDescription:     sarifText{Text: f.Code},
-				DefaultConfiguration: sarifConfig{Level: sarifLevel(severity)},
-				Properties:           map[string]any{"security-severity": sarifSecuritySeverity(severity)},
-			}
-			if info != nil {
-				title := info.TitleFor(provider)
-				description := info.DescriptionFor(provider)
-				rule.Name = title
-				rule.ShortDescription = sarifText{Text: title}
-				if description != "" {
-					rule.FullDescription = &sarifText{Text: description}
-				}
-				if info.Remediation != "" {
-					rule.Help = &sarifText{Text: info.Remediation}
-				}
-				rule.HelpURI = info.DocURL
-			}
-			rulesByID[f.Code] = rule
+			rulesByID[f.Code] = sarifRuleFor(f.Code, severity, provider, info)
 		}
 
 		res := sarifResult{
 			RuleID:  f.Code,
+			Kind:    "fail",
 			Level:   sarifLevel(severity),
 			Message: sarifText{Text: f.Message},
 		}
@@ -238,6 +255,21 @@ func buildSARIF(findings []opaengine.Finding, fallbackURI, provider string) sari
 		}
 		results = append(results, res)
 	}
+
+	// Per-control status (passed / skipped / error) is deliberately NOT
+	// emitted into SARIF, even though the spec's `kind` field (pass /
+	// notApplicable / open) models it exactly. Verified 2026-07-31:
+	// GitHub Code Scanning — the primary consumer of this file, uploaded
+	// by default by the GitHub Action — ignores `result.kind` entirely
+	// and opens a normal alert for EVERY result (kind is absent from the
+	// supported-properties table in GitHub's SARIF support docs;
+	// github.com/orgs/community/discussions/65477 has staff
+	// acknowledgment and re-confirmations through Aug 2025). Synthetic
+	// kind:pass results would therefore flood the Security tab with one
+	// junk alert per passing control on every scan. The JSON report's
+	// per-block `status` field is the status feed; findings here carry an
+	// explicit kind:fail (the spec default, harmless to state) and
+	// nothing else.
 
 	ids := make([]string, 0, len(rulesByID))
 	for id := range rulesByID {

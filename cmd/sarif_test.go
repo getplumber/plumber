@@ -97,6 +97,19 @@ func TestBuildSARIF_ShapeAndSeverityMapping(t *testing.T) {
 			t.Errorf("rule %s missing security-severity", r.ID)
 		}
 	}
+
+	// Rules also carry controlName, and it resolves to the correct
+	// .plumber.yaml control key.
+	for _, r := range run.Tool.Driver.Rules {
+		if _, ok := r.Properties["controlName"]; !ok {
+			t.Errorf("rule %s missing controlName", r.ID)
+		}
+		if r.ID == "ISSUE-701" {
+			if got := r.Properties["controlName"]; got != "actionsMustBePinnedByCommitSha" {
+				t.Errorf("ISSUE-701 controlName = %v, want actionsMustBePinnedByCommitSha", got)
+			}
+		}
+	}
 }
 
 func TestBuildSARIF_AllCodedFindingsBecomeResults(t *testing.T) {
@@ -121,6 +134,29 @@ func TestBuildSARIF_CleanRunIsValidEmpty(t *testing.T) {
 	}
 	if _, err := json.Marshal(doc); err != nil {
 		t.Fatalf("clean SARIF does not marshal: %v", err)
+	}
+}
+
+// Finding results carry an explicit kind: fail (the spec default, stated
+// so intent is visible) and NOTHING ELSE: synthetic per-control status
+// results (kind pass / notApplicable / open) were verified 2026-07-31 to
+// flood GitHub Code Scanning with one junk alert per result -- Code
+// Scanning ignores result.kind and alerts on every result (see the
+// comment in buildSARIF). Status lives in the JSON report only.
+func TestBuildSARIF_OnlyFindingResultsAllKindFail(t *testing.T) {
+	findings := []opaengine.Finding{
+		{Code: "ISSUE-701", Severity: "high", Message: "unpinned", File: "wf.yml", Line: 3},
+		{Code: "ISSUE-203", Severity: "critical", Message: "debug trace"},
+	}
+	doc := buildSARIF(findings, ".plumber.yaml", "github")
+	run := doc.Runs[0]
+	if len(run.Results) != len(findings) {
+		t.Fatalf("results = %d, want exactly one per finding (no synthetic status results)", len(run.Results))
+	}
+	for _, r := range run.Results {
+		if r.Kind != "fail" {
+			t.Errorf("%s kind = %q, want fail (non-fail kinds create junk Code Scanning alerts)", r.RuleID, r.Kind)
+		}
 	}
 }
 
