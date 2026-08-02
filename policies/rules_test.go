@@ -1604,6 +1604,189 @@ func TestIssue101_ImageAuthorizedSources(t *testing.T) {
 	}
 }
 
+// TestIssue414_ComponentAuthorizedSources exercises
+// component_authorized_sources.rego directly against hand-built
+// ir.Include entries — the lightweight parseGitLabCI test parser used
+// by runGitLabPolicyCases does not parse `include:` (same situation
+// ISSUE-101 hit for job.image.Registry).
+func TestIssue414_ComponentAuthorizedSources(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFS(policies.FS); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+
+	cases := []struct {
+		name     string
+		inc      ir.Include
+		cfg      map[string]any
+		expected bool
+	}{
+		{
+			name: "trusted_own_project",
+			inc:  ir.Include{Kind: "component", Source: "gitlab.example.com/my-group/my-project/ci-component"},
+			cfg: map[string]any{
+				"componentAuthorizedSources": map[string]any{
+					"trustedUrls": []string{"gitlab.example.com/my-group/my-project/*"},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "untrusted_external",
+			inc:  ir.Include{Kind: "component", Source: "gitlab.example.com/attacker/evil-component"},
+			cfg: map[string]any{
+				"componentAuthorizedSources": map[string]any{
+					"trustedUrls": []string{"gitlab.example.com/my-group/my-project/*"},
+				},
+			},
+			expected: true,
+		},
+		{
+			// componentMustComeFromAuthorizedSources.trustedUrls
+			// variables are resolved via os.Getenv before the Rego
+			// input is built (control/task.go), which in a real run
+			// would already have collapsed both sides to the same
+			// literal text; this locks in the Rego-side notation
+			// fallback (${VAR} vs $VAR) for whatever survives that.
+			name: "notation_normalization",
+			inc:  ir.Include{Kind: "component", Source: "$CI_SERVER_FQDN/my-group/my-project/ci-component"},
+			cfg: map[string]any{
+				"componentAuthorizedSources": map[string]any{
+					"trustedUrls": []string{"${CI_SERVER_FQDN}/my-group/my-project/*"},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "non_component_kind_ignored",
+			inc:  ir.Include{Kind: "local", Source: "anything/untrusted"},
+			cfg: map[string]any{
+				"componentAuthorizedSources": map[string]any{
+					"trustedUrls": []string{"gitlab.example.com/my-group/my-project/*"},
+				},
+			},
+			expected: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pipeline := &ir.NormalizedPipeline{
+				Provider: ir.ProviderGitLab,
+				Includes: []ir.Include{tc.inc},
+			}
+			findings, err := engine.Evaluate(context.Background(), pipeline, tc.cfg)
+			if err != nil {
+				t.Fatalf("evaluate: %v", err)
+			}
+			found := false
+			for _, f := range findings {
+				if f.Code == "ISSUE-414" {
+					found = true
+				}
+			}
+			if found != tc.expected {
+				t.Fatalf("%s: expected violation=%v, got %v (findings=%+v)", tc.name, tc.expected, found, findings)
+			}
+		})
+	}
+}
+
+// TestIssue415_FunctionAuthorizedSources exercises
+// function_authorized_sources.rego directly against hand-built
+// ir.Function entries, mirroring TestIssue414_ComponentAuthorizedSources
+// (the lightweight test parser doesn't parse `run:` either).
+func TestIssue415_FunctionAuthorizedSources(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFS(policies.FS); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	cfg := map[string]any{
+		"functionAuthorizedSources": map[string]any{
+			"trustedUrls": []string{
+				"registry.gitlab.com/my-group/my-project/*",
+				"$CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/*",
+			},
+		},
+	}
+
+	cases := []struct {
+		name           string
+		fn             ir.Function
+		expectFinding  bool
+		expectedStatus string
+	}{
+		{
+			name:          "authorized_oci",
+			fn:            ir.Function{Name: "say_hi", Ref: "registry.gitlab.com/my-group/my-project/echo:1", Kind: "oci"},
+			expectFinding: false,
+		},
+		{
+			name:           "unauthorized_oci",
+			fn:             ir.Function{Name: "say_hi", Ref: "registry.gitlab.com/attacker/evil:1", Kind: "oci"},
+			expectFinding:  true,
+			expectedStatus: "unauthorized",
+		},
+		{
+			// Deprecated is independent of trust: even a reference
+			// that would otherwise match trustedUrls is reported as
+			// deprecated, not authorized.
+			name:           "deprecated_step_keyword",
+			fn:             ir.Function{Name: "say_hi", Ref: "registry.gitlab.com/my-group/my-project/echo:1", Kind: "oci", Deprecated: true},
+			expectFinding:  true,
+			expectedStatus: "deprecated",
+		},
+		{
+			name:           "deprecated_git_repo_format",
+			fn:             ir.Function{Name: "say_hi", Ref: "gitlab.com/funcs/my-git-repo@v1.0.0", Kind: "git", Deprecated: true},
+			expectFinding:  true,
+			expectedStatus: "deprecated",
+		},
+		{
+			name:          "local_ref_excluded",
+			fn:            ir.Function{Name: "say_hi", Ref: "./funcs/release/dry-run.yml", Kind: "local"},
+			expectFinding: false,
+		},
+		{
+			// No variable resolution happens for this control — the
+			// pattern and the ref both carry the SAME literal
+			// variable text (a common idiom for the project's own
+			// namespace); only notation ($VAR vs ${VAR}) is
+			// normalized, never resolved to a real value.
+			name:          "notation_normalization_same_literal_vars",
+			fn:            ir.Function{Name: "say_hi", Ref: "${CI_TEMPLATE_REGISTRY_HOST}/${CI_PROJECT_PATH}/echo:1", Kind: "oci"},
+			expectFinding: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pipeline := &ir.NormalizedPipeline{
+				Provider: ir.ProviderGitLab,
+				Jobs:     []ir.Job{{Name: "build", Functions: []ir.Function{tc.fn}}},
+			}
+			findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+			if err != nil {
+				t.Fatalf("evaluate: %v", err)
+			}
+			var got *opaengine.Finding
+			for i := range findings {
+				if findings[i].Code == "ISSUE-415" {
+					got = &findings[i]
+				}
+			}
+			if (got != nil) != tc.expectFinding {
+				t.Fatalf("%s: expected finding=%v, got %v (findings=%+v)", tc.name, tc.expectFinding, got != nil, findings)
+			}
+			if got != nil && tc.expectedStatus != "" {
+				if status, _ := got.Data["status"].(string); status != tc.expectedStatus {
+					t.Fatalf("%s: expected status=%q, got %q (finding=%+v)", tc.name, tc.expectedStatus, status, got)
+				}
+			}
+		})
+	}
+}
+
 // TestIssue410_SecurityJobsWeakened flags SAST-like jobs with
 // allow_failure: true or when: manual.
 func TestIssue410_SecurityJobsWeakened(t *testing.T) {

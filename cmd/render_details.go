@@ -669,6 +669,52 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 			{Label: "Authorized", Value: fmt.Sprintf("%d", authorized)},
 			{Label: "Unauthorized", Value: fmt.Sprintf("%d", unauthorized)},
 		}
+	case "componentMustComeFromAuthorizedSources":
+		total := 0
+		if result.GitLabPipeline != nil {
+			for _, inc := range result.GitLabPipeline.Includes {
+				if inc.Kind == "component" {
+					total++
+				}
+			}
+		}
+		unauthorized := findingsCount
+		authorized := total - unauthorized
+		if authorized < 0 {
+			authorized = 0
+		}
+		return []statLine{
+			{Label: "Total Components", Value: fmt.Sprintf("%d", total)},
+			{Label: "Authorized", Value: fmt.Sprintf("%d", authorized)},
+			{Label: "Unauthorized", Value: fmt.Sprintf("%d", unauthorized)},
+		}
+	case "functionMustComeFromAuthorizedSources":
+		total := 0
+		if result.GitLabPipeline != nil {
+			for _, job := range result.GitLabPipeline.Jobs {
+				total += len(job.Functions)
+			}
+		}
+		unauthorized := 0
+		deprecated := 0
+		for _, f := range findings {
+			switch f.Data["status"] {
+			case "deprecated":
+				deprecated++
+			default:
+				unauthorized++
+			}
+		}
+		authorized := total - unauthorized - deprecated
+		if authorized < 0 {
+			authorized = 0
+		}
+		return []statLine{
+			{Label: "Total Functions", Value: fmt.Sprintf("%d", total)},
+			{Label: "Authorized", Value: fmt.Sprintf("%d", authorized)},
+			{Label: "Unauthorized", Value: fmt.Sprintf("%d", unauthorized)},
+			{Label: "Deprecated", Value: fmt.Sprintf("%d", deprecated)},
+		}
 	case "pipelineMustNotIncludeHardcodedJobs":
 		total := uint(0)
 		hardcoded := uint(0)

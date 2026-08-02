@@ -54,6 +54,12 @@ var validControlSchema = map[string][]string{
 	"pipelineMustIncludeTemplate": {
 		"enabled", "required", "requiredGroups",
 	},
+	"componentMustComeFromAuthorizedSources": {
+		"enabled", "trustedUrls",
+	},
+	"functionMustComeFromAuthorizedSources": {
+		"enabled", "trustedUrls",
+	},
 	"pipelineMustNotEnableDebugTrace": {
 		"enabled", "forbiddenVariables",
 	},
@@ -280,6 +286,12 @@ type ControlsConfig struct {
 
 	// PipelineMustIncludeTemplate control configuration
 	PipelineMustIncludeTemplate *RequiredTemplatesControlConfig `yaml:"pipelineMustIncludeTemplate,omitempty"`
+
+	// ComponentMustComeFromAuthorizedSources control configuration
+	ComponentMustComeFromAuthorizedSources *ComponentAuthorizedSourcesControlConfig `yaml:"componentMustComeFromAuthorizedSources,omitempty"`
+
+	// FunctionMustComeFromAuthorizedSources control configuration
+	FunctionMustComeFromAuthorizedSources *FunctionAuthorizedSourcesControlConfig `yaml:"functionMustComeFromAuthorizedSources,omitempty"`
 
 	// PipelineMustNotEnableDebugTrace control configuration
 	PipelineMustNotEnableDebugTrace *DebugTraceControlConfig `yaml:"pipelineMustNotEnableDebugTrace,omitempty"`
@@ -599,6 +611,32 @@ type ImageAuthorizedSourcesControlConfig struct {
 	// Defaults to true. Set false to trust only the entries listed here.
 	// Ignored in legacy (no-extends) mode.
 	IncludePlumberDefaults *bool `yaml:"includePlumberDefaults,omitempty"`
+}
+
+// ComponentAuthorizedSourcesControlConfig configuration for the
+// authorized GitLab CI/CD component sources control (ISSUE-414).
+type ComponentAuthorizedSourcesControlConfig struct {
+	// Enabled controls whether this check runs
+	Enabled *bool `yaml:"enabled,omitempty"`
+
+	// TrustedUrls is a list of trusted component source URLs/patterns
+	// (supports wildcards). $CI_SERVER_FQDN / $CI_PROJECT_PATH (and
+	// ${...} form) are resolved from Plumber's OS environment at scan
+	// time before matching.
+	TrustedUrls []string `yaml:"trustedUrls,omitempty"`
+}
+
+// FunctionAuthorizedSourcesControlConfig configuration for the
+// authorized GitLab CI/CD function sources control (ISSUE-415).
+type FunctionAuthorizedSourcesControlConfig struct {
+	// Enabled controls whether this check runs
+	Enabled *bool `yaml:"enabled,omitempty"`
+
+	// TrustedUrls is a list of trusted function source URLs/patterns
+	// (supports wildcards), matched as literal text against the
+	// pipeline's func: reference (only $VAR / ${VAR} notation is
+	// normalized — no variable resolution is performed).
+	TrustedUrls []string `yaml:"trustedUrls,omitempty"`
 }
 
 // BranchProtectionControlConfig configuration for the branch protection control
@@ -1120,6 +1158,42 @@ func (c *ImageAuthorizedSourcesControlConfig) IsIncludePlumberDefaults() bool {
 		return true
 	}
 	return *c.IncludePlumberDefaults
+}
+
+// IsEnabled returns whether the control is enabled
+// Returns false if not properly configured
+func (c *ComponentAuthorizedSourcesControlConfig) IsEnabled() bool {
+	if c == nil || c.Enabled == nil {
+		return false
+	}
+	return *c.Enabled
+}
+
+// IsEnabled returns whether the control is enabled
+// Returns false if not properly configured
+func (c *FunctionAuthorizedSourcesControlConfig) IsEnabled() bool {
+	if c == nil || c.Enabled == nil {
+		return false
+	}
+	return *c.Enabled
+}
+
+// GetComponentMustComeFromAuthorizedSourcesConfig returns the control configuration
+// Returns nil if not configured
+func (c *PlumberConfig) GetComponentMustComeFromAuthorizedSourcesConfig() *ComponentAuthorizedSourcesControlConfig {
+	if c == nil {
+		return nil
+	}
+	return c.ControlsFor("gitlab").ComponentMustComeFromAuthorizedSources
+}
+
+// GetFunctionMustComeFromAuthorizedSourcesConfig returns the control configuration
+// Returns nil if not configured
+func (c *PlumberConfig) GetFunctionMustComeFromAuthorizedSourcesConfig() *FunctionAuthorizedSourcesControlConfig {
+	if c == nil {
+		return nil
+	}
+	return c.ControlsFor("gitlab").FunctionMustComeFromAuthorizedSources
 }
 
 // GetBranchMustBeProtectedConfig returns the control configuration

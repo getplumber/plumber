@@ -71,6 +71,15 @@ type AnalysisResult struct {
 	// Nil on the GitLab path.
 	GitHubPipeline *ir.NormalizedPipeline `json:"-"`
 
+	// GitLabPipeline is the normalized IR built for the Rego engine on
+	// the GitLab path, retained so the stats renderer can compute
+	// Total/Authorized/Unauthorized(/Deprecated) denominators for
+	// componentMustComeFromAuthorizedSources and
+	// functionMustComeFromAuthorizedSources directly from the pipeline
+	// (Includes/Jobs[].Functions) without a dedicated metrics
+	// collector. Nil on the GitHub path.
+	GitLabPipeline *ir.NormalizedPipeline `json:"-"`
+
 	// Warnings holds non-fatal "could not verify" messages from the run,
 	// e.g. a known-CVE check skipped because an action's pinned commit
 	// could not be resolved to a version (tag list blocked by an org IP
