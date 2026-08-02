@@ -107,7 +107,9 @@ func clearProgressLine(conf *configuration.Configuration) {
 const analysisStepCount = 18
 
 // runRegoEngine invokes the experimental Rego/OPA rule engine on the
-// GitLab collector outputs and returns the aggregated findings. The
+// GitLab collector outputs and returns the aggregated findings plus the
+// normalized pipeline they were evaluated against (retained by the
+// caller on AnalysisResult.GitLabPipeline for stats rendering). The
 // legacy Go controls always run and remain authoritative until parity
 // is reached (see phases 2+). On any failure the returned slice is nil
 // and the error is logged at Warn level so the overall analysis still
@@ -119,7 +121,7 @@ func runRegoEngine(
 	originData *gitlab.GitlabPipelineOriginData,
 	imageData *gitlab.GitlabPipelineImageData,
 	protectionData *gitlab.GitlabProtectionAnalysisData,
-) []opaengine.Finding {
+) ([]opaengine.Finding, *ir.NormalizedPipeline) {
 	pipeline := gitlab.ToNormalizedPipeline(
 		conf.ProjectPath,
 		project.DefaultBranch,
@@ -128,7 +130,7 @@ func runRegoEngine(
 		imageData,
 		protectionData,
 	)
-	return evaluatePolicies(l, conf, "gitlab", pipeline)
+	return evaluatePolicies(l, conf, "gitlab", pipeline), pipeline
 }
 
 // evaluatePolicies loads the embedded Rego policies and evaluates them
@@ -321,6 +323,31 @@ func buildEngineConfig(controls *configuration.ControlsConfig) map[string]any {
 			cfg["pipelineMustIncludeTemplate"] = map[string]any{
 				"requiredGroups": toAnyGroups(groups),
 			}
+		}
+	}
+
+	// componentAuthorizedSources: $CI_SERVER_FQDN / $CI_PROJECT_PATH
+	// (and ${...} form) in trustedUrls are resolved from Plumber's own
+	// OS environment via the same helper GitLab CI would populate them
+	// with — best-effort, correct when Plumber runs as a job inside the
+	// scanned pipeline, unresolved otherwise (see .plumber.yaml comment
+	// on this control).
+	if c := controls.ComponentMustComeFromAuthorizedSources; c != nil && len(c.TrustedUrls) > 0 {
+		resolved := make([]string, len(c.TrustedUrls))
+		for i, pattern := range c.TrustedUrls {
+			resolved[i] = gitlab.ReplaceVariableFromEnv(pattern)
+		}
+		cfg["componentAuthorizedSources"] = map[string]any{
+			"trustedUrls": resolved,
+		}
+	}
+
+	// functionAuthorizedSources: no variable resolution — GitLab never
+	// resolves run:/func: references server-side, so trustedUrls is
+	// passed through unmodified and matched as literal text in Rego.
+	if c := controls.FunctionMustComeFromAuthorizedSources; c != nil && len(c.TrustedUrls) > 0 {
+		cfg["functionAuthorizedSources"] = map[string]any{
+			"trustedUrls": c.TrustedUrls,
 		}
 	}
 
@@ -649,7 +676,7 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	// Rego/OPA rule engine evaluation — the single authoritative
 	// compliance path (the legacy Go controls were retired in
 	// docs/REFACTOR_MULTI_PROVIDER.md §8 Phase A).
-	result.Findings = runRegoEngine(l, conf, project, pipelineOriginData, pipelineImageData, protectionData)
+	result.Findings, result.GitLabPipeline = runRegoEngine(l, conf, project, pipelineOriginData, pipelineImageData, protectionData)
 	result.ProtectionData = protectionData
 
 	reportProgress(conf, analysisStepCount, analysisStepCount, "Analysis complete")

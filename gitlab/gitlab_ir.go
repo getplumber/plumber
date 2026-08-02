@@ -619,6 +619,9 @@ func enrichFromMergedConf(job *ir.Job, name string, conf *GitlabCIConf) {
 	if rules := extractGitLabRules(parsed.Rules); len(rules) > 0 {
 		job.Rules = rules
 	}
+	if fns := extractGitLabRunSteps(parsed.Run); len(fns) > 0 {
+		job.Functions = fns
+	}
 }
 
 // extractGitLabRules normalises the polymorphic `rules:` block into a
@@ -691,6 +694,73 @@ func extractGitLabServices(v any) []ir.Image {
 		}
 	}
 	return out
+}
+
+// extractGitLabRunSteps normalizes the polymorphic `run:` block (list of
+// {name, func, step, inputs, env} maps) into a flat list of ir.Function
+// entries. `func:` is the current keyword; `step:` is the deprecated
+// alias GitLab renamed away from (docs.gitlab.com/ci/functions) — using
+// it marks the function Deprecated regardless of its trust status. Ref
+// is stored exactly as parsed, with no variable substitution.
+func extractGitLabRunSteps(v any) []ir.Function {
+	list, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]ir.Function, 0, len(list))
+	for _, item := range list {
+		m, ok := item.(map[any]any)
+		if !ok {
+			continue
+		}
+		name, _ := m["name"].(string)
+		ref, _ := m["func"].(string)
+		usedDeprecatedKey := false
+		if ref == "" {
+			if step, ok := m["step"].(string); ok && step != "" {
+				ref = step
+				usedDeprecatedKey = true
+			}
+		}
+		if ref == "" {
+			continue
+		}
+		kind, deprecatedForm := classifyFunctionRef(ref)
+		out = append(out, ir.Function{
+			Name:       name,
+			Ref:        ref,
+			Kind:       kind,
+			Deprecated: usedDeprecatedKey || deprecatedForm,
+		})
+	}
+	return out
+}
+
+// classifyFunctionRef reports the reference form of a GitLab Function
+// `func:`/`step:` value. "local" refs (relative or absolute filesystem
+// paths) are same-repo and carry no supply-chain concern. "oci" refs
+// (registry/path:tag or a @sha256: digest) are the supported form.
+// Anything else containing "@" is the deprecated git-repository
+// loading form (host/path@ref, no OCI tag) — GitLab plans to remove
+// support for it in favor of OCI registry refs.
+func classifyFunctionRef(ref string) (kind string, deprecated bool) {
+	switch {
+	case strings.HasPrefix(ref, "./"), strings.HasPrefix(ref, "../"), strings.HasPrefix(ref, "/"):
+		return "local", false
+	case strings.Contains(ref, "@sha256:"):
+		return "oci", false
+	}
+	last := ref
+	if i := strings.LastIndex(ref, "/"); i >= 0 {
+		last = ref[i+1:]
+	}
+	if strings.Contains(last, ":") {
+		return "oci", false
+	}
+	if strings.Contains(ref, "@") {
+		return "git", true
+	}
+	return "oci", false
 }
 
 // extractGitLabVariables collapses the YAML-typed variables map into a

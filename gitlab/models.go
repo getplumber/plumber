@@ -233,6 +233,10 @@ type GitlabJob struct {
 	When         interface{}            `yaml:"when,omitempty"`
 	AllowFailure interface{}            `yaml:"allow_failure,omitempty"`
 	Extends      interface{}            `yaml:"extends,omitempty"`
+	// Run holds the `run:` keyword (docs.gitlab.com/ci/functions), an
+	// alternative to `script:` where each step invokes a GitLab
+	// Function via `func:` (or the deprecated `step:` alias).
+	Run interface{} `yaml:"run,omitempty"`
 }
 
 type Image struct {

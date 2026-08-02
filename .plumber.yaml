@@ -313,6 +313,58 @@ gitlab:
       # required: templates/go/go AND templates/trivy/trivy AND templates/iso27001/iso27001
       requiredGroups: []
     # ===========================================
+    # CI/CD components must come from authorized sources
+    # ===========================================
+    # Detects `include: component:` references pulled from a source not
+    # listed below. Components run arbitrary code with the job's full
+    # context (variables, secrets, CI_JOB_TOKEN) — the GitLab analogue of
+    # a GitHub Actions "pwn request".
+    #
+    # $CI_SERVER_FQDN and $CI_PROJECT_PATH (${...} form also supported)
+    # are resolved from Plumber's OS environment variables at scan time.
+    # This resolves correctly when Plumber runs as a job inside the same
+    # GitLab CI pipeline being scanned (or when you export these
+    # variables yourself before a local run). GitLab resolves
+    # include: component: locations server-side regardless of where
+    # Plumber runs, so running Plumber outside that CI context leaves
+    # this pattern unresolved and it will NOT match even your own
+    # project's components — replace the defaults below with literal
+    # values in that case, e.g. gitlab.example.com/my-group/my-project/*.
+    #
+    # Best practice: keep components scoped to your own project/group
+    componentMustComeFromAuthorizedSources:
+      # Set to false to disable this control
+      enabled: true
+      # Trusted component source URLs and patterns (supports wildcards)
+      trustedUrls:
+        - $CI_SERVER_FQDN/$CI_PROJECT_PATH/*
+        - ${CI_SERVER_FQDN}/${CI_PROJECT_PATH}/*
+    # ===========================================
+    # GitLab Functions must come from authorized sources
+    # ===========================================
+    # Detects `run:` step function references (the `func:` keyword, or
+    # the deprecated `step:` alias) pulled from a source not listed
+    # below, or using a deprecated reference form. Functions run
+    # arbitrary code with the job's full context, the same supply-chain
+    # exposure as CI/CD components.
+    #
+    # $CI_TEMPLATE_REGISTRY_HOST and $CI_PROJECT_PATH are NOT resolved to
+    # real values — GitLab does not resolve run:/func: references before
+    # Plumber sees them (unlike include: locations), so this pattern only
+    # matches function references that literally use the same
+    # $CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH variable text in their
+    # func: field (a common idiom). If your pipeline hardcodes literal
+    # registry values instead, add literal entries to trustedUrls.
+    #
+    # Best practice: keep functions scoped to your own project/group
+    functionMustComeFromAuthorizedSources:
+      # Set to false to disable this control
+      enabled: true
+      # Trusted function source URLs and patterns (supports wildcards)
+      trustedUrls:
+        - $CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/*
+        - ${CI_TEMPLATE_REGISTRY_HOST}/${CI_PROJECT_PATH}/*
+    # ===========================================
     # Pipeline must not enable debug trace
     # ===========================================
     # Detects CI/CD pipelines that set CI_DEBUG_TRACE or CI_DEBUG_SERVICES

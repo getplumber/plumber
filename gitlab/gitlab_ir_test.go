@@ -79,3 +79,51 @@ func TestToNormalizedPipeline_NilJobInMap(t *testing.T) {
 		t.Fatalf("expected valid job kept, got %q", pipeline.Jobs[0].Name)
 	}
 }
+
+func TestClassifyFunctionRef(t *testing.T) {
+	cases := []struct {
+		name           string
+		ref            string
+		expectedKind   string
+		expectedDeprec bool
+	}{
+		{"oci_registry_tag", "registry.gitlab.com/gitlab-org/ci-cd/runner-tools/example/echo:1", "oci", false},
+		{"oci_digest", "registry.gitlab.com/gitlab-org/example/echo@sha256:abcd1234", "oci", false},
+		{"oci_no_slash", "echo:1", "oci", false},
+		{"local_relative", "./path/to/my-function", "local", false},
+		{"local_relative_parent", "../shared/my-function", "local", false},
+		{"local_absolute", "/opt/gitlab-functions/my-function", "local", false},
+		{"git_deprecated", "gitlab.com/funcs/my-git-repo@v1.0.0", "git", true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			kind, deprecated := classifyFunctionRef(tc.ref)
+			if kind != tc.expectedKind || deprecated != tc.expectedDeprec {
+				t.Fatalf("classifyFunctionRef(%q) = (%q, %v), want (%q, %v)", tc.ref, kind, deprecated, tc.expectedKind, tc.expectedDeprec)
+			}
+		})
+	}
+}
+
+func TestExtractGitLabRunSteps(t *testing.T) {
+	steps := []any{
+		map[any]any{
+			"name": "say_hi",
+			"func": "registry.gitlab.com/gitlab-org/ci-cd/runner-tools/example/echo:1",
+		},
+		map[any]any{
+			"name": "legacy",
+			"step": "registry.gitlab.com/gitlab-org/example/legacy:1",
+		},
+	}
+	fns := extractGitLabRunSteps(steps)
+	if len(fns) != 2 {
+		t.Fatalf("expected 2 functions, got %d (%+v)", len(fns), fns)
+	}
+	if fns[0].Name != "say_hi" || fns[0].Kind != "oci" || fns[0].Deprecated {
+		t.Fatalf("unexpected func: entry: %+v", fns[0])
+	}
+	if fns[1].Name != "legacy" || fns[1].Ref != "registry.gitlab.com/gitlab-org/example/legacy:1" || !fns[1].Deprecated {
+		t.Fatalf("unexpected step: entry: %+v", fns[1])
+	}
+}

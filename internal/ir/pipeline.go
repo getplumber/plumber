@@ -149,6 +149,12 @@ type Job struct {
 	OriginFile string           `json:"originFile,omitempty"`
 	OriginLine int              `json:"originLine,omitempty"`
 	OriginKind string           `json:"originKind,omitempty"`
+	// Functions lists this job's `run:`-step function references
+	// (docs.gitlab.com/ci/functions, GitLab CI only). Kind classifies
+	// the reference form so policies can skip same-repo file
+	// references (no supply-chain concern) and flag deprecated forms
+	// independently of trust.
+	Functions []Function `json:"functions,omitempty"`
 	// Overridden is true when the job inherits from an upstream
 	// component or template but the project locally redefined some of
 	// its keys. Lets policies distinguish "user-authored override" from
@@ -366,6 +372,22 @@ type Include struct {
 	// upstream source across pipelines.
 	OriginHash     uint64          `json:"originHash,omitempty"`
 	OverriddenJobs []OverriddenJob `json:"overriddenJobs,omitempty"`
+}
+
+// Function references a GitLab CI/CD Function (docs.gitlab.com/ci/functions)
+// — a job's `run:` step's `func:` (or deprecated `step:`) reference. Kind
+// classifies the reference form: "oci" (registry/path:tag or @sha256:
+// digest — the supported form), "local" (relative/absolute filesystem
+// path — same-repo, no supply-chain concern), or "git" (the deprecated
+// git-repository loading form, host/path@ref with no OCI tag).
+type Function struct {
+	Name string `json:"name,omitempty"`
+	Ref  string `json:"ref"`
+	Kind string `json:"kind"`
+	// Deprecated is true when the step used the legacy `step:` key
+	// (renamed to `func:`) or Kind is "git" (deprecated git-repository
+	// loading, superseded by OCI registry refs).
+	Deprecated bool `json:"deprecated,omitempty"`
 }
 
 // OverriddenJob captures a single job whose inherited definition was

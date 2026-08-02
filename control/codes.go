@@ -140,6 +140,10 @@ const (
 	CodeDockerInDockerUsage ErrorCode = "ISSUE-412"
 	// ISSUE-413: CI/CD job uses Docker-in-Docker with insecure daemon configuration
 	CodeDockerInDockerInsecure ErrorCode = "ISSUE-413"
+	// ISSUE-414: GitLab CI/CD component comes from an unauthorized source
+	CodeComponentUnauthorizedSource ErrorCode = "ISSUE-414"
+	// ISSUE-415: GitLab CI/CD function comes from an unauthorized source, or uses a deprecated reference form
+	CodeFunctionUnauthorizedSource ErrorCode = "ISSUE-415"
 	// ISSUE-802: Job reaches a dangerous trigger (workflow_run, issue_comment,
 	// pull_request_review*, discussion*, gollum, fork) AND checks out fork
 	// content. pull_request_target is owned by ISSUE-804.
@@ -538,6 +542,24 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "If Docker-in-Docker is required, ensure TLS is enabled: do not set DOCKER_TLS_CERTDIR to an empty string, and use tcp://docker:2376 (TLS) instead of tcp://docker:2375 (plaintext). Prefer Kaniko or Buildah to avoid this pattern entirely.",
 		DocURL:      docsBaseURL + string(CodeDockerInDockerInsecure),
 		ControlName: "pipelineMustNotUseDockerInDocker",
+	},
+	CodeComponentUnauthorizedSource: {
+		Code:        CodeComponentUnauthorizedSource,
+		Severity:    SeverityHigh,
+		Title:       "Untrusted GitLab CI/CD component source",
+		Description: "A GitLab CI/CD component is included from a source that is not listed in the authorized sources. Components run arbitrary code with the job's full context (variables, secrets, CI_JOB_TOKEN), so an untrusted source increases supply chain attack risk.",
+		Remediation: "Include components only from an authorized source configured in .plumber.yaml under componentMustComeFromAuthorizedSources.trustedUrls, or add the source to the trusted list.",
+		DocURL:      docsBaseURL + string(CodeComponentUnauthorizedSource),
+		ControlName: "componentMustComeFromAuthorizedSources",
+	},
+	CodeFunctionUnauthorizedSource: {
+		Code:        CodeFunctionUnauthorizedSource,
+		Severity:    SeverityHigh,
+		Title:       "Untrusted or deprecated GitLab CI/CD function reference",
+		Description: "A GitLab CI/CD function (run:/func: step) is referenced from a source that is not listed in the authorized sources, or uses a deprecated reference form (the legacy step: keyword, or the deprecated git-repository loading format). Functions run arbitrary code with the job's full context, the same supply chain exposure as CI/CD components.",
+		Remediation: "Reference functions only from an authorized source configured in .plumber.yaml under functionMustComeFromAuthorizedSources.trustedUrls, and use the current func: keyword with an OCI registry reference instead of the deprecated step: keyword or git-repository loading format.",
+		DocURL:      docsBaseURL + string(CodeFunctionUnauthorizedSource),
+		ControlName: "functionMustComeFromAuthorizedSources",
 	},
 
 	// Access and authorization controls (5xx)
