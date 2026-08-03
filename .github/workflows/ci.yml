@@ -87,6 +87,17 @@ jobs:
           go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@5d1e709b7be35cb2025444e19de266b056b7b7ee # v2.10.1
           golangci-lint run
 
+      # Whole-program dead code check. The `unused` linter can't flag
+      # unreachable exported functions or code kept alive only by its own
+      # tests; deadcode does reachability analysis from main. The tool
+      # always exits 0, so fail on any output. Built from an immutable
+      # commit pin like golangci-lint; sum.golang.org verifies the
+      # download cryptographically.
+      - name: deadcode
+        run: |
+          out=$(go run golang.org/x/tools/cmd/deadcode@09747cdf594a7924dcecb506312be3bd6e437962 ./...) # v0.30.0
+          if [ -n "$out" ]; then echo "$out"; echo "dead code detected"; exit 1; fi
+
   govulncheck:
     name: Govulncheck
     runs-on: ubuntu-24.04

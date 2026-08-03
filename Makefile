@@ -1,4 +1,4 @@
-.PHONY: build clean test embed lint vuln
+.PHONY: build clean test embed lint deadcode vuln
 
 # Binary name
 BINARY=plumber
@@ -30,6 +30,16 @@ test: embed
 # Lint (mirrors CI configuration — requires golangci-lint v2+)
 lint: embed
 	golangci-lint run ./...
+
+# Dead code check (mirrors CI). Whole-program reachability from main:
+# catches unreachable functions the `unused` linter can't see (exported
+# identifiers, and code kept alive only by its own tests). The command
+# always exits 0, so fail on any output. The tool is built from an
+# immutable commit pin (v0.30.0) verified by sum.golang.org; bump the
+# hash and this version note together.
+deadcode: embed
+	@out=$$(go run golang.org/x/tools/cmd/deadcode@09747cdf594a7924dcecb506312be3bd6e437962 ./...); \
+	if [ -n "$$out" ]; then echo "$$out"; echo "deadcode: unreachable functions found"; exit 1; fi
 
 # Vulnerability scan. First run mirrors CI (reachability: what our code can
 # actually reach). Second run is module-level — matches OpenSSF Scorecard /
