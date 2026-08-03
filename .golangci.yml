@@ -1,0 +1,9 @@
+version: "2"
+
+# By default golangci-lint truncates output (3 identical issues per message,
+# 50 per linter, one issue per line). On this repo that hid 27 of 33 issues
+# and made the linter look like it only scanned two files. Report everything.
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
+  uniq-by-line: false
