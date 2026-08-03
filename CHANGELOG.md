@@ -1,3 +1,15 @@
+## [0.4.28](https://github.com/getplumber/plumber/compare/v0.4.27...v0.4.28) (2026-08-03)
+
+
+### 🐛 Bug Fixes
+
+* **github:** resolve default branch even when branchMustBeProtected is off ([3fed560](https://github.com/getplumber/plumber/commit/3fed560c051fc32706c5b7365874841883430dc7))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.27 refs [skip ci] ([7b8933d](https://github.com/getplumber/plumber/commit/7b8933da38fabe2dca6d2dfc5e940da2d86fdd72))
+
 ## [0.4.27](https://github.com/getplumber/plumber/compare/v0.4.26...v0.4.27) (2026-08-03)
 
 
