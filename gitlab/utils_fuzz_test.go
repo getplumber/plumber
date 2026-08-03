@@ -1,7 +1,6 @@
 package gitlab
 
 import (
-	"net/url"
 	"strings"
 	"testing"
 )
@@ -48,66 +47,5 @@ func FuzzParseGitlabComponentPath(f *testing.F) {
 			t.Fatalf("re-parsed clean path %q reintroduced separator", clean2)
 		}
 		_ = instance
-	})
-}
-
-// FuzzRemoveGitRefFromURL checks the URL ref-stripper never panics and is
-// idempotent: applying it twice yields the same result as once.
-// NOTE: the function is NOT idempotent on adversarial paths with several
-// `/blob/<x>/` segments — regexp.ReplaceAllString consumes the separators
-// between adjacent matches, so a second pass keeps eating segments. Real
-// forge URLs carry exactly one ref segment, so this never bites in
-// production (the only caller, RemoveVersionInRawLink, runs it once). The
-// fuzzer surfaced this; we assert the contract that actually holds (no
-// panic, parseable output) instead of an idempotence the function never
-// promised.
-func FuzzRemoveGitRefFromURL(f *testing.F) {
-	seeds := []string{
-		"https://gitlab.com/g/p/-/blob/main/.gitlab-ci.yml",
-		"https://github.com/o/r/blob/abc123/file.yml",
-		"https://h/raw/v1/x",
-		"not a url",
-		"://",
-		"",
-	}
-	for _, s := range seeds {
-		f.Add(s)
-	}
-
-	f.Fuzz(func(t *testing.T, raw string) {
-		out, err := RemoveGitRefFromURL(raw)
-		if err != nil {
-			// A parse error returns the input unchanged; nothing more to assert.
-			return
-		}
-		// The output round-trips through net/url; a result that no longer
-		// parses would signal corruption introduced by the ref-stripping.
-		if _, perr := url.Parse(out); perr != nil {
-			t.Fatalf("RemoveGitRefFromURL(%q)=%q is not parseable: %v", raw, out, perr)
-		}
-	})
-}
-
-// FuzzRemoveVersionInRawLink checks the wrapper never panics on arbitrary
-// input and always strips an @-version segment.
-func FuzzRemoveVersionInRawLink(f *testing.F) {
-	for _, s := range []string{
-		"https://h/raw/v1/x@2.0.0",
-		"plain@1",
-		"@",
-		"",
-		"a@b@c",
-	} {
-		f.Add(s)
-	}
-	f.Fuzz(func(t *testing.T, raw string) {
-		out := RemoveVersionInRawLink(raw)
-		// The @-version is split off before any URL handling, so the result
-		// must not contain the part after the first '@' from the original.
-		if i := strings.Index(raw, "@"); i >= 0 {
-			if strings.Contains(out, raw[i:]) && raw[i:] != "@" {
-				t.Fatalf("version segment %q leaked into %q", raw[i:], out)
-			}
-		}
 	})
 }

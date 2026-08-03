@@ -494,18 +494,3 @@ func GitHubControlCompliance(_ string, _ *GitHubAnalysisStats, findings int) flo
 	}
 	return 100
 }
-
-// ApplyFindings fills in Compliance for each catalog entry based on
-// whether any finding matches its ControlName. The rule is binary: 100
-// when the control fires no finding (or is skipped), 0 otherwise.
-func ApplyFindings(entries []ControlEntry, findingsByControl map[string]int) []ControlEntry {
-	out := make([]ControlEntry, len(entries))
-	for i, e := range entries {
-		e.Compliance = 100.0
-		if !e.Skipped && findingsByControl[e.ControlName] > 0 {
-			e.Compliance = 0.0
-		}
-		out[i] = e
-	}
-	return out
-}

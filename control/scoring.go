@@ -98,27 +98,6 @@ func SeverityCountsFromIssueCodes(codes []ErrorCode) SeverityCounts {
 	return c
 }
 
-// AggregateSeverityCounts walks analysis issues and counts occurrences per severity.
-// Kept for callers that only need totals per severity (banners, summary tables).
-func AggregateSeverityCounts(result *AnalysisResult) SeverityCounts {
-	var c SeverityCounts
-	forEachIssueCode(result, func(code ErrorCode) {
-		switch SeverityForCode(code) {
-		case SeverityCritical:
-			c.Critical++
-		case SeverityHigh:
-			c.High++
-		case SeverityMedium:
-			c.Medium++
-		case SeverityLow:
-			c.Low++
-		default:
-			c.Medium++
-		}
-	})
-	return c
-}
-
 // AggregateIssueCodeCounts walks analysis issues and counts occurrences per ErrorCode.
 // This is the input expected by ComputePlumberScore in scoring-v3 (per-code caps).
 func AggregateIssueCodeCounts(result *AnalysisResult) map[ErrorCode]int {

@@ -7,9 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
-	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	"github.com/spf13/cobra"
 )
 
@@ -126,71 +124,6 @@ func TestParseControlsFilters_SkipOnly(t *testing.T) {
 	}
 	if len(skip) != 1 || skip[0] != "pipelineMustNotEnableDebugTrace" {
 		t.Fatalf("skip: got %v", skip)
-	}
-}
-
-// ---------------------------------------------------------------------------
-// computeGitLabCompliance
-// ---------------------------------------------------------------------------
-
-func confWithDebugTrace() *configuration.Configuration {
-	enabled := true
-	pc := &configuration.PlumberConfig{
-		Version: "2.0",
-		GitLab: &configuration.ProviderConfig{
-			Controls: configuration.ControlsConfig{
-				PipelineMustNotEnableDebugTrace: &configuration.DebugTraceControlConfig{
-					Enabled: &enabled,
-				},
-			},
-		},
-	}
-	conf := configuration.NewDefaultConfiguration()
-	conf.PlumberConfig = pc
-	return conf
-}
-
-func TestComputeGitLabCompliance_CiMissing(t *testing.T) {
-	result := &control.AnalysisResult{CiMissing: true, CiValid: true}
-	compliance, count := computeGitLabCompliance(result, confWithDebugTrace())
-	if compliance != 0 || count != 0 {
-		t.Fatalf("CiMissing: want 0/0, got %v/%v", compliance, count)
-	}
-}
-
-func TestComputeGitLabCompliance_CiInvalid(t *testing.T) {
-	result := &control.AnalysisResult{CiMissing: false, CiValid: false}
-	compliance, count := computeGitLabCompliance(result, confWithDebugTrace())
-	if compliance != 0 || count != 0 {
-		t.Fatalf("CiInvalid: want 0/0, got %v/%v", compliance, count)
-	}
-}
-
-func TestComputeGitLabCompliance_NoFindings(t *testing.T) {
-	result := &control.AnalysisResult{CiValid: true, CiMissing: false}
-	compliance, count := computeGitLabCompliance(result, confWithDebugTrace())
-	if count == 0 {
-		t.Fatal("expected at least one control to be counted")
-	}
-	if compliance != 100.0 {
-		t.Fatalf("no findings → want 100%%, got %.1f%%", compliance)
-	}
-}
-
-func TestComputeGitLabCompliance_WithFinding(t *testing.T) {
-	result := &control.AnalysisResult{
-		CiValid:   true,
-		CiMissing: false,
-		Findings: []opaengine.Finding{
-			{Code: string(control.CodeDebugTraceEnabled)},
-		},
-	}
-	compliance, count := computeGitLabCompliance(result, confWithDebugTrace())
-	if count == 0 {
-		t.Fatal("expected at least one control to be counted")
-	}
-	if compliance >= 100.0 {
-		t.Fatalf("finding present → compliance should be <100, got %.1f", compliance)
 	}
 }
 

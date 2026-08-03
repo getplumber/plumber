@@ -152,7 +152,7 @@ deny contains finding if {
 	}
 }
 
-func TestLoadFromFS(t *testing.T) {
+func TestLoadFromFSFiltered_NilSkipLoadsAll(t *testing.T) {
 	fsys := fstest.MapFS{
 		"first.rego":  &fstest.MapFile{Data: []byte("package first")},
 		"second.rego": &fstest.MapFile{Data: []byte("package second")},
@@ -160,7 +160,7 @@ func TestLoadFromFS(t *testing.T) {
 	}
 
 	engine := New()
-	if err := engine.LoadFromFS(fsys); err != nil {
+	if err := engine.LoadFromFSFiltered(fsys, nil); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 

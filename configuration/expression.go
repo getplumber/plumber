@@ -123,27 +123,19 @@ func tokenize(expr string) ([]token, error) {
 // AST
 // --------------------------------------------------------------------------
 
-type exprNode interface {
-	nodeType() string
-}
+type exprNode any
 
 type identNode struct {
 	name string
 }
 
-func (n *identNode) nodeType() string { return "ident" }
-
 type andNode struct {
 	children []exprNode
 }
 
-func (n *andNode) nodeType() string { return "and" }
-
 type orNode struct {
 	children []exprNode
 }
-
-func (n *orNode) nodeType() string { return "or" }
 
 // --------------------------------------------------------------------------
 // Parser
@@ -341,55 +333,4 @@ func ParseRequiredExpression(expr string) ([][]string, error) {
 	}
 
 	return toDNF(node), nil
-}
-
-// GroupsToExpression converts DNF groups ([][]string) back to a
-// human-readable expression string. Useful for display purposes.
-//
-// Examples:
-//
-//	[["a", "b"]]              → "a AND b"
-//	[["a"], ["b"]]            → "a OR b"
-//	[["a", "b"], ["c"]]       → "(a AND b) OR c"
-//	[["a", "b"], ["c", "d"]]  → "(a AND b) OR (c AND d)"
-//	[]                        → ""
-func GroupsToExpression(groups [][]string) string {
-	if len(groups) == 0 {
-		return ""
-	}
-
-	// Filter out empty groups
-	var nonEmpty [][]string
-	for _, g := range groups {
-		if len(g) > 0 {
-			nonEmpty = append(nonEmpty, g)
-		}
-	}
-	if len(nonEmpty) == 0 {
-		return ""
-	}
-
-	var parts []string
-	for _, group := range nonEmpty {
-		if len(group) == 1 {
-			parts = append(parts, group[0])
-		} else {
-			groupExpr := strings.Join(group, " AND ")
-			// Wrap in parentheses when there are multiple OR alternatives
-			// to preserve grouping
-			if len(nonEmpty) > 1 {
-				groupExpr = "(" + groupExpr + ")"
-			}
-			parts = append(parts, groupExpr)
-		}
-	}
-
-	return strings.Join(parts, " OR ")
-}
-
-// ValidateExpression checks whether an expression string is syntactically valid.
-// Returns nil if valid, or a descriptive error if not.
-func ValidateExpression(expr string) error {
-	_, err := ParseRequiredExpression(expr)
-	return err
 }

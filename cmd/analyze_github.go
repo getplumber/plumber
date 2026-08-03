@@ -11,8 +11,6 @@ import (
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
 	githubpkg "github.com/getplumber/plumber/github"
-	"github.com/getplumber/plumber/internal/ir"
-	"github.com/getplumber/plumber/pbom"
 	plumberprovider "github.com/getplumber/plumber/provider"
 	"github.com/getplumber/plumber/utils"
 )
@@ -205,109 +203,4 @@ func detectGitHubAuthSource(apiHost string) string {
 		return "gh"
 	}
 	return ""
-}
-
-// parseAdvisoryIDs extracts the advisory ID strings from the raw []any slice
-// stored in a finding's Data map.
-func parseAdvisoryIDs(advRaw []any) []string {
-	ids := make([]string, 0, len(advRaw))
-	for _, a := range advRaw {
-		if s, ok := a.(string); ok && s != "" {
-			ids = append(ids, s)
-		}
-	}
-	return ids
-}
-
-// applyVulnerableAction records a vulnerable action and its advisory IDs.
-func applyVulnerableAction(uses string, data map[string]any, out *pbom.GitHubComplianceData) {
-	out.VulnerableActions[uses] = true
-	if advRaw, ok := data["advisories"].([]any); ok {
-		if ids := parseAdvisoryIDs(advRaw); len(ids) > 0 {
-			out.ActionAdvisories[uses] = ids
-		}
-	}
-}
-
-// applyFindingToCompliance updates the appropriate compliance map field based
-// on a single finding's code and data.
-func applyFindingToCompliance(code string, data map[string]any, out *pbom.GitHubComplianceData) {
-	switch code {
-	case string(control.CodeImageForbiddenTag):
-		if v, ok := data["link"].(string); ok && v != "" {
-			out.ForbiddenTagImages[v] = true
-		}
-	case string(control.CodeActionUnpinned):
-		if v, ok := data["uses"].(string); ok && v != "" {
-			out.UnpinnedActions[v] = true
-		}
-	case string(control.CodeActionArchivedRepo):
-		if v, ok := data["uses"].(string); ok && v != "" {
-			out.ArchivedActions[v] = true
-		}
-	case string(control.CodeKnownVulnerableAction):
-		if v, ok := data["uses"].(string); ok && v != "" {
-			applyVulnerableAction(v, data, out)
-		}
-	}
-}
-
-// collectPinnedImages walks the normalized pipeline IR and records every
-// image that is pinned by digest.
-func collectPinnedImages(result *control.AnalysisResult, out *pbom.GitHubComplianceData) {
-	if result.GitHubPipeline == nil {
-		return
-	}
-	for _, j := range result.GitHubPipeline.Jobs {
-		if j.Image != nil && j.Image.Digest != "" {
-			out.ImagesPinnedByDigest[normalizeIRImageRef(*j.Image)] = true
-		}
-		for _, s := range j.Services {
-			if s.Digest != "" {
-				out.ImagesPinnedByDigest[normalizeIRImageRef(s)] = true
-			}
-		}
-	}
-}
-
-// buildGitHubPBOMCompliance walks Findings and the IR to assemble
-// the per-image / per-action compliance lookup the PBOM generator
-// uses to enrich entries. Returns nil when there is nothing to enrich.
-func buildGitHubPBOMCompliance(result *control.AnalysisResult) *pbom.GitHubComplianceData {
-	if result == nil {
-		return nil
-	}
-	out := &pbom.GitHubComplianceData{
-		ForbiddenTagImages:   map[string]bool{},
-		ImagesPinnedByDigest: map[string]bool{},
-		UnpinnedActions:      map[string]bool{},
-		ArchivedActions:      map[string]bool{},
-		VulnerableActions:    map[string]bool{},
-		ActionAdvisories:     map[string][]string{},
-	}
-	for _, f := range result.Findings {
-		applyFindingToCompliance(f.Code, f.Data, out)
-	}
-	collectPinnedImages(result, out)
-	return out
-}
-
-// normalizeIRImageRef mirrors pbom.normalizeImageRef so the keys we
-// stamp into the compliance lookup match the ones the PBOM emits.
-// Kept private to cmd/ to avoid leaking pbom internals.
-func normalizeIRImageRef(img ir.Image) string {
-	if img.Name == "" {
-		return ""
-	}
-	ref := img.Name
-	if img.Registry != "" && !strings.HasPrefix(ref, img.Registry+"/") {
-		ref = img.Registry + "/" + ref
-	}
-	if img.Digest != "" {
-		return ref + "@" + img.Digest
-	}
-	if img.Tag != "" {
-		return ref + ":" + img.Tag
-	}
-	return ref
 }

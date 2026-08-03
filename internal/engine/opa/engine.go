@@ -141,20 +141,16 @@ func (e *Engine) LoadModule(name, source string) {
 	e.modules[name] = source
 }
 
-// LoadFromFS loads every .rego file at the root of fsys. The module's
-// logical name is the file's base name without its extension. Nested
-// subdirectories are ignored for now; the concern-based layout lands
-// with the first real policies in Phase 2.
-func (e *Engine) LoadFromFS(fsys fs.FS) error {
-	return e.LoadFromFSFiltered(fsys, nil)
-}
-
-// LoadFromFSFiltered is LoadFromFS with an optional skip predicate.
-// When skip is non-nil and returns true for a (filename, content)
-// pair, that file is excluded from the engine — it never executes,
-// never produces findings, never costs evaluation time. Used to
-// gate dev-side benched policies out of production runs without
-// touching the policy files themselves.
+// LoadFromFSFiltered loads every .rego file at the root of fsys. The
+// module's logical name is the file's base name without its extension.
+// Nested subdirectories are ignored.
+//
+// skip is an optional predicate: when it is non-nil and returns true
+// for a (filename, content) pair, that file is excluded from the
+// engine — it never executes, never produces findings, never costs
+// evaluation time. Used to gate dev-side benched policies out of
+// production runs without touching the policy files themselves. Pass
+// nil to load everything.
 func (e *Engine) LoadFromFSFiltered(fsys fs.FS, skip func(filename string, content []byte) bool) error {
 	entries, err := fs.ReadDir(fsys, ".")
 	if err != nil {

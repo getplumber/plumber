@@ -209,6 +209,58 @@ func enabledGitHubControlKeys(t *testing.T, doc []byte) map[string]bool {
 	return out
 }
 
+// starterWizardConfig reproduces the "accept every wizard default" run:
+// the initWizardState below mirrors the Default values of the survey
+// prompts in init.go, then goes through the live toPlumberConfig mapping.
+// It exists so the drift-guard tests compare wizard output against the
+// embedded default via the same code path real wizard runs take.
+func starterWizardConfig() *configuration.PlumberConfig {
+	st := &initWizardState{
+		Providers:                       []string{"gitlab", "github"},
+		Categories:                      []string{catImages, catComposition, catAccess, catVariables},
+		ForbiddenTagsEnabled:            true,
+		ForbiddenTagsCSV:                defaultForbiddenTags(),
+		PinByDigest:                     true,
+		AuthorizedEnabled:               true,
+		TrustDockerHubOfficial:          true,
+		TrustedURLsText:                 strings.Join(defaultTrustedURLs(), "\n"),
+		AuthorizedActionsUsePlumberList: true,
+		CompositionChoices: []string{
+			compHardcoded, compUpToDate, compForbidden, compRefCollision, compSecurity, compScripts, compJobVars, compDinD,
+			compActionPin, compAuthorizedActions, compDangerousTriggers, compPRTargetHead, compDeclarePermissions, compReusableSecrets, compOverprovSecrets, compTemplateInjection,
+			compEnvInjection, compWriteAllPerms, compRefConfusion, compArchivedActions, compKnownCVEs, compImpostorCommit, compMutableRemoteExec, compCachePoisoning, compDebugTraceGitHub,
+		},
+		ActionPinTrustedOwnersMultiline:        strings.Join(defaultGitHubTrustedActionOwners(), "\n"),
+		SecurityJobPatternsGitHubMultiline:     strings.Join(defaultGitHubSecurityJobPatterns(), "\n"),
+		ForbiddenVersionsMultiline:             strings.Join(defaultForbiddenVersions(), "\n"),
+		DefaultBranchIsForbiddenVersion:        false,
+		SecurityJobPatternsMultiline:           strings.Join(defaultSecurityJobPatterns(), "\n"),
+		SecuritySubAllowFailure:                false,
+		SecuritySubAllowFailureGitHub:          true,
+		SecuritySubRules:                       true,
+		SecuritySubRulesGitHub:                 true,
+		SecuritySubWhenNotManual:               true,
+		SecuritySubWhenNotManualGitHub:         true,
+		DebugForbiddenVariablesGitHubMultiline: strings.Join(defaultGitHubDebugTraceVariables(), "\n"),
+		JobOverrideVariablesMultiline:          strings.Join(defaultJobOverrideVariables(), "\n"),
+		DinDDetectInsecureDaemon:               true,
+		BranchEnabled:                          true,
+		BranchPatterns:                         defaultBranchPatterns(),
+		BranchDefaultMustBeProtected:           true,
+		BranchAllowForcePush:                   false,
+		BranchCodeOwnerApprovalRequired:        false,
+		BranchCodeOwnerApprovalRequiredGitHub:  false,
+		BranchMinMergeAccessLevel:              "30",
+		BranchMinPushAccessLevel:               "40",
+		DebugTraceEnabled:                      true,
+		DebugForbiddenVariablesMultiline:       "CI_DEBUG_TRACE\nCI_DEBUG_SERVICES",
+		UnsafeExpansionEnabled:                 true,
+		DangerousVariablesMultiline:            strings.Join(defaultDangerousVariables(), "\n"),
+		AllowedPatternsMultiline:               "",
+	}
+	return st.toPlumberConfig()
+}
+
 // Every GitHub control enabled in the embedded default must also be emitted
 // (and enabled) when the wizard defaults are accepted. This is the durable
 // regression guard against `config init` drifting behind the shipped control
@@ -219,7 +271,7 @@ func TestStarterGitHubControlsMatchEmbeddedDefault(t *testing.T) {
 	if len(wantKeys) == 0 {
 		t.Fatal("embedded default exposed no enabled github controls; test wiring is wrong")
 	}
-	starterBytes, err := yaml.Marshal(starterPlumberConfig())
+	starterBytes, err := yaml.Marshal(starterWizardConfig())
 	if err != nil {
 		t.Fatalf("marshal starter: %v", err)
 	}
@@ -232,9 +284,9 @@ func TestStarterGitHubControlsMatchEmbeddedDefault(t *testing.T) {
 }
 
 func TestStarterPlumberConfigValidate(t *testing.T) {
-	cfg := starterPlumberConfig()
+	cfg := starterWizardConfig()
 	if err := cfg.Validate(); err != nil {
-		t.Fatalf("starterPlumberConfig: %v", err)
+		t.Fatalf("starterWizardConfig: %v", err)
 	}
 	if cfg.GitLab == nil {
 		t.Fatal("starter config should populate the gitlab section")
@@ -481,7 +533,7 @@ func TestInitWizardStateBothProviders(t *testing.T) {
 // shipped value. This is the regression guard against config init drifting
 // behind the embedded default again.
 func TestStarterPlumberConfigGitHubMatchesCuratedDefaults(t *testing.T) {
-	gh := starterPlumberConfig().GitHub.Controls
+	gh := starterWizardConfig().GitHub.Controls
 
 	if gh.WorkflowMustNotGrantPermissionsWriteAll == nil || !*gh.WorkflowMustNotGrantPermissionsWriteAll.Enabled {
 		t.Error("write-all permissions control should be present and enabled")
@@ -554,7 +606,7 @@ func TestInitWizardEnablesImpostorCommit(t *testing.T) {
 // The two toggles whose curated default differs per provider must keep
 // the GitLab side at its (looser) shipped value when defaults are accepted.
 func TestStarterPlumberConfigGitLabMatchesCuratedDefaults(t *testing.T) {
-	gl := starterPlumberConfig().GitLab.Controls
+	gl := starterWizardConfig().GitLab.Controls
 
 	// allow_failure stays off on GitLab: stock GitLab security templates ship
 	// allow_failure: true, so flagging it would false-positive on every

@@ -11,7 +11,7 @@ import (
 func TestScanGitHubWorkflows_Missing(t *testing.T) {
 	tmp := t.TempDir()
 
-	pipeline, partial, err := ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
+	pipeline, partial, err := ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -66,7 +66,7 @@ jobs:
 		}
 	}
 
-	pipeline, partial, err := ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
+	pipeline, partial, err := ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -134,7 +134,7 @@ jobs:
 		}
 	}
 
-	pipeline, partial, err := ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
+	pipeline, partial, err := ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
 	if err != nil || len(partial) != 0 {
 		t.Fatalf("unexpected: err=%v partial=%v", err, partial)
 	}
@@ -193,7 +193,7 @@ jobs:
 		t.Fatal(err)
 	}
 
-	pipeline, partial, err := ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
+	pipeline, partial, err := ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
 	if err != nil || len(partial) != 0 {
 		t.Fatalf("unexpected: err=%v partial=%v", err, partial)
 	}
@@ -250,7 +250,7 @@ jobs:
 		t.Fatal(err)
 	}
 
-	pipeline, partial, err := ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
+	pipeline, partial, err := ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
 	if err != nil || len(partial) != 0 {
 		t.Fatalf("unexpected: err=%v partial=%v", err, partial)
 	}
@@ -311,7 +311,7 @@ jobs:
 		t.Fatal(err)
 	}
 
-	pipeline, partial, err := ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
+	pipeline, partial, err := ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -379,7 +379,7 @@ jobs:
 		t.Fatal(err)
 	}
 
-	pipeline, partial, err := ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
+	pipeline, partial, err := ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
 	if err != nil || len(partial) != 0 {
 		t.Fatalf("unexpected: err=%v partial=%v", err, partial)
 	}
@@ -420,11 +420,36 @@ func TestScanGitHubWorkflows_ParseErrorReportedAsPartial(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, partial, err := ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
+	_, partial, err := ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
 	if err != nil {
 		t.Fatalf("expected no fatal error, got %v", err)
 	}
 	if len(partial) != 1 {
 		t.Fatalf("expected 1 partial error, got %d: %v", len(partial), partial)
+	}
+}
+
+// TestSplitImageRef_FoldsHubAliases pins the Docker Hub registry-host
+// alias fold in the container-image parser used by the workflow
+// collector (parseGitHubContainer -> splitImageRef): aliases like
+// registry.hub.docker.com and index.docker.io are canonicalized to
+// docker.io so trustedUrls patterns match regardless of Hub hostname.
+func TestSplitImageRef_FoldsHubAliases(t *testing.T) {
+	cases := []struct {
+		ref      string
+		wantName string
+		wantTag  string
+	}{
+		{"registry.hub.docker.com/library/node:alpine", "docker.io/library/node", "alpine"},
+		{"index.docker.io/python:3.12", "docker.io/python", "3.12"},
+		{"ghcr.io/astral-sh/uv:latest", "ghcr.io/astral-sh/uv", "latest"},
+		{"alpine:3.20", "alpine", "3.20"},
+	}
+	for _, tc := range cases {
+		got := splitImageRef(tc.ref)
+		if got.Name != tc.wantName || got.Tag != tc.wantTag {
+			t.Errorf("splitImageRef(%q) = {name:%q tag:%q}, want {name:%q tag:%q}",
+				tc.ref, got.Name, got.Tag, tc.wantName, tc.wantTag)
+		}
 	}
 }

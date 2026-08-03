@@ -1,11 +1,9 @@
 package gitlab
 
 import (
-	"context"
 	"fmt"
 
 	"github.com/getplumber/plumber/configuration"
-	"github.com/machinebox/graphql"
 	"github.com/sirupsen/logrus"
 	gitlab "gitlab.com/gitlab-org/api/client-go"
 )
@@ -117,105 +115,6 @@ func fetchLatestCommitSha(glab *gitlab.Client, projectPath string, branch string
 	return "HEAD", nil
 }
 
-// FetchProjectByID fetches project information using its GitLab ID
-func FetchProjectByID(projectID int, token string, instanceURL string, conf *configuration.Configuration) (*Project, error) {
-	l := logger.WithFields(logrus.Fields{
-		"action":      "FetchProjectByID",
-		"projectID":   projectID,
-		"instanceURL": instanceURL,
-	})
-
-	// Get project by ID using REST API
-	glab, err := GetNewGitlabClient(token, instanceURL, conf)
-	if err != nil {
-		l.WithError(err).Error("Unable to get a GitLab client")
-		return nil, err
-	}
-
-	gitlabProject, resp, err := glab.Projects.GetProject(projectID, &gitlab.GetProjectOptions{
-		License:              new(bool),
-		Statistics:           new(bool),
-		WithCustomAttributes: new(bool),
-	})
-
-	if err != nil {
-		if resp != nil && resp.StatusCode == 404 {
-			l.Info("Project not found on GitLab")
-			return nil, fmt.Errorf("project not found: %d", projectID)
-		}
-		l.WithError(err).Error("Unable to fetch project from GitLab API")
-		return nil, err
-	}
-
-	// Now call FetchProjectDetails with the path to get full details
-	return FetchProjectDetails(gitlabProject.PathWithNamespace, token, instanceURL, conf)
-}
-
-// EnhanceProjectWithGraphQL adds additional data from GraphQL API
-// This can get information not available via REST
-func EnhanceProjectWithGraphQL(project *Project, token string, instanceURL string, conf *configuration.Configuration) error {
-	l := logger.WithFields(logrus.Fields{
-		"action":      "EnhanceProjectWithGraphQL",
-		"projectPath": project.Path,
-		"instanceURL": instanceURL,
-	})
-
-	query := `
-		query getProject($fullPath: ID!) {
-			project(fullPath: $fullPath) {
-				id
-				name
-				fullPath
-				archived
-				visibility
-				repository {
-					rootRef
-				}
-				ciConfigPathOrDefault
-				group {
-					fullPath
-				}
-			}
-		}
-	`
-
-	type graphqlResponse struct {
-		Project struct {
-			ID                    string `json:"id"`
-			Name                  string `json:"name"`
-			FullPath              string `json:"fullPath"`
-			Archived              bool   `json:"archived"`
-			Visibility            string `json:"visibility"`
-			CiConfigPathOrDefault string `json:"ciConfigPathOrDefault"`
-			Repository            struct {
-				RootRef string `json:"rootRef"`
-			} `json:"repository"`
-			Group *struct {
-				FullPath string `json:"fullPath"`
-			} `json:"group"`
-		} `json:"project"`
-	}
-
-	client := GetGraphQLClient(instanceURL, conf)
-	req := graphql.NewRequest(query)
-	req.Var("fullPath", project.Path)
-	req.Header.Add("Authorization", "Bearer "+token)
-
-	var resp graphqlResponse
-	if err := client.Run(context.Background(), req, &resp); err != nil {
-		l.WithError(err).Warn("GraphQL query failed")
-		return err
-	}
-
-	// Update with GraphQL data if available
-	if resp.Project.CiConfigPathOrDefault != "" {
-		project.CiConfPath = resp.Project.CiConfigPathOrDefault
-	}
-
-	l.Info("Project info enhanced with GraphQL data")
-	return nil
-}
-
 // FetchLatestCommitSha gets the latest commit SHA for a given branch.
 // Exported wrapper around fetchLatestCommitSha for use outside the gitlab package.
 func FetchLatestCommitSha(token, instanceURL, projectPath, branch string, conf *configuration.Configuration) (string, error) {
@@ -246,20 +145,4 @@ func (p *Project) ToProjectInfo() *ProjectInfo {
 		NotFound:            false, // If we have a Project struct, it was found
 		IsGroup:             p.GroupIdOnPlatform > 0,
 	}
-}
-
-// GetCIPredefinedVariables returns CI predefined variables based on project info
-// These would normally be available in GitLab CI jobs
-func (p *Project) GetCIPredefinedVariables() map[string]string {
-	vars := make(map[string]string)
-
-	vars["CI_PROJECT_ID"] = fmt.Sprintf("%d", p.IdOnPlatform)
-	vars["CI_PROJECT_NAME"] = p.Name
-	vars["CI_PROJECT_PATH"] = p.Path
-	vars["CI_PROJECT_PATH_SLUG"] = p.Path // Could be slugified
-	vars["CI_COMMIT_REF_NAME"] = p.DefaultBranch
-	vars["CI_COMMIT_SHA"] = p.LatestHeadCommitSha
-	vars["CI_PROJECT_VISIBILITY"] = p.Visibility
-
-	return vars
 }
