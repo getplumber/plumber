@@ -29,7 +29,7 @@ func TestCachePoisoningConfigContract(t *testing.T) {
 	}
 
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load policies: %v", err)
 	}
 	countISSUE705 := func(t *testing.T, p *ir.NormalizedPipeline) int {

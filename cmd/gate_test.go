@@ -351,6 +351,25 @@ func mustSetFlag(t *testing.T, cmd *cobra.Command, name, value string) {
 // buildComplianceSummary — per-provider gate wiring from AnalysisResult
 // ---------------------------------------------------------------------------
 
+// confWithDebugTrace returns a Configuration whose PlumberConfig enables a
+// single GitLab control, so compliance runs count at least one control.
+func confWithDebugTrace() *configuration.Configuration {
+	enabled := true
+	pc := &configuration.PlumberConfig{
+		Version: "2.0",
+		GitLab: &configuration.ProviderConfig{
+			Controls: configuration.ControlsConfig{
+				PipelineMustNotEnableDebugTrace: &configuration.DebugTraceControlConfig{
+					Enabled: &enabled,
+				},
+			},
+		},
+	}
+	conf := configuration.NewDefaultConfiguration()
+	conf.PlumberConfig = pc
+	return conf
+}
+
 func TestBuildComplianceSummary_CiWiring(t *testing.T) {
 	newGateFlagsCmd(t) // reset gate globals: default points gate (min-points 100)
 	gl := &provider.GitLabProvider{}

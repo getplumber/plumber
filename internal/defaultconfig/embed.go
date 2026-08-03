@@ -22,8 +22,3 @@ var Config []byte
 func Get() []byte {
 	return Config
 }
-
-// GetString returns the embedded default configuration as a string.
-func GetString() string {
-	return string(Get())
-}

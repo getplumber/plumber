@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"regexp"
 	"strings"
-	"time"
 
 	"github.com/getplumber/plumber/configuration"
 	"github.com/machinebox/graphql"
@@ -86,24 +85,6 @@ func GetGraphQLClient(url string, conf *configuration.Configuration) *graphql.Cl
 	}
 
 	return client
-}
-
-// GetHTTPClient creates a simple HTTP client with retry logic
-func GetHTTPClient(conf *configuration.Configuration) *http.Client {
-	// Use the host-injected client when present (rule J).
-	if conf != nil && conf.HTTPClient != nil {
-		return conf.HTTPClient
-	}
-
-	timeout := 30 * time.Second
-	if conf != nil && conf.HTTPClientTimeout > 0 {
-		timeout = conf.HTTPClientTimeout
-	}
-
-	return &http.Client{
-		Transport: WrapTransportWithRetry(http.DefaultTransport, conf),
-		Timeout:   timeout,
-	}
 }
 
 // maskSensitiveData masks sensitive information in log strings

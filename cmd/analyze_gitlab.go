@@ -485,41 +485,6 @@ func buildGitLabConf(
 	return conf
 }
 
-// computeGitLabCompliance returns the overall compliance percentage and the
-// number of non-skipped controls that were evaluated.
-//
-// When the CI config is missing or invalid no findings were produced because
-// nothing could be analysed — not because the project is compliant. Those
-// cases short-circuit to 0 so an absent or broken .gitlab-ci.yml never scores
-// 100% and cannot be used to bypass the gate.
-func computeGitLabCompliance(result *control.AnalysisResult, conf *configuration.Configuration) (compliance float64, controlCount int) {
-	if result.CiMissing || !result.CiValid {
-		return 0.0, 0
-	}
-	findingCountsByControl := map[string]int{}
-	for _, f := range result.Findings {
-		if info := control.LookupCode(control.ErrorCode(f.Code)); info != nil {
-			findingCountsByControl[info.ControlName]++
-		}
-	}
-	passed := 0
-	entries := control.GitLabControls(conf.PlumberConfig)
-	control.MarkSkippedByFilter(entries, conf.ControlsFilter, conf.SkipControlsFilter)
-	for _, e := range entries {
-		if e.Skipped {
-			continue
-		}
-		controlCount++
-		if findingCountsByControl[e.ControlName] == 0 {
-			passed++
-		}
-	}
-	if controlCount > 0 {
-		compliance = float64(passed) * 100.0 / float64(controlCount)
-	}
-	return compliance, controlCount
-}
-
 // envKeys maps each analyze flag to the environment variable that overrides it
 // when the flag is not set explicitly on the command line (flags always win).
 var envKeys = map[string]string{

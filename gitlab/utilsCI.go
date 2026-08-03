@@ -593,40 +593,6 @@ func ReplaceVariable(input string, project, group, instance, job, defaultJob, pr
 	return current
 }
 
-// ReplaceVariableFromEnv replaces variables in the input string using environment variables
-// This is used when running in CI mode where all variables are available in the environment
-func ReplaceVariableFromEnv(input string) string {
-	regex := `(\$[a-zA-Z_][a-zA-Z0-9_]*|\${[a-zA-Z_][a-zA-Z0-9_]*}|%[a-zA-Z_][a-zA-Z0-9_]*%)`
-	r := regexp.MustCompile(regex)
-
-	resolveFromEnv := func(input string) string {
-		return r.ReplaceAllStringFunc(input, func(match string) string {
-			varName := regexp.MustCompile(`[\$\{\}%]`).ReplaceAllString(match, "")
-
-			if val := os.Getenv(varName); val != "" {
-				return val
-			}
-
-			// Variable not found in environment, keep it as-is
-			return match
-		})
-	}
-
-	// Resolve recursively up to 5 levels (for nested variables)
-	maxLevels := 5
-	previous := ""
-	current := input
-	level := 0
-
-	for current != previous && level < maxLevels {
-		previous = current
-		current = resolveFromEnv(previous)
-		level++
-	}
-
-	return current
-}
-
 // GetImageName gets the image name from an interface parsed from gitlab ci file
 func GetImageName(imageInterface interface{}) (string, error) {
 	l := logrus.WithFields(logrus.Fields{
@@ -765,52 +731,6 @@ func GetExtends(extendsInterface interface{}) ([]string, error) {
 		}).Error("Found an extends with unknown type")
 		return []string{}, nil
 	}
-}
-
-// GetScriptLines extracts script lines from a script field (string or []interface{}).
-// Returns nil for nil input. Multi-line strings are split on newline boundaries.
-func GetScriptLines(scriptInterface interface{}) []string {
-	if scriptInterface == nil {
-		return nil
-	}
-
-	switch script := scriptInterface.(type) {
-	case string:
-		if script == "" {
-			return nil
-		}
-		return strings.Split(script, "\n")
-
-	case []interface{}:
-		var lines []string
-		for _, v := range script {
-			str, ok := v.(string)
-			if !ok {
-				continue
-			}
-			lines = append(lines, str)
-		}
-		return lines
-
-	default:
-		return nil
-	}
-}
-
-// ParseGitlabCI parses a .gitlab-ci.yml file
-func ParseGitlabCI(fileContent []byte) (*GitlabCIConf, error) {
-	l := logrus.WithFields(logrus.Fields{
-		"action": "ParseGitlabCI",
-	})
-
-	gitlabCi := GitlabCIConf{}
-
-	if err := yaml.Unmarshal(fileContent, &gitlabCi); err != nil {
-		return &gitlabCi, err
-	}
-
-	l.Info("Gitlab CI file parsed")
-	return &gitlabCi, nil
 }
 
 // FetchGitlabInclude retrieves all jobs from a CI conf include

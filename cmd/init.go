@@ -1309,53 +1309,6 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 	return cfg
 }
 
-func starterPlumberConfig() *configuration.PlumberConfig {
-	st := &initWizardState{
-		Providers:                       []string{"gitlab", "github"},
-		Categories:                      []string{catImages, catComposition, catAccess, catVariables},
-		ForbiddenTagsEnabled:            true,
-		ForbiddenTagsCSV:                defaultForbiddenTags(),
-		PinByDigest:                     true,
-		AuthorizedEnabled:               true,
-		TrustDockerHubOfficial:          true,
-		TrustedURLsText:                 strings.Join(defaultTrustedURLs(), "\n"),
-		AuthorizedActionsUsePlumberList: true,
-		CompositionChoices: []string{
-			compHardcoded, compUpToDate, compForbidden, compRefCollision, compSecurity, compScripts, compJobVars, compDinD,
-			compActionPin, compAuthorizedActions, compDangerousTriggers, compPRTargetHead, compDeclarePermissions, compReusableSecrets, compOverprovSecrets, compTemplateInjection,
-			compEnvInjection, compWriteAllPerms, compRefConfusion, compArchivedActions, compKnownCVEs, compImpostorCommit, compMutableRemoteExec, compCachePoisoning, compDebugTraceGitHub,
-		},
-		ActionPinTrustedOwnersMultiline:        strings.Join(defaultGitHubTrustedActionOwners(), "\n"),
-		SecurityJobPatternsGitHubMultiline:     strings.Join(defaultGitHubSecurityJobPatterns(), "\n"),
-		ForbiddenVersionsMultiline:             strings.Join(defaultForbiddenVersions(), "\n"),
-		DefaultBranchIsForbiddenVersion:        false,
-		SecurityJobPatternsMultiline:           strings.Join(defaultSecurityJobPatterns(), "\n"),
-		SecuritySubAllowFailure:                false,
-		SecuritySubAllowFailureGitHub:          true,
-		SecuritySubRules:                       true,
-		SecuritySubRulesGitHub:                 true,
-		SecuritySubWhenNotManual:               true,
-		SecuritySubWhenNotManualGitHub:         true,
-		DebugForbiddenVariablesGitHubMultiline: strings.Join(defaultGitHubDebugTraceVariables(), "\n"),
-		JobOverrideVariablesMultiline:          strings.Join(defaultJobOverrideVariables(), "\n"),
-		DinDDetectInsecureDaemon:               true,
-		BranchEnabled:                          true,
-		BranchPatterns:                         defaultBranchPatterns(),
-		BranchDefaultMustBeProtected:           true,
-		BranchAllowForcePush:                   false,
-		BranchCodeOwnerApprovalRequired:        false,
-		BranchCodeOwnerApprovalRequiredGitHub:  false,
-		BranchMinMergeAccessLevel:              "30",
-		BranchMinPushAccessLevel:               "40",
-		DebugTraceEnabled:                      true,
-		DebugForbiddenVariablesMultiline:       "CI_DEBUG_TRACE\nCI_DEBUG_SERVICES",
-		UnsafeExpansionEnabled:                 true,
-		DangerousVariablesMultiline:            strings.Join(defaultDangerousVariables(), "\n"),
-		AllowedPatternsMultiline:               "",
-	}
-	return st.toPlumberConfig()
-}
-
 // writeInitConfig writes validated YAML with a provenance header. If promptIfExists is true
 // and the path exists without --force, an interactive overwrite prompt may be shown.
 // checkInitOverwrite returns an error when the target file exists and the user

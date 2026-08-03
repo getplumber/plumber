@@ -111,14 +111,6 @@ var removedControls = map[string]string{
 	"pipelineMustNotLeakSecretsInConfig": "secret detection is no longer part of Plumber; remove this block from .plumber.yaml",
 }
 
-// IsRemovedControl reports whether the named control existed in an
-// earlier release and has been removed, with the user-facing
-// explanation as the second return.
-func IsRemovedControl(controlName string) (string, bool) {
-	msg, ok := removedControls[controlName]
-	return msg, ok
-}
-
 // benchedControls is the dev-side gate for controls that are NOT yet
 // production-ready, keyed by provider. Findings for any (provider,
 // control) pair listed here are dropped before reaching scoring,
@@ -241,12 +233,6 @@ func IsBenched(provider, controlName string) bool {
 	return false
 }
 
-// ControlMetaFor returns the registered metadata for a control name,
-// or the zero value (empty Providers slice) if the name is unknown.
-func ControlMetaFor(controlName string) ControlMeta {
-	return controlsMeta[controlName]
-}
-
 // IsControlApplicableTo reports whether the named control applies to
 // the given provider. Returns false for unknown control names.
 func IsControlApplicableTo(controlName, provider string) bool {
@@ -260,14 +246,4 @@ func IsControlApplicableTo(controlName, provider string) bool {
 		}
 	}
 	return false
-}
-
-// AllRegisteredControlNames returns every name in the registry. Used
-// by tests and by the configuration validator's misplacement check.
-func AllRegisteredControlNames() []string {
-	out := make([]string, 0, len(controlsMeta))
-	for n := range controlsMeta {
-		out = append(out, n)
-	}
-	return out
 }

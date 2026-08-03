@@ -93,7 +93,7 @@ func collectWorkflowJobs(rootDir string) (jobs []ir.Job, partialErrors []error, 
 	return jobs, partialErrors, nil
 }
 
-// ScanGitHubWorkflows reads every .yml/.yaml file under
+// ScanGitHubWorkflowsWithProgress reads every .yml/.yaml file under
 // <rootDir>/.github/workflows/ and aggregates them into a single
 // NormalizedPipeline. Job names are namespaced by the workflow file base
 // name ("ci/lint", "release/build", ...) so two workflows can expose
@@ -103,46 +103,9 @@ func collectWorkflowJobs(rootDir string) (jobs []ir.Job, partialErrors []error, 
 // simply carries no jobs. Individual unreadable or unparseable files are
 // returned in partialErrors so the caller can surface them without
 // aborting the whole scan.
-func ScanGitHubWorkflows(projectPath, defaultBranch, rootDir, apiHost string, enrichActionMetadata bool) (pipeline *ir.NormalizedPipeline, partialErrors []error, err error) {
-	pipeline = &ir.NormalizedPipeline{
-		Provider:      ir.ProviderGitHub,
-		ProjectPath:   projectPath,
-		DefaultBranch: defaultBranch,
-	}
-	// Producer-side check: if the scanned repo is itself an action whose
-	// own source fetches mutable remote code, flag it. Read from the
-	// local checkout; computed even when the repo has no workflows.
-	pipeline.SelfActionMutableExec = ScanLocalSelfAction(rootDir)
-
-	jobs, partialErrors, err := collectWorkflowJobs(rootDir)
-	if err != nil {
-		return nil, nil, err
-	}
-	pipeline.Jobs = jobs
-
-	if dcfg, derr := scanDependabotConfig(rootDir); derr != nil {
-		partialErrors = append(partialErrors, derr)
-	} else if dcfg != nil {
-		pipeline.Dependabot = dcfg
-	}
-	pipeline.RenovateConfigPath = scanRenovateConfig(rootDir)
-	pipeline.SecurityPolicyPath = scanSecurityPolicy(rootDir)
-	pipeline.Dockerfiles = scanDockerfiles(rootDir)
-	// Enrich actions with GitHub API metadata (archived repo, ref
-	// kind, tag SHA). Best-effort: if gh is not authenticated, the
-	// client operates in degraded mode and leaves metadata empty.
-	if enrichActionMetadata {
-		// Plain variant is the test-only entry point; the mutable-exec
-		// source scan (network) is off here, exercised via its own unit
-		// tests and the progress/remote variants used in production.
-		enrichActionsWithAPIMetadata(pipeline, apiHost, false, nil)
-	}
-	return pipeline, partialErrors, nil
-}
-
-// ScanGitHubWorkflowsWithProgress mirrors ScanGitHubWorkflows but
-// notifies the caller through progressFn as it works. The progress
-// total is sized so the bar advances monotonically end-to-end:
+//
+// The caller is notified through progressFn as the scan works. The
+// progress total is sized so the bar advances monotonically end-to-end:
 //
 //	step 1                 Scanning workflow files
 //	step 2..(1+N)          Resolving action <n>      (N unique refs)
@@ -151,7 +114,7 @@ func ScanGitHubWorkflows(projectPath, defaultBranch, rootDir, apiHost string, en
 // The last step (policy evaluation) is reported by the caller
 // (RunGitHubAnalysis) using the same total so the bar keeps
 // climbing. progressFn may be nil; callers that don't care about
-// progress should call the plain ScanGitHubWorkflows variant.
+// progress simply pass nil.
 func ScanGitHubWorkflowsWithProgress(projectPath, defaultBranch, rootDir, apiHost string, enrichActionMetadata, scanMutableExec bool, progressFn ProgressFunc) (pipeline *ir.NormalizedPipeline, partialErrors []error, err error) {
 	pipeline = &ir.NormalizedPipeline{
 		Provider:      ir.ProviderGitHub,
@@ -924,12 +887,8 @@ func parseGitHubContainer(v any) (ir.Image, bool) {
 	return ir.Image{}, false
 }
 
-// SplitImageRef parses a GitHub Actions image reference into an ir.Image,
+// splitImageRef parses a GitHub Actions image reference into an ir.Image,
 // folding Docker Hub registry-host aliases to docker.io.
-func SplitImageRef(ref string) ir.Image {
-	return splitImageRef(ref)
-}
-
 func splitImageRef(ref string) ir.Image {
 	// Fold Docker Hub registry-host aliases (registry.hub.docker.com,
 	// index.docker.io, registry-1.docker.io) to docker.io so trustedUrls

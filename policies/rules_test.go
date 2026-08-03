@@ -295,7 +295,7 @@ func TestIssue102_ImageMutableTag(t *testing.T) {
 	}
 
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 
@@ -334,7 +334,7 @@ func TestIssue102_ImageMutableTag(t *testing.T) {
 
 // TestIssue509_ExcessivePermissions drives the excessive_permissions
 // policy against real GitHub workflow fixtures. It uses the real
-// production collector (ScanGitHubWorkflows) rather than the test-time
+// production collector (ScanGitHubWorkflowsWithProgress) rather than the test-time
 // parser to exercise the permissions propagation end-to-end.
 func TestIssue509_ExcessivePermissions(t *testing.T) {
 	cases := []struct {
@@ -356,14 +356,14 @@ func TestIssue509_ExcessivePermissions(t *testing.T) {
 	}
 
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 
 	for _, tc := range cases {
 		t.Run(tc.fixture, func(t *testing.T) {
 			// Stage the fixture under a fake .github/workflows/ dir so
-			// ScanGitHubWorkflows can discover it unmodified.
+			// ScanGitHubWorkflowsWithProgress can discover it unmodified.
 			tmp := t.TempDir()
 			wfDir := filepath.Join(tmp, ".github", "workflows")
 			if err := os.MkdirAll(wfDir, 0o755); err != nil {
@@ -378,7 +378,7 @@ func TestIssue509_ExcessivePermissions(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			pipeline, _, err := githubpkg.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
+			pipeline, _, err := githubpkg.ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
@@ -410,7 +410,7 @@ func TestIssue509_ExcessivePermissions(t *testing.T) {
 // trigger AND a checkout of fork-controlled code — so the violation
 // fixtures pin the checkout ref to the PR / workflow_run head, and the
 // clean fixtures cover a metadata-only job and a fork-guarded job. The
-// test exercises the real production collector (ScanGitHubWorkflows).
+// test exercises the real production collector (ScanGitHubWorkflowsWithProgress).
 func TestIssue414_DangerousTriggers(t *testing.T) {
 	cases := []struct {
 		fixture      string
@@ -481,7 +481,7 @@ func TestIssue414_DangerousTriggers(t *testing.T) {
 	}
 
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 
@@ -501,7 +501,7 @@ func TestIssue414_DangerousTriggers(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			pipeline, _, err := githubpkg.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
+			pipeline, _, err := githubpkg.ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
@@ -601,7 +601,7 @@ func TestIssue206_TemplateInjection(t *testing.T) {
 	}
 
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 
@@ -621,7 +621,7 @@ func TestIssue206_TemplateInjection(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			pipeline, _, err := githubpkg.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
+			pipeline, _, err := githubpkg.ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
@@ -667,7 +667,7 @@ func TestIssue208_InsecureCommands(t *testing.T) {
 	}
 
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 
@@ -687,7 +687,7 @@ func TestIssue208_InsecureCommands(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			pipeline, _, err := githubpkg.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
+			pipeline, _, err := githubpkg.ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
@@ -733,7 +733,7 @@ func TestIssue307_Artipacked(t *testing.T) {
 	}
 
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 
@@ -753,7 +753,7 @@ func TestIssue307_Artipacked(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			pipeline, _, err := githubpkg.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
+			pipeline, _, err := githubpkg.ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
@@ -825,7 +825,7 @@ func TestIssue103_ImagePinnedByDigest(t *testing.T) {
 	}
 
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 
@@ -1029,7 +1029,7 @@ func TestIssue411_UnverifiedScripts_GitHub(t *testing.T) {
 // the resolved latest version.
 func TestIssue403_IncludesOutdated(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	pipeline := &ir.NormalizedPipeline{
@@ -1061,7 +1061,7 @@ func TestIssue403_IncludesOutdated(t *testing.T) {
 // "@1" tracks the latest 1.x.x, so it is never out of date within that major.
 func TestIssue403_IncludesOutdated_PartialSemver(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 
@@ -1112,7 +1112,7 @@ func TestIssue403_IncludesOutdated_PartialSemver(t *testing.T) {
 // name pattern that the provider reports as unprotected.
 func TestIssue501_BranchUnprotected(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	cfg := map[string]any{
@@ -1150,7 +1150,7 @@ func TestIssue501_BranchUnprotected(t *testing.T) {
 // settings fail to meet the declared minimum bar.
 func TestIssue505_BranchNonCompliant(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	cfg := map[string]any{
@@ -1209,7 +1209,7 @@ func TestIssue505_BranchNonCompliant(t *testing.T) {
 // permissive and should fire (legacy parity).
 func TestIssue505_AccessLevelStrictestPolicy(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	cfg := map[string]any{
@@ -1254,7 +1254,7 @@ func TestIssue505_AccessLevelStrictestPolicy(t *testing.T) {
 // policy requires a positive minimum.
 func TestIssue505_AccessLevelSkipsWhenIRZero(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	cfg := map[string]any{
@@ -1315,7 +1315,7 @@ func toStringSlice(raw any) []string {
 // the authoritative `Protected` field from the listing.
 func TestIssue505_DetailUnknownAbstainsButIssue501StillFires(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	cfg := map[string]any{
@@ -1367,7 +1367,7 @@ func TestIssue505_DetailUnknownAbstainsButIssue501StillFires(t *testing.T) {
 // is not the default branch when defaultMustBeProtected is false produces no ISSUE-505.
 func TestIssue505_NotInPolicyScope(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	cfg := map[string]any{
@@ -1399,7 +1399,7 @@ func TestIssue505_NotInPolicyScope(t *testing.T) {
 // forbidden version.
 func TestIssue404_IncludesForbiddenVersion(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	cfg := map[string]any{
@@ -1453,7 +1453,7 @@ func TestIssue204_UnsafeVariableExpansion(t *testing.T) {
 // full pipelineOriginData), so this test builds the IR directly.
 func TestIssue401_HardcodedJobs(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	pipeline := &ir.NormalizedPipeline{
@@ -1485,7 +1485,7 @@ func TestIssue401_HardcodedJobs(t *testing.T) {
 // because parseGitLabCI does not extract Image.Registry.
 func TestIssue101_ImageAuthorizedSources(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	cfg := map[string]any{
@@ -1555,7 +1555,7 @@ func TestIssue410_SecurityJobsWeakened(t *testing.T) {
 // "project", which the YAML-only test parser does not populate.
 func TestIssue410_MultipleWeakeningsOnOneJob(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	cfg := map[string]any{
@@ -1642,7 +1642,7 @@ func TestIssue410_GitHubContinueOnError(t *testing.T) {
 	}
 
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 
@@ -1662,7 +1662,7 @@ func TestIssue410_GitHubContinueOnError(t *testing.T) {
 				t.Fatal(err)
 			}
 
-			pipeline, _, err := githubpkg.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
+			pipeline, _, err := githubpkg.ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
@@ -1705,11 +1705,11 @@ func TestIssue205_JobVariableOverride(t *testing.T) {
 
 // TestIssue404_WildcardForbiddenVersion locks in legacy go-wildcard
 // parity: a `v*` pattern in forbiddenVersions must match `v1.0.0`
-// just like the legacy gitlab.CheckItemMatchToPatterns helper.
+// just like the go-wildcard matching the pre-OPA GitLab engine used.
 // Hardcoded includes are skipped regardless of ref.
 func TestIssue404_WildcardForbiddenVersion(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	cfg := map[string]any{
@@ -1746,7 +1746,7 @@ func TestIssue404_WildcardForbiddenVersion(t *testing.T) {
 // is just as dangerous as `eval`.
 func TestIssue204_SourceAndDotSourcing(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	cfg := map[string]any{
@@ -1787,7 +1787,7 @@ func TestIssue204_SourceAndDotSourcing(t *testing.T) {
 // previous Rego implementation) over-matched.
 func TestIssue204_VariableWordBoundary(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	cfg := map[string]any{
@@ -1824,7 +1824,7 @@ func TestIssue204_VariableWordBoundary(t *testing.T) {
 // image with `dind` in the tag (e.g. `nginx:dind`) must NOT match.
 func TestIssue412_DindLatestAndRegistryPrefix(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	pipeline := &ir.NormalizedPipeline{
@@ -1858,7 +1858,7 @@ func TestIssue412_DindLatestAndRegistryPrefix(t *testing.T) {
 // job, the policy must emit a single finding.
 func TestIssue412_OneFindingPerJob(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	pipeline := &ir.NormalizedPipeline{
@@ -1895,7 +1895,7 @@ func TestIssue412_OneFindingPerJob(t *testing.T) {
 //     (the legacy GetConf path skips the control).
 func TestIssue203_TruthyAndCaseInsensitive(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	cfg := map[string]any{
@@ -1950,7 +1950,7 @@ func TestIssue203_TruthyAndCaseInsensitive(t *testing.T) {
 // when-no-cfg behaviour for the GitHub provider.
 func TestIssue203_GitHubDebugVariables(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	cfg := map[string]any{
@@ -2006,7 +2006,7 @@ func TestIssue203_GitHubDebugVariables(t *testing.T) {
 }
 
 // TestIssue203_GitHubDebugTrace_CollectorIntegration exercises expression
-// and $GITHUB_ENV bypass paths end-to-end through ScanGitHubWorkflows.
+// and $GITHUB_ENV bypass paths end-to-end through ScanGitHubWorkflowsWithProgress.
 func TestIssue203_GitHubDebugTrace_CollectorIntegration(t *testing.T) {
 	tmp := t.TempDir()
 	wfDir := filepath.Join(tmp, ".github", "workflows")
@@ -2034,12 +2034,12 @@ jobs:
 	if err := os.WriteFile(filepath.Join(wfDir, "debug.yml"), []byte(workflow), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	pipeline, partial, err := githubpkg.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
+	pipeline, partial, err := githubpkg.ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
 	if err != nil || len(partial) != 0 {
 		t.Fatalf("scan: err=%v partial=%v", err, partial)
 	}
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load policies: %v", err)
 	}
 	cfg := map[string]any{
@@ -2075,7 +2075,7 @@ jobs:
 //     compares against just `name:tag`.
 func TestIssue101_VarNotationAndUnknownRegistry(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 
@@ -2140,7 +2140,7 @@ type policyCase struct {
 func runGitLabPolicyCases(t *testing.T, code string, cases []policyCase, cfg map[string]any) {
 	t.Helper()
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	dir := filepath.Join("testdata", code, "gitlab")
@@ -2190,7 +2190,7 @@ func stringSlicesEqual(a, b []string) bool {
 // group — the Rego port does the same.
 func TestIssue408_ComponentMissing(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	cfg := map[string]any{
@@ -2232,7 +2232,7 @@ func TestIssue408_ComponentMissing(t *testing.T) {
 // jobs were overridden with forbidden CI/CD keys.
 func TestIssue409_ComponentOverridden(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	cfg := map[string]any{
@@ -2276,7 +2276,7 @@ func TestIssue409_ComponentOverridden(t *testing.T) {
 // ignored.
 func TestIssue405_TemplateMissing(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	cfg := map[string]any{
@@ -2316,7 +2316,7 @@ func TestIssue405_TemplateMissing(t *testing.T) {
 // jobs were overridden locally.
 func TestIssue406_TemplateOverridden(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	cfg := map[string]any{
@@ -2392,7 +2392,7 @@ func TestIssue302_SecretsInherit(t *testing.T) {
 	}
 
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	for _, tc := range cases {
@@ -2410,7 +2410,7 @@ func TestIssue302_SecretsInherit(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(wfDir, tc.fixture), data, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			pipeline, _, err := githubpkg.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
+			pipeline, _, err := githubpkg.ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
@@ -2451,7 +2451,7 @@ func TestIssue309_OverprovisionedSecrets(t *testing.T) {
 	}
 
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	for _, tc := range cases {
@@ -2469,7 +2469,7 @@ func TestIssue309_OverprovisionedSecrets(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(wfDir, tc.fixture), data, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			pipeline, _, err := githubpkg.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
+			pipeline, _, err := githubpkg.ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
@@ -2539,7 +2539,7 @@ func TestIssue209_GitHubEnvInjection(t *testing.T) {
 	}
 
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	for _, tc := range cases {
@@ -2557,7 +2557,7 @@ func TestIssue209_GitHubEnvInjection(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(wfDir, tc.fixture), data, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			pipeline, _, err := githubpkg.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
+			pipeline, _, err := githubpkg.ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
@@ -2629,7 +2629,7 @@ func extractRegoUnsafePatterns(t *testing.T, file string) []string {
 // TestIssue105_ContainerHardcodedCredentials flags
 // jobs.<name>.container.credentials.password literals. Template
 // expressions (${{ secrets.X }}) pass through; missing credentials
-// block is a no-op. Exercises the production ScanGitHubWorkflows
+// block is a no-op. Exercises the production ScanGitHubWorkflowsWithProgress
 // collector so the test covers the full extraction path.
 func TestIssue105_ContainerHardcodedCredentials(t *testing.T) {
 	cases := []struct {
@@ -2642,7 +2642,7 @@ func TestIssue105_ContainerHardcodedCredentials(t *testing.T) {
 	}
 
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	for _, tc := range cases {
@@ -2660,7 +2660,7 @@ func TestIssue105_ContainerHardcodedCredentials(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(wfDir, tc.fixture), data, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			pipeline, _, err := githubpkg.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
+			pipeline, _, err := githubpkg.ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
@@ -2691,7 +2691,7 @@ func TestIssue105_ContainerHardcodedCredentials(t *testing.T) {
 // exemption, and SHA/local exemptions.
 func TestIssue104_ActionUnpinned(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	dir := filepath.Join("testdata", "ISSUE-701", "github")
@@ -2751,7 +2751,7 @@ func TestIssue210_BotConditions(t *testing.T) {
 	}
 
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	for _, tc := range cases {
@@ -2769,7 +2769,7 @@ func TestIssue210_BotConditions(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(wfDir, tc.fixture), data, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			pipeline, _, err := githubpkg.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
+			pipeline, _, err := githubpkg.ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
@@ -2808,7 +2808,7 @@ func TestIssue303_UnredactedSecrets(t *testing.T) {
 	}
 
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	for _, tc := range cases {
@@ -2826,7 +2826,7 @@ func TestIssue303_UnredactedSecrets(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(wfDir, tc.fixture), data, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			pipeline, _, err := githubpkg.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
+			pipeline, _, err := githubpkg.ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
@@ -2885,7 +2885,7 @@ func TestIssue705_CachePoisoning(t *testing.T) {
 	}
 
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	for _, tc := range cases {
@@ -2903,7 +2903,7 @@ func TestIssue705_CachePoisoning(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(wfDir, tc.fixture), data, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			pipeline, _, err := githubpkg.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
+			pipeline, _, err := githubpkg.ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
@@ -2983,7 +2983,7 @@ func issue705DefaultConfig() map[string]any {
 // same job flags, with it the job is clean. Guards the _script_excluded veto.
 func TestIssue705_CachePoisoning_ExcludeVeto(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	tmp := t.TempDir()
@@ -2998,7 +2998,7 @@ func TestIssue705_CachePoisoning_ExcludeVeto(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(wfDir, "clean_publish_dry_run.yml"), data, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	pipeline, _, err := githubpkg.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
+	pipeline, _, err := githubpkg.ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
@@ -3045,7 +3045,7 @@ func TestIssue705_CachePoisoning_ExcludeVeto(t *testing.T) {
 // declares it in publishActions, not because it is hardcoded.
 func TestIssue705_CachePoisoning_Configurable(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	scan := func(t *testing.T) *ir.NormalizedPipeline {
@@ -3062,7 +3062,7 @@ func TestIssue705_CachePoisoning_Configurable(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(wfDir, "violation_custom_publish_action.yml"), data, 0o644); err != nil {
 			t.Fatal(err)
 		}
-		pipeline, _, err := githubpkg.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
+		pipeline, _, err := githubpkg.ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
 		if err != nil {
 			t.Fatalf("scan: %v", err)
 		}
@@ -3129,7 +3129,7 @@ func TestIssue601_AnonymousDefinition(t *testing.T) {
 	}
 
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	for _, tc := range cases {
@@ -3147,7 +3147,7 @@ func TestIssue601_AnonymousDefinition(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(wfDir, tc.fixture), data, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			pipeline, _, err := githubpkg.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
+			pipeline, _, err := githubpkg.ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
@@ -3181,7 +3181,7 @@ func TestIssue602_MissingConcurrency(t *testing.T) {
 	}
 
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	for _, tc := range cases {
@@ -3199,7 +3199,7 @@ func TestIssue602_MissingConcurrency(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(wfDir, tc.fixture), data, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			pipeline, _, err := githubpkg.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
+			pipeline, _, err := githubpkg.ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
@@ -3248,7 +3248,7 @@ func TestIssue212_UnsoundContains(t *testing.T) {
 }
 
 // runGitHubFixtureCases drives a list of (fixture, expected jobs)
-// cases through ScanGitHubWorkflows + the embedded policies, then
+// cases through ScanGitHubWorkflowsWithProgress + the embedded policies, then
 // asserts the set of job names hit by the given issue code matches.
 func runGitHubFixtureCases(t *testing.T, code string, cases []struct {
 	fixture      string
@@ -3269,7 +3269,7 @@ func runGitHubFixtureCasesWithConfig(t *testing.T, code string, cases []struct {
 ) {
 	t.Helper()
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	for _, tc := range cases {
@@ -3287,7 +3287,7 @@ func runGitHubFixtureCasesWithConfig(t *testing.T, code string, cases []struct {
 			if err := os.WriteFile(filepath.Join(wfDir, tc.fixture), data, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			pipeline, _, err := githubpkg.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
+			pipeline, _, err := githubpkg.ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
@@ -3364,7 +3364,7 @@ func TestIssue606_DependabotInsecureExec(t *testing.T) {
 		{"clean.yml", 0},
 	}
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	for _, c := range cases {
@@ -3387,7 +3387,7 @@ func TestIssue606_DependabotInsecureExec(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(tmp, ".github", "workflows", "w.yml"), minimal, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			pipeline, _, err := githubpkg.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
+			pipeline, _, err := githubpkg.ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
@@ -3449,7 +3449,7 @@ func TestIssue607_DependabotMissingCooldown(t *testing.T) {
 		{"clean_with_cooldown.yml", 0},
 	}
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	for _, c := range cases {
@@ -3470,7 +3470,7 @@ func TestIssue607_DependabotMissingCooldown(t *testing.T) {
 			if err := os.WriteFile(filepath.Join(tmp, ".github", "workflows", "w.yml"), minimal, 0o644); err != nil {
 				t.Fatal(err)
 			}
-			pipeline, _, err := githubpkg.ScanGitHubWorkflows("owner/repo", "main", tmp, "", false)
+			pipeline, _, err := githubpkg.ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
@@ -3562,7 +3562,7 @@ func TestIssue308_SecretsDynamicIndex(t *testing.T) {
 // a finding.
 func TestIssue402_RefConfusion(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 
@@ -3618,7 +3618,7 @@ func TestIssue402_RefConfusion(t *testing.T) {
 // ref, and missing metadata all stay silent.
 func TestIssue707_ImpostorCommit(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	const deadSHA = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef" // 40 hex, does not exist
@@ -3694,7 +3694,7 @@ func TestIssue707_ImpostorCommit(t *testing.T) {
 // ISSUE-709. (PR #332 review — case-insensitive SHA parity)
 func TestIssue709_StaleActionRef(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	const latestSHA = "11bd71901bbe5b1630ceea73d27597364c9af683"
@@ -3757,7 +3757,7 @@ func TestIssue709_StaleActionRef(t *testing.T) {
 // not reported as a lying comment.
 func TestIssue708_RefVersionMismatch(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	const taggedSHA = "11bd71901bbe5b1630ceea73d27597364c9af683"
@@ -3822,7 +3822,7 @@ func TestIssue708_RefVersionMismatch(t *testing.T) {
 // probe never invents a finding.
 func TestIssue402_GitLabRefConfusion(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 
@@ -3878,7 +3878,7 @@ func TestIssue402_GitLabRefConfusion(t *testing.T) {
 // negative (silent abstain, no false positive).
 func TestIssue114_KnownVulnerableAction(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 
@@ -3976,7 +3976,7 @@ func TestIssue114_KnownVulnerableAction(t *testing.T) {
 // The "data" tier and a missing signal stay silent.
 func TestIssue714_MutableRemoteExec(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 
@@ -4067,7 +4067,7 @@ func TestIssue714_MutableRemoteExec(t *testing.T) {
 // GitHub API enrichment did not run).
 func TestIssue108_ActionArchivedRepo(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 
@@ -4150,7 +4150,7 @@ func TestIssue108_ActionArchivedRepo(t *testing.T) {
 // (local/docker refs, missing config, missing star metadata).
 func TestIssue713_ActionAuthorizedSources(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 
@@ -4418,7 +4418,7 @@ func TestIssue214_UnpinnedPackageInstall(t *testing.T) {
 // is not vacuous) and stay SILENT on GitLab (proving the guard suppresses it).
 func TestProviderGuards_SuppressGitHubOnlyRulesOnGitLab(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 
@@ -4485,7 +4485,7 @@ func TestIssue112_ReleaseWorkflowUnsigned(t *testing.T) {
 // no SAST action invocation.
 func TestIssue609_SASTWorkflowMissing(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	t.Run("no-sast", func(t *testing.T) {
@@ -4530,7 +4530,7 @@ func TestIssue609_SASTWorkflowMissing(t *testing.T) {
 // workflows but neither dependabot nor renovate config.
 func TestIssue608_DependencyUpdateToolMissing(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	baseJobs := []ir.Job{{Name: "build", OriginFile: "/tmp/.github/workflows/build.yml"}}
@@ -4579,7 +4579,7 @@ func TestIssue608_DependencyUpdateToolMissing(t *testing.T) {
 // but no SECURITY.md.
 func TestIssue610_SecurityPolicyMissing(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	baseJobs := []ir.Job{{Name: "build", OriginFile: "/tmp/.github/workflows/build.yml"}}
@@ -4615,7 +4615,7 @@ func TestIssue610_SecurityPolicyMissing(t *testing.T) {
 // without a @sha256 digest.
 func TestIssue107_DockerfileUnpinnedBase(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 	pipeline := &ir.NormalizedPipeline{
@@ -4652,7 +4652,7 @@ func TestIssue107_DockerfileUnpinnedBase(t *testing.T) {
 // (e) the outer-OR satisfaction short-circuit.
 func TestIssue416_RequiredActionMissing(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 
@@ -4824,7 +4824,7 @@ func TestIssue416_RequiredActionMissing(t *testing.T) {
 // machine consumers (Radar, dashboards) receive the evidence.
 func TestIssue323_FindingsCarryStructuredEvidence(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 

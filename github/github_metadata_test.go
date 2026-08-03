@@ -80,7 +80,7 @@ func Test_moreSpecificTag(t *testing.T) {
 // advisory for the action is silently dropped. The client is offline
 // (see TestMain), so the SHA simply resolves to no tag -> nil.
 func Test_resolveRefToVersion_commitSHA(t *testing.T) {
-	c := NewGitHubMetadataClient()
+	c := NewGitHubMetadataClientForHost("")
 	sha := "2d756ea4c53f7f6b397767d8723b3a10a9f35bf2"
 	if v := c.resolveRefToVersion("tj-actions", "changed-files", sha); v != nil {
 		t.Errorf("resolveRefToVersion(%s) = %v, want nil (SHA must not parse as semver)", sha, v)
@@ -183,7 +183,7 @@ func Test_advisoriesForRef_unresolvedSHA(t *testing.T) {
 	const sha = "1234567890abcdef1234567890abcdef12345678"
 
 	newClient := func() *GitHubMetadataClient {
-		c := NewGitHubMetadataClient()
+		c := NewGitHubMetadataClientForHost("")
 		// Inject a known advisory so advisoriesForRepo does not hit the API.
 		c.advisoryCache[repoKey] = []advisoryInfo{
 			{GhsaID: "GHSA-aaaa-bbbb-cccc", VulnerableRange: "< 0.35.0"},
@@ -237,7 +237,7 @@ func Test_advisoriesForRef_unresolvedSHA(t *testing.T) {
 func Test_advisoriesForRef_movingTag(t *testing.T) {
 	const repoKey = "step-security/harden-runner"
 	newClient := func() *GitHubMetadataClient {
-		c := NewGitHubMetadataClient()
+		c := NewGitHubMetadataClientForHost("")
 		c.advisoryCache[repoKey] = []advisoryInfo{
 			{GhsaID: "GHSA-g85v-wf27-67xc", VulnerableRange: "< 2.10.2"},
 			{GhsaID: "GHSA-mxr3-8whj-j74r", VulnerableRange: ">= 0.12.0, < 2.12.0"},
@@ -300,7 +300,7 @@ func Test_metadataClientOptions(t *testing.T) {
 func Test_NewClient_withMetadataToken_constructs(t *testing.T) {
 	t.Setenv(EnvDisableGitHubAPI, "") // undo the suite's offline default
 	t.Setenv(EnvMetadataToken, "ghp_metadata")
-	c := NewGitHubMetadataClient()
+	c := NewGitHubMetadataClientForHost("")
 	if !c.Available() {
 		t.Fatalf("client should be available with a metadata token set; disableCause=%v", c.disableCause)
 	}
@@ -328,7 +328,7 @@ func Test_fetchAllTags_anonymousFallbackOn403(t *testing.T) {
 	}))
 	defer anon.Close()
 
-	c := NewGitHubMetadataClient()
+	c := NewGitHubMetadataClientForHost("")
 	c.apiBaseURL = anon.URL
 	rest, err := api.NewRESTClient(api.ClientOptions{
 		AuthToken: "x",
@@ -385,7 +385,7 @@ func Test_commitResolves_triState(t *testing.T) {
 			Request:    r,
 		}, nil
 	})
-	c := NewGitHubMetadataClient()
+	c := NewGitHubMetadataClientForHost("")
 	rest, err := api.NewRESTClient(api.ClientOptions{AuthToken: "x", Transport: rt})
 	if err != nil {
 		t.Fatalf("new rest client: %v", err)
@@ -479,7 +479,7 @@ func Test_resolveUncached_refKnownAbsentGuard(t *testing.T) {
 				Request:    r,
 			}, nil
 		})
-		c := NewGitHubMetadataClient()
+		c := NewGitHubMetadataClientForHost("")
 		rest, err := api.NewRESTClient(api.ClientOptions{AuthToken: "x", Transport: rt})
 		if err != nil {
 			t.Fatalf("new rest client: %v", err)

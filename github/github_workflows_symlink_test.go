@@ -28,7 +28,7 @@ func TestScanGitHubWorkflowsSkipsSymlink(t *testing.T) {
 		t.Skipf("symlink unsupported: %v", err)
 	}
 
-	pipeline, _, err := ScanGitHubWorkflows("o/r", "main", root, "github.com", false)
+	pipeline, _, err := ScanGitHubWorkflowsWithProgress("o/r", "main", root, "github.com", false, true, nil)
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
@@ -72,7 +72,7 @@ func TestScanGitHubWorkflowsSymlinkedDirStillScansArtifacts(t *testing.T) {
 		"updates:\n  - package-ecosystem: npm\n    insecure-external-code-execution: allow\n")
 	mustWriteFile(t, filepath.Join(root, "SECURITY.md"), "# security\n")
 
-	pipeline, _, err := ScanGitHubWorkflows("o/r", "main", root, "github.com", false)
+	pipeline, _, err := ScanGitHubWorkflowsWithProgress("o/r", "main", root, "github.com", false, true, nil)
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}
@@ -99,7 +99,7 @@ func TestScanGitHubWorkflowsCapsSize(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(wfDir, "big.yml"), big, 0o644); err != nil {
 		t.Fatal(err)
 	}
-	pipeline, partial, err := ScanGitHubWorkflows("o/r", "main", root, "github.com", false)
+	pipeline, partial, err := ScanGitHubWorkflowsWithProgress("o/r", "main", root, "github.com", false, true, nil)
 	if err != nil {
 		t.Fatalf("scan: %v", err)
 	}

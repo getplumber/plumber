@@ -139,12 +139,3 @@ func Get(name string) (Provider, bool) {
 	p, ok := registry[name]
 	return p, ok
 }
-
-// Names returns all registered provider names.
-func Names() []string {
-	names := make([]string, 0, len(registry))
-	for n := range registry {
-		names = append(names, n)
-	}
-	return names
-}
