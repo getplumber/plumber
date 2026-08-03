@@ -1,3 +1,26 @@
+## [0.4.27](https://github.com/getplumber/plumber/compare/v0.4.26...v0.4.27) (2026-08-03)
+
+
+### 🐛 Bug Fixes
+
+* **lint:** report all issues instead of golangci-lint's truncated default ([cb5739a](https://github.com/getplumber/plumber/commit/cb5739adcaf0ff3ad69901febd1f238d1aa8ee5a))
+
+
+### ♻️ Refactoring
+
+* remove 50 dead functions unreachable from main ([a28393c](https://github.com/getplumber/plumber/commit/a28393ca6bc1e6ba9c4620a3daeaade415ff8122))
+
+
+### ✅ Tests
+
+* **config:** cover GitLab trustedUrls narrowing with includePlumberDefaults to false ([46f09ed](https://github.com/getplumber/plumber/commit/46f09ed7d79a75e7f46577fb5132ea85d37f1e82)), closes [#365](https://github.com/getplumber/plumber/issues/365)
+
+
+### 👷 CI/CD
+
+* **lint:** gate on whole-program dead code detection ([0aac54c](https://github.com/getplumber/plumber/commit/0aac54c5fe9cbf6f5f52372f81c45c78ef7becbb))
+* **release:** pin v0.4.26 refs [skip ci] ([e461736](https://github.com/getplumber/plumber/commit/e461736d107dcf87c104cf776bb8e517924cd89b))
+
 ## [0.4.26](https://github.com/getplumber/plumber/compare/v0.4.25...v0.4.26) (2026-07-31)
 
 
