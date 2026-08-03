@@ -48,7 +48,7 @@ func effectiveScorePush() (push bool, endpoint string) {
 // fails the run: any problem is a warning. Outside a token-granting CI it can't
 // publish; an explicit --score-push then prints a one-line note instead of
 // skipping silently, so the requested push is never a mystery.
-func maybePushScore(p providerPkg.Provider, conf *configuration.Configuration, payload []byte) {
+func maybePushScore(p providerPkg.Provider, conf *configuration.Configuration, payload []byte, defaultBranch string) {
 	push, endpoint := effectiveScorePush()
 	if !push || len(payload) == 0 {
 		return
@@ -94,7 +94,30 @@ func maybePushScore(p providerPkg.Provider, conf *configuration.Configuration, p
 		scoreWarn(fmt.Sprintf("score push failed: %v", err))
 		return
 	}
-	fmt.Fprintf(os.Stderr, "✓ Plumber Score published: %s/%s/%s\n", endpoint, platform, projectPath)
+	note := ""
+	// The score service keeps only default-branch pushes for the public badge
+	// (per-branch records stay reachable via ?branch=). When this run's branch
+	// is knowably not the default, say so instead of implying the badge changed.
+	if branch := ciRunBranch(p); branch != "" && defaultBranch != "" && branch != defaultBranch {
+		note = fmt.Sprintf(" (but not displayed on the public badge: %q is not the default branch)", branch)
+	}
+	fmt.Fprintf(os.Stderr, "✓ Plumber Score published: %s/%s/%s%s\n", endpoint, platform, projectPath, note)
+}
+
+// ciRunBranch returns the branch this CI run executes on, or "" when unknown
+// (local run, tag pipeline, GitLab MR pipeline). GitHub: GITHUB_REF_NAME when
+// GITHUB_REF_TYPE is "branch" — a PR run reports its merge ref ("N/merge"),
+// which correctly reads as not-the-default-branch. GitLab: CI_COMMIT_BRANCH,
+// set only on branch pipelines. Comparison against the default branch is
+// case-sensitive downstream, matching git ref semantics and the score service.
+func ciRunBranch(p providerPkg.Provider) string {
+	if p.Name() == "github" {
+		if os.Getenv("GITHUB_REF_TYPE") != "branch" {
+			return ""
+		}
+		return strings.TrimSpace(os.Getenv("GITHUB_REF_NAME"))
+	}
+	return strings.TrimSpace(os.Getenv("CI_COMMIT_BRANCH"))
 }
 
 // ciScoreTargetMismatch reports whether the scan analyzed a different project
@@ -293,7 +316,7 @@ func handleScorePublishingOnce(p providerPkg.Provider, conf *configuration.Confi
 		scoreWarn(fmt.Sprintf("could not build the score report payload: %v", err))
 		return
 	}
-	maybePushScore(p, conf, payload)
+	maybePushScore(p, conf, payload, result.DefaultBranch)
 }
 
 // maybeScoreNudge prints an invitation to publish a live badge whenever text
