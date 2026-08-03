@@ -34,6 +34,7 @@ func runWithProvider(p provider.Provider, cmd *cobra.Command, conf *configuratio
 	}
 
 	newLocationLinker(conf, result, p.Name()).Annotate(result.Findings)
+	opaengine.StampFingerprints(result.Findings)
 
 	summary := buildComplianceSummary(p, result, conf)
 
@@ -227,6 +228,7 @@ func writeOutputsWithProvider(p provider.Provider, result *control.AnalysisResul
 // pipeline.
 func presentResultWithProvider(p provider.Provider, cmd *cobra.Command, result *control.AnalysisResult, conf *configuration.Configuration) error {
 	newLocationLinker(conf, result, p.Name()).Annotate(result.Findings)
+	opaengine.StampFingerprints(result.Findings)
 	summary := buildComplianceSummary(p, result, conf)
 	if printOutput {
 		if err := outputTextWithProvider(p, result, conf, summary, conf.ControlsFilter, conf.SkipControlsFilter); err != nil {

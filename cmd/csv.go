@@ -22,11 +22,15 @@ import (
 //
 // Row model:
 //   - passed / skipped / error control -> one summary row. The finding columns
-//     (code, severity, context, file, line, url, docUrl) are empty and message
-//     carries the skip/error reason so the row is not opaque.
+//     (code, fingerprint, severity, context, file, line, url, docUrl) are empty
+//     and message carries the skip/error reason so the row is not opaque.
 //   - failed control -> one row per code-bearing finding, with status "failed"
 //     and the full finding detail. A control with N findings occupies N rows;
 //     that repetition is the natural shape of a flat findings table.
+//
+// The fingerprint column is a stable, line-independent identifier per finding
+// (opaengine.StampFingerprints), so a consumer can follow one specific finding
+// across runs even when the same control has many findings of the same code.
 //
 // Ordering: non-failing controls (passed / error / skipped) come first, then the
 // failing controls with their findings, so the clean posture reads at the top
@@ -37,7 +41,7 @@ import (
 // findings, but some rules put a branch / include path / file there instead), so
 // the header avoids the false claim "job" would make when the value isn't a job.
 func buildCSV(entries []control.ControlEntry, result *control.AnalysisResult) [][]string {
-	header := []string{"code", "controlName", "status", "severity", "message", "context", "file", "line", "url", "docUrl"}
+	header := []string{"code", "fingerprint", "controlName", "status", "severity", "message", "context", "file", "line", "url", "docUrl"}
 	byControl := control.FindingsByControl(result.Findings)
 
 	var nonFailing [][]string // passed / error / skipped: one row per control, at the top
@@ -50,6 +54,7 @@ func buildCSV(entries []control.ControlEntry, result *control.AnalysisResult) []
 		if status != control.StatusFailed {
 			nonFailing = append(nonFailing, []string{
 				"",                                 // code
+				"",                                 // fingerprint (no finding)
 				e.ControlName,                      // controlName
 				status,                             // status
 				"",                                 // severity
@@ -83,6 +88,7 @@ func buildCSV(entries []control.ControlEntry, result *control.AnalysisResult) []
 
 			failing = append(failing, []string{
 				f.Code,
+				f.Fingerprint,
 				e.ControlName,
 				status,
 				severity,
