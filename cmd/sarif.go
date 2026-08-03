@@ -105,6 +105,11 @@ type sarifConfig struct {
 
 type sarifResult struct {
 	RuleID string `json:"ruleId"`
+	// PartialFingerprints carries a stable, line-independent identifier per
+	// finding (opaengine.StampFingerprints). This is the SARIF-native
+	// mechanism GitHub Code Scanning uses to track the same alert across runs
+	// even as line numbers drift.
+	PartialFingerprints map[string]string `json:"partialFingerprints,omitempty"`
 	// Kind categorizes the result's evaluation state (SARIF §3.27.9):
 	// "fail" for findings (the spec default when absent), "pass" /
 	// "notApplicable" / "open" for the synthetic per-control status
@@ -230,6 +235,9 @@ func buildSARIF(findings []opaengine.Finding, fallbackURI, provider string) sari
 			Kind:    "fail",
 			Level:   sarifLevel(severity),
 			Message: sarifText{Text: f.Message},
+		}
+		if f.Fingerprint != "" {
+			res.PartialFingerprints = map[string]string{"plumber/v1": f.Fingerprint}
 		}
 		// SARIF's `artifactLocation.uri` must stay repo-relative so
 		// GitHub Code Scanning can map the alert to a file in the

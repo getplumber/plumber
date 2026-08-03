@@ -763,6 +763,9 @@ func extractGitHubUses(v any) []ir.Action {
 			continue
 		}
 		action := ir.Action{Uses: uses}
+		if name, ok := stepMap["name"].(string); ok {
+			action.Name = name
+		}
 		if withMap, ok := ghCastStringMap(stepMap["with"]); ok {
 			action.With = withMap
 		}

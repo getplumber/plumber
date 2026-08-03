@@ -244,6 +244,12 @@ type Job struct {
 type Action struct {
 	Uses string         `json:"uses"`
 	With map[string]any `json:"with,omitempty"`
+	// Name is the step's `name:` from the workflow YAML, when the author
+	// provided one. It is the only stable discriminator between two steps in
+	// the same job that reference the same action: the line number tells them
+	// apart within a scan but moves whenever unrelated code above them is
+	// edited, so the name is what a run-over-run identifier can rely on.
+	Name string `json:"name,omitempty"`
 	// Line is the 1-based line number of the `uses:` directive in the
 	// source workflow file. Populated by the provider collector so
 	// action-level findings can point the reviewer at the exact step
@@ -257,8 +263,8 @@ type Action struct {
 // Kept in internal/ir so policies can consume it via the serialised
 // JSON input without internal/ir importing the collector package.
 type ActionMetadata struct {
-	RepoArchived     bool     `json:"repoArchived,omitempty"`
-	RefExists        bool     `json:"refExists,omitempty"`
+	RepoArchived bool `json:"repoArchived,omitempty"`
+	RefExists    bool `json:"refExists,omitempty"`
 	// RefKnownAbsent is true ONLY when the upstream API definitively
 	// answered that the ref does not exist (a 404 / 422 on a readable
 	// repo). It stays false when the ref could not be verified (private

@@ -312,6 +312,7 @@ More details:
 
 - PBOM docs: [`docs/PBOM.md`](./docs/PBOM.md)
 - Scoring docs: [`docs/scoring.md`](./docs/scoring.md)
+- Finding fingerprint (tracking a finding across runs): [`docs/FINGERPRINT.md`](./docs/FINGERPRINT.md)
 - CLI reference: [getplumber.io/docs/cli](https://getplumber.io/docs/cli)
 
 ## Exit Codes

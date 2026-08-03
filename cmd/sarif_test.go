@@ -11,6 +11,19 @@ import (
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 )
 
+func TestBuildSARIF_PartialFingerprints(t *testing.T) {
+	findings := []opaengine.Finding{
+		{Code: "ISSUE-701", Severity: "high", Message: "unpinned", File: ".github/workflows/ci.yml", Line: 28, Fingerprint: "deadbeefcafef00d"},
+	}
+	doc := buildSARIF(findings, ".plumber.yaml", "github")
+	if len(doc.Runs[0].Results) != 1 {
+		t.Fatalf("results = %d, want 1", len(doc.Runs[0].Results))
+	}
+	if got := doc.Runs[0].Results[0].PartialFingerprints["plumber/v1"]; got != "deadbeefcafef00d" {
+		t.Errorf("partialFingerprints[plumber/v1] = %q, want deadbeefcafef00d", got)
+	}
+}
+
 func TestBuildSARIF_ShapeAndSeverityMapping(t *testing.T) {
 	findings := []opaengine.Finding{
 		{Code: "ISSUE-701", Severity: "high", Message: "unpinned action", File: ".github/workflows/ci.yml", Line: 28},

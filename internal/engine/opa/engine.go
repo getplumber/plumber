@@ -11,6 +11,8 @@ import (
 	"bytes"
 	"cmp"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -45,8 +47,13 @@ type Finding struct {
 	// host forge; locally it is the absolute filesystem path with the
 	// :line suffix that VS Code / iTerm recognise as a source reference.
 	// Empty when no useful link can be built (missing file/line, etc.).
-	URL  string         `json:"-"`
-	Data map[string]any `json:"-"`
+	URL string `json:"-"`
+	// Fingerprint is a stable, line-independent identifier for this finding,
+	// stamped once by StampFingerprints so every output format carries the same
+	// value and a consumer can track the same finding across runs even as line
+	// numbers drift. Empty until stamped, and for codeless findings.
+	Fingerprint string         `json:"-"`
+	Data        map[string]any `json:"-"`
 }
 
 // MarshalJSON flattens the canonical fields and the Data payload into
@@ -79,7 +86,72 @@ func (f Finding) MarshalJSON() ([]byte, error) {
 	if f.URL != "" {
 		out["url"] = f.URL
 	}
+	if f.Fingerprint != "" {
+		out["fingerprint"] = f.Fingerprint
+	}
 	return json.Marshal(out)
+}
+
+// computeFingerprint derives a stable, line-independent identifier from a
+// finding's identity: its code, file, context (job), and message. The message
+// carries the concrete subject the rule flagged (the action ref, image,
+// variable, ...), so the fingerprint distinguishes different findings of the
+// same code in the same file/job. Line and URL are deliberately excluded
+// because they move when unrelated code above the finding is edited, so the
+// fingerprint survives that drift and lets a consumer follow the same finding
+// across runs. Codeless findings get no fingerprint.
+// fingerprintSubjectKeys lists the structured payload keys that say what a
+// finding is ABOUT, in priority order; the first one present wins. Preferring
+// these over the prose message is what makes the fingerprint survive a message
+// rewording: the subject (an action ref, a branch, an image, a variable, a
+// script line) is the thing the rule actually flagged.
+//
+// Volatile payload is deliberately excluded, because it changes for reasons
+// unrelated to the finding and would make it look new: advisories grows as CVEs
+// are published, latestVersion moves whenever upstream releases, metadata is
+// refetched every run, and reasons/status track current settings rather than
+// identity.
+var fingerprintSubjectKeys = []string{
+	"uses", "branchName", "componentName", "image", "serviceImage",
+	"link", "tag", "variableName", "scriptLine", "detail",
+}
+
+// fingerprintSubject returns the finding's structured subject, falling back to
+// the message for rules that emit none. The key name is included so two
+// different keys holding the same value cannot collide.
+func fingerprintSubject(f Finding) string {
+	for _, k := range fingerprintSubjectKeys {
+		if v, ok := f.Data[k].(string); ok && v != "" {
+			return k + "=" + v
+		}
+	}
+	return f.Message
+}
+
+func computeFingerprint(f Finding) string {
+	if f.Code == "" {
+		return ""
+	}
+	id := f.Code + "\n" + f.File + "\n" + f.Job + "\n" + fingerprintSubject(f)
+	// A step name, when the workflow provides one, is appended as the final
+	// discriminator: two steps in the same job that reference the same action
+	// produce an identical code/file/job/message and would otherwise collide
+	// (observed on grafana/grafana, where one action appears twice in a job).
+	// Appended only when known, so findings without a step keep their
+	// identifier unchanged.
+	if step, ok := f.Data["step"].(string); ok && step != "" {
+		id += "\n" + step
+	}
+	sum := sha256.Sum256([]byte(id))
+	return hex.EncodeToString(sum[:])[:16]
+}
+
+// StampFingerprints sets Fingerprint on every finding in place. Call it once,
+// after findings are finalized, so all output writers read the same value.
+func StampFingerprints(findings []Finding) {
+	for i := range findings {
+		findings[i].Fingerprint = computeFingerprint(findings[i])
+	}
 }
 
 // UnmarshalJSON splits an incoming flat object into the canonical
@@ -101,6 +173,10 @@ func (f *Finding) UnmarshalJSON(b []byte) error {
 	if v, ok := raw["message"].(string); ok {
 		f.Message = v
 		delete(raw, "message")
+	}
+	if v, ok := raw["fingerprint"].(string); ok {
+		f.Fingerprint = v
+		delete(raw, "fingerprint")
 	}
 	if v, ok := raw["job"].(string); ok {
 		f.Job = v
@@ -284,6 +360,26 @@ func enrichFindingsWithJobLocation(findings []Finding, pipeline *ir.NormalizedPi
 		job, ok := byName[f.Job]
 		if !ok {
 			continue
+		}
+		// Resolve the step name for action-level findings. Rules emit the
+		// action's own `uses:` line, so matching on it is exact within this
+		// scan; what gets stored is the step NAME, which (unlike the line)
+		// survives edits above it. Two steps in the same job referencing the
+		// same action are otherwise indistinguishable, so this is what keeps
+		// their fingerprints apart. Runs before the Line fallback below so a
+		// job-level finding never matches an action by the job header line.
+		if f.Line != 0 {
+			for k := range job.Uses {
+				if job.Uses[k].Line == f.Line && job.Uses[k].Name != "" {
+					if f.Data == nil {
+						f.Data = map[string]any{}
+					}
+					if _, has := f.Data["step"]; !has {
+						f.Data["step"] = job.Uses[k].Name
+					}
+					break
+				}
+			}
 		}
 		if f.File == "" {
 			f.File = job.OriginFile

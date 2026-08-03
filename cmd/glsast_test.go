@@ -9,6 +9,40 @@ import (
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 )
 
+// The GitLab SAST vulnerability id must be line-independent so GitLab tracks the
+// same vulnerability across runs even when unrelated code above it is edited.
+func TestGLSASTID_LineIndependentAndDiscriminating(t *testing.T) {
+	a := opaengine.Finding{Code: "ISSUE-701", File: "ci.yml", Job: "build", Message: "unpinned action X"}
+	moved := a
+	moved.Line = 999
+	if glsastID(a) != glsastID(moved) {
+		t.Errorf("glsast id changed when only the line moved; want line-independent")
+	}
+	other := a
+	other.Message = "unpinned action Y"
+	if glsastID(a) == glsastID(other) {
+		t.Errorf("same id for two different subjects; want distinct")
+	}
+}
+
+// The plumber fingerprint is exposed as a GitLab identifier so the same value
+// carried in JSON / CSV / SARIF is correlatable in the SAST report too.
+func TestBuildGLSAST_FingerprintIdentifier(t *testing.T) {
+	findings := []opaengine.Finding{
+		{Code: "ISSUE-701", Severity: "high", Message: "x", File: "ci.yml", Line: 5, Fingerprint: "deadbeefcafef00d"},
+	}
+	rep := buildGLSAST(findings, "github")
+	found := false
+	for _, id := range rep.Vulnerabilities[0].Identifiers {
+		if id.Type == "plumber-fingerprint" && id.Value == "deadbeefcafef00d" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no plumber-fingerprint identifier carrying the finding's fingerprint; got %+v", rep.Vulnerabilities[0].Identifiers)
+	}
+}
+
 func TestBuildGLSAST_SchemaRequiredFields(t *testing.T) {
 	findings := []opaengine.Finding{
 		{Code: "ISSUE-203", Severity: "critical", Message: "debug trace", File: ".gitlab-ci.yml", Line: 11},

@@ -183,8 +183,11 @@ func projectFinding(f opaengine.Finding, jobKey string) map[string]any {
 	if f.URL != "" {
 		out["url"] = f.URL
 	}
+	if f.Fingerprint != "" {
+		out["fingerprint"] = f.Fingerprint
+	}
 	for k, v := range f.Data {
-		if k == "docUrl" || k == "url" {
+		if k == "docUrl" || k == "url" || k == "fingerprint" {
 			continue
 		}
 		out[k] = v
