@@ -235,11 +235,147 @@ func TestMaybePushScore_FullFlow(t *testing.T) {
 	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "req")
 
 	conf := &configuration.Configuration{PlumberConfig: &configuration.PlumberConfig{}}
-	maybePushScore(p, conf, []byte(`{"plumberScore":{"score":"A"}}`))
+	maybePushScore(p, conf, []byte(`{"plumberScore":{"score":"A"}}`), "main")
 
 	if gotPath != "/github.com/octo/repo" || gotAuth != "Bearer id-tok" || string(gotBody) != `{"plumberScore":{"score":"A"}}` {
 		t.Fatalf("push not received as expected: path=%q auth=%q body=%q", gotPath, gotAuth, gotBody)
 	}
+}
+
+// TestMaybePushScore_NonDefaultBranchNote proves the success line carries a
+// note when the run's branch is not the repo default: the score service stores
+// such a push per-branch only, so the PUBLIC badge does not change and a bare
+// "published" would be misleading. On the default branch (or when either side
+// is unknown) the line stays bare.
+func TestMaybePushScore_NonDefaultBranchNote(t *testing.T) {
+	p, ok := providerPkg.Get("github")
+	if !ok {
+		t.Skip("github provider not registered")
+	}
+
+	oidc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"value": "id-tok"})
+	}))
+	defer oidc.Close()
+	score := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer score.Close()
+
+	defer func(pp bool, e string) { pushScore, scoreEndpoint = pp, e }(pushScore, scoreEndpoint)
+	pushScore, scoreEndpoint = true, score.URL
+	t.Setenv("GITHUB_ACTIONS", "true")
+	t.Setenv("GITHUB_REPOSITORY", "octo/repo")
+	t.Setenv("GITHUB_SERVER_URL", "https://github.com")
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", oidc.URL)
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "req")
+
+	conf := &configuration.Configuration{PlumberConfig: &configuration.PlumberConfig{}}
+	payload := []byte(`{"plumberScore":{"score":"A"}}`)
+
+	push := func(t *testing.T, refType, refName, defaultBranch string) string {
+		t.Helper()
+		t.Setenv("GITHUB_REF_TYPE", refType)
+		t.Setenv("GITHUB_REF_NAME", refName)
+		return captureStderr(t, func() {
+			maybePushScore(p, conf, payload, defaultBranch)
+		})
+	}
+
+	t.Run("non-default branch gets the note", func(t *testing.T) {
+		out := push(t, "branch", "feature-x", "main")
+		if !strings.Contains(out, "Plumber Score published") {
+			t.Fatalf("expected the success line, got: %q", out)
+		}
+		if !strings.Contains(out, "not displayed") || !strings.Contains(out, "feature-x") {
+			t.Fatalf("expected a non-default-branch note naming the branch, got: %q", out)
+		}
+	})
+
+	t.Run("default branch stays bare", func(t *testing.T) {
+		out := push(t, "branch", "main", "main")
+		if !strings.Contains(out, "Plumber Score published") {
+			t.Fatalf("expected the success line, got: %q", out)
+		}
+		if strings.Contains(out, "not displayed") {
+			t.Fatalf("unexpected note on a default-branch run: %q", out)
+		}
+	})
+
+	t.Run("unknown run branch stays bare", func(t *testing.T) {
+		out := push(t, "", "", "main")
+		if strings.Contains(out, "not displayed") {
+			t.Fatalf("unexpected note when the run branch is unknown: %q", out)
+		}
+	})
+
+	t.Run("unknown default branch stays bare", func(t *testing.T) {
+		out := push(t, "branch", "feature-x", "")
+		if strings.Contains(out, "not displayed") {
+			t.Fatalf("unexpected note when the default branch is unknown: %q", out)
+		}
+	})
+}
+
+// TestMaybePushScore_NonDefaultBranchNote_GitLab drives the GitLab side of
+// ciRunBranch (CI_COMMIT_BRANCH): a branch pipeline off the default branch
+// gets the note, the default branch stays bare, and an MR pipeline (empty
+// CI_COMMIT_BRANCH) stays bare because the run branch is unknown.
+func TestMaybePushScore_NonDefaultBranchNote_GitLab(t *testing.T) {
+	p, ok := providerPkg.Get("gitlab")
+	if !ok {
+		t.Skip("gitlab provider not registered")
+	}
+
+	score := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer score.Close()
+
+	defer func(pp bool, e string) { pushScore, scoreEndpoint = pp, e }(pushScore, scoreEndpoint)
+	pushScore, scoreEndpoint = true, score.URL
+	t.Setenv("GITLAB_CI", "true")
+	t.Setenv("CI_PROJECT_PATH", "group/repo")
+	t.Setenv("CI_SERVER_URL", "https://gitlab.com")
+	t.Setenv(gitlabScoreTokenEnv, "tok")
+
+	conf := &configuration.Configuration{PlumberConfig: &configuration.PlumberConfig{}}
+	payload := []byte(`{"plumberScore":{"score":"A"}}`)
+
+	push := func(t *testing.T, commitBranch, defaultBranch string) string {
+		t.Helper()
+		t.Setenv("CI_COMMIT_BRANCH", commitBranch)
+		return captureStderr(t, func() {
+			maybePushScore(p, conf, payload, defaultBranch)
+		})
+	}
+
+	t.Run("non-default branch gets the note", func(t *testing.T) {
+		out := push(t, "feature-x", "main")
+		if !strings.Contains(out, "Plumber Score published") {
+			t.Fatalf("expected the success line, got: %q", out)
+		}
+		if !strings.Contains(out, "not displayed") || !strings.Contains(out, "feature-x") {
+			t.Fatalf("expected a non-default-branch note naming the branch, got: %q", out)
+		}
+	})
+
+	t.Run("default branch stays bare", func(t *testing.T) {
+		out := push(t, "main", "main")
+		if !strings.Contains(out, "Plumber Score published") {
+			t.Fatalf("expected the success line, got: %q", out)
+		}
+		if strings.Contains(out, "not displayed") {
+			t.Fatalf("unexpected note on a default-branch run: %q", out)
+		}
+	})
+
+	t.Run("MR pipeline stays bare", func(t *testing.T) {
+		out := push(t, "", "main")
+		if strings.Contains(out, "not displayed") {
+			t.Fatalf("unexpected note when CI_COMMIT_BRANCH is empty: %q", out)
+		}
+	})
 }
 
 // captureStderr redirects os.Stderr for the duration of fn and returns whatever
@@ -285,7 +421,7 @@ func TestMaybePushScore_LocalNote(t *testing.T) {
 	t.Run("explicit --score-push gets a note", func(t *testing.T) {
 		pushScore, scoreEndpoint = true, ""
 		out := captureStderr(t, func() {
-			maybePushScore(p, &configuration.Configuration{PlumberConfig: &configuration.PlumberConfig{}}, payload)
+			maybePushScore(p, &configuration.Configuration{PlumberConfig: &configuration.PlumberConfig{}}, payload, "main")
 		})
 		if !strings.Contains(out, "--score-push") || !strings.Contains(out, "CI") {
 			t.Fatalf("expected a local-skip note mentioning --score-push and CI, got: %q", out)

@@ -17,10 +17,11 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// EnvDisableGitHubAPI, when set to a truthy value, forces the
-// GitHub metadata client into degraded mode regardless of gh auth
-// state. Set to "1" by the test suite to keep unit tests offline
-// and fast; production code does not read this variable.
+// EnvDisableGitHubAPI, when set to a truthy value, forces every
+// GitHub API consumer that honors it (the metadata client, the
+// default-branch lookup seam in control) into degraded mode
+// regardless of gh auth state. Set to "1" by the test suites to
+// keep unit tests offline and fast.
 const EnvDisableGitHubAPI = "PLUMBER_DISABLE_GITHUB_API"
 
 // EnvMetadataToken, when set, supplies the token the metadata client uses
