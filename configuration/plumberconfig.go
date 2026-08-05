@@ -55,10 +55,10 @@ var validControlSchema = map[string][]string{
 		"enabled", "required", "requiredGroups",
 	},
 	"componentMustComeFromAuthorizedSources": {
-		"enabled", "trustedUrls",
+		"enabled", "trustedComponents", "trustSameGroupComponents", "trustSameInstanceComponents",
 	},
 	"functionMustComeFromAuthorizedSources": {
-		"enabled", "trustedUrls",
+		"enabled", "trustedFunctions", "trustSameGroupFunctions",
 	},
 	"pipelineMustNotEnableDebugTrace": {
 		"enabled", "forbiddenVariables",
@@ -619,11 +619,25 @@ type ComponentAuthorizedSourcesControlConfig struct {
 	// Enabled controls whether this check runs
 	Enabled *bool `yaml:"enabled,omitempty"`
 
-	// TrustedUrls is a list of trusted component source URLs/patterns
-	// (supports wildcards). $CI_SERVER_FQDN / $CI_PROJECT_PATH (and
-	// ${...} form) are resolved from Plumber's OS environment at scan
-	// time before matching.
-	TrustedUrls []string `yaml:"trustedUrls,omitempty"`
+	// TrustedComponents is a manual allowlist of trusted component
+	// source URLs/patterns (supports wildcards), matched against the
+	// server-side-resolved include: component: source, on top of the
+	// dynamic trust options below.
+	TrustedComponents []string `yaml:"trustedComponents,omitempty"`
+
+	// TrustSameGroupComponents trusts components hosted under the
+	// scanned project's root namespace (top-level group) on the same
+	// GitLab instance. Derived dynamically from the pipeline's own
+	// projectPath at scan time — no environment variables involved.
+	// Defaults to true when unset.
+	TrustSameGroupComponents *bool `yaml:"trustSameGroupComponents,omitempty"`
+
+	// TrustSameInstanceComponents trusts any component hosted on the
+	// same GitLab instance as the scanned project, regardless of
+	// namespace. Defaults to false on gitlab.com (a multi-tenant SaaS
+	// host — same-instance is not a trust boundary there) and true on a
+	// self-hosted instance (already inside the org's trust boundary).
+	TrustSameInstanceComponents *bool `yaml:"trustSameInstanceComponents,omitempty"`
 }
 
 // FunctionAuthorizedSourcesControlConfig configuration for the
@@ -632,11 +646,19 @@ type FunctionAuthorizedSourcesControlConfig struct {
 	// Enabled controls whether this check runs
 	Enabled *bool `yaml:"enabled,omitempty"`
 
-	// TrustedUrls is a list of trusted function source URLs/patterns
-	// (supports wildcards), matched as literal text against the
-	// pipeline's func: reference (only $VAR / ${VAR} notation is
-	// normalized — no variable resolution is performed).
-	TrustedUrls []string `yaml:"trustedUrls,omitempty"`
+	// TrustedFunctions is a manual allowlist of trusted function source
+	// URLs/patterns (supports wildcards), matched as literal text
+	// against the pipeline's func: reference (only $VAR / ${VAR}
+	// notation is normalized — no variable resolution is performed).
+	TrustedFunctions []string `yaml:"trustedFunctions,omitempty"`
+
+	// TrustSameGroupFunctions trusts function references whose path
+	// (ignoring the host — the OCI registry host convention varies per
+	// GitLab instance) starts with the scanned project's root
+	// namespace, or with the $CI_PROJECT_PATH idiom when the pipeline
+	// doesn't redefine CI_TEMPLATE_REGISTRY_HOST or CI_PROJECT_PATH in
+	// its own variables. Defaults to true when unset.
+	TrustSameGroupFunctions *bool `yaml:"trustSameGroupFunctions,omitempty"`
 }
 
 // BranchProtectionControlConfig configuration for the branch protection control
