@@ -120,12 +120,23 @@ func glsastSeverity(sev string) string {
 }
 
 // glsastID derives a stable, UUID-shaped id from the finding so GitLab can
-// track the same vulnerability across runs (id is recommended to be a UUID).
-// It hashes the same line-independent identity as opaengine's fingerprint
-// (code + file + context/job + message, NOT the line), so the id survives a
-// line drift when unrelated code above the finding is edited.
+// track the same vulnerability across runs (the schema wants a UUID, and
+// GitLab treats the id as its dedup key: two vulnerabilities sharing one id
+// are merged, which would silently drop a real finding).
+//
+// It is derived from the finding's Fingerprint so the id carries exactly the
+// same identity the report already exposes as a plumber-fingerprint
+// identifier. That matters for the case the fingerprint's step segment exists
+// to handle: the same action referenced by two steps of one job produces an
+// identical code, file, job and message, so hashing those alone would collide
+// and merge the two findings into one. Falls back to the canonical fields for
+// a finding that was never stamped (no code, or an unstamped caller).
 func glsastID(f opaengine.Finding) string {
-	sum := sha256.Sum256([]byte(f.Code + "|" + f.File + "|" + f.Job + "|" + f.Message))
+	identity := f.Fingerprint
+	if identity == "" {
+		identity = f.Code + "|" + f.File + "|" + f.Job + "|" + f.Message
+	}
+	sum := sha256.Sum256([]byte(identity))
 	h := hex.EncodeToString(sum[:])
 	return fmt.Sprintf("%s-%s-%s-%s-%s", h[0:8], h[8:12], h[12:16], h[16:20], h[20:32])
 }

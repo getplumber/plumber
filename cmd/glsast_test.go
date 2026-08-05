@@ -191,3 +191,30 @@ func TestBuildGLSAST_ControlNameSecondIdentifier(t *testing.T) {
 		t.Errorf("control-name identifier URL = %q, want empty", ids[1].URL)
 	}
 }
+
+// GitLab treats the vulnerability id as its dedup key, so two distinct findings
+// sharing one id are merged and a real finding silently disappears. The same
+// action referenced by two steps of one job has an identical code, file, job
+// and message, so the id must carry the step discriminator the fingerprint
+// already encodes. Regression: the id was briefly derived from
+// code|file|job|message alone, which collapsed exactly this case.
+func TestGLSASTID_SameActionTwoStepsDoNotCollide(t *testing.T) {
+	a := opaengine.Finding{Code: "ISSUE-713", File: "cov.yml", Job: "coverage", Message: "same message",
+		Line: 216, Fingerprint: "aaaa111122223333"}
+	b := opaengine.Finding{Code: "ISSUE-713", File: "cov.yml", Job: "coverage", Message: "same message",
+		Line: 316, Fingerprint: "bbbb444455556666"}
+	if glsastID(a) == glsastID(b) {
+		t.Errorf("two findings differing only by step share GitLab id %q; the second would be dropped", glsastID(a))
+	}
+}
+
+// The id must still ignore line drift: editing unrelated code above a finding
+// must not make GitLab see a new vulnerability.
+func TestGLSASTID_StillLineIndependent(t *testing.T) {
+	a := opaengine.Finding{Code: "ISSUE-701", File: "ci.yml", Job: "build", Message: "unpinned", Fingerprint: "ffff0000ffff0000"}
+	moved := a
+	moved.Line = 999
+	if glsastID(a) != glsastID(moved) {
+		t.Errorf("glsast id changed on line drift; want line-independent")
+	}
+}

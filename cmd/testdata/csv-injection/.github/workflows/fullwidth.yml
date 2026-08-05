@@ -1,0 +1,21 @@
+# CSV-injection fixture. Nothing here runs: it lives under testdata/, not in
+# the repository's real .github/workflows/.
+#
+# The test copies this file as '＝fullwidth.yml', because the payload is the FILE
+# NAME: the collector turns it into the job name, which becomes the CSV
+# `context` column. This case covers a full-width variant, evaluated in some locales and invisible to a byte-wise check.
+# The hostile name is applied at copy time rather than committed, since a
+# leading space breaks checkouts on Windows.
+#
+# The values below are also attacker-controlled in a real scan: the workflow
+# name, the step names, the image tag and the action refs.
+name: "＝HYPERLINK(\"http://evil.example\")"
+on: push
+permissions:
+  contents: read
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - name: "＠SUM(1+1)"
+        uses: dorny/paths-filter@v3

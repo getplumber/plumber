@@ -129,3 +129,42 @@ func TestWithControlMeta(t *testing.T) {
 		}
 	})
 }
+
+// The fingerprint is the per-finding identifier a consumer keys on to follow one
+// specific finding across runs, and the JSON report is the format most
+// integrations read. It reaches the output through projectFinding, so a
+// refactor there could silently drop it while every other format kept working.
+func TestProjectFindingEmitsFingerprint(t *testing.T) {
+	f := opaengine.Finding{Code: "ISSUE-701", Job: "ci/build", Fingerprint: "deadbeefcafef00d"}
+
+	got := projectFinding(f, "job")
+
+	if got["fingerprint"] != "deadbeefcafef00d" {
+		t.Errorf("fingerprint = %v, want deadbeefcafef00d", got["fingerprint"])
+	}
+}
+
+// A finding with no fingerprint (a codeless finding is never stamped) must not
+// grow an empty key: consumers distinguish "absent" from "empty string".
+func TestProjectFindingOmitsEmptyFingerprint(t *testing.T) {
+	got := projectFinding(opaengine.Finding{Code: "ISSUE-701", Job: "ci/build"}, "job")
+
+	if _, has := got["fingerprint"]; has {
+		t.Errorf("unstamped finding emitted fingerprint = %v, want the key absent", got["fingerprint"])
+	}
+}
+
+// Data must not be able to overwrite the stamped value: a rule payload that
+// happened to carry a "fingerprint" key would otherwise forge the identifier.
+func TestProjectFindingDataCannotOverrideFingerprint(t *testing.T) {
+	f := opaengine.Finding{
+		Code: "ISSUE-701", Job: "ci/build", Fingerprint: "realfingerprint0",
+		Data: map[string]any{"fingerprint": "forged"},
+	}
+
+	got := projectFinding(f, "job")
+
+	if got["fingerprint"] != "realfingerprint0" {
+		t.Errorf("fingerprint = %v, want the stamped value to win over Data", got["fingerprint"])
+	}
+}

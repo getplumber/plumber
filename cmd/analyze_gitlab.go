@@ -28,14 +28,14 @@ import (
 
 var (
 	// Flags for analyze command
-	gitlabURL         string
-	githubURL         string
-	providerFlag      string
-	projectPath       string
-	defaultBranch     string
-	outputFile        string
-	printOutput       bool
-	configFile        string
+	gitlabURL     string
+	githubURL     string
+	providerFlag  string
+	projectPath   string
+	defaultBranch string
+	outputFile    string
+	printOutput   bool
+	configFile    string
 	// configExplicitlySet is true when --config (or PLUMBER_ANALYZE_CONFIG)
 	// was supplied. It gates the zero-config fallback: a missing DEFAULT
 	// config path falls back to the embedded default, but a missing
@@ -50,12 +50,13 @@ var (
 	minPoints    float64
 	// minPointsSet distinguishes an explicit --min-points from its default:
 	// when only --min-score is given, the points gate is off.
-	minPointsSet bool
-	pbomFile     string
+	minPointsSet      bool
+	pbomFile          string
 	pbomCycloneDXFile string
 	sarifFile         string
 	glsastFile        string
 	csvFile           string
+	ocsfFile          string
 	mrComment         bool
 	badge             bool
 	showScore         bool
@@ -175,6 +176,7 @@ func init() {
 	analyzeCmd.Flags().StringVar(&sarifFile, "sarif", "", "Write SARIF 2.1.0 results to file (for GitHub Code Scanning / GitLab Security Dashboard)")
 	analyzeCmd.Flags().StringVar(&glsastFile, "glsast", "", "Write a GitLab SAST report (gl-sast-report.json) to file (for the GitLab Security Dashboard / MR widget)")
 	analyzeCmd.Flags().StringVar(&csvFile, "csv", "", "Write CSV results to file")
+	analyzeCmd.Flags().StringVar(&ocsfFile, "ocsf", "", "Write OCSF Compliance Finding results (JSON array) to file (for OCSF-consuming tools and GRC platforms)")
 	analyzeCmd.Flags().BoolVar(&mrComment, "mr-comment", false, "Post/update a compliance comment on the merge request (requires api scope token; only works in merge request pipelines)")
 	analyzeCmd.Flags().BoolVar(&badge, "badge", false, "Create/update a Plumber compliance badge on the project (requires api scope; only runs on default branch)")
 	analyzeCmd.Flags().BoolVar(&showScore, "score", false, "Banner: letter score, points, bar, severity counts on stdout; points + score in JSON, PBOM, CycloneDX; badge shows letter when set")
@@ -506,6 +508,7 @@ var envKeys = map[string]string{
 	"sarif":          "PLUMBER_ANALYZE_SARIF",
 	"glsast":         "PLUMBER_ANALYZE_GLSAST",
 	"csv":            "PLUMBER_ANALYZE_CSV",
+	"ocsf":           "PLUMBER_ANALYZE_OCSF",
 	"mr-comment":     "PLUMBER_ANALYZE_MR_COMMENT",
 	"badge":          "PLUMBER_ANALYZE_BADGE",
 	"score":          "PLUMBER_ANALYZE_SCORE",
@@ -619,14 +622,21 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		func() error { return envStringFallback(cmd, "config", envKeys["config"], &configFile) },
 		func() error { return envStringFallback(cmd, "output", envKeys["output"], &outputFile) },
 		func() error { return envStringFallback(cmd, "pbom", envKeys["pbom"], &pbomFile) },
-		func() error { return envStringFallback(cmd, "pbom-cyclonedx", envKeys["pbom-cyclonedx"], &pbomCycloneDXFile) },
+		func() error {
+			return envStringFallback(cmd, "pbom-cyclonedx", envKeys["pbom-cyclonedx"], &pbomCycloneDXFile)
+		},
 		func() error { return envStringFallback(cmd, "sarif", envKeys["sarif"], &sarifFile) },
 		func() error { return envStringFallback(cmd, "glsast", envKeys["glsast"], &glsastFile) },
 		func() error { return envStringFallback(cmd, "csv", envKeys["csv"], &csvFile) },
-		func() error { return envStringFallback(cmd, "score-endpoint", envKeys["score-endpoint"], &scoreEndpoint) },
+		func() error { return envStringFallback(cmd, "ocsf", envKeys["ocsf"], &ocsfFile) },
+		func() error {
+			return envStringFallback(cmd, "score-endpoint", envKeys["score-endpoint"], &scoreEndpoint)
+		},
 		func() error { return envStringFallback(cmd, "controls", envKeys["controls"], &controlsFilter) },
 		func() error { return envStringFallback(cmd, "skip-controls", envKeys["skip-controls"], &skipControls) },
-		func() error { return envStringFallback(cmd, "ci-config-path", envKeys["ci-config-path"], &ciConfigPath) },
+		func() error {
+			return envStringFallback(cmd, "ci-config-path", envKeys["ci-config-path"], &ciConfigPath)
+		},
 		func() error { return envFloat64Fallback(cmd, "threshold", envKeys["threshold"], &threshold) },
 		func() error { return envStringFallback(cmd, "min-score", envKeys["min-score"], &minScore) },
 		func() error { return envFloat64Fallback(cmd, "min-points", envKeys["min-points"], &minPoints) },
@@ -1774,4 +1784,3 @@ func indentBlock(s, prefix string) string {
 	}
 	return strings.Join(lines, "\n")
 }
-
