@@ -105,7 +105,7 @@ Top-level keys are emitted in this order (human-readable flow: context → aggre
 | `generatedAt` | string | ISO 8601 timestamp of generation |
 | `project` | object | Information about the analyzed project |
 | `summary` | object | Aggregate statistics |
-| `plumberScore` | object | Optional. Present when `plumber analyze` is run with `--score` and/or `--score-point`. Letter score (A–E), points (0–100), and severity counts (see below; per-code detail is exposed in the JSON `--output` only). |
+| `plumberScore` | object | Always present. Letter score (A–E), points (0–100), and severity counts (see below; per-code detail is exposed in the JSON `--output` only). The score has been emitted unconditionally since #218; `--score` is a deprecated no-op and `--score-point` only adds the per-code breakdown to stdout and the MR comment. |
 | `containerImages` | array | All container images used in the pipeline |
 | `includes` | array | All includes (components, templates, local, remote, project) |
 
@@ -286,14 +286,14 @@ All fields are always present (default to `0`). The provider-specific include co
 
 ### `plumberScore` Object (optional)
 
-Present only when analysis is run with `--score` and/or `--score-point`. Field meanings and the exact formula (weights, log₂ growth, per-severity caps, Critical malus, letter thresholds) are documented in **[scoring.md](scoring.md)**. Issue severities per code follow the [issues](https://getplumber.io/docs/cli/issues/) documentation.
+Always present; no flag is required. Field meanings and the exact formula (weights, log₂ growth, per-severity caps, Critical malus, letter thresholds) are documented in **[scoring.md](scoring.md)**. Issue severities per code follow the [issues](https://getplumber.io/docs/cli/issues/) documentation.
 
 | Field | Type | Description |
 |-------|------|-------------|
 | `profileId` | string | Scoring profile identifier (e.g. `scoring-v3`) |
 | `rawPoints` | number | Points (0–100) after severity losses, before Critical malus |
 | `finalPoints` | number | Points (0–100) after Critical malus when applicable |
-| `score` | string | Letter score `A`–`E` derived from final points (set when either `--score` or `--score-point` is used) |
+| `score` | string | Letter score `A`–`E` derived from final points (always set) |
 | `criticalMalusApplied` | bool | Whether any Critical issue forced final points into the E band |
 | `criticalMalusMax` | number | Maximum final points when Critical malus applies (30) |
 | `counts` | object | Issue counts by severity: `critical`, `high`, `medium`, `low` |
@@ -304,14 +304,14 @@ Present only when analysis is run with `--score` and/or `--score-point`. Field m
 
 The CycloneDX output follows the [CycloneDX 1.5 specification](https://cyclonedx.org/docs/1.5/json/) for compatibility with standard security tools.
 
-When `plumber analyze` is run with `--score` and/or `--score-point`, the BOM includes **metadata properties** (and duplicate properties on the root application component). Names use the `plumber:score-*` prefix for profile and counts, `plumber:points-*` for numeric points, and `plumber:score` for the letter:
+The BOM always includes **metadata properties** (and duplicate properties on the root application component); no flag is required. Names use the `plumber:score-*` prefix for profile and counts, `plumber:points-*` for numeric points, and `plumber:score` for the letter:
 
 | Property | Description |
 |----------|-------------|
 | `plumber:score-profile` | Scoring profile id |
 | `plumber:points-raw` | Raw points (0–100), before Critical malus |
 | `plumber:points-final` | Final points (0–100), after Critical malus |
-| `plumber:score` | Letter score `A`–`E` (when `--score` or `--score-point` is used) |
+| `plumber:score` | Letter score `A`–`E` (always emitted) |
 | `plumber:score-count-critical` | Count of Critical issues |
 | `plumber:score-count-high` | Count of High issues |
 | `plumber:score-count-medium` | Count of Medium issues |
@@ -436,14 +436,34 @@ When using the Plumber component in GitLab CI, the CycloneDX output is automatic
 
 ```yaml
 include:
-  - component: gitlab.com/getplumber/plumber/plumber@v0.1.29
+  # pinned plumber version
+  - component: gitlab.com/getplumber/plumber/plumber@v0.4.28
 ```
 
 Both `plumber-pbom.json` (native PBOM) and `plumber-cyclonedx-sbom.json` (CycloneDX) are generated and stored as pipeline artifacts by default.
 
 ## GitHub Actions Integration
 
-There is no first-class GitHub Actions reusable workflow yet (on the roadmap — see the README). For now, run the binary directly from a workflow step and surface the artifacts via standard `actions/upload-artifact`:
+The official [Plumber GitHub Action](https://github.com/marketplace/actions/plumber-score) is the supported path — it downloads the release binary, verifies its checksum and build-provenance attestation, and exposes `output`, `pbom` and `pbom-cyclonedx` inputs. Prefer it:
+
+```yaml
+jobs:
+  plumber:
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read         # read workflow files + repo metadata
+      # administration: read # uncomment if you also want ISSUE-505 (force-push, code-owner) evaluated
+    steps:
+      - uses: actions/checkout@<sha>   # pin via SHA per ISSUE-701
+      # pinned plumber version
+      - uses: getplumber/plumber@<sha>
+        with:
+          output: plumber-report.json
+          pbom: plumber-pbom.json
+          pbom-cyclonedx: plumber-cyclonedx-sbom.json
+```
+
+If you need to drive the binary yourself instead, run it directly from a workflow step and surface the artifacts via standard `actions/upload-artifact`. Note this path performs no checksum or attestation verification:
 
 ```yaml
 jobs:
@@ -455,7 +475,8 @@ jobs:
     steps:
       - uses: actions/checkout@<sha>   # pin via SHA per ISSUE-701
       - run: |
-          curl -LO https://github.com/getplumber/plumber/releases/latest/download/plumber-linux-amd64
+          # pinned plumber version
+          curl -LO https://github.com/getplumber/plumber/releases/download/v0.4.28/plumber-linux-amd64
           chmod +x plumber-linux-amd64
           ./plumber-linux-amd64 analyze \
             --output plumber-report.json \

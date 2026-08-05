@@ -102,10 +102,11 @@ Before opening an issue, please:
 
 ### Prerequisites
 
-- Go 1.25 or later
+- Go 1.25 or later (`go.mod` requests toolchain `go1.26.5`; run with `GOTOOLCHAIN=auto` so it is honoured)
 - Make
 - Git
-- A GitLab token with `read_api` + `read_repository` scopes (for testing against a real project)
+- For testing against a real GitLab project: a GitLab token with `read_api` + `read_repository` scopes. Required even for a local checkout — GitLab "local mode" only resolves `include:local` from disk, and the config merge, per-include job harvest, variable scopes and branch protections all still go through the API.
+- For testing against GitHub: `gh auth login` (preferred) or `GH_TOKEN`. A local GitHub scan runs token-free but only for workflow-content controls; repo-level and action-metadata controls need a token.
 
 ### Building
 
@@ -152,7 +153,7 @@ They must declare the same *set* of control blocks (values may differ); `configu
 ./plumber config generate --output test-config.yaml
 ```
 
-**Run analysis** (requires a GitLab token):
+**Run analysis** — GitLab (requires a token even for a local checkout):
 
 ```bash
 export GITLAB_TOKEN=glpat-xxxx
@@ -166,12 +167,30 @@ export GITLAB_TOKEN=glpat-xxxx
 # With debug output
 ./plumber analyze --verbose
 
-# Lower threshold for testing
-./plumber analyze --threshold 50
+# Lower the score gate for testing (--threshold is deprecated and
+# cannot be combined with --min-points / --min-score)
+./plumber analyze --min-points 50
 
 # Save JSON output
 ./plumber analyze --output results.json
 ```
+
+**Run analysis** — GitHub:
+
+```bash
+gh auth login          # preferred; or export GH_TOKEN=ghp_xxxx
+
+# Local checkout, auto-detected from the git remote
+./plumber analyze
+
+# A repo you have not cloned (remote mode; a token is mandatory here)
+./plumber analyze --provider github --project owner/repo
+```
+
+Remote mode does not read on-disk repo artefacts, so absence-based controls
+(`repositoriesMustConfigureDependencyUpdates`, `repositoriesMustPublishSecurityPolicy`)
+behave differently there than on a local checkout. Compare like with like when
+testing a rule.
 
 ### Running Tests
 
@@ -219,7 +238,10 @@ plumber/
 │   ├── analyze_shared.go      # Provider-agnostic analyze core
 │   ├── analyze_gitlab.go      # plumber analyze (GitLab entrypoint)
 │   ├── analyze_github.go      # plumber analyze (GitHub entrypoint)
-│   ├── config.go              # plumber config view / generate
+│   ├── config.go              # plumber config view / generate / init / validate / diff
+│   ├── config_resolve.go      # plumber config resolve (print the effective config)
+│   ├── config_migrate.go      # plumber config migrate (v1 -> v2 schema)
+│   ├── config_slim.go         # plumber config slim (full config -> overlay)
 │   └── version.go             # plumber version
 │
 ├── configuration/             # Config loading, types, and validation
@@ -608,13 +630,14 @@ If your rule emits a finding without `File` and `Line` (e.g. project-level contr
 
 ### 14. Init wizard (`plumber config init`)
 
-The wizard is a **separate code path** from `.plumber.yaml`. It generates a curated minimal config based on user answers; it does NOT read `.plumber.yaml`. So every new control needs a parallel update here, or `config init` silently produces a config missing your control.
+The wizard is a **separate code path** from `.plumber.yaml`: it builds a curated minimal config from the user's answers rather than dumping the template. Its *menu coverage* is hand-maintained, so a new control is not offered by `config init` until you add it here. Its *values* are not: since the wizard was reworked, every prompt default reads the shipped default through `embeddedDefault()`, so they cannot drift.
 
 - [ ] **`cmd/init.go`** — add the relevant lines for your control:
   - If it belongs to a composition / category menu item (e.g. "Security scanning", "Variables"), update `compositionOptionsForProviders` to include your control in that group, and the corresponding emit block in `toPlumberConfig`.
-  - If it has provider-specific defaults that differ from `.plumber.yaml`, add a dedicated field to `initWizardState`, a prompt with the right `Default:`, and the emit branch.
-  - The starter config emitted on "minimal" answer is built by `starterPlumberConfig` — make sure it gets your default values for the provider(s) this control applies to.
-- [ ] **`cmd/init_test.go`** — parity guards. `TestStarterGitHubControlsMatchEmbeddedDefault` and `TestDefaultTrustedURLsMatchEmbeddedDefault` are the existing ones; extend them or add a new one if your control has a default the test framework cannot infer.
+  - If it has provider-specific defaults, add a dedicated field to `initWizardState`, a prompt, and the emit branch. GitLab and GitHub defaults that differ cannot share one state field.
+  - **Do not hand-write the default value.** Add a `defaultXxx()` helper that reads `embeddedDefault()` (`cmd/init.go`, a `sync.OnceValue` parse of `defaultconfig.Get()`) and use it as the prompt's `Default:`. This is what keeps the wizard and the shipped default in sync. There is no `starterPlumberConfig` function; the hand-maintained starter lives in the test file below.
+- [ ] **`cmd/init_test.go`** — update `starterWizardConfig()`, the fixture mirroring what a user gets by pressing Enter at every prompt. It is hand-maintained against the prompt `Default:` literals, so changing a prompt default without updating it leaves the guards passing against a stale value.
+- [ ] Parity guards to extend: `TestWizardDefaultsSourcedFromEmbeddedDefault`, `TestStarterGitHubControlsMatchEmbeddedDefault` (there is no GitLab equivalent yet — a new GitLab control can land in the shipped default and be silently missing from the wizard), `TestStarterPlumberConfigGitHubMatchesCuratedDefaults`, `TestStarterPlumberConfigGitLabMatchesCuratedDefaults`.
 
 ### 15. CLI filter flags (`--controls` / `--skip-controls`)
 
@@ -654,7 +677,7 @@ The wizard is a **separate code path** from `.plumber.yaml`. It generates a cura
 
 ### 19. Documentation
 
-- [ ] **`README.md`** — update the count in the "Available Controls" intro (`X GitLab controls` / `Y GitHub controls`), add a `<details>` block describing the control with bad / good YAML examples, add a row in the "Valid control names" table at the bottom.
+- [ ] **`README.md`** — usually nothing to do. The README no longer carries a control count, per-control `<details>` blocks, or a "Valid control names" table; its `## Controls` section is a short prose summary that links to the website catalog. Touch it only if your control introduces a category that summary does not already cover.
 - [ ] **`docs/GITHUB_ISSUES.md`** (GitHub controls only) — add a TOC row under the right severity-category section (1xx/2xx/3xx/4xx/5xx/6xx), then a detailed `## ISSUE-XXX — <rule-name>` section with: severity + control name banner, threat model paragraph, bad/good YAML examples, FP guards if any, config snippet. Reference: the ISSUE-411 section we added during the Megalodon work.
 - [ ] **`docs/PBOM.md`** — only if you added PBOM enrichment (§11). Document both the JSON field and the CycloneDX property.
 - [ ] **`docs/scoring.md`** — only if your control's severity or contribution changes the score formula. Adding a new control at an existing severity does not require an update.
@@ -869,27 +892,31 @@ Releases are automated by semantic-release. A handful of version / image-digest 
 semantic-release runs two scripts in this repo:
 
 - `scripts/release-bump-version.sh` (in the tagged commit) — `action.yml`: the `version` input default and its "(e.g. vX)" hint.
-- `scripts/release-pin-refs.sh` (post-build, committed with `[skip ci]`) — `README.md` GitHub Action `uses: getplumber/plumber@<sha> # vX` pin, and the `templates/plumber.yml` component **image digest** line (`getplumber/plumber@sha256:… #vX`).
+- `scripts/release-pin-refs.sh` (post-build, committed with `[skip ci]`) — the `templates/plumber.yml` component **image digest** line (`getplumber/plumber@sha256:… #vX`).
+
+  > The same script also contains a `README.md` rewrite for the GitHub Action `uses: getplumber/plumber@<sha> # vX` pin. **It is currently dead.** Its sed requires a 40-hex SHA followed by a `# vX.Y.Z` comment, and the README now reads `uses: getplumber/plumber@<version>`, which can never match. The script still exits 0 and `pin-refs` still `git add README.md`, so the breakage is silent. Either restore a real SHA-pinned example in the README or drop the sed; do not assume the README pin is being maintained.
 
 Also automated: the Homebrew formula (the `release.yml` Homebrew job) and `CHANGELOG.md` (semantic-release).
 
+### Propagated automatically by marker — do not hand-edit
+
+The GitLab component repo and the website used to be a manual checklist. They are not any more. `release.yml` ends with a `propagate` job (`.github/workflows/propagate.yml`) that pushes each release outward: it syncs `templates/plumber.yml`, rewrites pins and `RELEASE_NOTES.md` in the GitLab component repo and tags `v${VERSION}` there (which makes the GitLab tag pipeline publish the Catalog release), then opens a pin-bump PR against `getplumber.io`.
+
+Rewrites are **marker-driven** (`scripts/release-propagate-pins.sh`): only lines carrying the phrase `pinned plumber version` in a comment are touched (case-insensitive, any comment syntax). If the marker line itself holds a rewritable reference it is the target, otherwise the line directly below it is.
+
+- To make a new version reference auto-update, add that phrase in a comment near it. Never mark a historical version mention.
+- **The rewrite replaces every `X.Y.Z` token on a marked line.** Only mark lines whose sole version is Plumber's; a marked line that also names a Go version or an action version will have it clobbered.
+- A marker with no rewritable target is "dangling" and fails the script with exit 3.
+- Re-run for the latest release with `gh workflow run propagate.yml -f version=X.Y.Z`.
+
+The component repo receives **two** commits per release, and it is the second that carries the `v${VERSION}` tag, so its README self-pins point one commit behind the tag by design.
+
 ### Manual — update on every release
 
-Nothing bumps these (they're in comments/prose, or in a separate repo the CLI release never touches):
+Only the references no marker covers:
 
 **This repo (`plumber-cli`):**
 - [ ] `templates/plumber.yml` — the `@vX.Y.Z` **usage-comment examples** in the header block. The image-digest line above them is auto-pinned; these comment lines are NOT.
-
-**GitLab component repo (`gitlab.com/getplumber/plumber`) — a hand-maintained mirror of the component:**
-- [ ] `templates/plumber.yml` — component image digest (`getplumber/plumber@sha256:… #vX`) and the `@vX.Y.Z` usage-comment examples.
-- [ ] `README.md` — `@vX.Y.Z` component references.
-
-**Website (`getplumber.io`) — no release automation, entirely manual:**
-- [ ] `.plumber.yaml` — the `# Generated with … (CLI vX)` header comment.
-- [ ] `src/docs/data/docs/en/cli/installation.mdx` — `brew install …@vX` version examples.
-- [ ] `src/docs/data/docs/en/cli/gitlab/index.mdx` — `component: …/plumber@X` examples.
-- [ ] `src/components/Animation/PipelineAnimation.astro` — the terminal-banner `vX`.
-- [ ] Blog posts with hardcoded install/download commands (e.g. `gh release download vX`).
 
 Demo/example repositories that pin the component or action by SHA (`# vX.Y.Z`) are bumped by hand when the examples are refreshed.
 

