@@ -95,8 +95,14 @@ type sarifRule struct {
 	Properties           map[string]any `json:"properties,omitempty"`
 }
 
+// sarifText is a multiformatMessageString (SARIF §3.12). Markdown is optional
+// and only meaningful on a rule's `help`: GitHub Code Scanning renders
+// help.markdown in place of help.text when present, which is the only place a
+// clickable link reaches an inline PR comment (helpUri is not among the
+// properties Code Scanning surfaces there).
 type sarifText struct {
-	Text string `json:"text"`
+	Text     string `json:"text"`
+	Markdown string `json:"markdown,omitempty"`
 }
 
 type sarifConfig struct {
@@ -106,9 +112,16 @@ type sarifConfig struct {
 type sarifResult struct {
 	RuleID string `json:"ruleId"`
 	// PartialFingerprints carries a stable, line-independent identifier per
-	// finding (opaengine.StampFingerprints). This is the SARIF-native
-	// mechanism GitHub Code Scanning uses to track the same alert across runs
-	// even as line numbers drift.
+	// finding (opaengine.StampFingerprints), so an alert keeps its identity
+	// across runs and a maintainer's dismissal survives.
+	//
+	// The key matters: Code Scanning reads ONLY `primaryLocationLineHash` and
+	// ignores every other entry, so that is the one that makes dismissals
+	// stick. Despite the name it is just an opaque tool-provided value, and a
+	// semantic identity is exactly what belongs there: GitHub's own fallback
+	// (rule + file + region + surrounding source) is what breaks on line drift.
+	// The plumber/v1 entry carries the same value under a self-describing name
+	// for consumers that are not Code Scanning.
 	PartialFingerprints map[string]string `json:"partialFingerprints,omitempty"`
 	// Kind categorizes the result's evaluation state (SARIF §3.27.9):
 	// "fail" for findings (the spec default when absent), "pass" /
@@ -197,13 +210,118 @@ func sarifRuleFor(code, severity, provider string, info *control.ErrorCodeInfo) 
 		if description != "" {
 			rule.FullDescription = &sarifText{Text: description}
 		}
-		if info.Remediation != "" {
-			rule.Help = &sarifText{Text: info.Remediation}
-		}
+		rule.Help = sarifHelp(code, info)
 		rule.HelpURI = info.DocURL
 		rule.Properties["controlName"] = info.ControlName
 	}
 	return rule
+}
+
+// sarifHelp builds the rule's help block. Code Scanning renders help.markdown
+// next to the alert (and in place of help.text), and it is the only route by
+// which the issue code and a clickable documentation link reach an inline PR
+// comment: helpUri is not among the properties Code Scanning surfaces there,
+// and ruleId is not shown prominently. text mirrors the same content for
+// consumers that do not render Markdown.
+func sarifHelp(code string, info *control.ErrorCodeInfo) *sarifText {
+	if info == nil {
+		return nil
+	}
+	docURL := info.DocURL
+	if docURL == "" {
+		docURL = "https://getplumber.io/docs/cli/issues/" + code
+	}
+
+	var md, txt strings.Builder
+	md.WriteString("**" + code + "**")
+	txt.WriteString(code)
+	if title := info.Title; title != "" {
+		md.WriteString(" — " + title)
+		txt.WriteString(" - " + title)
+	}
+	md.WriteString("\n\n")
+	txt.WriteString("\n\n")
+
+	if info.Remediation != "" {
+		md.WriteString(info.Remediation + "\n\n")
+		txt.WriteString(info.Remediation + "\n\n")
+	}
+	md.WriteString("[View the " + code + " documentation](" + docURL + ")")
+	txt.WriteString(docURL)
+
+	return &sarifText{Text: txt.String(), Markdown: md.String()}
+}
+
+// sarifLinkEscaper escapes the three characters SARIF reserves inside a
+// message string that carries an embedded link (§3.11.6). Finding detail
+// quotes job names and script lines, which can contain brackets of their
+// own; unescaped, a strict reader would try to parse them as link syntax.
+var sarifLinkEscaper = strings.NewReplacer(`\`, `\\`, `[`, `\[`, `]`, `\]`)
+
+// sarifMessage renders the text Code Scanning shows in an inline PR comment.
+// That comment contains only the rule title, this message, and GitHub's own
+// "Show more details" link to the Security-tab alert, which 404s for a reader
+// without security-events access. So both facts a reader needs have to be in
+// the message itself: the issue code (ruleId is not surfaced there) and the
+// documentation URL (helpUri is not surfaced, and rule help renders on the
+// alert page, which is gated behind the same access).
+//
+// The URL rides on the issue code as a SARIF embedded link (§3.11.6), which
+// is plain-text message syntax and not Markdown, so it does not depend on
+// message.markdown — a field Code Scanning ignores.
+func sarifMessage(f opaengine.Finding, info *control.ErrorCodeInfo) string {
+	if f.Code == "" {
+		return f.Message
+	}
+	docURL := ""
+	if info != nil {
+		docURL = info.DocURL
+	}
+	if docURL == "" {
+		docURL = "https://getplumber.io/docs/cli/issues/" + f.Code
+	}
+	msg := "[" + f.Code + "](" + docURL + ")"
+	if f.Message != "" {
+		msg += ": " + sarifLinkEscaper.Replace(sarifCodeSpanJob(f))
+	}
+	return msg
+}
+
+// sarifCodeSpanJob re-quotes the job name inside a finding message as a
+// Markdown code span, so an inline PR comment renders it as code rather than
+// as prose in quotes. It runs here and not in the rule that wrote the message
+// for two reasons. The message is shared by every output — terminal, JSON,
+// CSV, GitLab SAST — where a backtick is literal noise, not formatting. And
+// a rule that emits no structured subject key falls back to its message for
+// the fingerprint (fingerprintSubjectKeys), so rewording it in Rego re-files
+// the alert and drops any dismissal; rendering here leaves the fingerprint
+// input untouched.
+//
+// The job name is matched exactly, from Finding.Job, rather than guessed from
+// the prose, so a message that quotes something else is left alone.
+//
+// A job name carrying a character the span cannot hold keeps the rule's own
+// quoting instead. A backtick would close the span; `[`, `]` and `\` are the
+// characters sarifLinkEscaper escapes immediately after this runs (§3.11.6),
+// and a code span renders its contents verbatim, so those backslashes would
+// be shown rather than applied: `ci\[nightly\]/build` instead of the name.
+// Escaping first and spanning after would fix the display by emitting stray
+// unescaped brackets inside a message that carries an embedded link, which
+// the spec does not allow. Left as quoted prose the escapes render correctly,
+// because Markdown does apply them outside a code span.
+//
+// Both providers can produce such a name. A GitHub job is namespaced by the
+// workflow FILE base name, so `.github/workflows/ci[nightly].yml` yields
+// "ci[nightly]/build" (the job id itself cannot hold brackets, the filename
+// can). A GitLab job name is the raw YAML key from .gitlab-ci.yml, which is
+// free-form apart from the reserved keywords.
+func sarifCodeSpanJob(f opaengine.Finding) string {
+	if f.Job == "" || strings.ContainsAny(f.Job, "`[]\\") {
+		return f.Message
+	}
+	span := "`" + f.Job + "`"
+	msg := strings.ReplaceAll(f.Message, `"`+f.Job+`"`, span)
+	return strings.ReplaceAll(msg, `'`+f.Job+`'`, span)
 }
 
 func buildSARIF(findings []opaengine.Finding, fallbackURI, provider string) sarifLog {
@@ -234,10 +352,16 @@ func buildSARIF(findings []opaengine.Finding, fallbackURI, provider string) sari
 			RuleID:  f.Code,
 			Kind:    "fail",
 			Level:   sarifLevel(severity),
-			Message: sarifText{Text: f.Message},
+			Message: sarifText{Text: sarifMessage(f, info)},
 		}
 		if f.Fingerprint != "" {
-			res.PartialFingerprints = map[string]string{"plumber/v1": f.Fingerprint}
+			res.PartialFingerprints = map[string]string{
+				// The only key Code Scanning reads; without it GitHub falls
+				// back to hashing the surrounding source, which changes when
+				// an unrelated edit shifts the line and resurrects dismissals.
+				"primaryLocationLineHash": f.Fingerprint,
+				"plumber/v1":              f.Fingerprint,
+			}
 		}
 		// SARIF's `artifactLocation.uri` must stay repo-relative so
 		// GitHub Code Scanning can map the alert to a file in the
