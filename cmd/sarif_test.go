@@ -214,3 +214,256 @@ func TestWriteSARIFToFile_FilelessAnchorGuardedOnConfigExistence(t *testing.T) {
 		}
 	})
 }
+
+// Issue #372: a GHAS inline PR comment must let a reader identify which Plumber
+// issue fired and reach its documentation. Code Scanning does not surface
+// ruleId prominently and ignores helpUri in that view, so the code goes in the
+// message and the doc link goes in help.markdown, which Code Scanning renders
+// in place of help.text.
+func TestBuildSARIF_AlertCarriesIssueCodeAndDocLink(t *testing.T) {
+	code := "ISSUE-701"
+	info := control.LookupCode(control.ErrorCode(code))
+	if info == nil {
+		t.Fatalf("test prerequisite: %s must be registered", code)
+		return // unreachable, but staticcheck does not treat Fatalf as terminating
+	}
+
+	doc := buildSARIF([]opaengine.Finding{
+		{Code: code, Severity: "high", Message: "unpinned action", File: "ci.yml", Line: 3},
+	}, ".plumber.yaml", "github")
+
+	res := doc.Runs[0].Results[0]
+	if !strings.HasPrefix(res.Message.Text, "["+code+"](") {
+		t.Errorf("message = %q, want it to open with the code as an embedded link so the code is visible and clickable in the comment", res.Message.Text)
+	}
+	if !strings.Contains(res.Message.Text, "unpinned action") {
+		t.Errorf("message = %q, want the finding detail preserved", res.Message.Text)
+	}
+
+	rule := doc.Runs[0].Tool.Driver.Rules[0]
+	if rule.Help == nil {
+		t.Fatal("rule.help missing; Code Scanning renders help.markdown next to the alert")
+	}
+	help := *rule.Help
+	if help.Markdown == "" {
+		t.Fatal("rule.help.markdown missing; Code Scanning renders it in place of help.text")
+	}
+	if !strings.Contains(help.Markdown, code) {
+		t.Errorf("help.markdown %q does not name the issue code", help.Markdown)
+	}
+	if !strings.Contains(help.Markdown, "("+info.DocURL+")") {
+		t.Errorf("help.markdown %q lacks a markdown link to %s", help.Markdown, info.DocURL)
+	}
+	if info.Remediation != "" && !strings.Contains(help.Markdown, info.Remediation) {
+		t.Errorf("help.markdown %q lacks the remediation", help.Markdown)
+	}
+	// help.text must carry the same facts for consumers that do not render Markdown.
+	if !strings.Contains(help.Text, code) || !strings.Contains(help.Text, info.DocURL) {
+		t.Errorf("help.text %q must also carry the code and doc URL", help.Text)
+	}
+}
+
+// Code Scanning reads ONLY partialFingerprints.primaryLocationLineHash; any
+// other key is ignored, and without it GitHub falls back to hashing the
+// surrounding source, so a dismissal is lost the moment the line drifts.
+func TestBuildSARIF_EmitsPrimaryLocationLineHash(t *testing.T) {
+	doc := buildSARIF([]opaengine.Finding{
+		{Code: "ISSUE-701", Severity: "high", Message: "x", File: "ci.yml", Line: 3, Fingerprint: "deadbeefcafef00d"},
+	}, ".plumber.yaml", "github")
+
+	fp := doc.Runs[0].Results[0].PartialFingerprints
+	if got := fp["primaryLocationLineHash"]; got != "deadbeefcafef00d" {
+		t.Errorf("primaryLocationLineHash = %q, want the stable fingerprint; Code Scanning ignores every other key", got)
+	}
+	if got := fp["plumber/v1"]; got != "deadbeefcafef00d" {
+		t.Errorf("plumber/v1 = %q, want the same value under the self-describing name", got)
+	}
+}
+
+// Two findings that differ only by line must share an alert identity, so an
+// edit above a finding does not resurrect a dismissed alert.
+func TestBuildSARIF_FingerprintSurvivesLineDrift(t *testing.T) {
+	mk := func(line int) sarifLog {
+		return buildSARIF([]opaengine.Finding{
+			{Code: "ISSUE-701", Severity: "high", Message: "x", File: "ci.yml", Line: line, Fingerprint: "stablefingerprint"},
+		}, ".plumber.yaml", "github")
+	}
+	a := mk(3).Runs[0].Results[0].PartialFingerprints["primaryLocationLineHash"]
+	b := mk(400).Runs[0].Results[0].PartialFingerprints["primaryLocationLineHash"]
+	if a != b {
+		t.Errorf("alert identity changed on line drift: %q vs %q", a, b)
+	}
+}
+
+// The inline PR comment contains only the rule title, the message, and GitHub's
+// own "Show more details" link, which 404s for a reader without security-events
+// access. So the message must carry the doc URL itself, or such a reader has no
+// working path to the documentation.
+func TestBuildSARIF_MessageCarriesDocURLForReadersWithoutAlertAccess(t *testing.T) {
+	code := "ISSUE-701"
+	info := control.LookupCode(control.ErrorCode(code))
+	if info == nil {
+		t.Fatalf("test prerequisite: %s must be registered", code)
+		return // unreachable, but staticcheck does not treat Fatalf as terminating
+	}
+
+	doc := buildSARIF([]opaengine.Finding{
+		{Code: code, Severity: "high", Message: "unpinned action", File: "ci.yml", Line: 3},
+	}, ".plumber.yaml", "github")
+
+	msg := doc.Runs[0].Results[0].Message.Text
+	if !strings.Contains(msg, info.DocURL) {
+		t.Errorf("message %q does not carry the doc URL %q", msg, info.DocURL)
+	}
+	// The URL is attached to the issue code as a SARIF embedded link (§3.11.6)
+	// rather than trailing the message as a bare URL, so the comment reads as
+	// one sentence. Embedded links are plain-text message syntax, not Markdown.
+	if !strings.Contains(msg, "["+code+"]("+info.DocURL+")") {
+		t.Errorf("message %q does not link the issue code to %s", msg, info.DocURL)
+	}
+}
+
+// A finding detail carrying brackets of its own must not be readable as link
+// syntax once the message contains an embedded link (SARIF §3.11.6).
+func TestBuildSARIF_MessageEscapesBracketsInFindingDetail(t *testing.T) {
+	doc := buildSARIF([]opaengine.Finding{
+		{Code: "ISSUE-701", Severity: "high", Message: `step "build[0]" uses \x`, File: "ci.yml", Line: 3},
+	}, ".plumber.yaml", "github")
+
+	msg := doc.Runs[0].Results[0].Message.Text
+	if !strings.Contains(msg, `build\[0\]`) {
+		t.Errorf("message %q does not escape the brackets in the finding detail", msg)
+	}
+	if !strings.Contains(msg, `\\x`) {
+		t.Errorf("message %q does not escape the backslash in the finding detail", msg)
+	}
+}
+
+// PR #394 review: a job name reads better as a code span than as quoted prose
+// in the inline comment. The rewrite happens at render time, so the message the
+// fingerprint is computed from (and every non-Markdown output) is unchanged.
+func TestBuildSARIF_JobNameRendersAsCodeSpan(t *testing.T) {
+	for _, tc := range []struct{ name, message string }{
+		{"double quoted", `job "wf/injection" writes to $GITHUB_ENV`},
+		{"single quoted", `Job 'wf/injection' script: curl x | bash`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := buildSARIF([]opaengine.Finding{
+				{Code: "ISSUE-701", Severity: "high", Message: tc.message, Job: "wf/injection", File: "ci.yml", Line: 3},
+			}, ".plumber.yaml", "github")
+
+			msg := doc.Runs[0].Results[0].Message.Text
+			if !strings.Contains(msg, "`wf/injection`") {
+				t.Errorf("message %q does not render the job name as a code span", msg)
+			}
+			if strings.Contains(msg, `"wf/injection"`) || strings.Contains(msg, `'wf/injection'`) {
+				t.Errorf("message %q still quotes the job name as prose", msg)
+			}
+		})
+	}
+}
+
+// Only the job name is re-quoted. A quoted value that is not the job (an image
+// ref, a variable, a tag) keeps the rule's own punctuation.
+func TestBuildSARIF_CodeSpanLeavesOtherQuotedValuesAlone(t *testing.T) {
+	doc := buildSARIF([]opaengine.Finding{
+		{Code: "ISSUE-102", Severity: "high", Job: "wf/build", File: "ci.yml", Line: 3,
+			Message: `job "wf/build" uses forbidden tag 'latest' (image: "alpine:latest")`},
+	}, ".plumber.yaml", "github")
+
+	msg := doc.Runs[0].Results[0].Message.Text
+	if !strings.Contains(msg, "`wf/build`") {
+		t.Errorf("message %q does not render the job name as a code span", msg)
+	}
+	if !strings.Contains(msg, `'latest'`) || !strings.Contains(msg, `"alpine:latest"`) {
+		t.Errorf("message %q rewrote a quoted value that is not the job name", msg)
+	}
+}
+
+// A finding with no job (repository-level controls: branch protection, repo
+// settings) must pass through untouched.
+func TestBuildSARIF_CodeSpanNoopWithoutJob(t *testing.T) {
+	doc := buildSARIF([]opaengine.Finding{
+		{Code: "ISSUE-501", Severity: "critical", Message: `branch "main" is not protected`},
+	}, ".plumber.yaml", "github")
+
+	if msg := doc.Runs[0].Results[0].Message.Text; !strings.Contains(msg, `branch "main" is not protected`) {
+		t.Errorf("message %q altered a finding that has no job", msg)
+	}
+}
+
+// A code span renders verbatim, so it cannot carry the backslash escapes SARIF
+// requires for [ ] and \ in a message that holds an embedded link. A job name
+// containing any of them keeps the rule's own quoting instead, where Markdown
+// does apply the escapes. The invariant: a backslash must never appear inside
+// a code span. The bracket and backslash cases are the names a GitHub scan
+// really produces, since a job is namespaced by its workflow FILE base name
+// (verified: ci[nightly].yml yields "ci[nightly]/build"); a GitLab job name is
+// a free-form YAML key and can hold the same characters directly.
+func TestBuildSARIF_CodeSpanJobNameWithReservedChars(t *testing.T) {
+	for _, tc := range []struct {
+		name, job string
+		wantSpan  bool
+	}{
+		{"brackets from workflow filename", `ci[nightly]/build`, false},
+		{"backslash from workflow filename", `back\slash/build`, false},
+		{"backtick", "job`name", false},
+		{"plain name still spanned", `wf/build`, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			doc := buildSARIF([]opaengine.Finding{
+				{Code: "ISSUE-701", Severity: "high", Job: tc.job, File: "ci.yml", Line: 3,
+					Message: `job "` + tc.job + `" fails`},
+			}, ".plumber.yaml", "github")
+			msg := doc.Runs[0].Results[0].Message.Text
+
+			if got := strings.Contains(msg, "`"+tc.job+"`"); got != tc.wantSpan {
+				t.Errorf("message %q: code-spanned = %v, want %v", msg, got, tc.wantSpan)
+			}
+			if inCodeSpan(msg, '\\') {
+				t.Errorf("message %q has a backslash inside a code span; it renders literally", msg)
+			}
+		})
+	}
+}
+
+// inCodeSpan reports whether r appears between an odd and the following
+// backtick, i.e. inside a Markdown code span.
+func inCodeSpan(s string, r rune) bool {
+	open := false
+	for _, c := range s {
+		switch {
+		case c == '`':
+			open = !open
+		case open && c == r:
+			return true
+		}
+	}
+	return false
+}
+
+// buildSARIF accepts a finding whose code is not in the registry (it falls back
+// to the finding's own severity for those), so sarifMessage runs with info nil
+// and derives the doc URL from the code instead. That derivation is the only
+// route by which such a finding reaches its documentation, because the rule
+// carries no help block without registry metadata.
+func TestBuildSARIF_UnregisteredCodeStillLinksToDocs(t *testing.T) {
+	const code = "ISSUE-000"
+	if control.LookupCode(control.ErrorCode(code)) != nil {
+		t.Fatalf("test prerequisite: %s must NOT be registered", code)
+	}
+
+	doc := buildSARIF([]opaengine.Finding{
+		{Code: code, Severity: "high", Message: "something unregistered", File: "ci.yml", Line: 3},
+	}, ".plumber.yaml", "github")
+
+	want := "[" + code + "](https://getplumber.io/docs/cli/issues/" + code + ")"
+	if msg := doc.Runs[0].Results[0].Message.Text; !strings.HasPrefix(msg, want) {
+		t.Errorf("message = %q, want it to open with %q", msg, want)
+	}
+	// Documents the consequence: without registry metadata there is no
+	// help block, so the message link is the reader's only path to the docs.
+	if rule := doc.Runs[0].Tool.Driver.Rules[0]; rule.Help != nil || rule.HelpURI != "" {
+		t.Errorf("rule for an unregistered code should carry no help block, got help=%+v helpUri=%q", rule.Help, rule.HelpURI)
+	}
+}
