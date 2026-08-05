@@ -1,0 +1,21 @@
+# CSV-injection fixture. Nothing here runs: it lives under testdata/, not in
+# the repository's real .github/workflows/.
+#
+# The test copies this file as ' =spacebypass.yml', because the payload is the FILE
+# NAME: the collector turns it into the job name, which becomes the CSV
+# `context` column. This case covers a leading space before the trigger, which some importers trim before evaluating.
+# The hostile name is applied at copy time rather than committed, since a
+# leading space breaks checkouts on Windows.
+#
+# The values below are also attacker-controlled in a real scan: the workflow
+# name, the step names, the image tag and the action refs.
+name: " =1+1"
+on: push
+permissions:
+  contents: read
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: " -2+3+cmd|' /C calc'!A0"
+        uses: tj-actions/changed-files@v45
