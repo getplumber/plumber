@@ -1,3 +1,15 @@
+## [0.4.30](https://github.com/getplumber/plumber/compare/v0.4.29...v0.4.30) (2026-08-05)
+
+
+### 🐛 Bug Fixes
+
+* **misc:** Update various stale documentation and fix incorrect array size in catalog ([98b399a](https://github.com/getplumber/plumber/commit/98b399a98485a4c4b7c2ea8dcc4e59997502507d))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.29 refs [skip ci] ([72d4610](https://github.com/getplumber/plumber/commit/72d461056e592082b2747a72196ea5a1266e7ac5))
+
 ## [0.4.29](https://github.com/getplumber/plumber/compare/v0.4.28...v0.4.29) (2026-08-05)
 
 
