@@ -371,55 +371,56 @@ gitlab:
     # ===========================================
     # CI/CD components must come from authorized sources
     # ===========================================
-    # Detects `include: component:` references pulled from a source not
-    # listed below. Components run arbitrary code with the job's full
-    # context (variables, secrets, CI_JOB_TOKEN) — the GitLab analogue of
-    # a GitHub Actions "pwn request".
+    # Detects `include: component:` references that are not trusted.
+    # Components run arbitrary code with the job's full context
+    # (variables, secrets, CI_JOB_TOKEN) — the GitLab analogue of a
+    # GitHub Actions "pwn request".
     #
-    # $CI_SERVER_FQDN and $CI_PROJECT_PATH (${...} form also supported)
-    # are resolved from Plumber's OS environment variables at scan time.
-    # This resolves correctly when Plumber runs as a job inside the same
-    # GitLab CI pipeline being scanned (or when you export these
-    # variables yourself before a local run). GitLab resolves
-    # include: component: locations server-side regardless of where
-    # Plumber runs, so running Plumber outside that CI context leaves
-    # this pattern unresolved and it will NOT match even your own
-    # project's components — replace the defaults below with literal
-    # values in that case, e.g. gitlab.example.com/my-group/my-project/*.
+    # A source is trusted when it matches trustedComponents, OR lives
+    # under this project's own root namespace on the same GitLab
+    # instance (trustSameGroupComponents), OR is hosted on the same
+    # GitLab instance at all (trustSameInstanceComponents — off by
+    # default on gitlab.com, on by default on a self-hosted instance).
+    # Both are derived dynamically from the pipeline at scan time, in CI
+    # or locally — no environment variables involved.
     #
     # Best practice: keep components scoped to your own project/group
     componentMustComeFromAuthorizedSources:
       # Set to false to disable this control
       enabled: true
-      # Trusted component source URLs and patterns (supports wildcards)
-      trustedUrls:
-        - $CI_SERVER_FQDN/$CI_PROJECT_PATH/*
-        - ${CI_SERVER_FQDN}/${CI_PROJECT_PATH}/*
+      # Trust components under this project's own root namespace
+      trustSameGroupComponents: true
+      # Trust any component on the same GitLab instance, regardless of
+      # namespace (defaults to true when self-hosted, false on gitlab.com)
+      trustSameInstanceComponents: false
+      # Additional trusted component source URLs and patterns (supports wildcards)
+      trustedComponents: []
     # ===========================================
     # GitLab Functions must come from authorized sources
     # ===========================================
     # Detects `run:` step function references (the `func:` keyword, or
-    # the deprecated `step:` alias) pulled from a source not listed
-    # below, or using a deprecated reference form. Functions run
+    # the deprecated `step:` alias) that are not trusted. Functions run
     # arbitrary code with the job's full context, the same supply-chain
-    # exposure as CI/CD components.
+    # exposure as CI/CD components. Trust is evaluated the same way
+    # regardless of reference form — deprecated forms are not a free
+    # pass; deprecation is tracked separately (see the Deprecated stat
+    # in `plumber analyze` output) and doesn't affect this control.
     #
-    # $CI_TEMPLATE_REGISTRY_HOST and $CI_PROJECT_PATH are NOT resolved to
-    # real values — GitLab does not resolve run:/func: references before
-    # Plumber sees them (unlike include: locations), so this pattern only
-    # matches function references that literally use the same
-    # $CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH variable text in their
-    # func: field (a common idiom). If your pipeline hardcodes literal
-    # registry values instead, add literal entries to trustedUrls.
+    # A reference is trusted when it matches trustedFunctions, OR its
+    # path (host ignored — the OCI registry host convention varies per
+    # GitLab instance) starts with this project's own root namespace, or
+    # with the $CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH idiom, as
+    # long as the pipeline doesn't redefine either variable itself
+    # (trustSameGroupFunctions).
     #
     # Best practice: keep functions scoped to your own project/group
     functionMustComeFromAuthorizedSources:
       # Set to false to disable this control
       enabled: true
-      # Trusted function source URLs and patterns (supports wildcards)
-      trustedUrls:
-        - $CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/*
-        - ${CI_TEMPLATE_REGISTRY_HOST}/${CI_PROJECT_PATH}/*
+      # Trust functions under this project's own root namespace
+      trustSameGroupFunctions: true
+      # Additional trusted function source URLs and patterns (supports wildcards)
+      trustedFunctions: []
     # ===========================================
     # Pipeline must not enable debug trace
     # ===========================================

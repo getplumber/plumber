@@ -690,22 +690,19 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 		}
 	case "functionMustComeFromAuthorizedSources":
 		total := 0
+		deprecated := 0
 		if result.GitLabPipeline != nil {
 			for _, job := range result.GitLabPipeline.Jobs {
 				total += len(job.Functions)
+				for _, fn := range job.Functions {
+					if fn.Deprecated {
+						deprecated++
+					}
+				}
 			}
 		}
-		unauthorized := 0
-		deprecated := 0
-		for _, f := range findings {
-			switch f.Data["status"] {
-			case "deprecated":
-				deprecated++
-			default:
-				unauthorized++
-			}
-		}
-		authorized := total - unauthorized - deprecated
+		unauthorized := findingsCount
+		authorized := total - unauthorized
 		if authorized < 0 {
 			authorized = 0
 		}

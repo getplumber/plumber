@@ -1611,22 +1611,23 @@ func TestIssue101_ImageAuthorizedSources(t *testing.T) {
 // ISSUE-101 hit for job.image.Registry).
 func TestIssue414_ComponentAuthorizedSources(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
 
 	cases := []struct {
-		name     string
-		inc      ir.Include
-		cfg      map[string]any
-		expected bool
+		name        string
+		inc         ir.Include
+		projectPath string
+		cfg         map[string]any
+		expected    bool
 	}{
 		{
-			name: "trusted_own_project",
+			name: "trusted_allowlist",
 			inc:  ir.Include{Kind: "component", Source: "gitlab.example.com/my-group/my-project/ci-component"},
 			cfg: map[string]any{
 				"componentAuthorizedSources": map[string]any{
-					"trustedUrls": []string{"gitlab.example.com/my-group/my-project/*"},
+					"trustedComponents": []string{"gitlab.example.com/my-group/my-project/*"},
 				},
 			},
 			expected: false,
@@ -1636,23 +1637,83 @@ func TestIssue414_ComponentAuthorizedSources(t *testing.T) {
 			inc:  ir.Include{Kind: "component", Source: "gitlab.example.com/attacker/evil-component"},
 			cfg: map[string]any{
 				"componentAuthorizedSources": map[string]any{
-					"trustedUrls": []string{"gitlab.example.com/my-group/my-project/*"},
+					"trustedComponents": []string{"gitlab.example.com/my-group/my-project/*"},
 				},
 			},
 			expected: true,
 		},
 		{
-			// componentMustComeFromAuthorizedSources.trustedUrls
-			// variables are resolved via os.Getenv before the Rego
-			// input is built (control/task.go), which in a real run
-			// would already have collapsed both sides to the same
-			// literal text; this locks in the Rego-side notation
-			// fallback (${VAR} vs $VAR) for whatever survives that.
+			name:        "trust_same_group_root_namespace",
+			inc:         ir.Include{Kind: "component", Source: "gitlab.example.com/my-group/other-project/ci-component"},
+			projectPath: "my-group/my-project",
+			cfg: map[string]any{
+				"componentAuthorizedSources": map[string]any{
+					"trustSameGroupComponents": true,
+					"instanceHost":             "gitlab.example.com",
+				},
+			},
+			expected: false,
+		},
+		{
+			// A different root namespace (top-level group) must NOT be
+			// trusted, even on the same instance.
+			name:        "trust_same_group_different_root_namespace",
+			inc:         ir.Include{Kind: "component", Source: "gitlab.example.com/other-group/x/ci-component"},
+			projectPath: "my-group/my-project",
+			cfg: map[string]any{
+				"componentAuthorizedSources": map[string]any{
+					"trustSameGroupComponents": true,
+					"instanceHost":             "gitlab.example.com",
+				},
+			},
+			expected: true,
+		},
+		{
+			name:        "trust_same_group_disabled",
+			inc:         ir.Include{Kind: "component", Source: "gitlab.example.com/my-group/other-project/ci-component"},
+			projectPath: "my-group/my-project",
+			cfg: map[string]any{
+				"componentAuthorizedSources": map[string]any{
+					"trustSameGroupComponents": false,
+					"instanceHost":             "gitlab.example.com",
+				},
+			},
+			expected: true,
+		},
+		{
+			name:        "trust_same_instance_any_namespace",
+			inc:         ir.Include{Kind: "component", Source: "gitlab.example.com/other-group/x/ci-component"},
+			projectPath: "my-group/my-project",
+			cfg: map[string]any{
+				"componentAuthorizedSources": map[string]any{
+					"trustSameGroupComponents":    false,
+					"trustSameInstanceComponents": true,
+					"instanceHost":                "gitlab.example.com",
+				},
+			},
+			expected: false,
+		},
+		{
+			// A matching namespace path on a DIFFERENT instance host must
+			// not be trusted — host is checked, not just the path text.
+			name:        "different_instance_host_not_trusted",
+			inc:         ir.Include{Kind: "component", Source: "gitlab.com/my-group/my-project/ci-component"},
+			projectPath: "my-group/my-project",
+			cfg: map[string]any{
+				"componentAuthorizedSources": map[string]any{
+					"trustSameGroupComponents":    true,
+					"trustSameInstanceComponents": true,
+					"instanceHost":                "gitlab.example.com",
+				},
+			},
+			expected: true,
+		},
+		{
 			name: "notation_normalization",
 			inc:  ir.Include{Kind: "component", Source: "$CI_SERVER_FQDN/my-group/my-project/ci-component"},
 			cfg: map[string]any{
 				"componentAuthorizedSources": map[string]any{
-					"trustedUrls": []string{"${CI_SERVER_FQDN}/my-group/my-project/*"},
+					"trustedComponents": []string{"${CI_SERVER_FQDN}/my-group/my-project/*"},
 				},
 			},
 			expected: false,
@@ -1662,7 +1723,7 @@ func TestIssue414_ComponentAuthorizedSources(t *testing.T) {
 			inc:  ir.Include{Kind: "local", Source: "anything/untrusted"},
 			cfg: map[string]any{
 				"componentAuthorizedSources": map[string]any{
-					"trustedUrls": []string{"gitlab.example.com/my-group/my-project/*"},
+					"trustedComponents": []string{"gitlab.example.com/my-group/my-project/*"},
 				},
 			},
 			expected: false,
@@ -1672,8 +1733,9 @@ func TestIssue414_ComponentAuthorizedSources(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			pipeline := &ir.NormalizedPipeline{
-				Provider: ir.ProviderGitLab,
-				Includes: []ir.Include{tc.inc},
+				Provider:    ir.ProviderGitLab,
+				ProjectPath: tc.projectPath,
+				Includes:    []ir.Include{tc.inc},
 			}
 			findings, err := engine.Evaluate(context.Background(), pipeline, tc.cfg)
 			if err != nil {
@@ -1698,63 +1760,103 @@ func TestIssue414_ComponentAuthorizedSources(t *testing.T) {
 // (the lightweight test parser doesn't parse `run:` either).
 func TestIssue415_FunctionAuthorizedSources(t *testing.T) {
 	engine := opaengine.New()
-	if err := engine.LoadFromFS(policies.FS); err != nil {
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
-	}
-	cfg := map[string]any{
-		"functionAuthorizedSources": map[string]any{
-			"trustedUrls": []string{
-				"registry.gitlab.com/my-group/my-project/*",
-				"$CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/*",
-			},
-		},
 	}
 
 	cases := []struct {
-		name           string
-		fn             ir.Function
-		expectFinding  bool
-		expectedStatus string
+		name          string
+		fn            ir.Function
+		projectPath   string
+		globalVars    map[string]string
+		cfg           map[string]any
+		expectFinding bool
 	}{
 		{
-			name:          "authorized_oci",
-			fn:            ir.Function{Name: "say_hi", Ref: "registry.gitlab.com/my-group/my-project/echo:1", Kind: "oci"},
+			name: "authorized_allowlist",
+			fn:   ir.Function{Name: "say_hi", Ref: "registry.gitlab.com/my-group/my-project/echo:1", Kind: "oci"},
+			cfg: map[string]any{
+				"functionAuthorizedSources": map[string]any{
+					"trustedFunctions": []string{"registry.gitlab.com/my-group/my-project/*"},
+				},
+			},
 			expectFinding: false,
 		},
 		{
-			name:           "unauthorized_oci",
-			fn:             ir.Function{Name: "say_hi", Ref: "registry.gitlab.com/attacker/evil:1", Kind: "oci"},
-			expectFinding:  true,
-			expectedStatus: "unauthorized",
+			name:          "unauthorized_oci",
+			fn:            ir.Function{Name: "say_hi", Ref: "registry.gitlab.com/attacker/evil:1", Kind: "oci"},
+			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{}},
+			expectFinding: true,
 		},
 		{
-			// Deprecated is independent of trust: even a reference
-			// that would otherwise match trustedUrls is reported as
-			// deprecated, not authorized.
-			name:           "deprecated_step_keyword",
-			fn:             ir.Function{Name: "say_hi", Ref: "registry.gitlab.com/my-group/my-project/echo:1", Kind: "oci", Deprecated: true},
-			expectFinding:  true,
-			expectedStatus: "deprecated",
+			// Regression for PR #387 blocking issue #1: the legacy
+			// git-repository loading form (deprecated) must NOT bypass
+			// the trust check when the reference is also untrusted.
+			name:          "deprecated_and_untrusted_still_flagged",
+			fn:            ir.Function{Name: "say_hi", Ref: "gitlab.com/attacker/evil@v1.0.0", Kind: "git", Deprecated: true},
+			projectPath:   "my-group/my-project",
+			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true}},
+			expectFinding: true,
 		},
 		{
-			name:           "deprecated_git_repo_format",
-			fn:             ir.Function{Name: "say_hi", Ref: "gitlab.com/funcs/my-git-repo@v1.0.0", Kind: "git", Deprecated: true},
-			expectFinding:  true,
-			expectedStatus: "deprecated",
+			// Deprecated but otherwise trusted (same-group): deprecation
+			// carries no weight in this control.
+			name:          "deprecated_but_trusted_not_flagged",
+			fn:            ir.Function{Name: "say_hi", Ref: "gitlab.com/my-group/my-project@v1.0.0", Kind: "git", Deprecated: true},
+			projectPath:   "my-group/my-project",
+			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true}},
+			expectFinding: false,
 		},
 		{
 			name:          "local_ref_excluded",
 			fn:            ir.Function{Name: "say_hi", Ref: "./funcs/release/dry-run.yml", Kind: "local"},
+			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{}},
 			expectFinding: false,
 		},
 		{
+			// Same-group path match ignores the host entirely — the OCI
+			// registry host convention varies per GitLab instance.
+			name:          "same_group_path_match_ignores_host",
+			fn:            ir.Function{Name: "say_hi", Ref: "registry.gitlab.com/my-group/my-project/echo:1", Kind: "oci"},
+			projectPath:   "my-group/my-project",
+			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true}},
+			expectFinding: false,
+		},
+		{
+			name:          "different_root_namespace_untrusted",
+			fn:            ir.Function{Name: "say_hi", Ref: "registry.gitlab.com/other-group/x/echo:1", Kind: "oci"},
+			projectPath:   "my-group/my-project",
+			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true}},
+			expectFinding: true,
+		},
+		{
+			name:          "ci_project_path_idiom_trusted",
+			fn:            ir.Function{Name: "say_hi", Ref: "$CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/echo:1", Kind: "oci"},
+			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true}},
+			expectFinding: false,
+		},
+		{
+			// Regression for PR #387 blocking issue #3's shadowing
+			// example: the pipeline redefines CI_TEMPLATE_REGISTRY_HOST
+			// itself, so the $CI_PROJECT_PATH idiom text must NOT be
+			// trusted — at runtime it would resolve from the attacker's
+			// redefined value, GitLab predefined variables having the
+			// lowest precedence.
+			name:          "ci_project_path_idiom_untrusted_when_redefined",
+			fn:            ir.Function{Name: "x", Ref: "$CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/echo:1", Kind: "oci"},
+			globalVars:    map[string]string{"CI_TEMPLATE_REGISTRY_HOST": "registry.evil.example"},
+			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true}},
+			expectFinding: true,
+		},
+		{
 			// No variable resolution happens for this control — the
-			// pattern and the ref both carry the SAME literal
-			// variable text (a common idiom for the project's own
-			// namespace); only notation ($VAR vs ${VAR}) is
-			// normalized, never resolved to a real value.
+			// ref carries the SAME literal variable text (a common
+			// idiom for the project's own namespace); only notation
+			// ($VAR vs ${VAR}) is normalized, never resolved to a real
+			// value.
 			name:          "notation_normalization_same_literal_vars",
 			fn:            ir.Function{Name: "say_hi", Ref: "${CI_TEMPLATE_REGISTRY_HOST}/${CI_PROJECT_PATH}/echo:1", Kind: "oci"},
+			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true}},
 			expectFinding: false,
 		},
 	}
@@ -1762,26 +1864,23 @@ func TestIssue415_FunctionAuthorizedSources(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			pipeline := &ir.NormalizedPipeline{
-				Provider: ir.ProviderGitLab,
-				Jobs:     []ir.Job{{Name: "build", Functions: []ir.Function{tc.fn}}},
+				Provider:        ir.ProviderGitLab,
+				ProjectPath:     tc.projectPath,
+				GlobalVariables: tc.globalVars,
+				Jobs:            []ir.Job{{Name: "build", Functions: []ir.Function{tc.fn}}},
 			}
-			findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+			findings, err := engine.Evaluate(context.Background(), pipeline, tc.cfg)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
-			var got *opaengine.Finding
-			for i := range findings {
-				if findings[i].Code == "ISSUE-415" {
-					got = &findings[i]
+			found := false
+			for _, f := range findings {
+				if f.Code == "ISSUE-415" {
+					found = true
 				}
 			}
-			if (got != nil) != tc.expectFinding {
-				t.Fatalf("%s: expected finding=%v, got %v (findings=%+v)", tc.name, tc.expectFinding, got != nil, findings)
-			}
-			if got != nil && tc.expectedStatus != "" {
-				if status, _ := got.Data["status"].(string); status != tc.expectedStatus {
-					t.Fatalf("%s: expected status=%q, got %q (finding=%+v)", tc.name, tc.expectedStatus, status, got)
-				}
+			if found != tc.expectFinding {
+				t.Fatalf("%s: expected finding=%v, got %v (findings=%+v)", tc.name, tc.expectFinding, found, findings)
 			}
 		})
 	}

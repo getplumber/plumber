@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/getplumber/plumber/configuration"
@@ -157,7 +158,7 @@ func evaluatePolicies(l *logrus.Entry, conf *configuration.Configuration, provid
 	controls := conf.PlumberConfig.ControlsFor(provider)
 	ctx, cancel := context.WithTimeout(context.Background(), opaEvaluateTimeout)
 	defer cancel()
-	findings, err := engine.Evaluate(ctx, pipeline, buildEngineConfig(controls))
+	findings, err := engine.Evaluate(ctx, pipeline, buildEngineConfig(controls, conf.GitlabURL))
 	if err != nil {
 		l.WithError(err).Warn("Rego/OPA engine evaluation failed")
 		return empty
@@ -173,8 +174,10 @@ func evaluatePolicies(l *logrus.Entry, conf *configuration.Configuration, provid
 // buildEngineConfig projects the relevant bits of the user's .plumber.yaml
 // onto a Rego-friendly map. Policies read it as `input.config.<rule>.<key>`.
 // Only the sections consumed by already-ported policies are included;
-// additional entries land with each new policy.
-func buildEngineConfig(controls *configuration.ControlsConfig) map[string]any {
+// additional entries land with each new policy. gitlabURL is
+// conf.GitlabURL — only used to derive the scanned GitLab instance's host
+// for componentAuthorizedSources; callers scoped to GitHub may pass "".
+func buildEngineConfig(controls *configuration.ControlsConfig, gitlabURL string) map[string]any {
 	if controls == nil {
 		return nil
 	}
@@ -326,29 +329,50 @@ func buildEngineConfig(controls *configuration.ControlsConfig) map[string]any {
 		}
 	}
 
-	// componentAuthorizedSources: $CI_SERVER_FQDN / $CI_PROJECT_PATH
-	// (and ${...} form) in trustedUrls are resolved from Plumber's own
-	// OS environment via the same helper GitLab CI would populate them
-	// with — best-effort, correct when Plumber runs as a job inside the
-	// scanned pipeline, unresolved otherwise (see .plumber.yaml comment
-	// on this control).
-	if c := controls.ComponentMustComeFromAuthorizedSources; c != nil && len(c.TrustedUrls) > 0 {
-		resolved := make([]string, len(c.TrustedUrls))
-		for i, pattern := range c.TrustedUrls {
-			resolved[i] = gitlab.ReplaceVariableFromEnv(pattern)
+	// componentAuthorizedSources: no environment-variable resolution.
+	// Trust is either an explicit trustedComponents allowlist pattern, or
+	// derived dynamically from the scanned project's own namespace/instance
+	// via trustSameGroupComponents / trustSameInstanceComponents — modeled
+	// on githubActionMustComeFromAuthorizedSources's trustSameOrgActions,
+	// which reads input.pipeline.projectPath instead of trusting Plumber's
+	// own process environment.
+	if c := controls.ComponentMustComeFromAuthorizedSources; c != nil && c.IsEnabled() {
+		trustSameGroup := true
+		if c.TrustSameGroupComponents != nil {
+			trustSameGroup = *c.TrustSameGroupComponents
 		}
-		cfg["componentAuthorizedSources"] = map[string]any{
-			"trustedUrls": resolved,
+		trustSameInstance := !isGitlabSaaS(gitlabURL)
+		if c.TrustSameInstanceComponents != nil {
+			trustSameInstance = *c.TrustSameInstanceComponents
 		}
+		entry := map[string]any{
+			"trustSameGroupComponents":    trustSameGroup,
+			"trustSameInstanceComponents": trustSameInstance,
+			"instanceHost":                gitlabInstanceHost(gitlabURL),
+		}
+		if len(c.TrustedComponents) > 0 {
+			entry["trustedComponents"] = c.TrustedComponents
+		}
+		cfg["componentAuthorizedSources"] = entry
 	}
 
-	// functionAuthorizedSources: no variable resolution — GitLab never
-	// resolves run:/func: references server-side, so trustedUrls is
-	// passed through unmodified and matched as literal text in Rego.
-	if c := controls.FunctionMustComeFromAuthorizedSources; c != nil && len(c.TrustedUrls) > 0 {
-		cfg["functionAuthorizedSources"] = map[string]any{
-			"trustedUrls": c.TrustedUrls,
+	// functionAuthorizedSources: same dynamic same-namespace model, but
+	// same-group trust matches on the ref's path only (ignoring host) —
+	// GitLab does not resolve run:/func: references server-side, and the
+	// OCI registry host convention varies per instance, so a fixed host
+	// can't be checked reliably here.
+	if c := controls.FunctionMustComeFromAuthorizedSources; c != nil && c.IsEnabled() {
+		trustSameGroup := true
+		if c.TrustSameGroupFunctions != nil {
+			trustSameGroup = *c.TrustSameGroupFunctions
 		}
+		entry := map[string]any{
+			"trustSameGroupFunctions": trustSameGroup,
+		}
+		if len(c.TrustedFunctions) > 0 {
+			entry["trustedFunctions"] = c.TrustedFunctions
+		}
+		cfg["functionAuthorizedSources"] = entry
 	}
 
 	if c := controls.ActionsMustBePinnedByCommitSha; c != nil && c.IsEnabled() {
@@ -411,6 +435,23 @@ func toAnyGroups(groups [][]string) []any {
 		out[i] = inner
 	}
 	return out
+}
+
+// gitlabInstanceHost strips the scheme (and any trailing slash) from a
+// GitLab base URL, e.g. "https://gitlab.com" -> "gitlab.com".
+func gitlabInstanceHost(gitlabURL string) string {
+	host := gitlabURL
+	if i := strings.Index(host, "://"); i >= 0 {
+		host = host[i+3:]
+	}
+	return strings.TrimSuffix(host, "/")
+}
+
+// isGitlabSaaS reports whether gitlabURL points at gitlab.com, the
+// multi-tenant SaaS instance — as opposed to a self-hosted instance,
+// which is already inside the scanning org's trust boundary.
+func isGitlabSaaS(gitlabURL string) bool {
+	return gitlabInstanceHost(gitlabURL) == "gitlab.com"
 }
 
 // RunAnalysis executes the complete pipeline analysis for a GitLab project
