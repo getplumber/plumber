@@ -1,3 +1,17 @@
+## [0.4.29](https://github.com/getplumber/plumber/compare/v0.4.28...v0.4.29) (2026-08-05)
+
+
+### ✨ Features
+
+* **artifacts:** Add controlName in the outputs + add status for json output  + add csv format ([c9a08b4](https://github.com/getplumber/plumber/commit/c9a08b4c106d18790c09cdc0cc63619c755333ca))
+* **artifacts:** stable per-finding fingerprint in JSON, CSV, SARIF, GLSAST ([faf7040](https://github.com/getplumber/plumber/commit/faf70406bd8b56a4063c8d0fea5ad330d7dc71f0))
+* **cli:** add OCSF Compliance Finding export (--ocsf) ([9a7ef68](https://github.com/getplumber/plumber/commit/9a7ef68547acef19fd4c31a473c31ae843b690f4))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.28 refs [skip ci] ([0637800](https://github.com/getplumber/plumber/commit/0637800ee26dafb61ef2763d787b31210c69b645))
+
 ## [0.4.28](https://github.com/getplumber/plumber/compare/v0.4.27...v0.4.28) (2026-08-03)
 
 
