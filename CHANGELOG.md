@@ -1,3 +1,15 @@
+## [0.4.31](https://github.com/getplumber/plumber/compare/v0.4.30...v0.4.31) (2026-08-06)
+
+
+### 🔧 Chores
+
+* **ci:** bump the github-actions group across 1 directory with 5 updates ([c67b731](https://github.com/getplumber/plumber/commit/c67b7313b65dea89a7d108ac6a5575f3b3f7e8f5))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.30 refs [skip ci] ([75037fd](https://github.com/getplumber/plumber/commit/75037fd51c29c09c5f59172d0b1eb74754df7018))
+
 ## [0.4.30](https://github.com/getplumber/plumber/compare/v0.4.29...v0.4.30) (2026-08-05)
 
 
