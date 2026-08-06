@@ -1,3 +1,15 @@
+## [0.4.32](https://github.com/getplumber/plumber/compare/v0.4.31...v0.4.32) (2026-08-06)
+
+
+### ✨ Features
+
+* **sarif:** surface the issue code, doc link and stable alert identity in GHAS ([74691c6](https://github.com/getplumber/plumber/commit/74691c621040606428f6e074f013498df68b01fc)), closes [#372](https://github.com/getplumber/plumber/issues/372)
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.31 refs [skip ci] ([c75127f](https://github.com/getplumber/plumber/commit/c75127f9cd1b768dad098271331e7851f517040c))
+
 ## [0.4.31](https://github.com/getplumber/plumber/compare/v0.4.30...v0.4.31) (2026-08-06)
 
 
