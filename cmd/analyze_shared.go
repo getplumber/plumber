@@ -34,6 +34,7 @@ func runWithProvider(p provider.Provider, cmd *cobra.Command, conf *configuratio
 	}
 
 	newLocationLinker(conf, result, p.Name()).Annotate(result.Findings)
+	opaengine.StampFingerprints(result.Findings)
 
 	summary := buildComplianceSummary(p, result, conf)
 
@@ -172,13 +173,13 @@ func buildProviderControlSummariesAndGroups(p provider.Provider, result *control
 }
 
 // writeOutputsWithProvider writes all requested artifact files (JSON, PBOM,
-// CycloneDX, SARIF, GitLab SAST) using the provider's writers.
+// CycloneDX, SARIF, GitLab SAST, CSV, OCSF) using the provider's writers.
 func writeOutputsWithProvider(p provider.Provider, result *control.AnalysisResult, conf *configuration.Configuration, s complianceSummary) error {
 	// Artifacts are still written on a degraded run (they are files the user
 	// asked for, and the exit-3 gate, not the file's absence, protects CI).
 	// Each format stamps itself degraded; warn so a partial report is not
 	// mistaken for authoritative (#220).
-	if result.DataCollectionDegraded && (outputFile != "" || pbomFile != "" || pbomCycloneDXFile != "" || sarifFile != "" || glsastFile != "") {
+	if result.DataCollectionDegraded && (outputFile != "" || pbomFile != "" || pbomCycloneDXFile != "" || sarifFile != "" || glsastFile != "" || csvFile != "" || ocsfFile != "") {
 		fmt.Fprintf(os.Stderr, "Note: data collection was incomplete — artifacts are written but marked degraded; treat them as partial.\n")
 	}
 	if outputFile != "" {
@@ -212,6 +213,18 @@ func writeOutputsWithProvider(p provider.Provider, result *control.AnalysisResul
 		}
 		fmt.Fprintf(os.Stderr, "GitLab SAST report written to: %s\n", glsastFile)
 	}
+	if csvFile != "" {
+		if err := writeCSVToFile(p, result, conf, csvFile); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "CSV written to: %s\n", csvFile)
+	}
+	if ocsfFile != "" {
+		if err := writeOCSFToFile(p, result, conf, ocsfFile); err != nil {
+			return err
+		}
+		fmt.Fprintf(os.Stderr, "OCSF report written to: %s\n", ocsfFile)
+	}
 	return nil
 }
 
@@ -221,6 +234,7 @@ func writeOutputsWithProvider(p provider.Provider, result *control.AnalysisResul
 // pipeline.
 func presentResultWithProvider(p provider.Provider, cmd *cobra.Command, result *control.AnalysisResult, conf *configuration.Configuration) error {
 	newLocationLinker(conf, result, p.Name()).Annotate(result.Findings)
+	opaengine.StampFingerprints(result.Findings)
 	summary := buildComplianceSummary(p, result, conf)
 	if printOutput {
 		if err := outputTextWithProvider(p, result, conf, summary, conf.ControlsFilter, conf.SkipControlsFilter); err != nil {

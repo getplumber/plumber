@@ -1,3 +1,53 @@
+## [0.4.32](https://github.com/getplumber/plumber/compare/v0.4.31...v0.4.32) (2026-08-06)
+
+
+### ✨ Features
+
+* **sarif:** surface the issue code, doc link and stable alert identity in GHAS ([74691c6](https://github.com/getplumber/plumber/commit/74691c621040606428f6e074f013498df68b01fc)), closes [#372](https://github.com/getplumber/plumber/issues/372)
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.31 refs [skip ci] ([c75127f](https://github.com/getplumber/plumber/commit/c75127f9cd1b768dad098271331e7851f517040c))
+
+## [0.4.31](https://github.com/getplumber/plumber/compare/v0.4.30...v0.4.31) (2026-08-06)
+
+
+### 🔧 Chores
+
+* **ci:** bump the github-actions group across 1 directory with 5 updates ([c67b731](https://github.com/getplumber/plumber/commit/c67b7313b65dea89a7d108ac6a5575f3b3f7e8f5))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.30 refs [skip ci] ([75037fd](https://github.com/getplumber/plumber/commit/75037fd51c29c09c5f59172d0b1eb74754df7018))
+
+## [0.4.30](https://github.com/getplumber/plumber/compare/v0.4.29...v0.4.30) (2026-08-05)
+
+
+### 🐛 Bug Fixes
+
+* **misc:** Update various stale documentation and fix incorrect array size in catalog ([98b399a](https://github.com/getplumber/plumber/commit/98b399a98485a4c4b7c2ea8dcc4e59997502507d))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.29 refs [skip ci] ([72d4610](https://github.com/getplumber/plumber/commit/72d461056e592082b2747a72196ea5a1266e7ac5))
+
+## [0.4.29](https://github.com/getplumber/plumber/compare/v0.4.28...v0.4.29) (2026-08-05)
+
+
+### ✨ Features
+
+* **artifacts:** Add controlName in the outputs + add status for json output  + add csv format ([c9a08b4](https://github.com/getplumber/plumber/commit/c9a08b4c106d18790c09cdc0cc63619c755333ca))
+* **artifacts:** stable per-finding fingerprint in JSON, CSV, SARIF, GLSAST ([faf7040](https://github.com/getplumber/plumber/commit/faf70406bd8b56a4063c8d0fea5ad330d7dc71f0))
+* **cli:** add OCSF Compliance Finding export (--ocsf) ([9a7ef68](https://github.com/getplumber/plumber/commit/9a7ef68547acef19fd4c31a473c31ae843b690f4))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.28 refs [skip ci] ([0637800](https://github.com/getplumber/plumber/commit/0637800ee26dafb61ef2763d787b31210c69b645))
+
 ## [0.4.28](https://github.com/getplumber/plumber/compare/v0.4.27...v0.4.28) (2026-08-03)
 
 

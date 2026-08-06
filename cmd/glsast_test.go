@@ -9,6 +9,40 @@ import (
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 )
 
+// The GitLab SAST vulnerability id must be line-independent so GitLab tracks the
+// same vulnerability across runs even when unrelated code above it is edited.
+func TestGLSASTID_LineIndependentAndDiscriminating(t *testing.T) {
+	a := opaengine.Finding{Code: "ISSUE-701", File: "ci.yml", Job: "build", Message: "unpinned action X"}
+	moved := a
+	moved.Line = 999
+	if glsastID(a) != glsastID(moved) {
+		t.Errorf("glsast id changed when only the line moved; want line-independent")
+	}
+	other := a
+	other.Message = "unpinned action Y"
+	if glsastID(a) == glsastID(other) {
+		t.Errorf("same id for two different subjects; want distinct")
+	}
+}
+
+// The plumber fingerprint is exposed as a GitLab identifier so the same value
+// carried in JSON / CSV / SARIF is correlatable in the SAST report too.
+func TestBuildGLSAST_FingerprintIdentifier(t *testing.T) {
+	findings := []opaengine.Finding{
+		{Code: "ISSUE-701", Severity: "high", Message: "x", File: "ci.yml", Line: 5, Fingerprint: "deadbeefcafef00d"},
+	}
+	rep := buildGLSAST(findings, "github")
+	found := false
+	for _, id := range rep.Vulnerabilities[0].Identifiers {
+		if id.Type == "plumber-fingerprint" && id.Value == "deadbeefcafef00d" {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no plumber-fingerprint identifier carrying the finding's fingerprint; got %+v", rep.Vulnerabilities[0].Identifiers)
+	}
+}
+
 func TestBuildGLSAST_SchemaRequiredFields(t *testing.T) {
 	findings := []opaengine.Finding{
 		{Code: "ISSUE-203", Severity: "critical", Message: "debug trace", File: ".gitlab-ci.yml", Line: 11},
@@ -129,5 +163,58 @@ func TestBuildGLSAST_LocationAlwaysPresent(t *testing.T) {
 	}
 	if _, ok := m["location"]; !ok {
 		t.Errorf("vulnerability is missing the required 'location' key: %s", b)
+	}
+}
+
+func TestBuildGLSAST_ControlNameSecondIdentifier(t *testing.T) {
+	findings := []opaengine.Finding{
+		{Code: "ISSUE-701", Severity: "high", Message: "unpinned action"},
+	}
+	rep := buildGLSAST(findings, "github")
+	if len(rep.Vulnerabilities) != 1 {
+		t.Fatalf("vulnerabilities = %d, want 1", len(rep.Vulnerabilities))
+	}
+	ids := rep.Vulnerabilities[0].Identifiers
+	if len(ids) != 2 {
+		t.Fatalf("identifiers = %d, want 2", len(ids))
+	}
+	// The first identifier (the ISSUE code) must stay first and untouched --
+	// GitLab treats identifiers[0] as the Primary Identifier for
+	// cross-scan vulnerability tracking.
+	if ids[0].Type != "plumber" || ids[0].Value != "ISSUE-701" {
+		t.Errorf("primary identifier changed: %+v", ids[0])
+	}
+	if ids[1].Type != "plumber_control" || ids[1].Name != "actionsMustBePinnedByCommitSha" || ids[1].Value != "actionsMustBePinnedByCommitSha" {
+		t.Errorf("control-name identifier = %+v, want type=plumber_control name/value=actionsMustBePinnedByCommitSha", ids[1])
+	}
+	if ids[1].URL != "" {
+		t.Errorf("control-name identifier URL = %q, want empty", ids[1].URL)
+	}
+}
+
+// GitLab treats the vulnerability id as its dedup key, so two distinct findings
+// sharing one id are merged and a real finding silently disappears. The same
+// action referenced by two steps of one job has an identical code, file, job
+// and message, so the id must carry the step discriminator the fingerprint
+// already encodes. Regression: the id was briefly derived from
+// code|file|job|message alone, which collapsed exactly this case.
+func TestGLSASTID_SameActionTwoStepsDoNotCollide(t *testing.T) {
+	a := opaengine.Finding{Code: "ISSUE-713", File: "cov.yml", Job: "coverage", Message: "same message",
+		Line: 216, Fingerprint: "aaaa111122223333"}
+	b := opaengine.Finding{Code: "ISSUE-713", File: "cov.yml", Job: "coverage", Message: "same message",
+		Line: 316, Fingerprint: "bbbb444455556666"}
+	if glsastID(a) == glsastID(b) {
+		t.Errorf("two findings differing only by step share GitLab id %q; the second would be dropped", glsastID(a))
+	}
+}
+
+// The id must still ignore line drift: editing unrelated code above a finding
+// must not make GitLab see a new vulnerability.
+func TestGLSASTID_StillLineIndependent(t *testing.T) {
+	a := opaengine.Finding{Code: "ISSUE-701", File: "ci.yml", Job: "build", Message: "unpinned", Fingerprint: "ffff0000ffff0000"}
+	moved := a
+	moved.Line = 999
+	if glsastID(a) != glsastID(moved) {
+		t.Errorf("glsast id changed on line drift; want line-independent")
 	}
 }

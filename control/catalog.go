@@ -29,7 +29,7 @@ func GitLabControls(pc *configuration.PlumberConfig) []ControlEntry {
 		return nil
 	}
 	c := pc.ControlsFor("gitlab")
-	entries := make([]ControlEntry, 0, 14)
+	entries := make([]ControlEntry, 0, 15)
 
 	// Container images must not use forbidden tags
 	cfgForbiddenTags := c.ContainerImageMustNotUseForbiddenTags
@@ -127,7 +127,7 @@ func GitHubControls(pc *configuration.PlumberConfig) []ControlEntry {
 		return nil
 	}
 	c := pc.ControlsFor("github")
-	entries := make([]ControlEntry, 0, 9)
+	entries := make([]ControlEntry, 0, 23)
 
 	cfgForbiddenTags := c.ContainerImageMustNotUseForbiddenTags
 	name := "Container images must not use forbidden tags"
@@ -290,9 +290,17 @@ func isSecurityJobsWeakenedSkipped(cfg *configuration.SecurityJobsWeakenedContro
 // ControlsConfig (use pc.ControlsFor("gitlab") or
 // pc.ControlsFor("github")).
 // DisabledControlNames returns the set of control names that are disabled
-// (nil or enabled:false) in the given ControlsConfig. It derives the list
-// from the same spec tables used by GitLabControls/GitHubControls so the
-// two sources of truth stay in sync automatically.
+// (nil or enabled:false) in the given ControlsConfig.
+//
+// WARNING: this is a HAND-WRITTEN if-chain, not a derivation. It does NOT
+// stay in sync with GitLabControls/GitHubControls automatically, and no
+// test compares them, so adding a control to either catalog without adding
+// a branch here silently breaks its disable path: the control renders as
+// "skipped" in the terminal table and the legacy JSON, while its findings
+// still survive FilterFindingsByEnabledControls into SARIF, GLSAST, PBOM
+// and the score. For a Critical code that means a 30-point malus and an E
+// on a control the user believes is off. Keep the branch count equal to
+// the union of the two catalogs.
 func DisabledControlNames(c *configuration.ControlsConfig) map[string]bool {
 	out := map[string]bool{}
 	if c == nil {

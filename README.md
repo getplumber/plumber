@@ -41,7 +41,7 @@ Plumber scans CI/CD pipelines for risky patterns and security gaps.
 - **GitHub Actions:** reads `.github/workflows/*.{yml,yaml}` locally or through the GitHub API.
 - **One config:** `.plumber.yaml` contains provider-specific policy sections for GitLab and GitHub.
 
-Plumber reports findings in the terminal, JSON, SARIF, GitLab SAST, PBOM, and CycloneDX formats.
+Plumber reports findings in the terminal, JSON, SARIF, GitLab SAST, CSV, OCSF, PBOM, and CycloneDX formats.
 
 <p align="center">
   <img src="assets/component.gif" alt="Plumber GitLab CI component running" width="700">
@@ -309,6 +309,8 @@ Full catalogs:
 | JSON | `--output results.json` | Automation and dashboards |
 | SARIF | `--sarif results.sarif` | GitHub Code Scanning and SARIF-compatible tools |
 | GitLab SAST | `--glsast gl-sast-report.json` | GitLab Security Dashboard / MR widget |
+| CSV | `--csv results.csv` | Spreadsheet tools, ad-hoc analysis |
+| OCSF | `--ocsf plumber.ocsf.json` | OCSF consumers and GRC platforms (Compliance Finding, schema 1.8.0) |
 | PBOM | `--pbom pbom.json` | Pipeline inventory |
 | CycloneDX | `--pbom-cyclonedx cdx.json` | SBOM tooling |
 
@@ -322,6 +324,7 @@ Example:
 plumber analyze \
   --output results.json \
   --sarif results.sarif \
+  --csv results.csv \
   --pbom pbom.json \
   --pbom-cyclonedx cdx.json
 ```
@@ -330,6 +333,7 @@ More details:
 
 - PBOM docs: [`docs/PBOM.md`](./docs/PBOM.md)
 - Scoring docs: [`docs/scoring.md`](./docs/scoring.md)
+- Finding fingerprint (tracking a finding across runs): [`docs/FINGERPRINT.md`](./docs/FINGERPRINT.md)
 - CLI reference: [getplumber.io/docs/cli](https://getplumber.io/docs/cli)
 
 ## Exit Codes

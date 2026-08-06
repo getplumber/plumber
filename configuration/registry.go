@@ -132,9 +132,18 @@ var removedControls = map[string]string{
 // on/off, also add a typed struct in configuration/plumberconfig.go
 // and wire it through buildEngineConfig.
 //
-// As of 2026-05-06 (commit 7f05d81 + Phase 1 follow-up):
-//   - GitLab: zero benched controls. All 14 GitLab controls ship.
-//   - GitHub: a lot of benched WIP
+// As of 2026-08-05 (v0.4.28), counted from this file and control/catalog.go:
+//   - controlsMeta declares 59 controls: 15 cross-provider, 44
+//     GitHub-only, 0 GitLab-only.
+//   - GitLab: zero benched. All 15 GitLab-applicable controls ship, and
+//     GitLabControls returns exactly those 15.
+//   - GitHub: 36 benched, so only 23 of the 59 GitHub-applicable controls
+//     reach users, and GitHubControls returns exactly those 23. Eight of
+//     the 36 are cross-provider controls benched on the GitHub side only,
+//     i.e. they still fire on GitLab.
+//
+// Keep these numbers honest when you bench or unbench something; they are
+// the fastest way to see how much of the GitHub catalog is actually live.
 var benchedControls = map[string]map[string]struct{}{
 	ProviderGitLab: {},
 	ProviderGitHub: {

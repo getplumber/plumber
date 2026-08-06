@@ -119,10 +119,24 @@ func glsastSeverity(sev string) string {
 	return "Unknown"
 }
 
-// glsastID derives a stable UUID-shaped id from the finding so GitLab can
-// track the same vulnerability across runs (id is recommended to be a UUID).
+// glsastID derives a stable, UUID-shaped id from the finding so GitLab can
+// track the same vulnerability across runs (the schema wants a UUID, and
+// GitLab treats the id as its dedup key: two vulnerabilities sharing one id
+// are merged, which would silently drop a real finding).
+//
+// It is derived from the finding's Fingerprint so the id carries exactly the
+// same identity the report already exposes as a plumber-fingerprint
+// identifier. That matters for the case the fingerprint's step segment exists
+// to handle: the same action referenced by two steps of one job produces an
+// identical code, file, job and message, so hashing those alone would collide
+// and merge the two findings into one. Falls back to the canonical fields for
+// a finding that was never stamped (no code, or an unstamped caller).
 func glsastID(f opaengine.Finding) string {
-	sum := sha256.Sum256([]byte(f.Code + "|" + f.File + "|" + fmt.Sprint(f.Line) + "|" + f.Message))
+	identity := f.Fingerprint
+	if identity == "" {
+		identity = f.Code + "|" + f.File + "|" + f.Job + "|" + f.Message
+	}
+	sum := sha256.Sum256([]byte(identity))
 	h := hex.EncodeToString(sum[:])
 	return fmt.Sprintf("%s-%s-%s-%s-%s", h[0:8], h[8:12], h[12:16], h[16:20], h[20:32])
 }
@@ -160,6 +174,12 @@ func buildGLSAST(findings []opaengine.Finding, provider string) glsastReport {
 			Identifiers: []glsastIdentifier{{Type: "plumber", Name: "Plumber " + f.Code, Value: f.Code}},
 			Location:    glsastLocation{File: reportFilePath(f.File), StartLine: f.Line},
 		}
+		// Expose the plumber fingerprint as a GitLab identifier so the same
+		// stable, line-independent id carried by the JSON / CSV / SARIF outputs
+		// is correlatable here too.
+		if f.Fingerprint != "" {
+			v.Identifiers = append(v.Identifiers, glsastIdentifier{Type: "plumber-fingerprint", Name: "Plumber fingerprint", Value: f.Fingerprint})
+		}
 		// Surface the clickable source pointer through the schema's
 		// `links` array. We only emit links with an http(s) scheme —
 		// the GitLab UI tries to navigate to whatever it sees, and a
@@ -175,6 +195,11 @@ func buildGLSAST(findings []opaengine.Finding, provider string) glsastReport {
 			v.Solution = info.Remediation
 			v.Identifiers[0].Name = "Plumber " + f.Code + ": " + title
 			v.Identifiers[0].URL = info.DocURL
+			v.Identifiers = append(v.Identifiers, glsastIdentifier{
+				Type:  "plumber_control",
+				Name:  info.ControlName,
+				Value: info.ControlName,
+			})
 		}
 		// GitLab's Vulnerability Report UI does not render the deprecated
 		// `message` field, so fold the per-finding detail into `description`
