@@ -524,6 +524,8 @@ func Test_tagObjectResolves(t *testing.T) {
 		nestedSHA    = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 		danglingSHA  = "cccccccccccccccccccccccccccccccccccccccc"
 		danglingCmt  = "1111111111111111111111111111111111111111"
+		treeTagSHA   = "2222222222222222222222222222222222222222"
+		loopSHA      = "3333333333333333333333333333333333333333"
 	)
 	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
 		p := r.URL.Path
@@ -535,6 +537,11 @@ func Test_tagObjectResolves(t *testing.T) {
 			body = `{"sha":"` + nestedSHA + `","tag":"v9","object":{"sha":"` + tagObjectSHA + `","type":"tag"}}`
 		case strings.HasSuffix(p, "/git/tags/"+danglingSHA):
 			body = `{"sha":"` + danglingSHA + `","tag":"v8","object":{"sha":"` + danglingCmt + `","type":"commit"}}`
+		case strings.HasSuffix(p, "/git/tags/"+treeTagSHA):
+			body = `{"sha":"` + treeTagSHA + `","tag":"v7","object":{"sha":"` + commitSHA + `","type":"tree"}}`
+		case strings.HasSuffix(p, "/git/tags/"+loopSHA):
+			// Points at itself: an unterminated ^{commit} walk.
+			body = `{"sha":"` + loopSHA + `","tag":"v6","object":{"sha":"` + loopSHA + `","type":"tag"}}`
 		case strings.HasSuffix(p, "/git/tags/"+absentSHA):
 			body, status = `{"message":"Not Found"}`, http.StatusNotFound
 		case strings.HasSuffix(p, "/git/tags/"+gatedSHA):
@@ -543,6 +550,14 @@ func Test_tagObjectResolves(t *testing.T) {
 			body = `{"sha":"` + commitSHA + `"}`
 		case strings.HasSuffix(p, "/commits/"+danglingCmt):
 			body, status = `{"message":"No commit found for SHA"}`, http.StatusUnprocessableEntity
+		default:
+			// Anything else, including a mixed-case SHA, is not a key the
+			// git database endpoints recognise. GitHub answers a
+			// mixed-case object SHA with 500, which is NOT a definitive
+			// absence answer.
+			if strings.Contains(p, "/git/tags/") {
+				body, status = `{"message":"Server Error"}`, http.StatusInternalServerError
+			}
 		}
 		return &http.Response{
 			StatusCode: status,
@@ -566,13 +581,25 @@ func Test_tagObjectResolves(t *testing.T) {
 		wantChecked bool
 	}{
 		{"annotated tag object dereferences to its commit", tagObjectSHA, commitSHA, true, true},
+		// An uppercase pin is the same object: git resolves SHAs
+		// case-insensitively and every other SHA path here already
+		// lowercases. The git database endpoints do NOT, so the ref must
+		// be normalised before the lookup.
+		{"uppercase pin resolves like its lowercase equivalent", strings.ToUpper(tagObjectSHA), commitSHA, true, true},
 		{"absent SHA is a confirmed 404", absentSHA, "", false, true},
 		{"rate-limited lookup is unverified", gatedSHA, "", false, false},
-		{"nested tag object is not claimed as a commit", nestedSHA, "", false, false},
+		// ^{commit} semantics: a tag object may point at another tag
+		// object, and the walk must follow it to the commit.
+		{"nested tag object dereferences through to the commit", nestedSHA, commitSHA, true, true},
+		{"self-referential tag object stops at the depth cap", loopSHA, "", false, false},
 		// The SHA plainly exists upstream (git/tags served it), so
 		// "does not exist in the upstream repository" would be a false
 		// statement at critical severity. Abstain instead.
 		{"tag object whose commit will not confirm abstains", danglingSHA, "", false, false},
+		{"tag object pointing at a tree is not a commit pin", treeTagSHA, "", false, false},
+		// A non-SHA ref cannot be a tag object SHA, so the answer is
+		// definitive without spending a request.
+		{"non-SHA ref is definitively not a tag object", "v99", "", false, true},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -645,6 +672,98 @@ func Test_resolveUncached_annotatedTagObjectPin(t *testing.T) {
 	}
 }
 
+// Test_resolveUncached_tagObjectAbstainKeepsIssue707Silent locks the
+// abstain branch that sits between the git/tags fallback and
+// RefKnownAbsent. When the commits endpoint answers a definitive 422 on
+// a readable repo but the tag-object lookup CANNOT be completed, the
+// collector must leave RefKnownAbsent false: impostor-commit (ISSUE-707,
+// critical) fires only on confirmed absence, never on a SHA we merely
+// failed to classify. Without this test, deleting `else if !tagChecked`
+// would silently reintroduce the false positive this fix removes.
+func Test_resolveUncached_tagObjectAbstainKeepsIssue707Silent(t *testing.T) {
+	const (
+		owner = "acme"
+		repo  = "widget"
+		sha   = "abcdef0123456789abcdef0123456789abcdef01"
+		inner = "fedcba9876543210fedcba9876543210fedcba98"
+	)
+	// gitTagBody/gitTagStatus stand in for whatever git/tags answers;
+	// every other probe is a miss so the ref reaches the commit branch.
+	newClient := func(t *testing.T, gitTagBody string, gitTagStatus int) *GitHubMetadataClient {
+		rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			p := r.URL.Path
+			body, status := `{}`, http.StatusNotFound
+			switch {
+			case p == "/repos/"+owner+"/"+repo:
+				body, status = `{"archived":false,"stargazers_count":0}`, http.StatusOK
+			case strings.Contains(p, "/releases"):
+				body, status = `[]`, http.StatusOK
+			case strings.HasPrefix(p, "/advisories"):
+				body, status = `[]`, http.StatusOK
+			case strings.Contains(p, "/git/tags/"):
+				body, status = gitTagBody, gitTagStatus
+			case strings.Contains(p, "/commits/"):
+				body, status = `{"message":"No commit found for SHA"}`, http.StatusUnprocessableEntity
+			}
+			return &http.Response{
+				StatusCode: status,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     make(http.Header),
+				Request:    r,
+			}, nil
+		})
+		c := NewGitHubMetadataClientForHost("")
+		rest, err := api.NewRESTClient(api.ClientOptions{AuthToken: "x", Transport: rt})
+		if err != nil {
+			t.Fatalf("new rest client: %v", err)
+		}
+		c.rest = rest
+		return c
+	}
+
+	cases := []struct {
+		name       string
+		gitTagBody string
+		gitTagCode int
+	}{
+		{
+			name:       "rate-limited tag lookup",
+			gitTagBody: `{"message":"API rate limit exceeded"}`,
+			gitTagCode: http.StatusForbidden,
+		},
+		{
+			name:       "tag object pointing at a tree",
+			gitTagBody: `{"sha":"` + sha + `","tag":"v1","object":{"sha":"` + inner + `","type":"tree"}}`,
+			gitTagCode: http.StatusOK,
+		},
+		{
+			name:       "tag object whose target commit will not confirm",
+			gitTagBody: `{"sha":"` + sha + `","tag":"v1","object":{"sha":"` + inner + `","type":"commit"}}`,
+			gitTagCode: http.StatusOK,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			m := newClient(t, tc.gitTagBody, tc.gitTagCode).resolveUncached(owner, repo, sha)
+			if m.RefKnownAbsent {
+				t.Fatal("an unclassifiable tag lookup must leave RefKnownAbsent false, or ISSUE-707 fires critical on a SHA we never confirmed absent")
+			}
+			if m.RefExists {
+				t.Fatal("abstaining must not claim the ref exists either")
+			}
+		})
+	}
+
+	// The guard must not swallow the real thing: a confirmed 404 from
+	// git/tags still means the SHA is nothing upstream.
+	t.Run("confirmed absent tag object still reports the impostor", func(t *testing.T) {
+		m := newClient(t, `{"message":"Not Found"}`, http.StatusNotFound).resolveUncached(owner, repo, sha)
+		if !m.RefKnownAbsent {
+			t.Fatal("a SHA that is neither commit nor tag object upstream must still be reported (ISSUE-707)")
+		}
+	})
+}
+
 // Test_resolveUncached_tagObjectProbeOnlyForShaRefs keeps the ISSUE-401
 // fallback off the hot path. git/tags/{sha} is keyed by object SHA, so
 // asking it about a ref that is not SHA-shaped ("v99", a typo'd branch)
@@ -704,6 +823,108 @@ func Test_resolveUncached_tagObjectProbeOnlyForShaRefs(t *testing.T) {
 		c.resolveUncached(owner, repo, "abcdef0123456789abcdef0123456789abcdef01")
 		if calls != 1 {
 			t.Fatalf("git/tags called %d time(s) for a SHA-shaped ref, want exactly 1", calls)
+		}
+	})
+}
+
+// Test_resolveUncached_realWorldTagObjectVectors replays the five
+// annotated-tag-object pins reported in ISSUE-401 against a transport
+// that reproduces the upstream API's real answers: 422 from the commits
+// endpoint for the tag object, 200 from git/tags with the commit it
+// dereferences to. Every one must resolve, and the fabricated control
+// SHA (absent from both endpoints) must still be reported, because a fix
+// that merely relaxes the check is worse than the bug.
+//
+// SHAs and dereferenced commits verified against the live API. The
+// deliberately absent control is the one from the report.
+func Test_resolveUncached_realWorldTagObjectVectors(t *testing.T) {
+	type vector struct {
+		owner, repo string
+		tagObject   string
+		tag         string
+		commit      string
+	}
+	vectors := []vector{
+		// gradle/actions/setup-gradle is a subdirectory action; the repo
+		// the collector queries is gradle/actions.
+		{"gradle", "actions", "48b5f213c81028ace310571dc5ec0fbbca0b2947", "v4.4.3", "ed408507eac070d1f99cc633dbcf757c94c7933a"},
+		{"mxschmitt", "action-tmate", "1fb8b1023602bf1fd0e2994d7f1e93015cb5bbec", "v3.22", "7b6a61a73bbb9793cb80ad69b8dd8ac19261834c"},
+		{"pnpm", "action-setup", "7088e561eb65bb68695d245aa206f005ef30921d", "v4.1.0", "a7487c7e89a18df4991f7f222e4898a00d66ddda"},
+		{"cross-platform-actions", "action", "462ed697694d2ac9aa49e1225f395f7bb6dd49fe", "v0.29.0", "e8a7b572196ff79ded1979dc2bb9ee67d1ddb252"},
+		{"astral-sh", "setup-uv", "884ad927a57e558e7a70b92f2bccf9198a4be546", "v6", "bd01e18f51369d5a26f1651c3cb451d3417e3bba"},
+	}
+	const absentSHA = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+
+	byTagObject := map[string]vector{}
+	byCommit := map[string]bool{}
+	for _, v := range vectors {
+		byTagObject[v.tagObject] = v
+		byCommit[v.commit] = true
+	}
+	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		p := r.URL.Path
+		body, status := `{}`, http.StatusNotFound
+		switch {
+		case strings.Count(p, "/") == 3 && strings.HasPrefix(p, "/repos/"):
+			body, status = `{"archived":false,"stargazers_count":1200}`, http.StatusOK
+		case strings.Contains(p, "/releases"):
+			body, status = `[]`, http.StatusOK
+		case strings.HasPrefix(p, "/advisories"):
+			body, status = `[]`, http.StatusOK
+		case strings.Contains(p, "/git/tags/"):
+			sha := p[strings.LastIndex(p, "/")+1:]
+			if v, ok := byTagObject[sha]; ok {
+				body, status = `{"sha":"`+sha+`","tag":"`+v.tag+`","object":{"sha":"`+v.commit+`","type":"commit"}}`, http.StatusOK
+			}
+		case strings.Contains(p, "/commits/"):
+			sha := p[strings.LastIndex(p, "/")+1:]
+			if byCommit[sha] {
+				body, status = `{"sha":"`+sha+`"}`, http.StatusOK
+			} else {
+				// What GitHub really answers for a tag object SHA, and
+				// for a SHA that is not in the repository at all.
+				body, status = `{"message":"No commit found for SHA: `+sha+`"}`, http.StatusUnprocessableEntity
+			}
+		}
+		return &http.Response{
+			StatusCode: status,
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Header:     make(http.Header),
+			Request:    r,
+		}, nil
+	})
+	newClient := func(t *testing.T) *GitHubMetadataClient {
+		c := NewGitHubMetadataClientForHost("")
+		rest, err := api.NewRESTClient(api.ClientOptions{AuthToken: "x", Transport: rt})
+		if err != nil {
+			t.Fatalf("new rest client: %v", err)
+		}
+		c.rest = rest
+		return c
+	}
+
+	for _, v := range vectors {
+		t.Run(v.owner+"/"+v.repo+"@"+v.tag, func(t *testing.T) {
+			m := newClient(t).resolveUncached(v.owner, v.repo, v.tagObject)
+			if !m.RefExists {
+				t.Fatalf("RefExists = false for %s@%s, a valid annotated tag object that GitHub Actions resolves", v.owner+"/"+v.repo, v.tag)
+			}
+			if m.RefKnownAbsent {
+				t.Fatalf("RefKnownAbsent = true for %s@%s: ISSUE-707 would fire critical on a valid pin", v.owner+"/"+v.repo, v.tag)
+			}
+			if m.RefCommitSha != v.commit {
+				t.Fatalf("RefCommitSha = %q, want %q", m.RefCommitSha, v.commit)
+			}
+		})
+	}
+
+	t.Run("fabricated SHA is still reported", func(t *testing.T) {
+		m := newClient(t).resolveUncached("actions", "checkout", absentSHA)
+		if !m.RefKnownAbsent {
+			t.Fatal("a SHA absent from both endpoints must still set RefKnownAbsent, or the fix has softened the control instead of resolving the object")
+		}
+		if m.RefExists {
+			t.Fatal("a fabricated SHA must not be reported as existing")
 		}
 	})
 }

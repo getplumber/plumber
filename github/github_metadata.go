@@ -889,6 +889,12 @@ func (c *GitHubMetadataClient) resolveTag(owner, repo, ref string) (string, bool
 	return parsed.Object.Sha, true
 }
 
+// maxTagObjectDepth caps the ^{commit} walk in tagObjectResolves. A tag
+// object pointing at another tag object is legal but does not occur in
+// released actions; the cap exists so a malformed or self-referential
+// chain cannot spin.
+const maxTagObjectDepth = 4
+
 // tagObjectResolves reports whether ref is the SHA of an annotated tag
 // OBJECT in the upstream repository, and returns the commit that tag
 // object dereferences to. That shape is what `git rev-parse v1.2.3`
@@ -896,9 +902,13 @@ func (c *GitHubMetadataClient) resolveTag(owner, repo, ref string) (string, bool
 // action by hand or with a script (ISSUE-401), yet the commits endpoint
 // answers 422 for it because it only accepts commit SHAs.
 //
-// Both calls are scoped to the upstream repository, so no fork object
-// can satisfy the check. The dereferenced commit is confirmed in the
-// same repository before we call the pin resolvable.
+// Every call is scoped to the upstream repository, and the dereferenced
+// commit is confirmed in that same repository before the pin is called
+// resolvable. (GitHub serves fork-network objects from the parent, so a
+// fork-only object can still satisfy a same-repo lookup. That is the
+// pre-existing scope limit of this control, documented in
+// impostor_commit.rego, and the tag-object path neither widens nor
+// narrows it.)
 //
 // The tri-state contract matches commitResolves: checked is true ONLY
 // on a definitive answer (a resolvable tag object, or a 404 / 422 that
@@ -913,41 +923,61 @@ func (c *GitHubMetadataClient) tagObjectResolves(owner, repo, ref string) (commi
 	if !_isCommitSha(ref) {
 		return "", false, true
 	}
-	var resp struct {
-		Object struct {
-			Sha  string `json:"sha"`
-			Type string `json:"type"`
-		} `json:"object"`
-	}
-	err := c.rest.Get(fmt.Sprintf("repos/%s/%s/git/tags/%s", owner, repo, ref), &resp)
-	if err != nil {
-		var httpErr *api.HTTPError
-		if errors.As(err, &httpErr) {
-			switch httpErr.StatusCode {
-			// 404 / 422: the SHA is not a tag object on a repo we can
-			// read. Definitive, so the caller may fall through to
-			// "absent upstream".
-			case http.StatusNotFound, http.StatusUnprocessableEntity:
-				return "", false, true
-			}
+	// Git resolves SHAs case-insensitively and every other SHA path here
+	// lowercases before comparing, but the git database endpoints are
+	// keyed by the exact object SHA: GitHub answers a mixed-case one with
+	// 500, which is not a definitive absence. Normalise so an uppercase
+	// pin takes the same path as its lowercase equivalent.
+	sha := strings.ToLower(ref)
+
+	// `git rev-parse <tag>^{commit}` peels through however many tag
+	// objects sit in the chain. Nesting beyond one level does not occur
+	// in practice, so the cap is a cheap guard against a malformed or
+	// self-referential chain rather than a real traversal budget.
+	for depth := 0; depth < maxTagObjectDepth; depth++ {
+		var resp struct {
+			Object struct {
+				Sha  string `json:"sha"`
+				Type string `json:"type"`
+			} `json:"object"`
 		}
-		return "", false, false
+		err := c.rest.Get(fmt.Sprintf("repos/%s/%s/git/tags/%s", owner, repo, sha), &resp)
+		if err != nil {
+			var httpErr *api.HTTPError
+			if errors.As(err, &httpErr) {
+				switch httpErr.StatusCode {
+				// 404 / 422: the SHA is not a tag object on a repo we can
+				// read. Definitive for the ref we were asked about, so the
+				// caller may fall through to "absent upstream". Deeper in
+				// the chain it only means we lost the thread, so abstain.
+				case http.StatusNotFound, http.StatusUnprocessableEntity:
+					return "", false, depth == 0
+				}
+			}
+			return "", false, false
+		}
+		// Past this point git/tags served the SHA, so it plainly exists in
+		// the upstream repository. Anything we cannot turn into a confirmed
+		// commit abstains (checked=false) rather than falling through to
+		// "does not exist upstream", which would be a false statement at
+		// critical severity.
+		switch {
+		case resp.Object.Sha == "":
+			return "", false, false
+		case resp.Object.Type == "commit":
+			if ok, _ := c.commitResolves(owner, repo, resp.Object.Sha); !ok {
+				return "", false, false
+			}
+			return resp.Object.Sha, true, true
+		case resp.Object.Type == "tag":
+			sha = resp.Object.Sha
+		default:
+			// A tag pointing at a tree or blob is legal in git but is not
+			// something we can describe as a commit pin.
+			return "", false, false
+		}
 	}
-	// Past this point git/tags served the SHA, so it plainly exists in
-	// the upstream repository. Anything we cannot turn into a confirmed
-	// commit abstains (checked=false) rather than falling through to
-	// "does not exist upstream", which would be a false statement at
-	// critical severity.
-	if resp.Object.Type != "commit" || resp.Object.Sha == "" {
-		// A tag object pointing at another tag object (or at a tree /
-		// blob) is legal in git but vanishingly rare, and we cannot
-		// describe it as a commit pin.
-		return "", false, false
-	}
-	if exists, _ := c.commitResolves(owner, repo, resp.Object.Sha); !exists {
-		return "", false, false
-	}
-	return resp.Object.Sha, true, true
+	return "", false, false
 }
 
 func (c *GitHubMetadataClient) branchExists(owner, repo, ref string) bool {
