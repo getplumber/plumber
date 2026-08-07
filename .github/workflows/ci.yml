@@ -93,9 +93,22 @@ jobs:
       # always exits 0, so fail on any output. Built from an immutable
       # commit pin like golangci-lint; sum.golang.org verifies the
       # download cryptographically.
+      #
+      # finding/identity is exempt: it publishes the finding-identity recipe
+      # for consumers outside this module (#403), so reachability from our own
+      # main says nothing about whether its API is used. Its surface is pinned
+      # by finding/identity/identity_test.go instead.
+      #
+      # The analyzer runs on its own line, and only its output is filtered.
+      # Piping it straight into `grep -v ... || true` would make a broken run
+      # (module download failure, toolchain mismatch, a package that does not
+      # compile) indistinguishable from a clean one: the `|| true` needed for
+      # the healthy path, where grep suppresses every line, would swallow the
+      # tool's own failure and pass the step with the safety net switched off.
       - name: deadcode
         run: |
-          out=$(go run golang.org/x/tools/cmd/deadcode@09747cdf594a7924dcecb506312be3bd6e437962 ./...) # v0.30.0
+          raw=$(go run golang.org/x/tools/cmd/deadcode@09747cdf594a7924dcecb506312be3bd6e437962 ./...) # v0.30.0
+          out=$(printf '%s\n' "$raw" | grep -v '^finding/identity/' || true)
           if [ -n "$out" ]; then echo "$out"; echo "dead code detected"; exit 1; fi
 
   govulncheck:

@@ -42,7 +42,9 @@ deny contains finding if {
 		"code":                  "ISSUE-402",
 		"severity":              "medium",
 		"message":               sprintf("%s pins ref '%s' — it resolves as both a tag AND a branch in the source project, so which revision runs is ambiguous; pin to a commit SHA to disambiguate", [inc.source, inc.ref]),
-		"job":                   inc.source,
+		# No "job": an include is not a job. includePath names what this finding
+		# is about (finding/identity). componentName stays as payload.
+		"includePath":           inc.source,
 		"file":                  object.get(inc, "originFile", ""),
 		"line":                  object.get(inc, "originLine", 0),
 		"version":               inc.ref,

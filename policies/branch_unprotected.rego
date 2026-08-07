@@ -13,10 +13,11 @@ deny contains finding if {
 	branch.protected == false
 	_branch_must_be_protected(branch.name)
 	finding := {
-		"code":       "ISSUE-501",
-		"severity":   "critical",
-		"message":    sprintf("branch %q must be protected", [branch.name]),
-		"job":        branch.name,
+		"code":     "ISSUE-501",
+		"severity": "critical",
+		"message":  sprintf("branch %q must be protected", [branch.name]),
+		# No "job": a branch is not a job. branchName names what this finding is
+		# about and is what the identity recipe selects (finding/identity).
 		"type":       "unprotected",
 		"branchName": branch.name,
 	}

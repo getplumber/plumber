@@ -16,5 +16,10 @@ deny contains finding if {
 		"severity": "medium",
 		"message":  sprintf("job %q is hardcoded (not sourced from include/component/template)", [job.name]),
 		"job":      job.name,
+		# hardcodedJob names what this finding is about, so its identity is the
+		# job rather than the wording of the message above (finding/identity).
+		# Not "jobName": that was a v0.2.x output alias for `job`, retired on
+		# purpose, and reviving the key would confuse JSON consumers.
+		"hardcodedJob": job.name,
 	}
 }

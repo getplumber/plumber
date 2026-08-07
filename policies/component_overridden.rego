@@ -24,7 +24,10 @@ deny contains finding if {
 		"code":     "ISSUE-409",
 		"severity": "high",
 		"message":  sprintf("required component %q is imported but %d of its job(s) are overridden locally", [required, count(inc.overriddenJobs)]),
-		"job":      required,
+		# No "job": an overridden component is not a job. componentPath names
+		# what this finding is about, so its identity does not depend on the
+		# message above, whose override count moves as jobs are added.
+		"componentPath": required,
 	}
 }
 
