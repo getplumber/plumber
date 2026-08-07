@@ -11,8 +11,6 @@ import (
 	"bytes"
 	"cmp"
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io/fs"
@@ -22,6 +20,7 @@ import (
 
 	"github.com/open-policy-agent/opa/v1/rego"
 
+	"github.com/getplumber/plumber/finding/identity"
 	"github.com/getplumber/plumber/internal/ir"
 )
 
@@ -92,58 +91,36 @@ func (f Finding) MarshalJSON() ([]byte, error) {
 	return json.Marshal(out)
 }
 
-// computeFingerprint derives a stable, line-independent identifier from a
-// finding's identity: its code, file, context (job), and message. The message
-// carries the concrete subject the rule flagged (the action ref, image,
-// variable, ...), so the fingerprint distinguishes different findings of the
-// same code in the same file/job. Line and URL are deliberately excluded
-// because they move when unrelated code above the finding is edited, so the
-// fingerprint survives that drift and lets a consumer follow the same finding
-// across runs. Codeless findings get no fingerprint.
-// fingerprintSubjectKeys lists the structured payload keys that say what a
-// finding is ABOUT, in priority order; the first one present wins. Preferring
-// these over the prose message is what makes the fingerprint survive a message
-// rewording: the subject (an action ref, a branch, an image, a variable, a
-// script line) is the thing the rule actually flagged.
+// Identity returns the finding's identity field set: the fields the shared
+// recipe selects as identifying this one finding instance across runs, as data.
+// ok is false for a codeless finding, which has no identity.
 //
-// Volatile payload is deliberately excluded, because it changes for reasons
-// unrelated to the finding and would make it look new: advisories grows as CVEs
-// are published, latestVersion moves whenever upstream releases, metadata is
-// refetched every run, and reasons/status track current settings rather than
-// identity.
-var fingerprintSubjectKeys = []string{
-	"uses", "branchName", "componentName", "image", "serviceImage",
-	"link", "tag", "variableName", "scriptLine", "detail",
+// The selection lives in finding/identity because Plumber is not its only
+// consumer: a platform grouping findings into long-lived issues needs the same
+// answer, and a second list maintained alongside this one would drift.
+func (f Finding) Identity() (identity.Fields, bool) {
+	return identity.Of(f.identityInput())
 }
 
-// fingerprintSubject returns the finding's structured subject, falling back to
-// the message for rules that emit none. The key name is included so two
-// different keys holding the same value cannot collide.
-func fingerprintSubject(f Finding) string {
-	for _, k := range fingerprintSubjectKeys {
-		if v, ok := f.Data[k].(string); ok && v != "" {
-			return k + "=" + v
-		}
+// identityInput projects a finding onto the view the recipe reads. Line and URL
+// are not passed on: they move whenever unrelated code above the finding is
+// edited, and the whole point of the fingerprint is to survive that drift.
+func (f Finding) identityInput() identity.Finding {
+	return identity.Finding{
+		Code:    f.Code,
+		File:    f.File,
+		Job:     f.Job,
+		Message: f.Message,
+		Data:    f.Data,
 	}
-	return f.Message
 }
 
+// computeFingerprint hashes the identity field set above into the short, stable
+// identifier every output format carries. It is the same selection, so the
+// fingerprint and the platform's grouping key can never disagree about which
+// findings are the same finding. Codeless findings get no fingerprint.
 func computeFingerprint(f Finding) string {
-	if f.Code == "" {
-		return ""
-	}
-	id := f.Code + "\n" + f.File + "\n" + f.Job + "\n" + fingerprintSubject(f)
-	// A step name, when the workflow provides one, is appended as the final
-	// discriminator: two steps in the same job that reference the same action
-	// produce an identical code/file/job/message and would otherwise collide
-	// (observed on grafana/grafana, where one action appears twice in a job).
-	// Appended only when known, so findings without a step keep their
-	// identifier unchanged.
-	if step, ok := f.Data["step"].(string); ok && step != "" {
-		id += "\n" + step
-	}
-	sum := sha256.Sum256([]byte(id))
-	return hex.EncodeToString(sum[:])[:16]
+	return identity.Fingerprint(f.identityInput())
 }
 
 // StampFingerprints sets Fingerprint on every finding in place. Call it once,

@@ -50,9 +50,13 @@ deny contains finding if {
 		"code":     "ISSUE-417",
 		"severity": "high",
 		"message":  sprintf("required action or reusable workflow %q is not referenced by any workflow (group %d)", [required, i]),
-		"job":      required,
-		"required": required,
-		"groupIndex": i,
+		# No "job": a missing required action is not a job. requiredAction names
+		# what this finding is about and is what the identity recipe selects
+		# (finding/identity). groupIndex stays as payload: it moves whenever the
+		# user reorders requiredGroups, which is not a new finding.
+		"requiredAction": required,
+		"required":       required,
+		"groupIndex":     i,
 	}
 }
 

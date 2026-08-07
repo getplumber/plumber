@@ -476,7 +476,7 @@ func buildRequiredActionsBlock(c legacyCommon, cfg *configuration.RequiredAction
 	requirementGroups, satisfied := _resolveRequiredActionGroups(groups, result)
 	return map[string]any{
 		"requirementGroups": requirementGroups,
-		"issues":            projectFindings(findings, "job"),
+		"issues":            projectFindings(findings, ""),
 		"metrics": map[string]any{
 			"totalGroups":       len(requirementGroups),
 			"satisfiedGroups":   satisfied,

@@ -1,6 +1,61 @@
 package opa
 
-import "testing"
+import (
+	"encoding/json"
+	"testing"
+
+	"github.com/getplumber/plumber/finding/identity"
+)
+
+// A consumer outside this module reads findings from Plumber's serialized
+// output, not from the Go type, and must arrive at the same identity. That only
+// holds if every input the recipe reads is flattened into the JSON object, so
+// the round trip is pinned here rather than assumed.
+func TestFingerprint_SurvivesTheJSONRoundTrip(t *testing.T) {
+	findings := []Finding{{
+		Code: "ISSUE-701", File: ".github/workflows/ci.yml", Job: "build",
+		Message: "prose", Line: 12, URL: "https://example.com/ci.yml#L12",
+		Data: map[string]any{"uses": "owner/act@v1", "step": "Check out", "advisories": "GHSA-1"},
+	}, {
+		Code: "ISSUE-803", File: "ci.yml", Job: "build", Message: "no structured subject here",
+	}, {
+		Code: "ISSUE-405", File: ".gitlab-ci.yml", Job: "templates/go/go",
+		Message: "required template is missing",
+		Data:    map[string]any{"templatePath": "templates/go/go"},
+	}}
+	StampFingerprints(findings)
+	for _, f := range findings {
+		b, err := json.Marshal(f)
+		if err != nil {
+			t.Fatalf("marshal %s: %v", f.Code, err)
+		}
+		var serialized map[string]any
+		if err := json.Unmarshal(b, &serialized); err != nil {
+			t.Fatalf("unmarshal %s: %v", f.Code, err)
+		}
+		if got := identity.Fingerprint(identity.FromMap(serialized)); got != f.Fingerprint {
+			t.Errorf("%s: fingerprint from serialized finding = %q, stamped = %q", f.Code, got, f.Fingerprint)
+		}
+	}
+}
+
+// The engine must not keep a second copy of the selection: it computes the
+// fingerprint through the public recipe, so a key added there is honoured here
+// without an edit. A finding using a subject key the engine never knew about is
+// the check that the two are one implementation and not two lists.
+func TestFingerprint_ComesFromTheSharedRecipe(t *testing.T) {
+	f := Finding{
+		Code: "ISSUE-405", File: ".gitlab-ci.yml", Job: "templates/go/go",
+		Message: `required template "templates/go/go" is missing from the pipeline (group 0)`,
+		Data:    map[string]any{"templatePath": "templates/go/go"},
+	}
+	want := identity.Fingerprint(identity.Finding{
+		Code: f.Code, File: f.File, Job: f.Job, Message: f.Message, Data: f.Data,
+	})
+	if got := computeFingerprint(f); got != want {
+		t.Errorf("computeFingerprint = %q, identity.Fingerprint = %q; the engine is using its own selection", got, want)
+	}
+}
 
 // The fingerprint must survive line drift: the same finding whose line moved
 // (because unrelated code above it was edited) keeps the same identifier, so a

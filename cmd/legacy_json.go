@@ -186,8 +186,22 @@ func projectFinding(f opaengine.Finding, jobKey string) map[string]any {
 	if f.Fingerprint != "" {
 		out["fingerprint"] = f.Fingerprint
 	}
+	// The fingerprint above is a hash, so it cannot tell a consumer WHICH
+	// fields it was built from, and this function strips message, file and
+	// line, so those inputs are not recoverable from the issue entry either.
+	// The identity block carries the selected field set itself, which is what
+	// lets a platform group findings into long-lived issues across runs
+	// without re-deriving (and eventually diverging from) the recipe. Its
+	// version travels with it: see finding/identity.RecipeVersion.
+	if fields, ok := f.Identity(); ok {
+		out["identity"] = map[string]any{
+			"version":            fields.Version,
+			"fields":             fields.Pairs(),
+			"subjectFromMessage": fields.SubjectFromMessage,
+		}
+	}
 	for k, v := range f.Data {
-		if k == "docUrl" || k == "url" || k == "fingerprint" {
+		if k == "docUrl" || k == "url" || k == "fingerprint" || k == "identity" {
 			continue
 		}
 		out[k] = v
@@ -275,11 +289,6 @@ func enrichBranchProtection505IssueMaps(issues []map[string]any, result *control
 		}
 		branchName, _ := issue["branchName"].(string)
 		if branchName == "" {
-			if j, ok := issue["job"].(string); ok {
-				branchName = j
-			}
-		}
-		if branchName == "" {
 			continue
 		}
 		if result == nil || result.ProtectionData == nil {
@@ -348,7 +357,11 @@ func enrichForbiddenVersion404IssueMaps(issues []map[string]any, result *control
 		if code != string(control.CodeIncludeForbiddenVersion) {
 			continue
 		}
-		src, _ := issue["job"].(string)
+		// The rule emits includePath, not job: an include is not a job, and
+		// includePath is what the identity recipe selects for this finding
+		// (finding/identity). It carries the same include-source value job
+		// used to carry, so reading it here restores the enrichment.
+		src, _ := issue["includePath"].(string)
 		if src == "" {
 			continue
 		}
@@ -475,6 +488,22 @@ func buildImageAuthorizedSourcesBlock(c legacyCommon, result *control.AnalysisRe
 	}
 }
 
+// nonCompliantBranchNames collects the branches that fired ISSUE-505, read from
+// the finding's branchName payload. Not from Finding.Job: that field is a CI
+// job name, and a branch is not a job, so branch rules leave it empty.
+func nonCompliantBranchNames(findings []opaengine.Finding) map[string]bool {
+	out := map[string]bool{}
+	for _, f := range findings {
+		if f.Code != string(control.CodeBranchNonCompliant) {
+			continue
+		}
+		if name, ok := f.Data["branchName"].(string); ok && name != "" {
+			out[name] = true
+		}
+	}
+	return out
+}
+
 func buildBranchProtectionBlock(c legacyCommon, result *control.AnalysisResult, pc *configuration.PlumberConfig, findings []opaengine.Finding) map[string]any {
 	total, toProtect, protected, unprotected := _branchProtectionCounts(result, pc)
 	nonCompliant := 0
@@ -521,12 +550,7 @@ func buildBranchProtectionBlock(c legacyCommon, result *control.AnalysisResult, 
 		// fired a non-compliance finding — compliant branches keep
 		// the slim {branchName, default, protected} shape so the JSON
 		// stays focused on what reviewers need to act on.
-		nonCompliantBranches := map[string]bool{}
-		for _, f := range findings {
-			if f.Code == string(control.CodeBranchNonCompliant) {
-				nonCompliantBranches[f.Job] = true
-			}
-		}
+		nonCompliantBranches := nonCompliantBranchNames(findings)
 		// Iterate the branches with the default branch first, then the
 		// rest sorted alphabetically — matches v0.2.x's display order
 		// where the project's flagship branch leads the data list.
@@ -734,7 +758,7 @@ func buildForbiddenVersionsBlock(c legacyCommon, result *control.AnalysisResult,
 	if usingAuthorized < 0 {
 		usingAuthorized = 0
 	}
-	issues := projectFindings(findings, "job")
+	issues := projectFindings(findings, "")
 	enrichForbiddenVersion404IssueMaps(issues, result)
 	return map[string]any{
 		"issues": issues,
@@ -758,7 +782,7 @@ func buildRequirementGroupsBlock(c legacyCommon, cfg *configuration.RequiredComp
 	requirementGroups, satisfied := _resolveRequirementGroups(groups, result)
 	return map[string]any{
 		"requirementGroups": requirementGroups,
-		"issues":            projectFindings(findings, "job"),
+		"issues":            projectFindings(findings, ""),
 		"overriddenIssues":  []any{},
 		"metrics": map[string]any{
 			"totalGroups":       len(requirementGroups),
@@ -782,7 +806,7 @@ func buildRequirementGroupsTemplateBlock(c legacyCommon, cfg *configuration.Requ
 	requirementGroups, satisfied := _resolveRequirementGroups(groups, result)
 	return map[string]any{
 		"requirementGroups": requirementGroups,
-		"issues":            projectFindings(findings, "job"),
+		"issues":            projectFindings(findings, ""),
 		"overriddenIssues":  []any{},
 		"metrics": map[string]any{
 			"totalGroups":       len(requirementGroups),

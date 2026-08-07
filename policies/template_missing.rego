@@ -22,7 +22,11 @@ deny contains finding if {
 		"code":     "ISSUE-405",
 		"severity": "high",
 		"message":  sprintf("required template %q is missing from the pipeline (group %d)", [required, i]),
-		"job":      required,
+		# No "job": a missing template is not a job. templatePath names what
+		# this finding is about and is what the identity recipe selects
+		# (finding/identity). The group index stays out: it moves whenever the
+		# user reorders requiredGroups, which is not a new finding.
+		"templatePath": required,
 	}
 }
 

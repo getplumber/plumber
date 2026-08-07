@@ -22,7 +22,11 @@ deny contains finding if {
 		"code":     "ISSUE-408",
 		"severity": "high",
 		"message":  sprintf("required component %q is missing from the pipeline (group %d)", [required, i]),
-		"job":      required,
+		# No "job": a missing component is not a job. componentPath names what
+		# this finding is about and is what the identity recipe selects
+		# (finding/identity). The group index stays out: it moves whenever the
+		# user reorders requiredGroups, which is not a new finding.
+		"componentPath": required,
 	}
 }
 

@@ -6,12 +6,14 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
 
 	"gopkg.in/yaml.v2"
 
+	"github.com/getplumber/plumber/finding/identity"
 	githubpkg "github.com/getplumber/plumber/github"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	"github.com/getplumber/plumber/internal/ir"
@@ -1178,20 +1180,21 @@ func TestIssue505_BranchNonCompliant(t *testing.T) {
 		t.Fatalf("evaluate: %v", err)
 	}
 	hits := map[string]bool{}
-	issue505ByJob := map[string]opaengine.Finding{}
+	issue505ByBranch := map[string]opaengine.Finding{}
 	for _, f := range findings {
 		if f.Code == "ISSUE-505" {
-			if issue505ByJob[f.Job].Code != "" {
-				t.Fatalf("expected at most one ISSUE-505 per branch, got duplicate for %q", f.Job)
+			branch, _ := f.Data["branchName"].(string)
+			if issue505ByBranch[branch].Code != "" {
+				t.Fatalf("expected at most one ISSUE-505 per branch, got duplicate for %q", branch)
 			}
-			issue505ByJob[f.Job] = f
-			hits[f.Job] = true
+			issue505ByBranch[branch] = f
+			hits[branch] = true
 		}
 	}
 	if !hits["main"] || !hits["low-push"] {
 		t.Fatalf("expected main and low-push flagged, got %v", hits)
 	}
-	mainF := issue505ByJob["main"]
+	mainF := issue505ByBranch["main"]
 	if !strings.Contains(mainF.Message, "main") || !strings.Contains(mainF.Message, "non-compliant") {
 		t.Fatalf("unexpected ISSUE-505 message for main: %q", mainF.Message)
 	}
@@ -1202,6 +1205,8 @@ func TestIssue505_BranchNonCompliant(t *testing.T) {
 	if hits["compliant"] || hits["unprotected"] {
 		t.Fatalf("unexpected flag on compliant/unprotected: %v", hits)
 	}
+	assertSubjectKey(t, findings, "ISSUE-505", "branchName", []string{"main", "low-push"})
+	assertNoJob(t, findings, "ISSUE-505")
 }
 
 // TestIssue505_AccessLevelStrictestPolicy: GitLab access level 0 = "No one".
@@ -1346,8 +1351,8 @@ func TestIssue505_DetailUnknownAbstainsButIssue501StillFires(t *testing.T) {
 	for _, f := range findings {
 		switch f.Code {
 		case "ISSUE-501":
-			if f.Job != "feature" {
-				t.Fatalf("ISSUE-501 should target the unprotected branch, got %q", f.Job)
+			if name, _ := f.Data["branchName"].(string); name != "feature" {
+				t.Fatalf("ISSUE-501 should target the unprotected branch, got %q", name)
 			}
 			saw501++
 		case "ISSUE-505":
@@ -1360,6 +1365,8 @@ func TestIssue505_DetailUnknownAbstainsButIssue501StillFires(t *testing.T) {
 	if saw505 != 0 {
 		t.Errorf("expected 0 ISSUE-505 when ProtectionDetailsKnown=false, got %d", saw505)
 	}
+	assertSubjectKey(t, findings, "ISSUE-501", "branchName", []string{"feature"})
+	assertNoJob(t, findings, "ISSUE-501")
 }
 
 // TestIssue505_NotInPolicyScope ensures ISSUE-501 scope matches ISSUE-505:
@@ -1431,6 +1438,11 @@ func TestIssue404_IncludesForbiddenVersion(t *testing.T) {
 	if hits != 2 {
 		t.Fatalf("expected 2 ISSUE-404 findings, got %d", hits)
 	}
+	// The include path is what the finding is about. Without it the finding's
+	// identity falls back to the prose message, and a copy-edit to that message
+	// re-keys every ISSUE-404 in the wild.
+	assertSubjectKey(t, findings, "ISSUE-404", "includePath", []string{"plumber/a", "plumber/b"})
+	assertNoJob(t, findings, "ISSUE-404")
 }
 
 // TestIssue204_UnsafeVariableExpansion flags scripts re-parsing
@@ -1476,6 +1488,71 @@ func TestIssue401_HardcodedJobs(t *testing.T) {
 	}
 	if len(hits) != 1 || hits[0] != "build" {
 		t.Fatalf("expected only [build], got %v", hits)
+	}
+	assertSubjectKey(t, findings, "ISSUE-401", "hardcodedJob", []string{"build"})
+}
+
+// assertSubjectKey pins the structured key a control emits to say what its
+// finding is about. That key is what the finding-identity recipe selects
+// (finding/identity.SubjectKeys); a control emitting none of them falls back to
+// its prose message, so rewording the rule re-keys every finding it ever
+// emitted. Pinning the key here is what keeps that from happening silently.
+//
+// This is also the tripwire the recipe's own tests cannot be: they run on fixed
+// identity.Finding values, so they guard the algorithm and stay green when a
+// control changes what it emits, even though that moves real fingerprints just
+// as much. If one of these assertions fails because a rule's payload changed on
+// purpose, bump identity.RecipeVersion in the same change.
+func assertSubjectKey(t *testing.T, findings []opaengine.Finding, code, key string, wantValues []string) {
+	t.Helper()
+	if !slices.Contains(identity.SubjectKeys(), key) {
+		t.Fatalf("%s: key %q is not part of the identity recipe: %v", code, key, identity.SubjectKeys())
+	}
+	got := []string{}
+	for _, f := range findings {
+		if f.Code != code {
+			continue
+		}
+		fields, ok := f.Identity()
+		if !ok {
+			t.Fatalf("%s: finding has no identity: %+v", code, f)
+		}
+		if fields.Subject.Key != key {
+			t.Errorf("%s: identity subject is %q=%q, want the structured key %q", code, fields.Subject.Key, fields.Subject.Value, key)
+			continue
+		}
+		got = append(got, fields.Subject.Value)
+	}
+	slices.Sort(got)
+	want := slices.Clone(wantValues)
+	slices.Sort(want)
+	if !slices.Equal(got, want) {
+		t.Errorf("%s: %s values = %v, want %v", code, key, got, want)
+	}
+}
+
+// assertNoJob pins that a control leaves Finding.Job empty. The field is a CI
+// job name and a hashed identity input; a control that puts a branch, an
+// include source or a required path there both mislabels its output and makes
+// identity depend on the mislabelling.
+//
+// It also requires that the code produced at least one finding: a pin that
+// silently passes because the control emitted zero findings is not a
+// regression guard, it is a no-op.
+func assertNoJob(t *testing.T, findings []opaengine.Finding, code string) {
+	t.Helper()
+	count := 0
+	for _, f := range findings {
+		if f.Code != code {
+			continue
+		}
+		count++
+		if f.Job != "" {
+			t.Errorf("%s: job = %q, want empty: this finding is not about a job", code, f.Job)
+		}
+	}
+	if count == 0 {
+		t.Fatalf("%s: no findings with this code, assertNoJob passes vacuously", code)
 	}
 }
 
@@ -1732,12 +1809,14 @@ func TestIssue404_WildcardForbiddenVersion(t *testing.T) {
 	hits := []string{}
 	for _, f := range findings {
 		if f.Code == "ISSUE-404" {
-			hits = append(hits, f.Job)
+			path, _ := f.Data["includePath"].(string)
+			hits = append(hits, path)
 		}
 	}
 	if len(hits) != 1 || hits[0] != "plumber/a" {
 		t.Fatalf("expected only [plumber/a] flagged via wildcard, got %v", hits)
 	}
+	assertNoJob(t, findings, "ISSUE-404")
 }
 
 // TestIssue204_SourceAndDotSourcing covers the two patterns that were
@@ -2214,7 +2293,8 @@ func TestIssue408_ComponentMissing(t *testing.T) {
 	hits := map[string]bool{}
 	for _, f := range findings {
 		if f.Code == "ISSUE-408" {
-			hits[f.Job] = true
+			name, _ := f.Data["componentPath"].(string)
+			hits[name] = true
 		}
 	}
 	if !hits["components/secret-detection/secret-detection"] {
@@ -2226,6 +2306,9 @@ func TestIssue408_ComponentMissing(t *testing.T) {
 	if hits["components/sast/sast"] {
 		t.Fatalf("unexpected flag on present component: %v", hits)
 	}
+	assertSubjectKey(t, findings, "ISSUE-408", "componentPath",
+		[]string{"components/secret-detection/secret-detection", "your-org/full-security/full-security"})
+	assertNoJob(t, findings, "ISSUE-408")
 }
 
 // TestIssue409_ComponentOverridden flags required components whose
@@ -2268,6 +2351,8 @@ func TestIssue409_ComponentOverridden(t *testing.T) {
 	if hits != 1 {
 		t.Fatalf("expected 1 ISSUE-409 finding, got %d", hits)
 	}
+	assertSubjectKey(t, findings, "ISSUE-409", "componentPath", []string{"components/sast/sast"})
+	assertNoJob(t, findings, "ISSUE-409")
 }
 
 // TestIssue405_TemplateMissing flags DNF groups whose required
@@ -2301,7 +2386,8 @@ func TestIssue405_TemplateMissing(t *testing.T) {
 	hits := map[string]bool{}
 	for _, f := range findings {
 		if f.Code == "ISSUE-405" {
-			hits[f.Job] = true
+			path, _ := f.Data["templatePath"].(string)
+			hits[path] = true
 		}
 	}
 	if !hits["templates/trivy/trivy"] {
@@ -2310,6 +2396,8 @@ func TestIssue405_TemplateMissing(t *testing.T) {
 	if hits["templates/go/go"] {
 		t.Fatalf("unexpected flag on present template: %v", hits)
 	}
+	assertSubjectKey(t, findings, "ISSUE-405", "templatePath", []string{"templates/trivy/trivy"})
+	assertNoJob(t, findings, "ISSUE-405")
 }
 
 // TestIssue406_TemplateOverridden flags required templates whose
@@ -2353,6 +2441,8 @@ func TestIssue406_TemplateOverridden(t *testing.T) {
 	if hits != 1 {
 		t.Fatalf("expected 1 ISSUE-406 finding, got %d", hits)
 	}
+	assertSubjectKey(t, findings, "ISSUE-406", "templatePath", []string{"templates/go/go"})
+	assertNoJob(t, findings, "ISSUE-406")
 }
 
 // parseGitHubStepsUses extracts `steps[].uses` entries from a workflow
@@ -4767,7 +4857,8 @@ func TestIssue416_RequiredActionMissing(t *testing.T) {
 		hits := map[string]bool{}
 		for _, f := range findings {
 			if f.Code == "ISSUE-417" {
-				hits[f.Job] = true
+				requiredAction, _ := f.Data["requiredAction"].(string)
+				hits[requiredAction] = true
 			}
 		}
 		for _, want := range []string{"myorg/sast-scan", "myorg/policy/.github/workflows/policy.yml", "myorg/full-security"} {
@@ -4775,6 +4866,12 @@ func TestIssue416_RequiredActionMissing(t *testing.T) {
 				t.Errorf("expected ISSUE-417 finding for %q; got hits=%v", want, hits)
 			}
 		}
+		assertSubjectKey(t, findings, "ISSUE-417", "requiredAction", []string{
+			"myorg/sast-scan",
+			"myorg/policy/.github/workflows/policy.yml",
+			"myorg/full-security",
+		})
+		assertNoJob(t, findings, "ISSUE-417")
 	})
 
 	t.Run("step-level uses with pinned SHA satisfies ref-agnostic match", func(t *testing.T) {
@@ -4849,7 +4946,7 @@ func TestIssue416_RequiredActionMissing(t *testing.T) {
 		}
 		matched := false
 		for _, f := range findings {
-			if f.Code == "ISSUE-417" && f.Job == "myorg/sast-scan" {
+			if f.Code == "ISSUE-417" && f.Data["requiredAction"] == "myorg/sast-scan" {
 				matched = true
 			}
 		}
@@ -5071,4 +5168,49 @@ func TestIssue323_FindingsCarryStructuredEvidence(t *testing.T) {
 			}
 		})
 	}
+}
+
+// ISSUE-403 is about an include, not a job. Its identity used to be the include
+// source smuggled through the job field, with componentName (a bare name, empty
+// for non-component includes) as the only structured key.
+func TestIssue403_OutdatedIncludeIdentifiesOnTheIncludePath(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	pipeline := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitLab,
+		Includes: []ir.Include{
+			{Kind: "component", Source: "gitlab.example.com/components/sast/sast", Ref: "1.0.0", Current: "1.1.0"},
+		},
+	}
+	findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	assertSubjectKey(t, findings, "ISSUE-403", "includePath",
+		[]string{"gitlab.example.com/components/sast/sast"})
+	assertNoJob(t, findings, "ISSUE-403")
+}
+
+// ISSUE-402's GitLab block is about an include. Its GitHub block, which flags an
+// ambiguous action ref inside a job, keeps its job name and its uses subject.
+func TestIssue402_AmbiguousIncludeIdentifiesOnTheIncludePath(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	pipeline := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitLab,
+		Includes: []ir.Include{
+			{Kind: "component", Source: "gitlab.example.com/components/sast/sast", Ref: "v1", RefIsAmbiguous: true},
+		},
+	}
+	findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	assertSubjectKey(t, findings, "ISSUE-402", "includePath",
+		[]string{"gitlab.example.com/components/sast/sast"})
+	assertNoJob(t, findings, "ISSUE-402")
 }

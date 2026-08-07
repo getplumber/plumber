@@ -293,7 +293,7 @@ func sarifMessage(f opaengine.Finding, info *control.ErrorCodeInfo) string {
 // for two reasons. The message is shared by every output — terminal, JSON,
 // CSV, GitLab SAST — where a backtick is literal noise, not formatting. And
 // a rule that emits no structured subject key falls back to its message for
-// the fingerprint (fingerprintSubjectKeys), so rewording it in Rego re-files
+// the fingerprint (finding/identity.SubjectKeys), so rewording it in Rego re-files
 // the alert and drops any dismissal; rendering here leaves the fingerprint
 // input untouched.
 //
