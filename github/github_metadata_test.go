@@ -825,6 +825,50 @@ func Test_resolveUncached_tagObjectProbeOnlyForShaRefs(t *testing.T) {
 			t.Fatalf("git/tags called %d time(s) for a SHA-shaped ref, want exactly 1", calls)
 		}
 	})
+
+	// The fallback lives behind a definitive commit-absent answer, so an
+	// ordinary commit-SHA pin (the overwhelming majority of refs in a
+	// real scan) must not pay for it at all.
+	t.Run("resolvable commit pin skips the probe entirely", func(t *testing.T) {
+		const good = "abcdef0123456789abcdef0123456789abcdef01"
+		calls := 0
+		rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			p := r.URL.Path
+			body, status := `{}`, http.StatusNotFound
+			switch {
+			case p == "/repos/"+owner+"/"+repo:
+				body, status = `{"archived":false,"stargazers_count":0}`, http.StatusOK
+			case strings.Contains(p, "/releases"):
+				body, status = `[]`, http.StatusOK
+			case strings.HasPrefix(p, "/advisories"):
+				body, status = `[]`, http.StatusOK
+			case strings.Contains(p, "/git/tags/"):
+				calls++
+			case strings.HasSuffix(p, "/commits/"+good):
+				body, status = `{"sha":"`+good+`"}`, http.StatusOK
+			}
+			return &http.Response{
+				StatusCode: status,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     make(http.Header),
+				Request:    r,
+			}, nil
+		})
+		c := NewGitHubMetadataClientForHost("")
+		rest, err := api.NewRESTClient(api.ClientOptions{AuthToken: "x", Transport: rt})
+		if err != nil {
+			t.Fatalf("new rest client: %v", err)
+		}
+		c.rest = rest
+
+		m := c.resolveUncached(owner, repo, good)
+		if !m.RefExists || m.RefKind != "commit" {
+			t.Fatalf("a resolvable commit pin must resolve as before: RefExists=%v RefKind=%q", m.RefExists, m.RefKind)
+		}
+		if calls != 0 {
+			t.Fatalf("git/tags called %d time(s) on the happy path; the fallback must cost nothing for an ordinary commit pin", calls)
+		}
+	})
 }
 
 // Test_resolveUncached_realWorldTagObjectVectors replays the five
