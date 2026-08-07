@@ -61,8 +61,13 @@ type GitHubMetadata struct {
 	// repo). It stays false when the ref could not be verified (private
 	// repo, rate limit, network error) so impostor-commit (ISSUE-707)
 	// never flags a valid SHA it merely failed to reach.
-	RefKnownAbsent   bool
-	RefKind          string
+	RefKnownAbsent bool
+	RefKind        string
+	// RefCommitSha is set only when the pinned ref is the SHA of an
+	// annotated tag OBJECT: it carries the commit that tag object
+	// dereferences to. Empty for every other ref shape, including a
+	// plain commit pin (there the ref already IS the commit).
+	RefCommitSha     string
 	TagSha           string
 	LatestTag        string
 	LatestReleaseSha string
@@ -268,13 +273,28 @@ func (c *GitHubMetadataClient) resolveUncached(owner, repo, ref string) GitHubMe
 		m.RefExists = true
 		return m
 	} else if checked && info.err == nil {
+		// The commits endpoint only accepts commit SHAs, so it answers
+		// 422 for a pin that names an annotated tag OBJECT. Dereference
+		// that object before concluding anything (ISSUE-401): the pin is
+		// immutable, resolves in GitHub Actions, and reporting it as
+		// absent is a critical false positive.
+		if commit, tagExists, tagChecked := c.tagObjectResolves(owner, repo, ref); tagExists {
+			m.RefKind = "commit"
+			m.RefExists = true
+			m.RefCommitSha = commit
+			return m
+		} else if !tagChecked {
+			// The tag lookup itself could not be completed, so we cannot
+			// rule the tag-object shape out. Stay silent.
+			return m
+		}
 		// A definitive absence answer (404 / 422) on a repo we CAN read
-		// means the SHA is not tag, branch, nor commit upstream — a
-		// genuine impostor commit or typo. We require info.err == nil so
-		// a private / missing repo (whose commits endpoint also 404s) is
-		// never mistaken for an absent commit. Left false when the repo
-		// itself is unreadable so ISSUE-707 stays silent (see
-		// commitResolves).
+		// means the SHA is not tag, branch, tag object, nor commit
+		// upstream — a genuine impostor commit or typo. We require
+		// info.err == nil so a private / missing repo (whose commits
+		// endpoint also 404s) is never mistaken for an absent commit.
+		// Left false when the repo itself is unreadable so ISSUE-707
+		// stays silent (see commitResolves).
 		m.RefKnownAbsent = true
 	}
 	// Unknown ref — keep RefKind empty, RefExists false.
@@ -866,6 +886,60 @@ func (c *GitHubMetadataClient) resolveTag(owner, repo, ref string) (string, bool
 		}
 	}
 	return parsed.Object.Sha, true
+}
+
+// tagObjectResolves reports whether ref is the SHA of an annotated tag
+// OBJECT in the upstream repository, and returns the commit that tag
+// object dereferences to. That shape is what `git rev-parse v1.2.3`
+// yields without `^{commit}`, so it is a normal outcome of pinning an
+// action by hand or with a script (ISSUE-401), yet the commits endpoint
+// answers 422 for it because it only accepts commit SHAs.
+//
+// Both calls are scoped to the upstream repository, so no fork object
+// can satisfy the check. The dereferenced commit is confirmed in the
+// same repository before we call the pin resolvable.
+//
+// The tri-state contract matches commitResolves: checked is true ONLY
+// on a definitive answer (a resolvable tag object, or a 404 / 422 that
+// rules one out). Any other failure (403, rate limit, network) leaves
+// checked false so impostor-commit (ISSUE-707) stays silent on a SHA we
+// merely failed to reach.
+func (c *GitHubMetadataClient) tagObjectResolves(owner, repo, ref string) (commitSha string, exists, checked bool) {
+	var resp struct {
+		Object struct {
+			Sha  string `json:"sha"`
+			Type string `json:"type"`
+		} `json:"object"`
+	}
+	err := c.rest.Get(fmt.Sprintf("repos/%s/%s/git/tags/%s", owner, repo, ref), &resp)
+	if err != nil {
+		var httpErr *api.HTTPError
+		if errors.As(err, &httpErr) {
+			switch httpErr.StatusCode {
+			// 404 / 422: the SHA is not a tag object on a repo we can
+			// read. Definitive, so the caller may fall through to
+			// "absent upstream".
+			case http.StatusNotFound, http.StatusUnprocessableEntity:
+				return "", false, true
+			}
+		}
+		return "", false, false
+	}
+	// Past this point git/tags served the SHA, so it plainly exists in
+	// the upstream repository. Anything we cannot turn into a confirmed
+	// commit abstains (checked=false) rather than falling through to
+	// "does not exist upstream", which would be a false statement at
+	// critical severity.
+	if resp.Object.Type != "commit" || resp.Object.Sha == "" {
+		// A tag object pointing at another tag object (or at a tree /
+		// blob) is legal in git but vanishingly rare, and we cannot
+		// describe it as a commit pin.
+		return "", false, false
+	}
+	if exists, _ := c.commitResolves(owner, repo, resp.Object.Sha); !exists {
+		return "", false, false
+	}
+	return resp.Object.Sha, true, true
 }
 
 func (c *GitHubMetadataClient) branchExists(owner, repo, ref string) bool {

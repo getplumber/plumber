@@ -38,8 +38,19 @@ deny contains finding if {
 # API's lowercase latestReleaseSha treats an uppercase pin like its
 # lowercase equivalent; for a tag pin, metadata.tagSha carries the
 # resolved value.
+#
+# A pin naming an annotated tag OBJECT is a third case (ISSUE-401): the
+# ref is SHA-shaped but designates the tag object, not the commit, so
+# the collector records the dereferenced commit in refCommitSha and
+# that is what compares against latestReleaseSha. The SHA-pin clause
+# below excludes it so the two never disagree on one action.
+_pinned_sha(_, meta) := lower(meta.refCommitSha) if {
+	meta.refCommitSha != ""
+}
+
 _pinned_sha(ref, meta) := lower(ref) if {
 	regex.match(sha_pattern, lower(ref))
+	object.get(meta, "refCommitSha", "") == ""
 }
 
 _pinned_sha(_, meta) := meta.tagSha if {

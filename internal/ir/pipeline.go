@@ -270,8 +270,13 @@ type ActionMetadata struct {
 	// repo). It stays false when the ref could not be verified (private
 	// repo, rate limit, network error) so impostor-commit (ISSUE-707)
 	// never flags a valid SHA it merely failed to reach.
-	RefKnownAbsent   bool     `json:"refKnownAbsent,omitempty"`
-	RefKind          string   `json:"refKind,omitempty"`
+	RefKnownAbsent bool   `json:"refKnownAbsent,omitempty"`
+	RefKind        string `json:"refKind,omitempty"`
+	// RefCommitSha is set only when the pinned ref is the SHA of an
+	// annotated tag OBJECT: it carries the commit that tag object
+	// dereferences to. Empty for every other ref shape, including a
+	// plain commit pin (there the ref already IS the commit).
+	RefCommitSha     string   `json:"refCommitSha,omitempty"`
 	TagSha           string   `json:"tagSha,omitempty"`
 	LatestTag        string   `json:"latestTag,omitempty"`
 	LatestReleaseSha string   `json:"latestReleaseSha,omitempty"`

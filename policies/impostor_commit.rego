@@ -8,6 +8,11 @@
 # with HTTP 200 from the parent, so they read as present; this rule
 # flags only SHAs the API reports as absent (404 / 422).
 #
+# Scope note: a pin naming the SHA of an annotated tag OBJECT is not an
+# impostor. Those SHAs 422 on the commits endpoint but dereference
+# through git/tags to a commit in the same repository, so the collector
+# resolves them (refExists, refCommitSha) and refKnownAbsent stays false.
+#
 # Requires the collector to have resolved the action's GitHub
 # metadata. The rule fires only on refKnownAbsent, which the collector
 # sets ONLY when the upstream API confirms the commit is absent (a

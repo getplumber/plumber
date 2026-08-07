@@ -3651,6 +3651,22 @@ func TestIssue707_ImpostorCommit(t *testing.T) {
 			wantHits: 0,
 		},
 		{
+			// ISSUE-401: a 40-hex SHA naming an annotated tag OBJECT is
+			// a fifth, distinct shape. The commits endpoint answers 422
+			// for it, but git/tags resolves it, so the collector reports
+			// it as an existing commit and this control must stay quiet.
+			name: "SHA of an annotated tag object is silent",
+			action: ir.Action{
+				Uses: "pnpm/action-setup@7088e561eb65bb68695d245aa206f005ef30921d",
+				Metadata: &ir.ActionMetadata{
+					RefKind:      "commit",
+					RefExists:    true,
+					RefCommitSha: "a7487c7e89a18df4991f7f222e4898a00d66ddda",
+				},
+			},
+			wantHits: 0,
+		},
+		{
 			name:     "non-SHA tag ref is silent",
 			action:   ir.Action{Uses: "owner/repo@v99", Metadata: &ir.ActionMetadata{RefKnownAbsent: true}},
 			wantHits: 0,
@@ -3725,6 +3741,38 @@ func TestIssue709_StaleActionRef(t *testing.T) {
 			action:   ir.Action{Uses: "actions/checkout@" + latestSHA},
 			wantHits: 0,
 		},
+		{
+			// ISSUE-401: the pin names the annotated tag object of the
+			// latest release. latestReleaseSha is the dereferenced
+			// commit, so comparing the raw SHAs calls an up-to-date pin
+			// stale.
+			name: "pin naming the latest release's tag object is not stale",
+			action: ir.Action{
+				Uses: "actions/checkout@7088e561eb65bb68695d245aa206f005ef30921d",
+				Metadata: &ir.ActionMetadata{
+					RefKind:          "commit",
+					RefExists:        true,
+					RefCommitSha:     latestSHA,
+					LatestReleaseSha: latestSHA,
+					LatestTag:        "v4",
+				},
+			},
+			wantHits: 0,
+		},
+		{
+			name: "tag object pin behind the latest release is still stale",
+			action: ir.Action{
+				Uses: "actions/checkout@7088e561eb65bb68695d245aa206f005ef30921d",
+				Metadata: &ir.ActionMetadata{
+					RefKind:          "commit",
+					RefExists:        true,
+					RefCommitSha:     "a7487c7e89a18df4991f7f222e4898a00d66ddda",
+					LatestReleaseSha: latestSHA,
+					LatestTag:        "v4",
+				},
+			},
+			wantHits: 1,
+		},
 	}
 
 	for _, tc := range cases {
@@ -3789,6 +3837,43 @@ func TestIssue708_RefVersionMismatch(t *testing.T) {
 			name:     "missing metadata abstains",
 			action:   ir.Action{Uses: "actions/checkout@" + taggedSHA, Comment: "# v4.1.7"},
 			wantHits: 0,
+		},
+		{
+			// ISSUE-401: the pin names the annotated tag OBJECT for the
+			// very version the comment claims. commentTagSha is the
+			// dereferenced commit, so the raw SHAs differ while the
+			// comment is telling the truth.
+			name: "pin naming the comment tag's annotated tag object is silent",
+			action: ir.Action{
+				Uses:    "pnpm/action-setup@7088e561eb65bb68695d245aa206f005ef30921d",
+				Comment: "# v4.1.0",
+				Metadata: &ir.ActionMetadata{
+					RefKind:        "commit",
+					RefExists:      true,
+					RefCommitSha:   "a7487c7e89a18df4991f7f222e4898a00d66ddda",
+					CommentVersion: "4.1.0",
+					CommentTagSha:  "a7487c7e89a18df4991f7f222e4898a00d66ddda",
+				},
+			},
+			wantHits: 0,
+		},
+		{
+			// The dereference must not become a blanket amnesty: a tag
+			// object pin whose comment names a different release is
+			// still a misleading comment.
+			name: "tag object pin whose comment names another release is flagged",
+			action: ir.Action{
+				Uses:    "pnpm/action-setup@7088e561eb65bb68695d245aa206f005ef30921d",
+				Comment: "# v3.0.0",
+				Metadata: &ir.ActionMetadata{
+					RefKind:        "commit",
+					RefExists:      true,
+					RefCommitSha:   "a7487c7e89a18df4991f7f222e4898a00d66ddda",
+					CommentVersion: "3.0.0",
+					CommentTagSha:  taggedSHA,
+				},
+			},
+			wantHits: 1,
 		},
 	}
 
