@@ -421,7 +421,8 @@ flagged.
 This does not detect a fork-network impostor commit (one pushed to a
 fork of the upstream repo). GitHub serves those with HTTP 200 from the
 parent, so they read as present; the control flags only SHAs the API
-reports as absent.
+reports as absent. An annotated tag object pushed only to a fork is
+covered by the same blind spot, for the same reason.
 
 A pin may also name the SHA of an annotated tag *object* rather than
 the commit that tag points at (what `git rev-parse v1.2.3` returns

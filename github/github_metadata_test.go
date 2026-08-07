@@ -895,6 +895,14 @@ func Test_resolveUncached_realWorldTagObjectVectors(t *testing.T) {
 		{"mxschmitt", "action-tmate", "1fb8b1023602bf1fd0e2994d7f1e93015cb5bbec", "v3.22", "7b6a61a73bbb9793cb80ad69b8dd8ac19261834c"},
 		{"pnpm", "action-setup", "7088e561eb65bb68695d245aa206f005ef30921d", "v4.1.0", "a7487c7e89a18df4991f7f222e4898a00d66ddda"},
 		{"cross-platform-actions", "action", "462ed697694d2ac9aa49e1225f395f7bb6dd49fe", "v0.29.0", "e8a7b572196ff79ded1979dc2bb9ee67d1ddb252"},
+		// setup-uv's v6 is a MOVING tag. refs/tags/v6 has since been
+		// repointed at a newer tag object, so this SHA is orphaned from
+		// every ref while remaining a valid, immutable, resolvable object
+		// whose commit is in the repo. It is the reason the fork-network
+		// blind spot documented on tagObjectResolves cannot be closed by
+		// checking membership in the repo's own tag refs
+		// (git/matching-refs/tags/): that check rejects this pin and
+		// reinstates the ISSUE-401 false positive for every moving tag.
 		{"astral-sh", "setup-uv", "884ad927a57e558e7a70b92f2bccf9198a4be546", "v6", "bd01e18f51369d5a26f1651c3cb451d3417e3bba"},
 	}
 	const absentSHA = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"

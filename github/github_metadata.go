@@ -904,11 +904,23 @@ const maxTagObjectDepth = 4
 //
 // Every call is scoped to the upstream repository, and the dereferenced
 // commit is confirmed in that same repository before the pin is called
-// resolvable. (GitHub serves fork-network objects from the parent, so a
-// fork-only object can still satisfy a same-repo lookup. That is the
-// pre-existing scope limit of this control, documented in
-// impostor_commit.rego, and the tag-object path neither widens nor
-// narrows it.)
+// resolvable.
+//
+// Fork-network blind spot. GitHub serves every object in a fork network
+// from the parent, so a tag object pushed only to a FORK of owner/repo
+// still answers 200 here and is accepted. The control already had this
+// gap for commits (see impostor_commit.rego); resolving tag objects
+// extends it to them, because before this change every tag object was
+// reported and a fork-only one was caught as collateral of that bug
+// rather than by any fork check.
+//
+// It cannot be closed by requiring the SHA to appear in the repo's own
+// tag refs (git/matching-refs/tags/): a moving tag such as `v6` is
+// repointed on each release, which orphans the previous tag object from
+// every ref while leaving it a valid, immutable, resolvable pin. That
+// check would reject those and reinstate the false positive this
+// function exists to remove. Closing the gap needs a source that is not
+// shared across the fork network.
 //
 // The tri-state contract matches commitResolves: checked is true ONLY
 // on a definitive answer (a resolvable tag object, or a 404 / 422 that
