@@ -1,3 +1,37 @@
+## [0.4.33](https://github.com/getplumber/plumber/compare/v0.4.32...v0.4.33) (2026-08-07)
+
+
+### 🐛 Bug Fixes
+
+* **github:** normalize SHA case and peel nested tag objects ([fbfacde](https://github.com/getplumber/plumber/commit/fbfacdedfde62fefad673085727c7cde74f32e84))
+* **github:** resolve action pins that name an annotated tag object ([4016170](https://github.com/getplumber/plumber/commit/4016170c336cc4921a83a36862a615f58e9d37a1)), closes [#401](https://github.com/getplumber/plumber/issues/401)
+
+
+### ⚡ Performance
+
+* **github:** skip the tag object probe for refs that cannot be one ([eb9c669](https://github.com/getplumber/plumber/commit/eb9c669db0123a790c81f11aedf5e1ab085c591e))
+
+
+### 🔧 Chores
+
+* drop a stray worktree entry committed by mistake ([82c947f](https://github.com/getplumber/plumber/commit/82c947f3d3ee8c81f8148f928cac548fe3cf5036))
+
+
+### 📚 Documentation
+
+* **github:** record that the fork blind spot now covers tag objects ([4eeee96](https://github.com/getplumber/plumber/commit/4eeee967332e87e3ebda2da71a30fad3983ad4e3))
+
+
+### ✅ Tests
+
+* **github:** lock the collector-to-IR metadata handoff ([ccfc59b](https://github.com/getplumber/plumber/commit/ccfc59b39ef4cffd4d866b1620b2b9d61c754c9c))
+* **github:** lock the zero-cost happy path for the tag object fallback ([fae517e](https://github.com/getplumber/plumber/commit/fae517e590f5c295852b9c5977b58dec5b5a2b6a))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.32 refs [skip ci] ([e84e2c0](https://github.com/getplumber/plumber/commit/e84e2c078d9e34a0b995098180746d3e4d191ccc))
+
 ## [0.4.32](https://github.com/getplumber/plumber/compare/v0.4.31...v0.4.32) (2026-08-06)
 
 
