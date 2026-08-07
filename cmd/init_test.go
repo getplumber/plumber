@@ -208,10 +208,15 @@ func starterWizardConfig() *configuration.PlumberConfig {
 		TrustedURLsText:                 strings.Join(defaultTrustedURLs(), "\n"),
 		AuthorizedActionsUsePlumberList: true,
 		CompositionChoices: []string{
-			compHardcoded, compUpToDate, compForbidden, compRefCollision, compSecurity, compScripts, compJobVars, compDinD,
+			compHardcoded, compUpToDate, compForbidden, compRefCollision, compAuthorizedComponents, compAuthorizedFunctions, compSecurity, compScripts, compJobVars, compDinD,
 			compActionPin, compAuthorizedActions, compDangerousTriggers, compPRTargetHead, compDeclarePermissions, compReusableSecrets, compOverprovSecrets, compTemplateInjection,
 			compEnvInjection, compWriteAllPerms, compRefConfusion, compArchivedActions, compKnownCVEs, compImpostorCommit, compMutableRemoteExec, compCachePoisoning, compDebugTraceGitHub,
 		},
+		TrustSameGroupComponentsEnabled:        true,
+		TrustSameInstanceComponentsEnabled:     true,
+		TrustedComponentsMultiline:             strings.Join(defaultTrustedComponents(), "\n"),
+		TrustSameGroupFunctionsEnabled:         true,
+		TrustedFunctionsMultiline:              strings.Join(defaultTrustedFunctions(), "\n"),
 		ActionPinTrustedOwnersMultiline:        strings.Join(defaultGitHubTrustedActionOwners(), "\n"),
 		SecurityJobPatternsGitHubMultiline:     strings.Join(defaultGitHubSecurityJobPatterns(), "\n"),
 		ForbiddenVersionsMultiline:             strings.Join(defaultForbiddenVersions(), "\n"),
@@ -261,6 +266,54 @@ func TestStarterGitHubControlsMatchEmbeddedDefault(t *testing.T) {
 	for k := range wantKeys {
 		if !gotKeys[k] {
 			t.Errorf("config init starter omits github control %q that ships enabled in the embedded default", k)
+		}
+	}
+}
+
+// enabledGitLabControlKeys parses a .plumber.yaml document and returns the
+// set of gitlab.controls.<name> keys whose block has enabled: true.
+func enabledGitLabControlKeys(t *testing.T, doc []byte) map[string]bool {
+	t.Helper()
+	var root map[string]interface{}
+	if err := yaml.Unmarshal(doc, &root); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	out := map[string]bool{}
+	gl, _ := root["gitlab"].(map[interface{}]interface{})
+	if gl == nil {
+		return out
+	}
+	controls, _ := gl["controls"].(map[interface{}]interface{})
+	for name, block := range controls {
+		m, ok := block.(map[interface{}]interface{})
+		if !ok {
+			continue
+		}
+		if enabled, _ := m["enabled"].(bool); enabled {
+			out[name.(string)] = true
+		}
+	}
+	return out
+}
+
+// Every GitLab control enabled in the embedded default must also be emitted
+// (and enabled) when the wizard defaults are accepted. This is the GitLab-side
+// twin of TestStarterGitHubControlsMatchEmbeddedDefault — the durable
+// regression guard against `config init` drifting behind the shipped control
+// set again.
+func TestStarterGitLabControlsMatchEmbeddedDefault(t *testing.T) {
+	wantKeys := enabledGitLabControlKeys(t, defaultconfig.Get())
+	if len(wantKeys) == 0 {
+		t.Fatal("embedded default exposed no enabled gitlab controls; test wiring is wrong")
+	}
+	starterBytes, err := yaml.Marshal(starterWizardConfig())
+	if err != nil {
+		t.Fatalf("marshal starter: %v", err)
+	}
+	gotKeys := enabledGitLabControlKeys(t, starterBytes)
+	for k := range wantKeys {
+		if !gotKeys[k] {
+			t.Errorf("config init starter omits gitlab control %q that ships enabled in the embedded default", k)
 		}
 	}
 }
