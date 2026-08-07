@@ -1,3 +1,15 @@
+## [0.4.34](https://github.com/getplumber/plumber/compare/v0.4.33...v0.4.34) (2026-08-07)
+
+
+### ✨ Features
+
+* **identity:** expose the finding-identity recipe and make job mean a job ([e7af327](https://github.com/getplumber/plumber/commit/e7af3273786dd9f332c0474697b4fd0393fb8fe4)), closes [#403](https://github.com/getplumber/plumber/issues/403)
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.33 refs [skip ci] ([4a0c59d](https://github.com/getplumber/plumber/commit/4a0c59d189a408924c01cdde8b87b2e0c0e64aa7))
+
 ## [0.4.33](https://github.com/getplumber/plumber/compare/v0.4.32...v0.4.33) (2026-08-07)
 
 
