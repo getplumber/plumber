@@ -423,6 +423,14 @@ fork of the upstream repo). GitHub serves those with HTTP 200 from the
 parent, so they read as present; the control flags only SHAs the API
 reports as absent.
 
+A pin may also name the SHA of an annotated tag *object* rather than
+the commit that tag points at (what `git rev-parse v1.2.3` returns
+without `^{commit}`). Those pins are immutable and resolve in GitHub
+Actions, so Plumber dereferences them through
+`repos/<owner>/<repo>/git/tags/<sha>` and confirms the target commit in
+the same repository before deciding. Only a SHA that is neither a
+commit nor a resolvable tag object upstream is reported.
+
 Job-level reusable-workflow refs (`jobs.<id>.uses`) are not yet
 covered: the collector does not enrich them with API metadata for any
 metadata control (the same gap affects the archived, known-CVE, and
@@ -435,6 +443,8 @@ ref-confusion rules). Extending all four together is tracked upstream.
 
 ```yaml
 # ✅ after — verify with `gh api repos/<owner>/<repo>/commits/<sha>`
+#          (an annotated tag object answers 422 there; use
+#           `gh api repos/<owner>/<repo>/git/tags/<sha>` for those)
 - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.1.7
 ```
 

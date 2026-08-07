@@ -291,6 +291,7 @@ func enrichActionsWithAPIMetadata(pipeline *ir.NormalizedPipeline, apiHost strin
 				RefExists:         meta.RefExists,
 				RefKnownAbsent:    meta.RefKnownAbsent,
 				RefKind:           meta.RefKind,
+				RefCommitSha:      meta.RefCommitSha,
 				TagSha:            meta.TagSha,
 				LatestTag:         meta.LatestTag,
 				LatestReleaseSha:  meta.LatestReleaseSha,

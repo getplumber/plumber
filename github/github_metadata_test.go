@@ -507,3 +507,140 @@ func Test_resolveUncached_refKnownAbsentGuard(t *testing.T) {
 		}
 	})
 }
+
+// Test_tagObjectResolves covers the ISSUE-401 dereference step. A pin
+// can name an annotated tag OBJECT rather than the commit that tag
+// points at (what `git rev-parse v1.2.3` returns without `^{commit}`).
+// The commits endpoint answers 422 for those SHAs, so the collector
+// needs git/tags/{sha} to tell a real tag object apart from a SHA that
+// is genuinely absent upstream. The tri-state contract matches
+// commitResolves: checked is true only on a definitive answer.
+func Test_tagObjectResolves(t *testing.T) {
+	const (
+		tagObjectSHA = "7088e561eb65bb68695d245aa206f005ef30921d"
+		commitSHA    = "a7487c7e89a18df4991f7f222e4898a00d66ddda"
+		absentSHA    = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+		gatedSHA     = "ffffffffffffffffffffffffffffffffffffffff"
+		nestedSHA    = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+		danglingSHA  = "cccccccccccccccccccccccccccccccccccccccc"
+		danglingCmt  = "1111111111111111111111111111111111111111"
+	)
+	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		p := r.URL.Path
+		body, status := `{}`, http.StatusOK
+		switch {
+		case strings.HasSuffix(p, "/git/tags/"+tagObjectSHA):
+			body = `{"sha":"` + tagObjectSHA + `","tag":"v4.1.0","object":{"sha":"` + commitSHA + `","type":"commit"}}`
+		case strings.HasSuffix(p, "/git/tags/"+nestedSHA):
+			body = `{"sha":"` + nestedSHA + `","tag":"v9","object":{"sha":"` + tagObjectSHA + `","type":"tag"}}`
+		case strings.HasSuffix(p, "/git/tags/"+danglingSHA):
+			body = `{"sha":"` + danglingSHA + `","tag":"v8","object":{"sha":"` + danglingCmt + `","type":"commit"}}`
+		case strings.HasSuffix(p, "/git/tags/"+absentSHA):
+			body, status = `{"message":"Not Found"}`, http.StatusNotFound
+		case strings.HasSuffix(p, "/git/tags/"+gatedSHA):
+			body, status = `{"message":"API rate limit exceeded"}`, http.StatusForbidden
+		case strings.HasSuffix(p, "/commits/"+commitSHA):
+			body = `{"sha":"` + commitSHA + `"}`
+		case strings.HasSuffix(p, "/commits/"+danglingCmt):
+			body, status = `{"message":"No commit found for SHA"}`, http.StatusUnprocessableEntity
+		}
+		return &http.Response{
+			StatusCode: status,
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Header:     make(http.Header),
+			Request:    r,
+		}, nil
+	})
+	c := NewGitHubMetadataClientForHost("")
+	rest, err := api.NewRESTClient(api.ClientOptions{AuthToken: "x", Transport: rt})
+	if err != nil {
+		t.Fatalf("new rest client: %v", err)
+	}
+	c.rest = rest
+
+	cases := []struct {
+		name        string
+		sha         string
+		wantCommit  string
+		wantExists  bool
+		wantChecked bool
+	}{
+		{"annotated tag object dereferences to its commit", tagObjectSHA, commitSHA, true, true},
+		{"absent SHA is a confirmed 404", absentSHA, "", false, true},
+		{"rate-limited lookup is unverified", gatedSHA, "", false, false},
+		{"nested tag object is not claimed as a commit", nestedSHA, "", false, false},
+		// The SHA plainly exists upstream (git/tags served it), so
+		// "does not exist in the upstream repository" would be a false
+		// statement at critical severity. Abstain instead.
+		{"tag object whose commit will not confirm abstains", danglingSHA, "", false, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			commit, exists, checked := c.tagObjectResolves("pnpm", "action-setup", tc.sha)
+			if commit != tc.wantCommit || exists != tc.wantExists || checked != tc.wantChecked {
+				t.Fatalf("tagObjectResolves = (%q, exists=%v, checked=%v), want (%q, exists=%v, checked=%v)",
+					commit, exists, checked, tc.wantCommit, tc.wantExists, tc.wantChecked)
+			}
+		})
+	}
+}
+
+// Test_resolveUncached_annotatedTagObjectPin is the ISSUE-401
+// regression guard. Pinning an action to the SHA of an annotated tag
+// object is a normal outcome of pinning by hand or with a script, the
+// pin is immutable, and GitHub Actions resolves it. The commits
+// endpoint still answers 422 for it, so without the git/tags fallback
+// the collector marks it RefKnownAbsent and impostor-commit
+// (ISSUE-707, critical) fires on a perfectly valid pin.
+func Test_resolveUncached_annotatedTagObjectPin(t *testing.T) {
+	const (
+		owner        = "pnpm"
+		repo         = "action-setup"
+		tagObjectSHA = "7088e561eb65bb68695d245aa206f005ef30921d"
+		commitSHA    = "a7487c7e89a18df4991f7f222e4898a00d66ddda"
+	)
+	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		p := r.URL.Path
+		body, status := `{}`, http.StatusNotFound
+		switch {
+		case p == "/repos/"+owner+"/"+repo:
+			body, status = `{"archived":false,"stargazers_count":900}`, http.StatusOK
+		case strings.Contains(p, "/releases"):
+			body, status = `[]`, http.StatusOK
+		case strings.HasPrefix(p, "/advisories"):
+			body, status = `[]`, http.StatusOK
+		case strings.HasSuffix(p, "/git/tags/"+tagObjectSHA):
+			body, status = `{"sha":"`+tagObjectSHA+`","tag":"v4.1.0","object":{"sha":"`+commitSHA+`","type":"commit"}}`, http.StatusOK
+		case strings.HasSuffix(p, "/commits/"+commitSHA):
+			body, status = `{"sha":"`+commitSHA+`"}`, http.StatusOK
+		case strings.HasSuffix(p, "/commits/"+tagObjectSHA):
+			body, status = `{"message":"No commit found for SHA: `+tagObjectSHA+`"}`, http.StatusUnprocessableEntity
+		}
+		return &http.Response{
+			StatusCode: status,
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Header:     make(http.Header),
+			Request:    r,
+		}, nil
+	})
+	c := NewGitHubMetadataClientForHost("")
+	rest, err := api.NewRESTClient(api.ClientOptions{AuthToken: "x", Transport: rt})
+	if err != nil {
+		t.Fatalf("new rest client: %v", err)
+	}
+	c.rest = rest
+
+	m := c.resolveUncached(owner, repo, tagObjectSHA)
+	if m.RefKnownAbsent {
+		t.Fatal("a pin naming a resolvable annotated tag object must NOT be reported as absent upstream (ISSUE-707 false positive)")
+	}
+	if !m.RefExists {
+		t.Fatal("a resolvable annotated tag object must count as existing upstream")
+	}
+	if m.RefKind != "commit" {
+		t.Fatalf("RefKind = %q, want \"commit\": the pin designates a commit through the tag object, and refKind==\"tag\" means the ref is a tag NAME", m.RefKind)
+	}
+	if m.RefCommitSha != commitSHA {
+		t.Fatalf("RefCommitSha = %q, want %q (the commit the tag object dereferences to)", m.RefCommitSha, commitSHA)
+	}
+}
