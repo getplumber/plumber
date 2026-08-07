@@ -254,7 +254,16 @@ func report(fn ProgressFunc, step, total int, message string) {
 // requests per unique action — so disabling the control removes its
 // scan-time and rate-limit cost instead of merely hiding the findings.
 func enrichActionsWithAPIMetadata(pipeline *ir.NormalizedPipeline, apiHost string, scanMutableExec bool, progressFn ProgressFunc) {
-	client := NewGitHubMetadataClientForHost(apiHost)
+	enrichActionsWithClient(pipeline, NewGitHubMetadataClientForHost(apiHost), scanMutableExec, progressFn)
+}
+
+// enrichActionsWithClient is enrichActionsWithAPIMetadata with the
+// metadata client supplied rather than constructed, so tests can drive
+// the collector-to-IR handoff through a stubbed transport. Every field
+// the policies read crosses from GitHubMetadata into ir.ActionMetadata
+// here, and a field dropped in that copy silently disables the rule
+// that consumes it while every other test stays green.
+func enrichActionsWithClient(pipeline *ir.NormalizedPipeline, client *GitHubMetadataClient, scanMutableExec bool, progressFn ProgressFunc) {
 	if !client.Available() {
 		return
 	}

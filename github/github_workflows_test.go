@@ -1,10 +1,14 @@
 package github
 
 import (
+	"io"
+	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
+	"github.com/cli/go-gh/v2/pkg/api"
 	"github.com/getplumber/plumber/internal/ir"
 )
 
@@ -451,5 +455,95 @@ func TestSplitImageRef_FoldsHubAliases(t *testing.T) {
 			t.Errorf("splitImageRef(%q) = {name:%q tag:%q}, want {name:%q tag:%q}",
 				tc.ref, got.Name, got.Tag, tc.wantName, tc.wantTag)
 		}
+	}
+}
+
+// Test_enrichActionsWithClient_carriesTagObjectMetadata locks the
+// collector-to-IR handoff for ISSUE-401. Every field the rego rules read
+// crosses from GitHubMetadata into ir.ActionMetadata inside the
+// enrichment loop, and that copy is the single bridge between the
+// collector fix and the policy fix. Dropping RefCommitSha there would
+// re-flag a tag-object pin as an impostor commit (ISSUE-707, critical),
+// as a version mismatch (ISSUE-708) and as stale (ISSUE-709) in a real
+// scan, while the collector tests (which assert on the source) and the
+// rego tests (which hand-build the destination) both stayed green.
+func Test_enrichActionsWithClient_carriesTagObjectMetadata(t *testing.T) {
+	const (
+		owner        = "pnpm"
+		repo         = "action-setup"
+		tagObjectSHA = "7088e561eb65bb68695d245aa206f005ef30921d"
+		commitSHA    = "a7487c7e89a18df4991f7f222e4898a00d66ddda"
+		absentSHA    = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+	)
+	rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+		p := r.URL.Path
+		body, status := `{}`, http.StatusNotFound
+		switch {
+		case strings.Count(p, "/") == 3 && strings.HasPrefix(p, "/repos/"):
+			body, status = `{"archived":false,"stargazers_count":900}`, http.StatusOK
+		case strings.Contains(p, "/releases"):
+			body, status = `[]`, http.StatusOK
+		case strings.HasPrefix(p, "/advisories"):
+			body, status = `[]`, http.StatusOK
+		case strings.HasSuffix(p, "/git/tags/"+tagObjectSHA):
+			body, status = `{"sha":"`+tagObjectSHA+`","tag":"v4.1.0","object":{"sha":"`+commitSHA+`","type":"commit"}}`, http.StatusOK
+		case strings.HasSuffix(p, "/commits/"+commitSHA):
+			body, status = `{"sha":"`+commitSHA+`"}`, http.StatusOK
+		case strings.Contains(p, "/commits/"):
+			body, status = `{"message":"No commit found for SHA"}`, http.StatusUnprocessableEntity
+		}
+		return &http.Response{
+			StatusCode: status,
+			Body:       io.NopCloser(strings.NewReader(body)),
+			Header:     make(http.Header),
+			Request:    r,
+		}, nil
+	})
+	client := NewGitHubMetadataClientForHost("")
+	// TestMain disables the API package-wide; re-enable this instance so
+	// the enrichment loop actually runs against the stub.
+	client.disabled = false
+	rest, err := api.NewRESTClient(api.ClientOptions{AuthToken: "x", Transport: rt})
+	if err != nil {
+		t.Fatalf("new rest client: %v", err)
+	}
+	client.rest = rest
+
+	pipeline := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitHub,
+		Jobs: []ir.Job{{
+			Name: "build",
+			Uses: []ir.Action{
+				{Uses: owner + "/" + repo + "@" + tagObjectSHA},
+				{Uses: "actions/checkout@" + absentSHA},
+			},
+		}},
+	}
+	// scanMutableExec off: this test is about the metadata copy, not the
+	// per-action source fetch.
+	enrichActionsWithClient(pipeline, client, false, nil)
+
+	pin := pipeline.Jobs[0].Uses[0]
+	if pin.Metadata == nil {
+		t.Fatal("enrichment dropped the metadata for a tag-object pin")
+	}
+	if pin.Metadata.RefCommitSha != commitSHA {
+		t.Fatalf("Metadata.RefCommitSha = %q, want %q: the dereferenced commit did not cross into the IR, so ISSUE-708 and ISSUE-709 would fire on a correct pin", pin.Metadata.RefCommitSha, commitSHA)
+	}
+	if !pin.Metadata.RefExists || pin.Metadata.RefKind != "commit" {
+		t.Fatalf("Metadata = {RefExists:%v RefKind:%q}, want {true \"commit\"}", pin.Metadata.RefExists, pin.Metadata.RefKind)
+	}
+	if pin.Metadata.RefKnownAbsent {
+		t.Fatal("Metadata.RefKnownAbsent is true for a resolvable tag object: ISSUE-707 would fire critical on a valid pin")
+	}
+
+	// The control SHA must still cross over as a confirmed absence, so a
+	// broken copy cannot pass by blanking every field.
+	absent := pipeline.Jobs[0].Uses[1]
+	if absent.Metadata == nil || !absent.Metadata.RefKnownAbsent {
+		t.Fatal("a fabricated SHA must reach the IR with RefKnownAbsent set, or ISSUE-707 is silently disabled")
+	}
+	if absent.Metadata.RefCommitSha != "" {
+		t.Fatalf("Metadata.RefCommitSha = %q for an absent SHA, want empty", absent.Metadata.RefCommitSha)
 	}
 }
