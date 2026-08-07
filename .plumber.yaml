@@ -323,10 +323,9 @@ gitlab:
     # A source is trusted when it matches trustedComponents, OR lives
     # under this project's own root namespace on the same GitLab
     # instance (trustSameGroupComponents), OR is hosted on the same
-    # GitLab instance at all (trustSameInstanceComponents — off by
-    # default on gitlab.com, on by default on a self-hosted instance).
-    # Both are derived dynamically from the pipeline at scan time, in CI
-    # or locally — no environment variables involved.
+    # GitLab instance at all (trustSameInstanceComponents — on by
+    # default). Both are derived dynamically from the pipeline at scan
+    # time, in CI or locally — no environment variables involved.
     #
     # Best practice: keep components scoped to your own project/group
     componentMustComeFromAuthorizedSources:
@@ -335,8 +334,8 @@ gitlab:
       # Trust components under this project's own root namespace
       trustSameGroupComponents: true
       # Trust any component on the same GitLab instance, regardless of
-      # namespace (defaults to true when self-hosted, false on gitlab.com)
-      trustSameInstanceComponents: false
+      # namespace. (defaults to true when self-hosted, false on gitlab.com)
+      trustSameInstanceComponents: true
       # Additional trusted component source URLs and patterns (supports wildcards)
       trustedComponents: []
     # ===========================================

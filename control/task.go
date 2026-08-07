@@ -341,10 +341,16 @@ func buildEngineConfig(controls *configuration.ControlsConfig, gitlabURL string)
 		if c.TrustSameGroupComponents != nil {
 			trustSameGroup = *c.TrustSameGroupComponents
 		}
-		trustSameInstance := !isGitlabSaaS(gitlabURL)
+
+		trustSameInstance := true
 		if c.TrustSameInstanceComponents != nil {
 			trustSameInstance = *c.TrustSameInstanceComponents
 		}
+
+		if isGitlabSaaS(gitlabURL) {
+			trustSameInstance = false
+		}
+
 		entry := map[string]any{
 			"trustSameGroupComponents":    trustSameGroup,
 			"trustSameInstanceComponents": trustSameInstance,
@@ -467,9 +473,9 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 		ProjectPath: conf.ProjectPath,
 	}
 
-	///////////////////////
+	// /////////////////////
 	// Fetch Project Info from GitLab
-	///////////////////////
+	// /////////////////////
 	reportProgress(conf, 1, analysisStepCount, "Fetching project information")
 	l.Info("Fetching project information from GitLab")
 	project, err := gitlab.FetchProjectDetails(conf.ProjectPath, conf.GitlabToken, conf.GitlabURL, conf)
@@ -540,9 +546,9 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 		result.HeadCommitSha = projectInfo.LatestHeadCommitSha
 	}
 
-	///////////////////////
+	// /////////////////////
 	// Resolve CI config source (local file vs remote)
-	///////////////////////
+	// /////////////////////
 
 	// Priority:
 	// 1. If --branch is defined: use remote file on that branch
@@ -585,9 +591,9 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 		result.CIConfigSource = "local"
 	}
 
-	///////////////////////
+	// /////////////////////
 	// Run Data Collections
-	///////////////////////
+	// /////////////////////
 
 	// 1. Run Pipeline Origin data collection
 	reportProgress(conf, 2, analysisStepCount, "Collecting pipeline origins")
