@@ -644,3 +644,66 @@ func Test_resolveUncached_annotatedTagObjectPin(t *testing.T) {
 		t.Fatalf("RefCommitSha = %q, want %q (the commit the tag object dereferences to)", m.RefCommitSha, commitSHA)
 	}
 }
+
+// Test_resolveUncached_tagObjectProbeOnlyForShaRefs keeps the ISSUE-401
+// fallback off the hot path. git/tags/{sha} is keyed by object SHA, so
+// asking it about a ref that is not SHA-shaped ("v99", a typo'd branch)
+// can only 404. Every unresolvable non-SHA ref would otherwise pay an
+// extra round trip against the same rate limit budget, for an answer
+// that cannot change the outcome.
+func Test_resolveUncached_tagObjectProbeOnlyForShaRefs(t *testing.T) {
+	const (
+		owner = "acme"
+		repo  = "widget"
+	)
+	newClient := func(t *testing.T, gitTagCalls *int) *GitHubMetadataClient {
+		rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			p := r.URL.Path
+			body, status := `{}`, http.StatusNotFound
+			switch {
+			case p == "/repos/"+owner+"/"+repo:
+				body, status = `{"archived":false,"stargazers_count":0}`, http.StatusOK
+			case strings.Contains(p, "/releases"):
+				body, status = `[]`, http.StatusOK
+			case strings.HasPrefix(p, "/advisories"):
+				body, status = `[]`, http.StatusOK
+			case strings.Contains(p, "/git/tags/"):
+				*gitTagCalls++
+			}
+			return &http.Response{
+				StatusCode: status,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     make(http.Header),
+				Request:    r,
+			}, nil
+		})
+		c := NewGitHubMetadataClientForHost("")
+		rest, err := api.NewRESTClient(api.ClientOptions{AuthToken: "x", Transport: rt})
+		if err != nil {
+			t.Fatalf("new rest client: %v", err)
+		}
+		c.rest = rest
+		return c
+	}
+
+	t.Run("non-SHA ref skips the tag object probe", func(t *testing.T) {
+		calls := 0
+		c := newClient(t, &calls)
+		m := c.resolveUncached(owner, repo, "v99")
+		if calls != 0 {
+			t.Fatalf("git/tags called %d time(s) for a non-SHA ref; the endpoint is keyed by object SHA so the call cannot succeed", calls)
+		}
+		if !m.RefKnownAbsent {
+			t.Fatal("skipping the probe must not change the verdict for an absent non-SHA ref")
+		}
+	})
+
+	t.Run("SHA ref still pays for the probe", func(t *testing.T) {
+		calls := 0
+		c := newClient(t, &calls)
+		c.resolveUncached(owner, repo, "abcdef0123456789abcdef0123456789abcdef01")
+		if calls != 1 {
+			t.Fatalf("git/tags called %d time(s) for a SHA-shaped ref, want exactly 1", calls)
+		}
+	})
+}

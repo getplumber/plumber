@@ -278,6 +278,7 @@ func (c *GitHubMetadataClient) resolveUncached(owner, repo, ref string) GitHubMe
 		// that object before concluding anything (ISSUE-401): the pin is
 		// immutable, resolves in GitHub Actions, and reporting it as
 		// absent is a critical false positive.
+		//
 		if commit, tagExists, tagChecked := c.tagObjectResolves(owner, repo, ref); tagExists {
 			m.RefKind = "commit"
 			m.RefExists = true
@@ -905,6 +906,13 @@ func (c *GitHubMetadataClient) resolveTag(owner, repo, ref string) (string, bool
 // checked false so impostor-commit (ISSUE-707) stays silent on a SHA we
 // merely failed to reach.
 func (c *GitHubMetadataClient) tagObjectResolves(owner, repo, ref string) (commitSha string, exists, checked bool) {
+	// git/tags is keyed by object SHA, so only a SHA-shaped ref can name
+	// a tag object. Answering `v99` or a typo'd branch costs a round trip
+	// against the same rate limit for a guaranteed 404, so rule those out
+	// locally: the answer is definitive without asking.
+	if !_isCommitSha(ref) {
+		return "", false, true
+	}
 	var resp struct {
 		Object struct {
 			Sha  string `json:"sha"`
