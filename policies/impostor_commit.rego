@@ -6,7 +6,9 @@
 # Scope note: this does NOT detect a fork-network "impostor commit"
 # (one pushed to a fork of the upstream repo). GitHub serves those
 # with HTTP 200 from the parent, so they read as present; this rule
-# flags only SHAs the API reports as absent (404 / 422).
+# flags only SHAs the API reports as absent (404 / 422). The same is
+# true of an annotated tag object pushed only to a fork, since the
+# collector resolves those through the parent as well (ISSUE-401).
 #
 # Scope note: a pin naming the SHA of an annotated tag OBJECT is not an
 # impostor. Those SHAs 422 on the commits endpoint but dereference
