@@ -9,9 +9,9 @@ import "testing"
 // (debug logs replace the bar), and a terminal on stderr.
 func TestShouldShowProgress(t *testing.T) {
 	cases := []struct {
-		name                          string
-		printOutput, verbose, isTerm  bool
-		want                          bool
+		name                         string
+		printOutput, verbose, isTerm bool
+		want                         bool
 	}{
 		{"terminal quiet run shows the bar", true, false, true, true},
 		{"non-TTY (CI log, pipe) never shows the bar", true, false, false, false},

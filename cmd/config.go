@@ -10,7 +10,7 @@ import (
 	"strings"
 
 	"github.com/getplumber/plumber/configuration"
-	"github.com/getplumber/plumber/internal/defaultconfig"
+	defaultconfig "github.com/getplumber/plumber/defaultConfig"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v2"

@@ -17,7 +17,7 @@ import (
 	"github.com/charmbracelet/lipgloss/table"
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
-	"github.com/getplumber/plumber/internal/defaultconfig"
+	defaultconfig "github.com/getplumber/plumber/defaultConfig"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	plumberprovider "github.com/getplumber/plumber/provider"
 	"github.com/getplumber/plumber/utils"

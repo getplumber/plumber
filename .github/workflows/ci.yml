@@ -31,11 +31,33 @@ jobs:
         with:
           go-version: ${{ matrix.go-version }}
 
-      - name: Prepare embedded config
-        run: cp defaultConfig/.plumber.yaml internal/defaultconfig/default.yaml
-
       - name: Build
         run: go build ./...
+
+  clean-tree-build:
+    name: Build from committed tree
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.5'
+
+      # Build from what git actually tracks. Every other job builds the
+      # working tree, which can contain generated or git-ignored files that
+      # never reach the published module zip, so they all stayed green while
+      # `go install` was broken for months (getplumber/plumber#405). This job
+      # is the only one that sees what a consumer sees.
+      - name: Build from committed tree only
+        run: |
+          set -eo pipefail
+          tmp=$(mktemp -d)
+          git archive HEAD | tar -x -C "$tmp"
+          cd "$tmp"
+          go build ./...
 
   test:
     name: Test
@@ -48,9 +70,6 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.26.5'
-
-      - name: Prepare embedded config
-        run: cp defaultConfig/.plumber.yaml internal/defaultconfig/default.yaml
 
       - name: Run tests
         run: go test ./... -race -coverprofile=coverage.out -covermode=atomic
@@ -73,9 +92,6 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.26.5'
-
-      - name: Prepare embedded config
-        run: cp defaultConfig/.plumber.yaml internal/defaultconfig/default.yaml
 
       # Run golangci-lint via `go install` instead of the third-party
       # golangci-lint-action wrapper — no external action is trusted, and
@@ -122,9 +138,6 @@ jobs:
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
           go-version: '1.26.5'
-
-      - name: Prepare embedded config
-        run: cp defaultConfig/.plumber.yaml internal/defaultconfig/default.yaml
 
       - name: Install and run govulncheck
         # setup-go pins GOTOOLCHAIN=local, which makes `go` ignore the

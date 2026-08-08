@@ -39,9 +39,6 @@ dist/
 build/
 plumber
 
-# Embedded config (copied from .plumber.yaml during build)
-internal/defaultconfig/default.yaml
-
 #Output files
 results.json
 plumber-report.json
