@@ -6,7 +6,7 @@ import (
 	"os"
 	"sort"
 
-	"github.com/getplumber/plumber/internal/defaultconfig"
+	defaultconfig "github.com/getplumber/plumber/defaultConfig"
 	"github.com/getplumber/plumber/utils"
 	"github.com/sirupsen/logrus"
 	"gopkg.in/yaml.v2"

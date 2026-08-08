@@ -34,9 +34,7 @@ jobs:
           go-version: '1.26.4'
 
       - name: Build Plumber from source
-        run: |
-          cp defaultConfig/.plumber.yaml internal/defaultconfig/default.yaml
-          go build -o plumber .
+        run: go build -o plumber .
 
       - name: Run Plumber analyze
         id: analyze

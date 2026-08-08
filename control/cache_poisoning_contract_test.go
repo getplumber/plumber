@@ -5,8 +5,8 @@ import (
 	"testing"
 
 	"github.com/getplumber/plumber/configuration"
+	defaultconfig "github.com/getplumber/plumber/defaultConfig"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
-	"github.com/getplumber/plumber/internal/defaultconfig"
 	"github.com/getplumber/plumber/internal/ir"
 	"github.com/getplumber/plumber/policies"
 	"gopkg.in/yaml.v2"

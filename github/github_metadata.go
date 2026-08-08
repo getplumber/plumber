@@ -568,7 +568,7 @@ func (c *GitHubMetadataClient) fetchAllTags(owner, repo string) map[string]strin
 	if c.rest == nil {
 		return out
 	}
-	anonymous := false // flips to true once the authenticated read is blocked
+	anonymous := false                  // flips to true once the authenticated read is blocked
 	for page := 1; page <= 20; page++ { // hard cap 2000 tags
 		resp, blocked, err := c.fetchTagsPage(owner, repo, page, anonymous)
 		if blocked {

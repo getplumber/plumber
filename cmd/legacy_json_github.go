@@ -746,4 +746,3 @@ func buildUnverifiedScriptsBlockGitHub(c legacyCommon, result *control.AnalysisR
 		"skipped":   c.Skipped,
 	}
 }
-

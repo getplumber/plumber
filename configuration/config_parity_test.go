@@ -57,7 +57,7 @@ func TestSelfScanConfigControlsMatchDefault(t *testing.T) {
 //   - .plumber.yaml (self-scan) is loaded by the Plumber self-scan workflow
 //     (`plumber analyze --fail-warnings`, auto-discovered from the repo root).
 //   - defaultConfig/.plumber.yaml (shipped default) is embedded in the binary
-//     (make embed) and used by every zero-config user.
+//     in place by defaultConfig/embed.go and used by every zero-config user.
 //
 // TestSelfScanConfigControlsMatchDefault only compares control keys via a
 // shallow unmarshal, so a malformed value would pass CI yet break at load.

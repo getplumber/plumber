@@ -1,22 +1,14 @@
-.PHONY: build clean test embed lint deadcode vuln
+.PHONY: build clean test lint deadcode vuln
 
 # Binary name
 BINARY=plumber
 
-# Copy the shipped default config for embedding before building.
-# Source is defaultConfig/.plumber.yaml — the universal baseline every
-# zero-config user gets — NOT the repo-root .plumber.yaml, which is Plumber's
-# own self-scan config. The two are independent artifacts (getplumber/plumber
-# #352); defaultConfig/.plumber.yaml changes only via a deliberate, reviewed edit.
-embed:
-	@cp defaultConfig/.plumber.yaml internal/defaultconfig/default.yaml
-
 # Build the binary
-build: embed
+build:
 	go build -o $(BINARY) .
 
 # Build for all platforms
-build-all: embed
+build-all:
 	GOOS=linux GOARCH=amd64 go build -o $(BINARY)-linux-amd64 .
 	GOOS=linux GOARCH=arm64 go build -o $(BINARY)-linux-arm64 .
 	GOOS=darwin GOARCH=amd64 go build -o $(BINARY)-darwin-amd64 .
@@ -24,11 +16,11 @@ build-all: embed
 	GOOS=windows GOARCH=amd64 go build -o $(BINARY)-windows-amd64.exe .
 
 # Run tests
-test: embed
+test:
 	go test ./...
 
 # Lint (mirrors CI configuration — requires golangci-lint v2+)
-lint: embed
+lint:
 	golangci-lint run ./...
 
 # Dead code check (mirrors CI). Whole-program reachability from main:
@@ -50,7 +42,7 @@ lint: embed
 # compile) indistinguishable from a clean one: the `|| true` needed for the
 # healthy path, where grep suppresses every line, would swallow the tool's own
 # failure and report success with the safety net switched off.
-deadcode: embed
+deadcode:
 	@set -e; \
 	raw=$$(go run golang.org/x/tools/cmd/deadcode@09747cdf594a7924dcecb506312be3bd6e437962 ./...); \
 	out=$$(printf '%s\n' "$$raw" | grep -v '^finding/identity/' || true); \
@@ -59,17 +51,16 @@ deadcode: embed
 # Vulnerability scan. First run mirrors CI (reachability: what our code can
 # actually reach). Second run is module-level — matches OpenSSF Scorecard /
 # osv-scanner, catching vulnerable dependency versions even when unreachable.
-vuln: embed
+vuln:
 	go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
 	go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 -scan module
 
 # Clean build artifacts
 clean:
 	rm -f $(BINARY) $(BINARY)-*
-	rm -f internal/defaultconfig/default.yaml
 
 # Run the binary (for development)
-run: embed
+run:
 	go run .
 
 # Install locally
