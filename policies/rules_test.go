@@ -1799,12 +1799,12 @@ func TestIssue415_FunctionAuthorizedSources(t *testing.T) {
 			expectFinding: true,
 		},
 		{
-			// Deprecated but otherwise trusted (same-group): deprecation
-			// carries no weight in this control.
+			// Deprecated but otherwise trusted (same-group, same host):
+			// deprecation carries no weight in this control.
 			name:          "deprecated_but_trusted_not_flagged",
 			fn:            ir.Function{Name: "say_hi", Ref: "gitlab.com/my-group/my-project@v1.0.0", Kind: "git", Deprecated: true},
 			projectPath:   "my-group/my-project",
-			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true}},
+			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true, "instanceHost": "gitlab.com"}},
 			expectFinding: false,
 		},
 		{
@@ -1814,17 +1814,38 @@ func TestIssue415_FunctionAuthorizedSources(t *testing.T) {
 			expectFinding: false,
 		},
 		{
-			// Same-group path match ignores the host entirely — the OCI
-			// registry host convention varies per GitLab instance.
-			name:          "same_group_path_match_ignores_host",
+			// Same-group trust requires both the host AND the path to
+			// match — not the path alone.
+			name:          "same_group_host_and_path_match_trusted",
 			fn:            ir.Function{Name: "say_hi", Ref: "registry.gitlab.com/my-group/my-project/echo:1", Kind: "oci"},
 			projectPath:   "my-group/my-project",
-			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true}},
+			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true, "instanceHost": "registry.gitlab.com"}},
 			expectFinding: false,
 		},
 		{
 			name:          "different_root_namespace_untrusted",
 			fn:            ir.Function{Name: "say_hi", Ref: "registry.gitlab.com/other-group/x/echo:1", Kind: "oci"},
+			projectPath:   "my-group/my-project",
+			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true, "instanceHost": "registry.gitlab.com"}},
+			expectFinding: true,
+		},
+		{
+			// ISSUE-415 hardening regression: an attacker-controlled
+			// registry that names a top-level path segment after the
+			// victim's own root namespace must NOT be trusted just
+			// because the path (ignoring host) matches.
+			name:          "same_group_different_host_untrusted",
+			fn:            ir.Function{Name: "say_hi", Ref: "registry.evil.example/my-group/whatever:1", Kind: "oci"},
+			projectPath:   "my-group/my-project",
+			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true, "instanceHost": "gitlab.example.com"}},
+			expectFinding: true,
+		},
+		{
+			// ISSUE-415 hardening regression: the idiom branch must match
+			// the FULL ref against $CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/,
+			// not just the path after an attacker-controlled host.
+			name:          "ci_project_path_idiom_wrong_host_untrusted",
+			fn:            ir.Function{Name: "say_hi", Ref: "registry.evil.example/$CI_PROJECT_PATH/backdoor:1", Kind: "oci"},
 			projectPath:   "my-group/my-project",
 			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true}},
 			expectFinding: true,
