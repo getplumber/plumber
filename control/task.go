@@ -362,11 +362,11 @@ func buildEngineConfig(controls *configuration.ControlsConfig, gitlabURL string)
 		cfg["componentAuthorizedSources"] = entry
 	}
 
-	// functionAuthorizedSources: same dynamic same-namespace model, but
-	// same-group trust matches on the ref's path only (ignoring host) —
-	// GitLab does not resolve run:/func: references server-side, and the
-	// OCI registry host convention varies per instance, so a fixed host
-	// can't be checked reliably here.
+	// functionAuthorizedSources: same dynamic same-namespace model as
+	// componentAuthorizedSources. Same-group trust is host-bound too — via
+	// instanceHost for a literal same-instance ref, or via the
+	// $CI_TEMPLATE_REGISTRY_HOST idiom for the common case where the
+	// project's registry host differs from the GitLab instance host.
 	if c := controls.FunctionMustComeFromAuthorizedSources; c != nil && c.IsEnabled() {
 		trustSameGroup := true
 		if c.TrustSameGroupFunctions != nil {
@@ -374,6 +374,7 @@ func buildEngineConfig(controls *configuration.ControlsConfig, gitlabURL string)
 		}
 		entry := map[string]any{
 			"trustSameGroupFunctions": trustSameGroup,
+			"instanceHost":            gitlabInstanceHost(gitlabURL),
 		}
 		if len(c.TrustedFunctions) > 0 {
 			entry["trustedFunctions"] = c.TrustedFunctions
