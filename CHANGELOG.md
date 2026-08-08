@@ -1,3 +1,15 @@
+## [0.4.35](https://github.com/getplumber/plumber/compare/v0.4.34...v0.4.35) (2026-08-08)
+
+
+### 🐛 Bug Fixes
+
+* **config:** embed the shipped default in place ([a27b4a5](https://github.com/getplumber/plumber/commit/a27b4a5c465f19603000f02d08f7abedfcfe30a9)), closes [#405](https://github.com/getplumber/plumber/issues/405)
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.34 refs [skip ci] ([d4bf27b](https://github.com/getplumber/plumber/commit/d4bf27b3709de1b20d675309b7b02e085eba548a))
+
 ## [0.4.34](https://github.com/getplumber/plumber/compare/v0.4.33...v0.4.34) (2026-08-07)
 
 
