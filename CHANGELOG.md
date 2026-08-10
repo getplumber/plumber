@@ -1,3 +1,15 @@
+## [0.4.36](https://github.com/getplumber/plumber/compare/v0.4.35...v0.4.36) (2026-08-10)
+
+
+### 🔧 Chores
+
+* **deps:** bump github.com/open-policy-agent/opa ([f04befa](https://github.com/getplumber/plumber/commit/f04befad7511df8ad8700b2866953a692fbd034d))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.35 refs [skip ci] ([3b308ff](https://github.com/getplumber/plumber/commit/3b308ffa808f70522aee42bdca07ebba40a65418))
+
 ## [0.4.35](https://github.com/getplumber/plumber/compare/v0.4.34...v0.4.35) (2026-08-08)
 
 
