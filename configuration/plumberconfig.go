@@ -652,12 +652,10 @@ type FunctionAuthorizedSourcesControlConfig struct {
 	// notation is normalized — no variable resolution is performed).
 	TrustedFunctions []string `yaml:"trustedFunctions,omitempty"`
 
-	// TrustSameGroupFunctions trusts function references whose path
-	// (ignoring the host — the OCI registry host convention varies per
-	// GitLab instance) starts with the scanned project's root
-	// namespace, or with the $CI_PROJECT_PATH idiom when the pipeline
-	// doesn't redefine CI_TEMPLATE_REGISTRY_HOST or CI_PROJECT_PATH in
-	// its own variables. Defaults to true when unset.
+	// TrustSameGroupFunctions trusts function references whose host
+	// matches the scanned GitLab instance and whose path after that
+	// host starts with the scanned project's root namespace. Defaults
+	// to true when unset.
 	TrustSameGroupFunctions *bool `yaml:"trustSameGroupFunctions,omitempty"`
 }
 

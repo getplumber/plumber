@@ -1964,32 +1964,56 @@ func TestIssue415_FunctionAuthorizedSources(t *testing.T) {
 			expectFinding: true,
 		},
 		{
-			// ISSUE-415 hardening regression: the idiom branch must match
-			// the FULL ref against $CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/,
-			// not just the path after an attacker-controlled host.
-			name:          "ci_project_path_idiom_wrong_host_untrusted",
-			fn:            ir.Function{Name: "say_hi", Ref: "registry.evil.example/$CI_PROJECT_PATH/backdoor:1", Kind: "oci"},
-			projectPath:   "my-group/my-project",
-			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true}},
+			// ISSUE-415 hardening regression: the default trustedFunctions
+			// pattern must glob-match the FULL ref against
+			// $CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/, not just the
+			// path after an attacker-controlled host.
+			name:        "ci_project_path_idiom_wrong_host_untrusted",
+			fn:          ir.Function{Name: "say_hi", Ref: "registry.evil.example/$CI_PROJECT_PATH/backdoor:1", Kind: "oci"},
+			projectPath: "my-group/my-project",
+			cfg: map[string]any{"functionAuthorizedSources": map[string]any{
+				"trustSameGroupFunctions": true,
+				"trustedFunctions":        []string{"$CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/*"},
+			}},
 			expectFinding: true,
 		},
 		{
-			name:          "ci_project_path_idiom_trusted",
-			fn:            ir.Function{Name: "say_hi", Ref: "$CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/echo:1", Kind: "oci"},
-			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true}},
+			name: "default_trusted_functions_pattern_matches",
+			fn:   ir.Function{Name: "say_hi", Ref: "$CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/echo:1", Kind: "oci"},
+			cfg: map[string]any{"functionAuthorizedSources": map[string]any{
+				"trustSameGroupFunctions": true,
+				"trustedFunctions":        []string{"$CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/*"},
+			}},
 			expectFinding: false,
 		},
 		{
 			// Regression for PR #387 blocking issue #3's shadowing
 			// example: the pipeline redefines CI_TEMPLATE_REGISTRY_HOST
-			// itself, so the $CI_PROJECT_PATH idiom text must NOT be
-			// trusted — at runtime it would resolve from the attacker's
+			// itself, so the $CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/*
+			// trustedFunctions pattern must NOT authorize the ref — at
+			// runtime the literal text would resolve from the attacker's
 			// redefined value, GitLab predefined variables having the
 			// lowest precedence.
-			name:          "ci_project_path_idiom_untrusted_when_redefined",
-			fn:            ir.Function{Name: "x", Ref: "$CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/echo:1", Kind: "oci"},
-			globalVars:    map[string]string{"CI_TEMPLATE_REGISTRY_HOST": "registry.evil.example"},
-			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true}},
+			name:       "trusted_functions_pattern_untrusted_when_ci_var_redefined",
+			fn:         ir.Function{Name: "x", Ref: "$CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/echo:1", Kind: "oci"},
+			globalVars: map[string]string{"CI_TEMPLATE_REGISTRY_HOST": "registry.evil.example"},
+			cfg: map[string]any{"functionAuthorizedSources": map[string]any{
+				"trustSameGroupFunctions": true,
+				"trustedFunctions":        []string{"$CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/*"},
+			}},
+			expectFinding: true,
+		},
+		{
+			// The redefinition guard is generic — it isn't hardcoded to
+			// CI_TEMPLATE_REGISTRY_HOST/CI_PROJECT_PATH. A custom pattern
+			// referencing any other $CI_* variable must also be rejected
+			// when that variable is redefined by the pipeline.
+			name:       "custom_pattern_untrusted_when_ci_var_redefined",
+			fn:         ir.Function{Name: "x", Ref: "$CI_SERVER_HOST/mygroup/echo:1", Kind: "oci"},
+			globalVars: map[string]string{"CI_SERVER_HOST": "registry.evil.example"},
+			cfg: map[string]any{"functionAuthorizedSources": map[string]any{
+				"trustedFunctions": []string{"$CI_SERVER_HOST/mygroup/*"},
+			}},
 			expectFinding: true,
 		},
 		{
@@ -1998,9 +2022,12 @@ func TestIssue415_FunctionAuthorizedSources(t *testing.T) {
 			// idiom for the project's own namespace); only notation
 			// ($VAR vs ${VAR}) is normalized, never resolved to a real
 			// value.
-			name:          "notation_normalization_same_literal_vars",
-			fn:            ir.Function{Name: "say_hi", Ref: "${CI_TEMPLATE_REGISTRY_HOST}/${CI_PROJECT_PATH}/echo:1", Kind: "oci"},
-			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true}},
+			name: "notation_normalization_same_literal_vars",
+			fn:   ir.Function{Name: "say_hi", Ref: "${CI_TEMPLATE_REGISTRY_HOST}/${CI_PROJECT_PATH}/echo:1", Kind: "oci"},
+			cfg: map[string]any{"functionAuthorizedSources": map[string]any{
+				"trustSameGroupFunctions": true,
+				"trustedFunctions":        []string{"$CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/*"},
+			}},
 			expectFinding: false,
 		},
 	}

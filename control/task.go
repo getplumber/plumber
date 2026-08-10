@@ -363,10 +363,8 @@ func buildEngineConfig(controls *configuration.ControlsConfig, gitlabURL string)
 	}
 
 	// functionAuthorizedSources: same dynamic same-namespace model as
-	// componentAuthorizedSources. Same-group trust is host-bound too — via
-	// instanceHost for a literal same-instance ref, or via the
-	// $CI_TEMPLATE_REGISTRY_HOST idiom for the common case where the
-	// project's registry host differs from the GitLab instance host.
+	// componentAuthorizedSources — same-group trust is host-bound via
+	// instanceHost for a literal same-instance ref.
 	if c := controls.FunctionMustComeFromAuthorizedSources; c != nil && c.IsEnabled() {
 		trustSameGroup := true
 		if c.TrustSameGroupFunctions != nil {
