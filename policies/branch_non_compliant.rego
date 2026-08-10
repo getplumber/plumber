@@ -36,10 +36,11 @@ deny contains finding if {
 	reasons := [r | r := _non_compliant_reasons[branch.name][_]]
 	count(reasons) > 0
 	finding := {
-		"code":                          "ISSUE-505",
-		"severity":                      "high",
-		"message":                       sprintf("Branch '%s' has non-compliant protection settings", [branch.name]),
-		"job":                           branch.name,
+		"code":     "ISSUE-505",
+		"severity": "high",
+		"message":  sprintf("Branch '%s' has non-compliant protection settings", [branch.name]),
+		# No "job": a branch is not a job. branchName names what this finding is
+		# about and is what the identity recipe selects (finding/identity).
 		"type":                          "non_compliant",
 		"branchName":                    branch.name,
 		"reasons":                       reasons,

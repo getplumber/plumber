@@ -38,9 +38,10 @@ import (
 // and the problems are grouped at the bottom. Catalog order is preserved within
 // each group.
 //
-// The "context" column is Finding.Job as-is (a CI job name for job-scoped
-// findings, but some rules put a branch / include path / file there instead), so
-// the header avoids the false claim "job" would make when the value isn't a job.
+// The "context" column is Finding.Job: the CI job a finding sits in, or empty
+// when the finding is not about a job (a branch, an include, a required
+// template, component or action). Those findings carry what they are about in
+// their structured payload and in the identity block of the JSON report.
 func buildCSV(entries []control.ControlEntry, result *control.AnalysisResult) [][]string {
 	header := []string{"code", "fingerprint", "controlName", "status", "severity", "message", "context", "file", "line", "url", "docUrl"}
 	byControl := control.FindingsByControl(result.Findings)

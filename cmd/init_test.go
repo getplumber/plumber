@@ -1,14 +1,13 @@
 package cmd
 
 import (
-	"bytes"
 	"os"
 	"reflect"
 	"strings"
 	"testing"
 
 	"github.com/getplumber/plumber/configuration"
-	"github.com/getplumber/plumber/internal/defaultconfig"
+	defaultconfig "github.com/getplumber/plumber/defaultConfig"
 	"gopkg.in/yaml.v2"
 )
 
@@ -142,23 +141,6 @@ func TestWizardScratchAuthorizedActionsEmpty(t *testing.T) {
 	}
 	if len(got.TrustedGithubActions) != 0 || got.MinimumStars != 0 {
 		t.Errorf("expected empty allowlist and no star floor, got list=%d stars=%d", len(got.TrustedGithubActions), got.MinimumStars)
-	}
-}
-
-// The embedded default (defaultconfig.Get) must be byte-identical to the source
-// defaultConfig/.plumber.yaml. Every build path regenerates the embed from the
-// source (`make embed` / the CI+Docker `cp` step) before build/test; this
-// asserts that link directly, so a stale or skipped regeneration — which would
-// ship a drifted default to `config generate`, the init wizard, and zero-config
-// analyze while every self-consistent test stays green — fails here instead.
-func TestEmbeddedDefaultMatchesSource(t *testing.T) {
-	src, err := os.ReadFile("../defaultConfig/.plumber.yaml")
-	if err != nil {
-		t.Fatalf("read source default: %v", err)
-	}
-	if !bytes.Equal(src, defaultconfig.Get()) {
-		t.Errorf("embedded default (%d bytes) differs from defaultConfig/.plumber.yaml (%d bytes) — run `make embed` to regenerate the embed from source",
-			len(defaultconfig.Get()), len(src))
 	}
 }
 

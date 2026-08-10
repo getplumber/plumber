@@ -24,7 +24,11 @@ deny contains finding if {
 		"code":     "ISSUE-404",
 		"severity": "medium",
 		"message":  sprintf("%s uses forbidden version '%s'", [inc.source, inc.ref]),
-		"job":      inc.source,
+		# No "job": an include is not a job. includePath names what this finding
+		# is about and is what the identity recipe selects (finding/identity).
+		# The ref stays out: the same include drifting from one forbidden
+		# version to another is the same unresolved problem.
+		"includePath": inc.source,
 	}
 }
 

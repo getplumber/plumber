@@ -12,7 +12,7 @@ import (
 	"gopkg.in/yaml.v2"
 
 	"github.com/getplumber/plumber/configuration"
-	"github.com/getplumber/plumber/internal/defaultconfig"
+	defaultconfig "github.com/getplumber/plumber/defaultConfig"
 )
 
 func TestConfigResolve_MaterializesOverlay(t *testing.T) {

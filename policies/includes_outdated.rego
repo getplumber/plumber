@@ -21,7 +21,10 @@ deny contains finding if {
 		"code":                  "ISSUE-403",
 		"severity":              "medium",
 		"message":               sprintf("%s uses version '%s' (latest: %s)", [inc.source, inc.ref, inc.current]),
-		"job":                   inc.source,
+		# No "job": an include is not a job. includePath names what this finding
+		# is about (finding/identity). componentName stays as payload: it is a
+		# bare name, empty for any include that is not a component.
+		"includePath":           inc.source,
 		"file":                  object.get(inc, "originFile", ""),
 		"line":                  object.get(inc, "originLine", 0),
 		"version":               inc.ref,

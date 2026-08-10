@@ -9,9 +9,9 @@ import (
 // Concrete registry codes with known, distinct severities, so the derived
 // SeverityCounts is deterministic (see control/codes.go).
 const (
-	codeCritical = control.CodeImpostorCommit            // ISSUE-707, critical
-	codeHigh     = control.CodeImageUnauthorizedSource   // ISSUE-101, high
-	codeMedium   = control.CodeRefVersionMismatch        // ISSUE-708, medium
+	codeCritical = control.CodeImpostorCommit             // ISSUE-707, critical
+	codeHigh     = control.CodeImageUnauthorizedSource    // ISSUE-101, high
+	codeMedium   = control.CodeRefVersionMismatch         // ISSUE-708, medium
 	codeLow      = control.CodeActionRemoteExecUnverified // ISSUE-716, low
 )
 

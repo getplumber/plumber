@@ -332,7 +332,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Severity:    SeverityCritical,
 		Title:       "Pinned commit SHA does not belong to the action's repository",
 		Description: "A workflow pins an action to a commit SHA that does not resolve in the action's upstream repository. That means either the SHA was mistyped (the reference silently runs whatever tag/branch GitHub falls back to, typically the default branch) or — far worse — the author was tricked by a PR comment / stargazer dashboard showing a detached commit that was never merged upstream. The name-and-SHA combination is the precise form of the `impostor commit` attack documented in academic supply-chain literature.",
-		Remediation: "Replace the reference with a SHA that actually belongs to the action's repository. Use `gh api repos/<owner>/<repo>/commits/<sha>` to verify before committing the change.",
+		Remediation: "Replace the reference with a SHA that actually belongs to the action's repository. Use `gh api repos/<owner>/<repo>/commits/<sha>` to verify before committing the change. That endpoint only accepts commit SHAs, so a pin naming an annotated tag object answers 422 there; check it with `gh api repos/<owner>/<repo>/git/tags/<sha>` instead, which also reports the tag name and the commit it points at.",
 		DocURL:      docsBaseURL + string(CodeImpostorCommit),
 		ControlName: "actionRefsMustExistUpstream",
 	},
