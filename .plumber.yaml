@@ -362,7 +362,7 @@ gitlab:
       # Set to false to disable this control
       enabled: true
       # Trust functions under this project's own root namespace
-      trustSameGroupFunctions: false
+      trustSameGroupFunctions: true
       # Additional trusted function source URLs and patterns (supports
       # wildcards). Both $VAR and ${VAR} notation are listed below since
       # pipeline authors write either form.
