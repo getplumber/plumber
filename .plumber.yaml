@@ -349,11 +349,12 @@ gitlab:
     # pass; deprecation is tracked separately (see the Deprecated stat
     # in `plumber analyze` output) and doesn't affect this control.
     #
-    # A reference is trusted when it matches trustedFunctions, OR its
-    # path (host ignored — the OCI registry host convention varies per
-    # GitLab instance) starts with this project's own root namespace, or
-    # with the $CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH idiom, as
-    # long as the pipeline doesn't redefine either variable itself
+    # A reference is trusted when it matches trustedFunctions (patterns
+    # may reference $CI_* variables — a pattern is rejected if the
+    # pipeline redefines one of those variables itself; both $VAR and
+    # ${VAR} notation are accepted and normalized identically), OR its
+    # host matches the scanned GitLab instance and its path after that
+    # host starts with this project's own root namespace
     # (trustSameGroupFunctions).
     #
     # Best practice: keep functions scoped to your own project/group
@@ -361,9 +362,13 @@ gitlab:
       # Set to false to disable this control
       enabled: true
       # Trust functions under this project's own root namespace
-      trustSameGroupFunctions: true
-      # Additional trusted function source URLs and patterns (supports wildcards)
-      trustedFunctions: []
+      trustSameGroupFunctions: false
+      # Additional trusted function source URLs and patterns (supports
+      # wildcards). Both $VAR and ${VAR} notation are listed below since
+      # pipeline authors write either form.
+      trustedFunctions:
+        - $CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/*
+        - ${CI_TEMPLATE_REGISTRY_HOST}/${CI_PROJECT_PATH}/*
     # ===========================================
     # Pipeline must not enable debug trace
     # ===========================================

@@ -8,19 +8,24 @@
 # and carries no weight here.
 #
 # A reference is trusted when it matches an explicit trustedFunctions
-# allowlist pattern, or (trustSameGroupFunctions, default true) one of two
-# host-bound forms: the ref is hosted on the scanned GitLab instance
-# (instanceHost) and its path starts with the project's own root namespace
-# (top-level group), or the ref's full text starts with the literal
-# `$CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/` idiom, as long as the
-# pipeline does not redefine CI_TEMPLATE_REGISTRY_HOST or CI_PROJECT_PATH in
-# its own `variables:` block. GitLab predefined variables have the lowest
-# precedence, so a pipeline that shadows them could otherwise make Plumber
-# trust literal idiom text that resolves to an attacker registry at
-# runtime. Both branches must anchor on the host — a same-namespace check
-# that only looks at the path after an unvalidated host segment would trust
-# any registry that happens to name a top-level path after the victim's
-# namespace (ISSUE-415 hardening).
+# allowlist pattern, or (trustSameGroupFunctions, default true) the ref is
+# hosted on the scanned GitLab instance (instanceHost) and its path starts
+# with the project's own root namespace (top-level group) — a same-namespace
+# check that only looks at the path after an unvalidated host segment would
+# trust any registry that happens to name a top-level path after the
+# victim's namespace (ISSUE-415 hardening).
+#
+# Allowlist patterns may themselves reference GitLab predefined CI/CD
+# variables (e.g. the shipped defaults `$CI_TEMPLATE_REGISTRY_HOST/
+# $CI_PROJECT_PATH/*` and its `${VAR}` equivalent — both notations are
+# shipped since pipeline authors write either form, and _normalize_var
+# treats them identically). GitLab predefined variables have the lowest
+# precedence, so a pipeline that redefines one of them in its own
+# `variables:` block could make Plumber trust pattern text that resolves to
+# an attacker registry at runtime — _in_allowlist guards against this by
+# rejecting a pattern match if any `$CI_*` variable referenced by that
+# pattern is redefined in the pipeline's globalVariables/localGlobalVariables
+# (ISSUE-415 hardening).
 #
 # "local" (relative/absolute filesystem path) references are same-repo
 # and out of scope entirely, mirroring how `include: local` is out of
@@ -58,16 +63,41 @@ _is_authorized(fn) if _is_same_group(fn.ref)
 _in_allowlist(ref) if {
 	pattern := input.config.functionAuthorizedSources.trustedFunctions[_]
 	glob.match(_normalize_var(pattern), null, _normalize_var(ref))
+	not _pattern_redefined(pattern)
 }
 
-# _is_same_group trusts a function ref in either of two host-bound forms
-# — see _matches_own_namespace.
+# _pattern_redefined guards trustedFunctions patterns that reference
+# GitLab predefined CI/CD variables (e.g. $CI_PROJECT_PATH) — those
+# variables have the lowest precedence, so a pipeline that redefines one
+# in its own `variables:` block could make an otherwise-safe pattern
+# match text that resolves to an attacker-controlled source at runtime.
+# Every `/`-delimited segment of the pattern that starts with $CI is
+# checked independently; if ANY of those variables is redefined, the
+# pattern cannot authorize the ref (ISSUE-415 hardening).
+_pattern_redefined(pattern) if {
+	segment := split(_normalize_var(pattern), "/")[_]
+	startswith(segment, "$CI")
+	_pipeline_defines_var(_segment_var_name(segment))
+}
+
+# _segment_var_name extracts the bare variable name (no $) from a
+# normalized "$CI_..." path segment, e.g. "$CI_PROJECT_PATH" ->
+# "CI_PROJECT_PATH".
+_segment_var_name(segment) := name if {
+	m := regex.find_all_string_submatch_n(`^\$([A-Za-z_][A-Za-z0-9_]*)`, segment, 1)
+	count(m) > 0
+	name := m[0][1]
+}
+
+# _is_same_group trusts a function ref hosted on the scanned GitLab
+# instance whose path starts with the project's own root namespace — see
+# _matches_own_namespace.
 _is_same_group(ref) if {
 	object.get(input.config.functionAuthorizedSources, "trustSameGroupFunctions", true) == true
 	_matches_own_namespace(ref)
 }
 
-# Namespace branch: mirrors component_authorized_sources.rego's
+# _matches_own_namespace mirrors component_authorized_sources.rego's
 # _is_same_group — the ref must be hosted on the scanned GitLab instance
 # AND its path (after the host) must start with the project's root
 # namespace. Checking the path alone, with an unvalidated host segment
@@ -83,22 +113,11 @@ _matches_own_namespace(ref) if {
 	startswith(path, sprintf("%s/", [root]))
 }
 
-# Idiom branch: the pipeline's own variables must not redefine
-# CI_TEMPLATE_REGISTRY_HOST or CI_PROJECT_PATH — redefining either would
-# let a pipeline author write literal idiom text that resolves to an
-# attacker-controlled registry at runtime. The FULL ref must start with
-# the idiom, not just the path after an unchecked host segment — otherwise
-# registry.evil.example/$CI_PROJECT_PATH/x was trusted by matching path
-# text alone (ISSUE-415 hardening).
-_matches_own_namespace(ref) if {
-	not _redefines_project_vars
-	startswith(_normalize_var(ref), "$CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/")
-}
-
-_redefines_project_vars if _pipeline_defines_var("CI_TEMPLATE_REGISTRY_HOST")
-
-_redefines_project_vars if _pipeline_defines_var("CI_PROJECT_PATH")
-
+# _pipeline_defines_var reports whether the pipeline redefines a GitLab
+# predefined CI/CD variable itself — checked both against the merged
+# view (globalVariables) and the project-authored-only view
+# (localGlobalVariables), since either could shadow the predefined value
+# at runtime. Used by _pattern_redefined above.
 _pipeline_defines_var(name) if object.get(input.pipeline, "globalVariables", {})[name]
 
 _pipeline_defines_var(name) if object.get(input.pipeline, "localGlobalVariables", {})[name]
