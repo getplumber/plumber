@@ -48,7 +48,7 @@ func TestHandleScorePublishing_DisabledNeverSends(t *testing.T) {
 	conf := &configuration.Configuration{PlumberConfig: &configuration.PlumberConfig{}}
 	result := &control.AnalysisResult{ProjectPath: "group/repo", DefaultBranch: "main"}
 
-	handleScorePublishing(p, conf, result, complianceSummary{})
+	handleScorePublishing(p, conf, result, complianceSummary{}, []byte(`{"plumberScore":{"score":"A"}}`))
 
 	if got := posts.Load(); got != 0 {
 		t.Fatalf("score-push disabled but the service was contacted %d time(s); want 0", got)

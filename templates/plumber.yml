@@ -98,6 +98,9 @@ spec:
     score_endpoint:
       description: "Score service base URL. Override only for a self-hosted score service; the OIDC audience follows this value so it always matches the target."
       default: "https://score.getplumber.io"
+    platform:
+      description: "Plumber platform base URL. Setting it pushes this run's full results there over CI OIDC, and takes precedence over score_push. The default is a placeholder (RFC 2606 .invalid) that never enables a push — GitLab requires the id_tokens audience to be non-empty, so this input cannot default to empty."
+      default: "https://platform.invalid"
     controls:
       description: Run only listed controls (comma-separated control names). Cannot be used with skip_controls.
       default: ""
@@ -162,6 +165,14 @@ spec:
     # push is a one-line change; the CLI only uses it when push is on.
     PLUMBER_ANALYZE_SCORE_TOKEN:
       aud: $[[ inputs.score_endpoint ]]
+    # OIDC id-token for the platform push. Audience MUST equal the platform
+    # URL (the platform validates `aud`), so it follows the platform input.
+    # Minted on every run, matching the score token above, using the same
+    # `platform` input that also carries the sentinel default — the CLI
+    # decides whether to push, not this block. The CLI treats the literal
+    # value "https://platform.invalid" as "not configured" and skips the push.
+    PLUMBER_ANALYZE_PLATFORM_TOKEN:
+      aud: $[[ inputs.platform ]]
   variables:
     # Use intermediate variable to avoid self-reference when default is $GITLAB_TOKEN
     # GITLAB_TOKEN is exported in script (not here) to avoid a circular variable
@@ -186,6 +197,11 @@ spec:
     PLUMBER_ANALYZE_SCORE_POINT: $[[ inputs.score_point ]]
     PLUMBER_ANALYZE_SCORE_PUSH: $[[ inputs.score_push ]]
     PLUMBER_ANALYZE_SCORE_ENDPOINT: $[[ inputs.score_endpoint ]]
+    # Non-empty (the sentinel default) on every run; the CLI is the one that
+    # decides whether that constitutes "configured" (see platformSentinelURL
+    # in cmd/platform_push.go), so this passthrough alone never turns the push
+    # on for everyone.
+    PLUMBER_ANALYZE_PLATFORM: $[[ inputs.platform ]]
     PLUMBER_ANALYZE_CONTROLS: $[[ inputs.controls ]]
     PLUMBER_ANALYZE_SKIP_CONTROLS: $[[ inputs.skip_controls ]]
     PLUMBER_ANALYZE_FAIL_WARNINGS: $[[ inputs.fail_warnings ]]

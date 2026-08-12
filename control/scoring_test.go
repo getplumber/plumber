@@ -155,3 +155,30 @@ func TestScoreLetterFromPoints_boundaries(t *testing.T) {
 		}
 	}
 }
+
+// A project whose losses exceed 100 reports a floored rawPoints, because the
+// gate and the badge are defined on a 0-100 scale. The unclamped value is kept
+// alongside it so a consumer that wants the true depth of the deficit (the
+// platform) can read it without changing what the gate sees.
+func TestComputePlumberScore_KeepsUnclampedRawPoints(t *testing.T) {
+	counts := map[ErrorCode]int{}
+	// Enough critical findings to drive the summed capped loss well past 100.
+	// Use multiple distinct critical codes so losses stack.
+	counts[CodeDebugTraceEnabled] = 50
+	counts[CodeImpostorCommit] = 50
+	got := ComputePlumberScore(counts)
+
+	if got.RawPoints != 0 {
+		t.Errorf("RawPoints = %v, want 0 (clamped; the gate and badge must not change)", got.RawPoints)
+	}
+	if got.RawPointsUnclamped >= 0 {
+		t.Errorf("RawPointsUnclamped = %v, want a negative value carrying the true deficit", got.RawPointsUnclamped)
+	}
+	var summed float64
+	for _, cl := range got.CodeLosses {
+		summed += cl.CappedLoss
+	}
+	if want := 100.0 - summed; got.RawPointsUnclamped != want {
+		t.Errorf("RawPointsUnclamped = %v, want %v (100 minus summed capped losses)", got.RawPointsUnclamped, want)
+	}
+}

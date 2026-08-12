@@ -49,6 +49,11 @@ type PlumberScoreResult struct {
 
 	// RawPoints is 100 minus summed capped per-code losses (before Critical malus).
 	RawPoints float64 `json:"rawPoints"`
+	// RawPointsUnclamped is RawPoints before the floor at zero. RawPoints is
+	// what the gate and the badge are defined on, so it stays clamped; this
+	// carries the true signed deficit for consumers that store history and
+	// want to distinguish "barely failing" from "catastrophic".
+	RawPointsUnclamped float64 `json:"rawPointsUnclamped"`
 	// FinalPoints applies Critical category malus (max points in E band when any Critical exists).
 	FinalPoints float64 `json:"finalPoints"`
 	// Score is the letter A–E from final points (what people mean by "how did we score?").
@@ -252,6 +257,7 @@ func ComputePlumberScore(codeCounts map[ErrorCode]int) PlumberScoreResult {
 	}
 
 	raw := 100.0 - totalLoss
+	out.RawPointsUnclamped = raw
 	if raw < 0 {
 		raw = 0
 	}

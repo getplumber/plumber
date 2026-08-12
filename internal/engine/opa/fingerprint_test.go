@@ -2,6 +2,8 @@ package opa
 
 import (
 	"encoding/json"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/getplumber/plumber/finding/identity"
@@ -23,7 +25,7 @@ func TestFingerprint_SurvivesTheJSONRoundTrip(t *testing.T) {
 		Message: "required template is missing",
 		Data:    map[string]any{"templatePath": "templates/go/go"},
 	}}
-	StampFingerprints(findings)
+	StampFingerprints(findings, "")
 	for _, f := range findings {
 		b, err := json.Marshal(f)
 		if err != nil {
@@ -176,12 +178,39 @@ func TestFingerprint_CodelessIsEmpty(t *testing.T) {
 	}
 }
 
+// A relative path whose first segment merely STARTS WITH ".." (e.g.
+// "..foo/bar.yml") is a legitimate in-repo path, not an escape above root. A
+// bare strings.HasPrefix(rel, "..") check misclassifies it as an escape and
+// leaves File (wrongly) absolute; the fix checks the ".." path SEGMENT
+// specifically.
+func TestRepoRelative_DoesNotMisclassifyDotDotPrefixedSegment(t *testing.T) {
+	root := filepath.FromSlash("/repo")
+	file := filepath.Join(root, "..foo", "bar.yml")
+
+	got := repoRelative(file, root)
+	if got != "..foo/bar.yml" {
+		t.Errorf("repoRelative(%q, %q) = %q, want %q (a legitimate in-repo path, not an escape)", file, root, got, "..foo/bar.yml")
+	}
+}
+
+// A genuine escape above root (the ".." segment itself, or a path continuing
+// through it) must still be rejected and left absolute.
+func TestRepoRelative_RejectsGenuineEscape(t *testing.T) {
+	root := filepath.FromSlash("/repo/sub")
+	file := filepath.FromSlash("/repo/outside.yml")
+
+	got := repoRelative(file, root)
+	if got != filepath.ToSlash(file) {
+		t.Errorf("repoRelative(%q, %q) = %q, want the original absolute path unchanged (genuine escape)", file, root, got)
+	}
+}
+
 func TestStampFingerprints_SetsFieldInPlace(t *testing.T) {
 	fs := []Finding{
 		{Code: "ISSUE-701", File: "ci.yml", Job: "build", Message: "x"},
 		{Code: "", Message: "codeless"},
 	}
-	StampFingerprints(fs)
+	StampFingerprints(fs, "")
 	if fs[0].Fingerprint == "" {
 		t.Errorf("StampFingerprints did not set a fingerprint on a coded finding")
 	}
@@ -190,5 +219,88 @@ func TestStampFingerprints_SetsFieldInPlace(t *testing.T) {
 	}
 	if fs[0].Fingerprint != computeFingerprint(fs[0]) {
 		t.Errorf("stamped fingerprint != computeFingerprint")
+	}
+}
+
+// The GitHub collector records absolute paths, and the path is one of the four
+// hashed identity segments. Left raw, the same finding fingerprints differently
+// on a laptop and on a runner, which makes it unusable as a database key.
+func TestStampFingerprints_NormalizesFileToRepoRelative(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	findings := []Finding{{
+		Code: "ISSUE-701",
+		File: filepath.Join(wd, ".github", "workflows", "ci.yml"),
+		Job:  "ci/build",
+		Data: map[string]any{"uses": "actions/checkout@v4"},
+	}}
+	StampFingerprints(findings, wd)
+
+	if got := findings[0].File; got != ".github/workflows/ci.yml" {
+		t.Errorf("File = %q, want the repo-relative path", got)
+	}
+}
+
+// Two runs of the same finding from different absolute roots must agree.
+func TestStampFingerprints_FingerprintIsRootIndependent(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	mk := func(file, root string) string {
+		f := []Finding{{
+			Code: "ISSUE-701", File: file, Job: "ci/build",
+			Data: map[string]any{"uses": "actions/checkout@v4"},
+		}}
+		StampFingerprints(f, root)
+		return f[0].Fingerprint
+	}
+	inside := mk(filepath.Join(wd, ".github", "workflows", "ci.yml"), wd)
+	relative := mk(".github/workflows/ci.yml", wd)
+	if inside != relative {
+		t.Errorf("fingerprint depends on the absolute root: %q vs %q", inside, relative)
+	}
+}
+
+// The regression this guards: the previous implementation relativized every
+// File against os.Getwd() with no way to override it, but the GitHub
+// collector's absolute paths are rooted at conf.GitRepoRoot, not the
+// process's working directory. Running Plumber from a subdirectory of the
+// repo made filepath.Rel return a "../…" path, the escape guard rejected it,
+// and File (and therefore the fingerprint) stayed absolute and
+// machine-dependent — the exact defect RecipeVersion 3 claims to have fixed.
+// StampFingerprints now takes the repo root explicitly, so the SAME root
+// (not the caller's cwd) decides the relative path and the fingerprint no
+// longer depends on which directory Plumber was invoked from.
+func TestStampFingerprints_FingerprintStableFromSubdirectoryOfRepoRoot(t *testing.T) {
+	repoRoot := t.TempDir()
+	subDir := filepath.Join(repoRoot, "sub", "dir")
+	if err := os.MkdirAll(subDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	file := filepath.Join(repoRoot, ".github", "workflows", "ci.yml")
+
+	mk := func() string {
+		f := []Finding{{
+			Code: "ISSUE-701", File: file, Job: "ci/build",
+			Data: map[string]any{"uses": "actions/checkout@v4"},
+		}}
+		StampFingerprints(f, repoRoot)
+		if f[0].File != ".github/workflows/ci.yml" {
+			t.Errorf("File = %q, want the repo-relative path regardless of cwd", f[0].File)
+		}
+		return f[0].Fingerprint
+	}
+
+	t.Chdir(repoRoot)
+	atRoot := mk()
+
+	t.Chdir(subDir)
+	fromSubdir := mk()
+
+	if atRoot != fromSubdir {
+		t.Errorf("fingerprint depends on the working directory: %q (at repo root) vs %q (from a subdirectory)", atRoot, fromSubdir)
 	}
 }

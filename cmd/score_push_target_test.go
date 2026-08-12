@@ -47,7 +47,7 @@ func TestHandleScorePublishing_SkipsForeignProject(t *testing.T) {
 	}
 	result := &control.AnalysisResult{ProjectPath: "owner/other-repo", DefaultBranch: "main"}
 
-	handleScorePublishing(p, conf, result, complianceSummary{})
+	handleScorePublishing(p, conf, result, complianceSummary{}, []byte(`{"plumberScore":{"score":"A"}}`))
 
 	if got := posts.Load(); got != 0 {
 		t.Fatalf("foreign-project scan POSTed %d time(s); want 0 (push must be skipped)", got)

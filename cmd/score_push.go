@@ -27,6 +27,12 @@ const scorePushHTTPTimeout = 15 * time.Second
 // mints the token itself there.)
 const gitlabScoreTokenEnv = "PLUMBER_ANALYZE_SCORE_TOKEN"
 
+// gitlabPlatformTokenEnv is the env var the GitLab CI component's `id_tokens:`
+// block writes the PLATFORM OIDC id-token to. It is separate from the score
+// token because the audience must equal the destination, and the two
+// destinations differ.
+const gitlabPlatformTokenEnv = "PLUMBER_ANALYZE_PLATFORM_TOKEN"
+
 // effectiveScorePush resolves whether to publish and the score service
 // endpoint. Publishing has a single opt-in: the `--score-push` flag /
 // PLUMBER_ANALYZE_SCORE_PUSH env, which the CI integration input (the
@@ -36,6 +42,12 @@ const gitlabScoreTokenEnv = "PLUMBER_ANALYZE_SCORE_TOKEN"
 // sources, never from the analyzed repository's config file.
 func effectiveScorePush() (push bool, endpoint string) {
 	push = pushScore
+	// A run publishes to one destination. The platform supersedes the public
+	// badge when both are configured; maybePushScore prints the note so the
+	// skip is never silent.
+	if platformPush, _ := effectivePlatformPush(); platformPush {
+		push = false
+	}
 	endpoint = strings.TrimRight(strings.TrimSpace(scoreEndpoint), "/")
 	if endpoint == "" {
 		endpoint = configuration.DefaultScoreEndpoint
@@ -49,6 +61,13 @@ func effectiveScorePush() (push bool, endpoint string) {
 // publish; an explicit --score-push then prints a one-line note instead of
 // skipping silently, so the requested push is never a mystery.
 func maybePushScore(p providerPkg.Provider, conf *configuration.Configuration, payload []byte, defaultBranch string) {
+	// The --platform-preempts-badge skip note lives in handleScorePublishingOnce
+	// (printScorePushSkippedForPlatform), the only production caller: it decides
+	// push/no-push BEFORE building the payload, so by the time maybePushScore
+	// runs, push is already true. Do not duplicate that note here — a prior
+	// version did, and it went uncovered by any production call path because
+	// this function is only ever invoked after the caller already confirmed
+	// push == true.
 	push, endpoint := effectiveScorePush()
 	if !push || len(payload) == 0 {
 		return
@@ -63,7 +82,7 @@ func maybePushScore(p providerPkg.Provider, conf *configuration.Configuration, p
 		return
 	}
 
-	platform, projectPath, ok := resolveScoreTarget(p, conf)
+	forgeHost, projectPath, ok := resolveScoreTarget(p, conf)
 	if !ok {
 		scoreWarn("could not resolve the project path for the score push; skipped")
 		return
@@ -89,7 +108,7 @@ func maybePushScore(p providerPkg.Provider, conf *configuration.Configuration, p
 		return
 	}
 
-	target := fmt.Sprintf("%s/%s/%s", endpoint, platform, projectPath)
+	target := fmt.Sprintf("%s/%s/%s", endpoint, forgeHost, projectPath)
 	if err := postScoreReport(target, token, payload); err != nil {
 		scoreWarn(fmt.Sprintf("score push failed: %v", err))
 		return
@@ -101,7 +120,7 @@ func maybePushScore(p providerPkg.Provider, conf *configuration.Configuration, p
 	if branch := ciRunBranch(p); branch != "" && defaultBranch != "" && branch != defaultBranch {
 		note = fmt.Sprintf(" (but not displayed on the public badge: %q is not the default branch)", branch)
 	}
-	fmt.Fprintf(os.Stderr, "✓ Plumber Score published: %s/%s/%s%s\n", endpoint, platform, projectPath, note)
+	fmt.Fprintf(os.Stderr, "✓ Plumber Score published: %s/%s/%s%s\n", endpoint, forgeHost, projectPath, note)
 }
 
 // ciRunBranch returns the branch this CI run executes on, or "" when unknown
@@ -138,10 +157,10 @@ func ciScoreTargetMismatch(p providerPkg.Provider, conf *configuration.Configura
 	return ciRepo, scanned, !strings.EqualFold(ciRepo, scanned)
 }
 
-// resolveScoreTarget returns the {platform host} and {namespace/repo} project
+// resolveScoreTarget returns the {forge host} and {namespace/repo} project
 // path the badge is keyed by. The CI env (authoritative inside a pipeline)
 // wins over config. ok is false when no project path can be determined.
-func resolveScoreTarget(p providerPkg.Provider, conf *configuration.Configuration) (platform, projectPath string, ok bool) {
+func resolveScoreTarget(p providerPkg.Provider, conf *configuration.Configuration) (forgeHost, projectPath string, ok bool) {
 	env := p.CIEnvVars()
 
 	projectPath = strings.Trim(strings.TrimSpace(os.Getenv(env.RepoPath)), "/")
@@ -157,16 +176,16 @@ func resolveScoreTarget(p providerPkg.Provider, conf *configuration.Configuratio
 			serverURL = conf.GitlabURL
 		}
 	}
-	platform = hostOf(serverURL)
-	if platform == "" {
+	forgeHost = hostOf(serverURL)
+	if forgeHost == "" {
 		if p.Name() == "github" {
-			platform = "github.com"
+			forgeHost = "github.com"
 		} else {
-			platform = "gitlab.com"
+			forgeHost = "gitlab.com"
 		}
 	}
 
-	return platform, projectPath, projectPath != ""
+	return forgeHost, projectPath, projectPath != ""
 }
 
 // scoreOIDCToken returns the CI-native OIDC id-token minted for the score
@@ -182,8 +201,12 @@ func scoreOIDCToken(p providerPkg.Provider, endpoint string) (string, error) {
 		}
 		return fetchGitHubActionsIDToken(reqURL, reqTok, endpoint)
 	}
-	// GitLab (and others): the pipeline's id_tokens: block writes the token
-	// to the env; the CLI just reads it. Audience is pinned in the template.
+	// GitLab (and others): the pipeline's id_tokens: block writes the token to
+	// the env; the CLI just reads it. Audience is pinned in the template, so
+	// the destination decides which of the two tokens to read.
+	if platformPush, platformEndpoint := effectivePlatformPush(); platformPush && endpoint == platformEndpoint {
+		return strings.TrimSpace(os.Getenv(gitlabPlatformTokenEnv)), nil
+	}
 	return strings.TrimSpace(os.Getenv(gitlabScoreTokenEnv)), nil
 }
 
@@ -272,6 +295,15 @@ func scoreWarn(msg string) {
 	fmt.Fprintf(os.Stderr, "⚠️  %s (the run is not failed)\n", msg)
 }
 
+// printScorePushSkippedForPlatform tells the operator that their explicit
+// --score-push was preempted by --platform, so an explicitly requested badge
+// push is never dropped without a trace. Unlike maybeScoreNudge, this is NOT
+// gated by --print/--silent: the global "the skip is never silent" rule for
+// --platform vs --score-push is a hard requirement, not a cosmetic one.
+func printScorePushSkippedForPlatform(target string) {
+	fmt.Fprintf(os.Stderr, "ℹ️  --score-push skipped: results are being pushed to the platform at %s instead.\n", target)
+}
+
 // scorePublishOnce guards handleScorePublishing so a run publishes at most
 // once. The two entry points — runWithProvider (GitLab) and
 // presentResultWithProvider (GitHub) — are mutually exclusive today, but a
@@ -280,16 +312,28 @@ func scoreWarn(msg string) {
 var scorePublishOnce sync.Once
 
 // handleScorePublishing publishes the score when push is enabled, otherwise
-// nudges the user (interactive local runs only) to wire it into CI. It builds
-// the push payload from the same builder the JSON output uses, so the badge
+// nudges the user (interactive local runs only) to wire it into CI. payload is
+// the same analysis JSON bytes buildAnalysisJSONReport produced for --output,
+// built once by the caller and shared with the platform push, so the badge
 // record and the file on disk never diverge. Never fails the run, and runs at
 // most once per process (scorePublishOnce).
-func handleScorePublishing(p providerPkg.Provider, conf *configuration.Configuration, result *control.AnalysisResult, summary complianceSummary) {
-	scorePublishOnce.Do(func() { handleScorePublishingOnce(p, conf, result, summary) })
+func handleScorePublishing(p providerPkg.Provider, conf *configuration.Configuration, result *control.AnalysisResult, summary complianceSummary, payload []byte) {
+	scorePublishOnce.Do(func() { handleScorePublishingOnce(p, conf, result, summary, payload) })
 }
 
-func handleScorePublishingOnce(p providerPkg.Provider, conf *configuration.Configuration, result *control.AnalysisResult, summary complianceSummary) {
+func handleScorePublishingOnce(p providerPkg.Provider, conf *configuration.Configuration, result *control.AnalysisResult, summary complianceSummary, payload []byte) {
 	if push, _ := effectiveScorePush(); !push {
+		// A push was explicitly requested (--score-push) but --platform preempted
+		// it: say so instead of falling through to the "you should turn on
+		// score-push" nudge, which would be both wrong (it's already on) and,
+		// under --silent, would print nothing at all — silently dropping an
+		// explicit request.
+		if pushScore {
+			if platformPush, target := effectivePlatformPush(); platformPush {
+				printScorePushSkippedForPlatform(target)
+				return
+			}
+		}
 		maybeScoreNudge()
 		return
 	}
@@ -303,17 +347,8 @@ func handleScorePublishingOnce(p providerPkg.Provider, conf *configuration.Confi
 		scoreWarn("data collection was incomplete; score not published (avoids overwriting the last good badge)")
 		return
 	}
-	var pc *configuration.PlumberConfig
-	var includeOnly, skip []string
-	if conf != nil {
-		pc = conf.PlumberConfig
-		includeOnly, skip = conf.ControlsFilter, conf.SkipControlsFilter
-	}
-	payload, err := buildAnalysisJSONReport(result, pc, summary, jsonOutputParams{
-		provider: p.Name(), includeOnly: includeOnly, skip: skip,
-	})
-	if err != nil {
-		scoreWarn(fmt.Sprintf("could not build the score report payload: %v", err))
+	if len(payload) == 0 {
+		scoreWarn("could not build the score report payload; skipped")
 		return
 	}
 	maybePushScore(p, conf, payload, result.DefaultBranch)

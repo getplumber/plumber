@@ -41,7 +41,7 @@ func TestEnrichFindingsWithJobLocation_ResolvesStepName(t *testing.T) {
 	}
 
 	// The point of resolving it: the two findings must not collide.
-	StampFingerprints(findings)
+	StampFingerprints(findings, "")
 	if findings[0].Fingerprint == findings[1].Fingerprint {
 		t.Errorf("both findings share fingerprint %q; step resolution failed to discriminate", findings[0].Fingerprint)
 	}
