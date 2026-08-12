@@ -52,6 +52,9 @@ inputs:
   score-endpoint:
     description: "Score service base URL. Override only for a self-hosted score service; the minted OIDC audience follows this value so it always matches the target."
     default: "https://score.getplumber.io"
+  platform:
+    description: "Plumber platform base URL. Setting it pushes this run's full results there over CI OIDC, and takes precedence over score-push. The calling workflow MUST grant 'permissions: id-token: write'."
+    default: ""
   fail-warnings:
     description: "Fail the run on warnings: unknown configuration keys (exit 2) and 'could not verify' checks such as a skipped known-CVE lookup when an action version cannot be resolved (exit 3). soft-fail does not mask exit 3."
     default: "false"
@@ -173,6 +176,7 @@ runs:
         IN_SCORE: ${{ inputs.score }}
         IN_SCORE_PUSH: ${{ inputs.score-push }}
         IN_SCORE_ENDPOINT: ${{ inputs.score-endpoint }}
+        IN_PLATFORM: ${{ inputs.platform }}
         IN_FAIL_WARNINGS: ${{ inputs.fail-warnings }}
         IN_OUTPUT: ${{ inputs.output }}
         IN_PBOM: ${{ inputs.pbom }}
@@ -208,6 +212,7 @@ runs:
         [ "$IN_SCORE" = "true" ]    && args+=(--score-point)
         [ "$IN_SCORE_PUSH" = "true" ] && args+=(--score-push)
         [ -n "$IN_SCORE_ENDPOINT" ] && args+=(--score-endpoint "$IN_SCORE_ENDPOINT")
+        [ -n "$IN_PLATFORM" ] && args+=(--platform "$IN_PLATFORM")
         [ "$IN_FAIL_WARNINGS" = "true" ] && args+=(--fail-warnings)
         [ -n "$IN_OUTPUT" ]         && args+=(--output "$IN_OUTPUT")
         [ -n "$IN_PBOM" ]           && args+=(--pbom "$IN_PBOM")

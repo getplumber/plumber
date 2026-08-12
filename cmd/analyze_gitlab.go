@@ -63,6 +63,7 @@ var (
 	showScorePoint    bool
 	pushScore         bool
 	scoreEndpoint     string
+	platformURL       string
 	controlsFilter    string
 	skipControls      string
 	ciConfigPath      string
@@ -183,6 +184,7 @@ func init() {
 	analyzeCmd.Flags().BoolVar(&showScorePoint, "score-point", false, "Like --score plus full points breakdown in stdout and MR comment; overrides --score when both are set")
 	analyzeCmd.Flags().BoolVar(&pushScore, "score-push", false, "Publish this repo's Plumber Score to the hosted badge service (CI only; needs a CI OIDC id-token, so a local run is a no-op)")
 	analyzeCmd.Flags().StringVar(&scoreEndpoint, "score-endpoint", "", "Score service base URL (default https://score.getplumber.io); override only for a self-hosted score service")
+	analyzeCmd.Flags().StringVar(&platformURL, "platform", "", "Plumber platform base URL; setting it pushes this run's full results there over CI OIDC (implies the push, and takes precedence over --score-push)")
 	analyzeCmd.Flags().StringVar(&controlsFilter, "controls", "", "Run only listed controls (comma-separated)")
 	analyzeCmd.Flags().StringVar(&skipControls, "skip-controls", "", "Skip listed controls (comma-separated)")
 	analyzeCmd.Flags().BoolVar(&failWarnings, "fail-warnings", false, "Treat configuration warnings as errors (exit 2)")
@@ -515,6 +517,7 @@ var envKeys = map[string]string{
 	"score-point":    "PLUMBER_ANALYZE_SCORE_POINT",
 	"score-push":     "PLUMBER_ANALYZE_SCORE_PUSH",
 	"score-endpoint": "PLUMBER_ANALYZE_SCORE_ENDPOINT",
+	"platform":       "PLUMBER_ANALYZE_PLATFORM",
 	"controls":       "PLUMBER_ANALYZE_CONTROLS",
 	"skip-controls":  "PLUMBER_ANALYZE_SKIP_CONTROLS",
 	"fail-warnings":  "PLUMBER_ANALYZE_FAIL_WARNINGS",
@@ -632,6 +635,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		func() error {
 			return envStringFallback(cmd, "score-endpoint", envKeys["score-endpoint"], &scoreEndpoint)
 		},
+		func() error { return envStringFallback(cmd, "platform", envKeys["platform"], &platformURL) },
 		func() error { return envStringFallback(cmd, "controls", envKeys["controls"], &controlsFilter) },
 		func() error { return envStringFallback(cmd, "skip-controls", envKeys["skip-controls"], &skipControls) },
 		func() error {

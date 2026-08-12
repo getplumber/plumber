@@ -213,6 +213,13 @@ Display it with a badge in your README (swap in your platform/owner/repo):
 > name public**. Only the default branch's score is displayed. See [score
 > docs](https://getplumber.io/docs/plumber-score).
 
+## Common `analyze` flags
+
+| Flag | Purpose |
+|---|---|
+| `--score-endpoint` | Score service base URL (default `https://score.getplumber.io`). Override only for a self-hosted score service. |
+| `--platform` | Plumber platform base URL. Setting it pushes this run's full results there over CI OIDC, and takes precedence over `--score-push`. Requires an id-token grant: `permissions: id-token: write` on GitHub, the component's `id_tokens:` block on GitLab. A platform that is down or unreachable warns and never changes the run's outcome. |
+
 ## Configuration
 
 Plumber reads `.plumber.yaml`.

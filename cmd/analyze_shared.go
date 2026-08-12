@@ -34,7 +34,7 @@ func runWithProvider(p provider.Provider, cmd *cobra.Command, conf *configuratio
 	}
 
 	newLocationLinker(conf, result, p.Name()).Annotate(result.Findings)
-	opaengine.StampFingerprints(result.Findings)
+	opaengine.StampFingerprints(result.Findings, conf.GitRepoRoot)
 
 	summary := buildComplianceSummary(p, result, conf)
 
@@ -48,7 +48,9 @@ func runWithProvider(p provider.Provider, cmd *cobra.Command, conf *configuratio
 		return err
 	}
 
-	handleScorePublishing(p, conf, result, summary)
+	jsonPayload := buildPublishPayload(p, conf, result, summary)
+	handleScorePublishing(p, conf, result, summary, jsonPayload)
+	platformErr := maybePushPlatform(p, conf, result, jsonPayload)
 
 	pas := provider.PostActionSummary{
 		Passed:     summary.passed(),
@@ -61,7 +63,7 @@ func runWithProvider(p provider.Provider, cmd *cobra.Command, conf *configuratio
 		return err
 	}
 
-	return finalizeRun(result, summary)
+	return finalizeRun(result, summary, platformErr)
 }
 
 // buildComplianceSummary assembles the gate inputs for a run: the Plumber
@@ -234,7 +236,7 @@ func writeOutputsWithProvider(p provider.Provider, result *control.AnalysisResul
 // pipeline.
 func presentResultWithProvider(p provider.Provider, cmd *cobra.Command, result *control.AnalysisResult, conf *configuration.Configuration) error {
 	newLocationLinker(conf, result, p.Name()).Annotate(result.Findings)
-	opaengine.StampFingerprints(result.Findings)
+	opaengine.StampFingerprints(result.Findings, conf.GitRepoRoot)
 	summary := buildComplianceSummary(p, result, conf)
 	if printOutput {
 		if err := outputTextWithProvider(p, result, conf, summary, conf.ControlsFilter, conf.SkipControlsFilter); err != nil {
@@ -244,7 +246,9 @@ func presentResultWithProvider(p provider.Provider, cmd *cobra.Command, result *
 	if err := writeOutputsWithProvider(p, result, conf, summary); err != nil {
 		return err
 	}
-	handleScorePublishing(p, conf, result, summary)
+	jsonPayload := buildPublishPayload(p, conf, result, summary)
+	handleScorePublishing(p, conf, result, summary, jsonPayload)
+	platformErr := maybePushPlatform(p, conf, result, jsonPayload)
 	pas := provider.PostActionSummary{
 		Passed:     summary.passed(),
 		GateLine:   summary.gateLine(),
@@ -257,7 +261,7 @@ func presentResultWithProvider(p provider.Provider, cmd *cobra.Command, result *
 			return err
 		}
 	}
-	return finalizeRun(result, summary)
+	return finalizeRun(result, summary, platformErr)
 }
 
 func joinStrings(ss []string) string {
@@ -309,16 +313,49 @@ func computeScoreResult(result *control.AnalysisResult, scoreMode bool) *control
 	return &s
 }
 
+// buildPublishPayload builds the analysis JSON payload shared by the score
+// badge and the platform push, so the two destinations can never diverge on
+// what "the report" contains — both send the exact bytes buildAnalysisJSONReport
+// produced. Built once here (rather than separately inside each consumer) and
+// skipped (nil) when neither push is configured, so a plain local run pays no
+// marshal/hash cost for a payload nobody sends.
+func buildPublishPayload(p provider.Provider, conf *configuration.Configuration, result *control.AnalysisResult, summary complianceSummary) []byte {
+	scorePush, _ := effectiveScorePush()
+	platformPush, _ := effectivePlatformPush()
+	if !scorePush && !platformPush {
+		return nil
+	}
+	var pc *configuration.PlumberConfig
+	var includeOnly, skip []string
+	if conf != nil {
+		pc = conf.PlumberConfig
+		includeOnly, skip = conf.ControlsFilter, conf.SkipControlsFilter
+	}
+	payload, err := buildAnalysisJSONReport(result, pc, summary, jsonOutputParams{
+		provider: p.Name(), includeOnly: includeOnly, skip: skip,
+	})
+	if err != nil {
+		scoreWarn(fmt.Sprintf("could not build the publish payload: %v", err))
+		return nil
+	}
+	return payload
+}
+
 // finalizeRun applies the exit-code gates in priority order: a degraded run
 // (incomplete data) fails at exit 3 regardless of the gate (#220); then
-// --fail-warnings fails at exit 3 when "could not verify" warnings exist;
-// otherwise the score gate (or the deprecated --threshold gate) governs.
-func finalizeRun(result *control.AnalysisResult, s complianceSummary) error {
+// --fail-warnings fails at exit 3 when "could not verify" warnings exist; then
+// the score gate (or the deprecated --threshold gate). A platform token failure
+// is evaluated LAST so a broken id-token grant can never mask a security
+// finding the scan just made.
+func finalizeRun(result *control.AnalysisResult, s complianceSummary, platformErr error) error {
 	if result.DataCollectionDegraded {
 		return &IncompleteDataError{Reasons: result.DegradedReasons}
 	}
 	if failWarnings && len(result.Warnings) > 0 {
 		return &DegradedError{Count: len(result.Warnings)}
 	}
-	return s.gateErr()
+	if err := s.gateErr(); err != nil {
+		return err
+	}
+	return platformErr
 }

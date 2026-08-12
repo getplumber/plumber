@@ -72,7 +72,11 @@ import (
 //	       job, for the same reason: job held the branch name, not a job.
 //	   Ten of the eleven blocks lost job; only ISSUE-401 kept it. The
 //	   algorithm is unchanged; their fingerprints are not.
-const RecipeVersion = 2
+//	3  (2026-08-10): Finding.File is normalized to a repository-relative path
+//	   before hashing. It was the collector's absolute path, so the same finding
+//	   carried a different identity depending on whether it was scanned locally or
+//	   on a runner. Re-keys every finding whose file was recorded absolutely.
+const RecipeVersion = 3
 
 // fingerprintLength is how many hex characters of the digest the short
 // fingerprint keeps. 16 hex chars (64 bits) is short enough to read in a CSV

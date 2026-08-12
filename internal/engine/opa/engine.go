@@ -14,6 +14,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io/fs"
+	"os"
+	"path/filepath"
 	"slices"
 	"sort"
 	"strings"
@@ -123,10 +125,55 @@ func computeFingerprint(f Finding) string {
 	return identity.Fingerprint(f.identityInput())
 }
 
-// StampFingerprints sets Fingerprint on every finding in place. Call it once,
-// after findings are finalized, so all output writers read the same value.
-func StampFingerprints(findings []Finding) {
+// repoRelative rewrites an absolute path recorded by a collector into a
+// repository-relative, forward-slashed one, relative to root. The GitHub
+// collector stores absolute paths rooted at the repository (not the
+// process's working directory — see StampFingerprints), and Finding.File is
+// one of the hashed identity segments, so leaving it raw makes the same
+// finding hash differently on a laptop and on a runner. Paths already
+// relative pass through unchanged. A path outside root (or an empty root) is
+// left alone: there is no correct relative form for it, and an unstable
+// identity is still better than a wrong path.
+func repoRelative(file, root string) string {
+	file = strings.TrimPrefix(file, "./")
+	if file == "" || !filepath.IsAbs(file) {
+		return filepath.ToSlash(file)
+	}
+	if root == "" {
+		return filepath.ToSlash(file)
+	}
+	rel, err := filepath.Rel(root, file)
+	if err != nil || rel == ".." || strings.HasPrefix(rel, ".."+string(filepath.Separator)) {
+		return filepath.ToSlash(file)
+	}
+	return filepath.ToSlash(rel)
+}
+
+// StampFingerprints sets Fingerprint on every finding in place. Along the
+// way it also rewrites File in place to a repository-relative path (see
+// repoRelative), because the fingerprint is computed from the (possibly
+// just-rewritten) File — so both mutations are part of this call's contract,
+// not just the one named in the function's own name. Call it once, after
+// findings are finalized, so all output writers read the same File and
+// Fingerprint values.
+//
+// root is the repository root absolute File paths should be relativized
+// against. Pass the collector's own root (e.g. conf.GitRepoRoot) rather than
+// the process's current working directory: a collector that walks a
+// configured repo root (the GitHub collector walks conf.GitRepoRoot) keeps
+// recording paths relative to that root regardless of which subdirectory
+// Plumber was invoked from, and relativizing against os.Getwd() instead would
+// make the fingerprint depend on the invocation directory again — reopening
+// the machine-dependence problem this function exists to close. When root is
+// unknown, pass "" and StampFingerprints falls back to os.Getwd().
+func StampFingerprints(findings []Finding, root string) {
+	if root == "" {
+		if wd, err := os.Getwd(); err == nil {
+			root = wd
+		}
+	}
 	for i := range findings {
+		findings[i].File = repoRelative(findings[i].File, root)
 		findings[i].Fingerprint = computeFingerprint(findings[i])
 	}
 }

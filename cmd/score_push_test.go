@@ -466,7 +466,7 @@ func TestHandleScorePublishing_NonDefaultBranchStillPublishes(t *testing.T) {
 	conf := &configuration.Configuration{PlumberConfig: &configuration.PlumberConfig{}}
 	result := &control.AnalysisResult{ProjectPath: "group/subgroup/repo", DefaultBranch: "main"}
 
-	handleScorePublishing(p, conf, result, complianceSummary{})
+	handleScorePublishing(p, conf, result, complianceSummary{}, []byte(`{"plumberScore":{"score":"A"}}`))
 
 	if got := posts.Load(); got != 1 {
 		t.Fatalf("MR-pipeline run POSTed %d times, want exactly 1", got)
@@ -508,7 +508,7 @@ func TestHandleScorePublishing_SkipsDegraded(t *testing.T) {
 	conf := &configuration.Configuration{PlumberConfig: &configuration.PlumberConfig{}}
 	result := &control.AnalysisResult{ProjectPath: "group/repo", DefaultBranch: "main", DataCollectionDegraded: true}
 
-	handleScorePublishing(p, conf, result, complianceSummary{})
+	handleScorePublishing(p, conf, result, complianceSummary{}, []byte(`{"plumberScore":{"score":"A"}}`))
 
 	if got := posts.Load(); got != 0 {
 		t.Fatalf("degraded run POSTed %d times, want 0", got)
@@ -552,10 +552,84 @@ func TestHandleScorePublishing_PublishesOnce(t *testing.T) {
 	conf := &configuration.Configuration{PlumberConfig: &configuration.PlumberConfig{}}
 	result := &control.AnalysisResult{ProjectPath: "octo/repo", DefaultBranch: "main"}
 
-	handleScorePublishing(p, conf, result, complianceSummary{})
-	handleScorePublishing(p, conf, result, complianceSummary{})
+	handleScorePublishing(p, conf, result, complianceSummary{}, []byte(`{"plumberScore":{"score":"A"}}`))
+	handleScorePublishing(p, conf, result, complianceSummary{}, []byte(`{"plumberScore":{"score":"A"}}`))
 
 	if got := posts.Load(); got != 1 {
 		t.Fatalf("score POSTed %d times, want exactly 1", got)
 	}
+}
+
+// TestHandleScorePublishing_PlatformPreemptsScorePush drives the real
+// production entry point (handleScorePublishing, not a direct
+// effectiveScorePush/maybePushScore call) with both --score-push and
+// --platform set. This is the path a code-review round found broken:
+// handleScorePublishingOnce checked effectiveScorePush() (false, since
+// --platform preempts it), then unconditionally called maybeScoreNudge(),
+// which both printed the wrong ("turn on score-push") message and, under
+// --silent (printOutput == false), printed nothing at all — silently
+// dropping an explicit --score-push. That violates the global "the skip is
+// never silent" rule. This test pins the fix: the platform skip note prints,
+// the nudge does not, the badge endpoint is never hit, and the note survives
+// even with printOutput off.
+func TestHandleScorePublishing_PlatformPreemptsScorePush(t *testing.T) {
+	p, ok := providerPkg.Get("gitlab")
+	if !ok {
+		t.Skip("gitlab provider not registered")
+	}
+
+	var posts atomic.Int32
+	score := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		posts.Add(1)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer score.Close()
+
+	defer func(pp bool, e, pf string, po bool) {
+		pushScore, scoreEndpoint, platformURL, printOutput = pp, e, pf, po
+	}(pushScore, scoreEndpoint, platformURL, printOutput)
+
+	t.Setenv("CI", "true")
+	t.Setenv("GITLAB_CI", "true")
+	t.Setenv("CI_PROJECT_PATH", "group/repo")
+	t.Setenv("CI_SERVER_URL", "https://gitlab.com")
+	t.Setenv(gitlabScoreTokenEnv, "tok")
+
+	conf := &configuration.Configuration{PlumberConfig: &configuration.PlumberConfig{}}
+	result := &control.AnalysisResult{ProjectPath: "group/repo", DefaultBranch: "main"}
+
+	t.Run("printOutput on: note prints, nudge does not, badge not hit", func(t *testing.T) {
+		pushScore, scoreEndpoint, platformURL, printOutput = true, score.URL, "https://platform.example.com/", true
+		scorePublishOnce = sync.Once{}
+
+		out := captureStderr(t, func() {
+			handleScorePublishing(p, conf, result, complianceSummary{}, []byte(`{"plumberScore":{"score":"A"}}`))
+		})
+
+		if !strings.Contains(out, "--score-push skipped") || !strings.Contains(out, "https://platform.example.com") {
+			t.Fatalf("expected the platform skip note naming the trimmed platform URL, got: %q", out)
+		}
+		if strings.Contains(out, "turn on score-push") {
+			t.Fatalf("the nudge must not print once --score-push is already on, got: %q", out)
+		}
+		if got := posts.Load(); got != 0 {
+			t.Fatalf("badge endpoint hit %d times, want 0: --platform must preempt the badge POST", got)
+		}
+	})
+
+	t.Run("printOutput off (--silent): note still prints, not silently dropped", func(t *testing.T) {
+		pushScore, scoreEndpoint, platformURL, printOutput = true, score.URL, "https://platform.example.com/", false
+		scorePublishOnce = sync.Once{}
+
+		out := captureStderr(t, func() {
+			handleScorePublishing(p, conf, result, complianceSummary{}, []byte(`{"plumberScore":{"score":"A"}}`))
+		})
+
+		if !strings.Contains(out, "--score-push skipped") {
+			t.Fatalf("the skip note must survive --silent (never silent is a hard rule), got: %q", out)
+		}
+		if got := posts.Load(); got != 0 {
+			t.Fatalf("badge endpoint hit %d times, want 0", got)
+		}
+	})
 }

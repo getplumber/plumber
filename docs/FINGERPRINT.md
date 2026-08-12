@@ -34,7 +34,7 @@ The two sides never have to agree on a hash, only on the selection.
 
 ### The recipe version
 
-`identity.RecipeVersion` is currently **2**. Store it next to anything you key
+`identity.RecipeVersion` is currently **3**. Store it next to anything you key
 off the selection.
 
 It tracks identity **outcomes**, not just the code in the package, so it moves
@@ -60,6 +60,7 @@ signal.
 | --- | --- |
 | 1 | The recipe as first shipped. |
 | 2 | Eleven finding blocks that had no structured key, or that smuggled their subject through the `job` field, now name what they are about: ISSUE-401 (`hardcodedJob`), ISSUE-402 GitLab / ISSUE-403 / ISSUE-404 (`includePath`), ISSUE-405 / ISSUE-406 (`templatePath`), ISSUE-408 / ISSUE-409 (`componentPath`), ISSUE-417 (`requiredAction`), and ISSUE-501 / ISSUE-505 keep `branchName` while dropping `job`. Ten of the eleven also dropped `job`; ISSUE-401's `job` is a real job name and was kept. The algorithm is unchanged; their fingerprints are not. |
+| 3 | `file` is normalized to a repository-relative path before hashing. It was previously the collector's absolute path, so the same finding carried a different identity depending on whether it was scanned on a laptop or on a runner. Every finding whose file was recorded absolutely is re-keyed once. |
 
 The SARIF `partialFingerprints["plumber/v1"]` key is the name of that SARIF
 entry, not the recipe version. It stays at `v1` across bumps, because renaming

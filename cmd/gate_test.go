@@ -500,3 +500,61 @@ func TestBuildAnalysisJSONReport_GateContract(t *testing.T) {
 		assertAbsent(t, m, "minPoints", "minScore", "compliance")
 	})
 }
+
+// ---------------------------------------------------------------------------
+// finalizeRun — exit-code gate priority order
+// ---------------------------------------------------------------------------
+
+// TestFinalizeRun_OrderingPriority pins the priority order the platform push
+// depends on: a degraded run fails regardless of anything else (#220); then
+// --fail-warnings; then the score gate; and the platform token error is
+// evaluated LAST, so a broken id-token grant can never mask (by pre-empting)
+// a real degraded/warnings/gate failure the scan already found.
+func TestFinalizeRun_OrderingPriority(t *testing.T) {
+	platformErr := &PlatformTokenError{Reason: "no CI OIDC id-token available"}
+	passingGate := complianceSummary{minPoints: 100, score: scoreWithPoints(100), controlCount: 1}
+	failingGate := complianceSummary{minPoints: 100, score: scoreWithPoints(0), controlCount: 1}
+
+	t.Run("degraded wins over everything, including a platform error", func(t *testing.T) {
+		result := &control.AnalysisResult{DataCollectionDegraded: true, DegradedReasons: []string{"x"}}
+		err := finalizeRun(result, passingGate, platformErr)
+		var want *IncompleteDataError
+		if !errors.As(err, &want) {
+			t.Fatalf("finalizeRun = %v (%T), want *IncompleteDataError", err, err)
+		}
+	})
+
+	t.Run("--fail-warnings wins over the gate and a platform error", func(t *testing.T) {
+		defer func(v bool) { failWarnings = v }(failWarnings)
+		failWarnings = true
+		result := &control.AnalysisResult{Warnings: []string{"could not verify something"}}
+		err := finalizeRun(result, passingGate, platformErr)
+		var want *DegradedError
+		if !errors.As(err, &want) {
+			t.Fatalf("finalizeRun = %v (%T), want *DegradedError", err, err)
+		}
+	})
+
+	t.Run("the score gate wins over a platform error", func(t *testing.T) {
+		result := &control.AnalysisResult{}
+		err := finalizeRun(result, failingGate, platformErr)
+		var want *ScoreGateError
+		if !errors.As(err, &want) {
+			t.Fatalf("finalizeRun = %v (%T), want *ScoreGateError", err, err)
+		}
+	})
+
+	t.Run("a platform error surfaces only once nothing else failed", func(t *testing.T) {
+		result := &control.AnalysisResult{}
+		if err := finalizeRun(result, passingGate, platformErr); err != platformErr {
+			t.Fatalf("finalizeRun = %v, want the platform error itself", err)
+		}
+	})
+
+	t.Run("a clean run with no platform error passes", func(t *testing.T) {
+		result := &control.AnalysisResult{}
+		if err := finalizeRun(result, passingGate, nil); err != nil {
+			t.Fatalf("finalizeRun = %v, want nil", err)
+		}
+	})
+}
