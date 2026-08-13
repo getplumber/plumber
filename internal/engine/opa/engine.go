@@ -276,6 +276,22 @@ func (e *Engine) LoadFromFSFiltered(fsys fs.FS, skip func(filename string, conte
 	return nil
 }
 
+// FindingsObserver, when non-nil, receives every finding slice Evaluate
+// returns. It exists for the identity harness in policies_test, which must
+// see every emission the test suite produces to prove each control keeps
+// emitting the fields its declared identity depends on. Production code never
+// sets it; the harness sets it in TestMain before m.Run and clears it after,
+// so the write happens-before every read and no lock is needed. It is a
+// settable var rather than a Set* function so the whole-program deadcode gate
+// (make deadcode) does not read a test-only setter as unreachable.
+var FindingsObserver func([]Finding)
+
+func notifyFindingsObserver(fs []Finding) {
+	if FindingsObserver != nil {
+		FindingsObserver(fs)
+	}
+}
+
 // Evaluate runs every loaded policy against pipeline and returns the
 // aggregated findings. Policies see a two-field input:
 //
@@ -310,6 +326,7 @@ func (e *Engine) Evaluate(ctx context.Context, pipeline *ir.NormalizedPipeline, 
 	}
 	enrichFindingsWithJobLocation(findings, pipeline)
 	sortFindingsInPlace(findings)
+	notifyFindingsObserver(findings)
 	return findings, nil
 }
 

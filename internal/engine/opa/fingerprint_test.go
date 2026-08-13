@@ -74,14 +74,24 @@ func TestFingerprint_StableAndLineIndependent(t *testing.T) {
 	}
 }
 
-// Two findings of the same code in the same file/job but with different subjects
-// (different messages) must get different fingerprints, so the 62 ISSUE-701s of
-// a big repo are individually trackable.
-func TestFingerprint_DiscriminatesBySubject(t *testing.T) {
+// v4 change from v3: ISSUE-701 declares {file, job, uses, step}, not message
+// (message is reserved for the 29-code exception list; see
+// finding/identity/declarations.go), so two findings that share code/file/job
+// and differ only in message (no uses, no step -- an unrealistic shape in
+// production, where the collector always supplies uses) now COLLIDE. In v3
+// this test's name held because message was the only fallback available;
+// under v4 that job splits into two other tests that remain accurate:
+// structured-subject discrimination (TestFingerprint_SubjectDiscriminatesWithoutMessage)
+// and message-keyed-code discrimination
+// (TestFingerprint_FallsBackToMessageWithoutSubject). This test now pins the
+// narrowing itself, so an edit that quietly restores message sensitivity to a
+// uses-declared code is caught here instead of silently re-keying every
+// ISSUE-701 in the wild.
+func TestFingerprint_MessageAloneNoLongerDiscriminatesAUsesDeclaredCode(t *testing.T) {
 	a := Finding{Code: "ISSUE-701", File: "ci.yml", Job: "build", Message: "action A unpinned"}
 	b := Finding{Code: "ISSUE-701", File: "ci.yml", Job: "build", Message: "action B unpinned"}
-	if computeFingerprint(a) == computeFingerprint(b) {
-		t.Errorf("same fingerprint for two different subjects; want distinct")
+	if computeFingerprint(a) != computeFingerprint(b) {
+		t.Errorf("fingerprints differ on message alone; ISSUE-701 does not declare message in v4")
 	}
 }
 
@@ -147,13 +157,15 @@ func TestFingerprint_SubjectDiscriminatesWithoutMessage(t *testing.T) {
 	}
 }
 
-// Rules with no structured subject still fall back to the message, so they keep
-// whatever discrimination they had.
-func TestFingerprint_FallsBackToMessageWithoutSubject(t *testing.T) {
+// The former message-keyed controls now identify on canonical coordinates, so
+// rewording their prose no longer re-keys them. Message fallback survives only
+// as the backstop for an undeclared code (covered by
+// identity.TestOf_V4_UndeclaredCodeBackstop).
+func TestFingerprint_FormerMessageKeyedCodeIsStableAcrossRewording(t *testing.T) {
 	a := Finding{Code: "ISSUE-801", File: "ci.yml", Job: "build", Message: "first problem"}
 	b := Finding{Code: "ISSUE-801", File: "ci.yml", Job: "build", Message: "second problem"}
-	if computeFingerprint(a) == computeFingerprint(b) {
-		t.Errorf("message fallback failed to discriminate")
+	if computeFingerprint(a) != computeFingerprint(b) {
+		t.Errorf("rewording re-keyed a now-structured code; message must be inert")
 	}
 }
 

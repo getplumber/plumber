@@ -22,7 +22,11 @@ deny contains finding if {
 		"message":  sprintf("job %q uses image without digest pinning: %s", [job.name, _image_ref(job.image)]),
 		"job":      job.name,
 		"link":     _image_ref(job.image),
-		"tag":      _image_tag(job.image),
+		# Identity keys on imageRepo (registry/name, no tag): the subject
+		# is "this image is not pinned by digest", so a routine tag bump
+		# (still digestless) must not re-key it. link/tag stay as data.
+		"imageRepo": _image_repo(job.image),
+		"tag":       _image_tag(job.image),
 	}
 }
 
@@ -52,4 +56,16 @@ _image_ref(img) := ref if {
 } else := ref if {
 	img.tag != ""
 	ref := sprintf("%s:%s", [img.name, img.tag])
+} else := img.name
+
+# _image_repo is the tagless, digestless `<registry>/<name>` reference —
+# the identity subject for the not-pinned-by-digest finding. The "unknown"
+# registry literal the GitLab collector emits for a registryless image is
+# collapsed to the bare name (matching ISSUE-101's _image_repo and _full_ref),
+# so a registryless image gets a clean, stable identity and does not re-key if
+# its registry later resolves.
+_image_repo(img) := ref if {
+	img.registry != ""
+	img.registry != "unknown"
+	ref := sprintf("%s/%s", [img.registry, img.name])
 } else := img.name

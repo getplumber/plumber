@@ -27,5 +27,6 @@ deny contains finding if {
 		"severity": "high",
 		"message":  sprintf("job %q calls reusable workflow %q with `secrets: inherit` — forward only the secrets the callee needs", [job.name, job.reusableWorkflowUses]),
 		"job":      job.name,
+		"uses":     job.reusableWorkflowUses,
 	}
 }

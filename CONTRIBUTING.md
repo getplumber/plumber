@@ -329,6 +329,7 @@ For a typical "new GitHub-side control with simple `enabled` config, no new IR f
 |---|---|
 | **Rule** | `policies/<rule>.rego`, `policies/rules_test.go`, `policies/testdata/ISSUE-XXX/{github,gitlab}/*.yml` |
 | **Codes** | `control/codes.go` |
+| **Identity** | `finding/identity/declarations.go` (declare the finding's identity fields; the parity test fails the build without one) |
 | **Config schema** | `configuration/plumberconfig.go`, `configuration/plumberconfig_test.go` |
 | **Provider registry** | `configuration/registry.go` (controlsMeta, optional benchedControls) |
 | **Catalog** | `control/catalog.go` (GitLabControls / GitHubControls, DisabledControlNames) |
@@ -458,6 +459,19 @@ Skip if your rule only reads fields the IR already exposes (jobs, scripts, trigg
       ControlName: "<controlName>", // MUST match .plumber.yaml key + registry.go entry
   },
   ```
+- [ ] **Identity declaration** — `finding/identity/declarations.go`. Add one entry mapping your ISSUE code to the ordered list of fields that identify a finding of that code across runs; its fingerprint is the hash of exactly these fields (recipe v4, see `docs/FINGERPRINT.md`). **The parity test (`finding/identity/parity_test.go`) fails the build if a registered code has no declaration**, so this is not optional, benched or not. Choose the fields by what the finding is *about* and what stays stable:
+  ```go
+  var declarations = map[string][]string{
+      // ...
+      // <what the finding is>: keyed on <why these fields>.
+      "ISSUE-XXX": {"file", "job", "uses", "step"},
+  }
+  ```
+  - Reserved names `file`, `job`, `message` read the canonical finding fields; every other name (`uses`, `branchName`, `variableName`, `image`, `includePath`, `step`, …) reads that key out of the rule's emitted `data`.
+  - **Declare the structured subject your rule emits, not the prose `message`** — that is what makes identity survive a message rewording. When the finding has no sub-finding subject because it is inherently one per job, one per file, or one per repository, declare the canonical coordinates alone: `{"file", "job"}`, `{"file"}`, or the `{}` per-repository singleton. Do **not** declare `message`: no shipped code does, and prose identity re-keys on any copy-edit. `message` is reserved only as the backstop for an *undeclared* code (see `docs/FINGERPRINT.md`).
+  - **No volatile fields** in the declaration: line numbers, renameable job names, order-sensitive indices. They move for reasons unrelated to the finding and would make an unchanged finding look new.
+  - The identity harness (`policies/identity_harness_test.go`) also requires that your §3 fixtures actually **emit** every declared key (the "witness" + "containment" checks). A declared key no fixture produces fails the harness. So the fixtures and the declaration have to agree.
+  - Changing a declaration later re-keys every finding of that code — a deliberate `RecipeVersion` bump, coordinated with anything that stores fingerprints (the platform). Get it right the first time.
 
 ### 5. Config plumbing (`.plumber.yaml` schema + Go types)
 
@@ -524,7 +538,9 @@ Skip if your rule only reads fields the IR already exposes (jobs, scripts, trigg
       },
   }
   ```
+- [ ] **A benched control still needs an identity declaration** (§4) — the parity test does not exempt benched codes. If the rule's emitted data is not final yet, declare the best fields you can from what it emits today (fall back to the canonical coordinates `{"file", "job"}` when it has no structured subject yet, never the prose `message`) and tag the entry `(benched, not yet live: declaration provisional, revisit on unbench)` so the choice is revisited when the control ships.
 - [ ] **Promotion criteria for unbenching:** substantive rule + ≥3 fixtures (positive, negative, edge case) + docs in-repo + website docs + parity with the other provider if cross-provider. Remove the bench entry, ship as default-on or default-off as `.plumber.yaml` specifies.
+- [ ] **On unbench, revisit the identity declaration** — a benched control's declaration in `finding/identity/declarations.go` is provisional: it was chosen before the rule's emitted data settled (often the canonical coordinates `{"file", "job"}`). Before it ships to users, confirm it declares the finding's real structured subject; changing it is a deliberate `RecipeVersion` bump (a re-key), so decide it now rather than after findings are in the wild.
 
 ### 8. Stats aggregation (GitHub side only)
 

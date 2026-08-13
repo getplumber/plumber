@@ -26,7 +26,9 @@ Both read it from one place, the public package
 | --- | --- |
 | `identity.Of(f)` | the identity **field set** as data (`Fields`, with `Pairs()` for the ordered key/value pairs) |
 | `identity.Fingerprint(f)` | the short hash of exactly what `Of` selected |
-| `identity.SubjectKeys()` | the subject-key priority list below |
+| `identity.Declared(code)` | a code's declared identity field names, in hash order (see The declared fields below) |
+| `identity.DeclaredCodes()` | every code that has a declaration |
+| `identity.SubjectKeys()` | **deprecated**: the retired v3 subject-key priority list; recipe v4 does not consult it |
 | `identity.RecipeVersion` | the version of the selection |
 | `identity.FromMap(m)` | a finding read back from Plumber's serialized JSON, when that JSON is a whole finding rather than an exported issue entry (see below) |
 
@@ -34,7 +36,7 @@ The two sides never have to agree on a hash, only on the selection.
 
 ### The recipe version
 
-`identity.RecipeVersion` is currently **3**. Store it next to anything you key
+`identity.RecipeVersion` is currently **4**. Store it next to anything you key
 off the selection.
 
 It tracks identity **outcomes**, not just the code in the package, so it moves
@@ -42,8 +44,8 @@ in two cases:
 
 | Change | Example |
 | --- | --- |
-| The algorithm changes | a new subject key, a reordering of the priority list, a field entering or leaving the identity |
-| A control changes what it emits | a rule starts or stops emitting a subject key, moving its findings between prose identity and structured identity |
+| A declaration changes | `finding/identity/declarations.go` gains, drops or reorders a field for some code |
+| A control stops emitting a field its declaration names | the rule stops setting a `Data` key its declaration still lists, so that pair renders empty (`key=`) where it used to carry a value |
 
 The second case is the one that hides: nothing in `finding/identity` changes,
 so its tests stay green while real fingerprints move. The per-control pins in
@@ -61,6 +63,7 @@ signal.
 | 1 | The recipe as first shipped. |
 | 2 | Eleven finding blocks that had no structured key, or that smuggled their subject through the `job` field, now name what they are about: ISSUE-401 (`hardcodedJob`), ISSUE-402 GitLab / ISSUE-403 / ISSUE-404 (`includePath`), ISSUE-405 / ISSUE-406 (`templatePath`), ISSUE-408 / ISSUE-409 (`componentPath`), ISSUE-417 (`requiredAction`), and ISSUE-501 / ISSUE-505 keep `branchName` while dropping `job`. Ten of the eleven also dropped `job`; ISSUE-401's `job` is a real job name and was kept. The algorithm is unchanged; their fingerprints are not. |
 | 3 | `file` is normalized to a repository-relative path before hashing. It was previously the collector's absolute path, so the same finding carried a different identity depending on whether it was scanned on a laptop or on a runner. Every finding whose file was recorded absolutely is re-keyed once. |
+| 4 | Per-code declarations (`finding/identity/declarations.go`) replace the global subject-key priority list: every registered code now names its own ordered identity fields instead of the recipe picking one field by priority at hash time. The canonical form is uniformly `key=value` per declared field, where v3 rendered `code` / `file` / `job` / `step` bare and only the subject as `key=value`; every fingerprint value changed at this bump, even for the codes whose selected fields did not change. No registered code keys on its prose: the 29 GitHub controls that measured onto `message` were moved onto the subject their rule emits (`uses`, `variableName`, `condition`, `ecosystem`) or onto canonical coordinates alone (`{file, job}`, `{file}`, or the `{}` per-repository singleton) where the finding is inherently one per job, per file, or per repository. The `message` fallback remains only as the backstop for an undeclared code, which the parity test makes unreachable. |
 
 The SARIF `partialFingerprints["plumber/v1"]` key is the name of that SARIF
 entry, not the recipe version. It stays at `v1` across bumps, because renaming
@@ -70,11 +73,15 @@ what the entry is for.
 ## How it is computed
 
 ```
-fingerprint = sha256( code \n file \n job \n subject [\n step] )  -> hex, first 16 chars
+fingerprint = sha256( code \n key1=value1 \n key2=value2 \n ... )  -> hex, first 16 chars
 ```
 
-The `step` segment is appended only when the finding has one, so findings
-without a step keep the identifier they would have had without it.
+`key1=value1, key2=value2, ...` are the declared fields of the finding's code
+(`finding/identity/declarations.go`), in declared order, each rendered as
+`key=value` even when the value is empty (`key=`). There is no conditional
+segment: a declared field always contributes a pair, present or not, so two
+findings of the same code either agree on every pair or differ on at least
+one.
 
 ### The paths
 
@@ -95,23 +102,19 @@ Finding as emitted by the rule
     match the finding's line to the job's actions,
     take that step's `name:`
     the line is used to LOOK UP only, it is never hashed
+    only matters if the code declares "step" (see [3])
     |
     v
-[3] pick the subject
-    |
-    +-- carries one of: uses, branchName, includePath, templatePath,
-    |   componentPath, requiredAction, image, serviceImage, link, tag,
-    |   variableName, hardcodedJob, scriptLine, detail?
-    |
-    +-- yes -->  subject = "key=value"     first match only, rest ignored
-    |                                      survives a message rewording
-    |
-    +-- no  -->  subject = message         fallback, tied to the wording
+[3] look up the declaration
+    decl = declarations[code]                (finding/identity/declarations.go)
+    for each name in decl, in order:
+      "file", "job", "message"  -->  read the finding's canonical field
+      anything else              -->  read finding.Data[name]
+      render "name=value"                    (absent or non-string value -> "name=")
     |
     v
 [4] hash
-    id = code \n file \n job \n subject
-    if a step name was found:  id = id \n step
+    id = code \n pair_1 \n pair_2 \n ... \n pair_n     (declared order)
     fingerprint = sha256(id) as hex, first 16 chars
 ```
 
@@ -119,11 +122,11 @@ Finding as emitted by the rule
 
 | Input | In the hash | Why |
 | --- | --- | --- |
-| `code` | yes | The issue identity (`ISSUE-701`) |
-| `file` | yes | Where the finding lives, stable across edits |
-| `job` | yes | The CI job the finding sits in, empty when the finding is not about a job (see below) |
-| subject | yes | What the rule flagged (see below) |
-| `step` | yes, when present | Separates two steps in one job using the same action |
+| `code` | always | The issue identity (`ISSUE-701`); every declaration hashes on it, unlabeled |
+| `file` | when declared | Reserved name, reads the canonical field; where the finding lives, stable across edits |
+| `job` | when declared | Reserved name, reads the canonical field; the CI job the finding sits in, empty when the finding is not about a job (see below) |
+| `message` | backstop only | Reserved name, reads the canonical field; the identity of an **undeclared** code, unreachable while the parity test is green. No registered code declares it (see The message fallback below) |
+| any other declared name | when declared | Read from the rule's structured `Data` payload: `uses`, `step`, `branchName`, `variableName`, `condition`, `ecosystem`, and so on (see The declared fields below) |
 | `line` | no | Moves whenever unrelated code above the finding is edited |
 | `url` | no | Derived from the line, so it inherits the drift |
 | `advisories` | no | Grows as new CVEs are published |
@@ -133,126 +136,171 @@ Finding as emitted by the rule
 
 ### The job segment
 
-`job` is the name of a CI job. It is empty when the finding is not about a job:
-a branch, an include, a required template, component or action. Those findings
-identify on their subject key instead. Before recipe version 2 several rules
-put a branch name, an include source or a required path in this field, which
-made identity depend on a mislabelled value.
+`job` is a reserved declared name: a code whose declaration names it reads
+the finding's canonical `Job` field rather than the `Data` payload bag. Most
+codes declare it, but nothing in the mechanism requires it: the repository-
+and file-level GitHub checks whose finding is not about a job leave it out
+(`{file}` for ISSUE-418 / ISSUE-601, `{file, ecosystem}` for the dependabot
+checks, the `{}` singleton for ISSUE-903 / ISSUE-904 / ISSUE-905), and a code
+whose declaration does not name `job` does not hash on it at all.
 
-### The subject
+For a code that does declare it, `job` is empty when the finding is not about
+a job: a branch, an include, a required template, component or action. An
+empty declared value still renders as the pair `job=` (an empty value renders
+`key=`, per the formula above): it is present in the hash, it just does not
+distinguish one such finding from another. Before recipe version 2 several
+rules put a branch name, an include source or a required path in this field,
+which made identity depend on a mislabelled value; those controls now declare
+a proper field for it instead.
 
-The subject is what the finding is *about*, taken from the rule's structured
-payload rather than its prose. This is what makes the fingerprint survive a
-message rewording.
+### The declared fields
 
-**Exactly one key becomes the subject.** The list below is a priority order:
-the first key the finding carries is used, and every other key is ignored, even
-when present. The key name is part of the hashed string, so two different keys
-holding the same value cannot collide.
+Identity is no longer picked at hash time from a global list. Each registered
+code declares its identity fields once, as an ordered list, in
+[`finding/identity/declarations.go`](../finding/identity/declarations.go):
 
-| Priority | Key | Example value |
-| --- | --- | --- |
-| 1 | `uses` | `grafana/shared-workflows/actions/get-vault-secrets@main` |
-| 2 | `branchName` | `main` |
-| 3 | `includePath` | `gitlab.example.com/components/sast/sast` |
-| 4 | `templatePath` | `templates/go/go` |
-| 5 | `componentPath` | `components/sast/sast` |
-| 6 | `requiredAction` | `org/sast-scan` |
-| 7 | `image` | `golang:1.25` (a Dockerfile `FROM` base) |
-| 8 | `serviceImage` | `docker:27-dind` |
-| 9 | `link` | `registry.gitlab.com/security-products/secrets:7` |
-| 10 | `tag` | `latest` |
-| 11 | `variableName` | `CI_DEBUG_TRACE` |
-| 12 | `hardcodedJob` | `deploy-prod` |
-| 13 | `scriptLine` | `curl -sSL https://example.com/i.sh \| bash` |
-| 14 | `detail` | `allow_failure: true masks scan failures` |
-| fallback | `message` | used only when the finding carries none of the above |
+```go
+var declarations = map[string][]string{
+    "ISSUE-102": {"file", "job", "link"},
+    "ISSUE-701": {"file", "job", "uses", "step"},
+    // one entry per registered code
+}
+```
 
-The list is `identity.SubjectKeys()`; the fallback reports itself as the key
-`message`, which is not a member of the list: a rule can only fall back to it,
-never select it.
+`identity.Of` looks up the finding's code in this table and renders exactly
+those fields, in that order. Three names are reserved and read the finding's
+canonical fields: `file`, `job` and `message`. Every other name (`uses`,
+`branchName`, `step`, `variableName`, `condition`, `ecosystem`, and so on)
+reads the rule's structured `Data` payload instead.
 
-Worked example. This real finding carries both `link` and `tag`:
+There is no priority search and no single-subject selection anymore. v3 kept
+one global list and used the first key a finding happened to carry, discarding
+every other key the finding carried, even when present. v4 has no list to
+search: only the one code's declaration, and every field it names contributes
+a pair, not just the first one found.
+
+Worked example. ISSUE-102 declares `{file, job, link}`, so the separate `tag`
+data key is never a candidate for its identity, even on a finding that carries
+one:
 
 ```json
-{ "code": "ISSUE-103",
+{ "code": "ISSUE-102", "job": "scan",
   "link": "registry.gitlab.com/security-products/secrets:7",
   "tag": "7" }
 ```
 
-`link` has the higher priority, so the subject is
-`link=registry.gitlab.com/security-products/secrets:7` and `tag` contributes
-nothing to the hash.
+hashes on `link=registry.gitlab.com/security-products/secrets:7`; `tag`
+contributes nothing, not because it lost a priority contest, but because
+ISSUE-102's declaration does not name it. A code that needed both would
+declare `{"file", "job", "link", "tag"}` and hash on both pairs.
 
-The order is deliberate: the most specific value wins. If `tag` outranked
-`link`, every image tagged `latest` in a project would share the subject
-`tag=latest` and collide, whereas the full reference keeps `grafana/vale:latest`
-and `nginx:latest` apart.
+An **empty declaration** (`{}`) is valid and means the code is a per-repository
+singleton: identity is the code alone, so every finding of that code in one
+repository collapses onto one fingerprint (see Limits and stability below).
+Three codes declare it, the repository-level GitHub checks whose finding is
+"this repository is missing X" and fires at most once per scan: ISSUE-903 (no
+dependency updater), ISSUE-904 (no SAST scanner) and ISSUE-905 (no
+`SECURITY.md`). Their `file` would otherwise be an arbitrary first workflow,
+which reorders as workflows are added or removed, so the code alone is the
+stable identity.
 
-Two consequences of only one key being used:
+Look up a code's declaration with `identity.Declared(code)`; list every
+declared code with `identity.DeclaredCodes()`.
 
-- A rule that emits several structured fields still has just one of them
-  carrying identity. What matters is that its top-priority key is the most
-  specific one, not how many keys it emits.
-- `detail` holds prose, so a rule that reaches it stays sensitive to that
-  wording. It sits last because it only applies when nothing more structural
-  exists, and it is still narrower than the full `message`, which also embeds
-  the job name.
+#### The message fallback
+
+`message` is a reserved declarable name, but **no registered code declares
+it**. It exists only as the backstop `identity.Of` falls to for a code with no
+declaration at all: that finding hashes on `code` + `message` and is reported
+with `SubjectFromMessage == true`. The parity test
+(`finding/identity/parity_test.go`) requires every registered code to have a
+declaration, so the backstop is unreachable in production; it is a defensive
+path, not an identity anything ships on.
+
+Earlier in recipe v4, 29 GitHub controls keyed on `message` as a placeholder
+while their structured subject was settled. They no longer do. Each was moved
+onto the subject its rule already computes, or onto canonical coordinates
+where the finding has no sub-finding subject:
+
+| Now keyed on | Codes |
+| --- | --- |
+| `uses` (the reusable-workflow / action ref) | ISSUE-302, ISSUE-306 |
+| `variableName` (the bound env var) | ISSUE-209 |
+| `condition` (the `if:` expression) | ISSUE-210, ISSUE-211, ISSUE-212 |
+| `ecosystem` (the dependabot ecosystem) | ISSUE-901, ISSUE-902 |
+| `{file, job}` (one finding per job) | ISSUE-207, ISSUE-208, ISSUE-213, ISSUE-214, ISSUE-215, ISSUE-303, ISSUE-305, ISSUE-308, ISSUE-309, ISSUE-419, ISSUE-420, ISSUE-704, ISSUE-712, ISSUE-801, ISSUE-802, ISSUE-803 |
+| `{file}` (one finding per workflow file) | ISSUE-418, ISSUE-601 |
+| `{}` (one finding per repository) | ISSUE-903, ISSUE-904, ISSUE-905 |
+
+Rewording any rule's prose no longer re-keys a registered finding.
 
 ## Cases
 
 ### A rule with a structured subject
 
-The common case. Two different actions in the same job are told apart by their
-`uses` value, with no help from the message:
+The common case. ISSUE-701 declares `{file, job, uses, step}`, so two
+different actions in the same job are told apart by their `uses` value, with
+no help from the message:
 
 ```
 ISSUE-701  job=release  uses=grafana/shared-workflows/actions/get-vault-secrets@main
 ISSUE-701  job=release  uses=grafana/grafana-github-actions-go/community-release@main
 ```
 
-Rewording the rule's message later does not change either fingerprint.
+(`file=` and `step=` also ride along in the real hash; both are identical
+between these two findings, so they are elided above.) Rewording the rule's
+message later does not change either fingerprint: ISSUE-701's declaration
+does not name `message`.
 
 ### The same action used twice in one job
 
-Here `code`, `file`, `job` and the subject are all identical, so the step name
-is the only thing left. Plumber reads it from the step's `name:` in the
-workflow:
+Here `code`, `file`, `job` and `uses` are all identical, so the step name is
+the only declared field left to tell the two findings apart. ISSUE-713
+declares a trailing `step`; Plumber reads its value from the step's `name:`
+in the workflow:
 
 ```
-ISSUE-713  check-frontend-test-coverage.yml  step=Delete old coverage comment if not affected
-ISSUE-713  check-frontend-test-coverage.yml  step=Post PR comment
+ISSUE-713  file=check-frontend-test-coverage.yml  step=Delete old coverage comment if not affected
+ISSUE-713  file=check-frontend-test-coverage.yml  step=Post PR comment
 ```
 
-The step name is recovered by matching the finding's line against the job's
-actions during collection. The line is reliable inside a single scan, but only
-the resulting name is hashed, so the identifier still survives line drift.
+(`job=` and `uses=` are identical between the two and elided above.) The step
+name is recovered by matching the finding's line against the job's actions
+during collection. The line is reliable inside a single scan, but only the
+resulting name is hashed, so the identifier still survives line drift.
 
-### A rule with no structured subject
+### A rule identified by its coordinates alone
 
-A rule that emits only the canonical fields has the message as its subject,
-which still discriminates but ties the identifier to the wording:
+Some controls have no sub-finding subject: the finding is about the whole job
+and fires at most once per job, so there is nothing to point to beyond the job
+itself. These declare just `{file, job}`, and the rule's prose is not part of
+the identity. ISSUE-803 (excessive workflow permissions) is one:
 
 ```
-ISSUE-803  job=build  message="job \"build\" runs with overly broad permissions ..."
+ISSUE-803  file=.github/workflows/ci.yml  job=build
 ```
 
-`identity.Of` reports these as `Subject.Key == "message"` and
-`SubjectFromMessage == true`, so a consumer can tell prose-based identity apart
-from the structured kind and know which findings a copy-edit would re-key.
+The same job cannot produce two ISSUE-803 findings, so `{file, job}` is a
+complete identity; two `write-all` jobs in different workflows differ on
+`file`. `identity.Of` reports `SubjectFromMessage == false`, and rewording the
+rule's message does not move the fingerprint. Coarser variants exist for
+findings that are one per file (`{file}`: ISSUE-418, ISSUE-601) or one per
+repository (the `{}` singleton: ISSUE-903, ISSUE-904, ISSUE-905).
 
-Giving such a rule a structured payload moves it to the subject path and
-changes its fingerprints once. Recipe version 2 changed eleven finding blocks
-in total (see the version table above); ten of those also dropped the `job`
-field, and nine of the eleven moved off prose identity onto a structured
-subject key for the first time: the required-template (ISSUE-405, ISSUE-406)
-and required-component (ISSUE-408, ISSUE-409) controls now emit `templatePath`
-/ `componentPath`, hardcoded-jobs (ISSUE-401) emits `hardcodedJob`,
+Moving a rule from prose onto a structured payload changes its declaration and
+re-keys its findings once. Recipe version 2 did this for eleven finding blocks
+under the selection mechanism of that time
+(see the version table above); ten of those also dropped the `job` field, and
+nine of the eleven moved off prose identity onto a structured key for the
+first time: the required-template (ISSUE-405, ISSUE-406) and
+required-component (ISSUE-408, ISSUE-409) controls now emit `templatePath` /
+`componentPath`, hardcoded-jobs (ISSUE-401) emits `hardcodedJob`,
 forbidden-include-version (ISSUE-404) and required-actions (ISSUE-417) emit
 `includePath` / `requiredAction`, and the GitLab include block of ISSUE-402
 plus ISSUE-403 emit `includePath`. The remaining two of the eleven,
 ISSUE-501 and ISSUE-505, already had `branchName` as their subject before this
-version; they only dropped `job`, so they are not part of the nine.
+version; they only dropped `job`, so they are not part of the nine. Every one
+of these keys is still what its code declares under v4.
 
 Four collapses were introduced along the way, each dropping one input from
 identity on purpose:
@@ -279,15 +327,17 @@ below).
 ### A repository-level finding
 
 Controls that evaluate repository settings rather than a file have no `file`,
-and their subject comes from the payload:
+and their identity comes from the payload instead. ISSUE-505 declares
+`{file, job, branchName}`:
 
 ```
-ISSUE-505  file=""  branchName=main
+ISSUE-505  file=  job=  branchName=main
 ```
 
-Two branches produce different fingerprints because `branchName` differs; this
-finding is not about a job, so `job` is empty and contributes nothing to the
-hash.
+Two branches produce different fingerprints because `branchName` differs;
+this finding is about neither a file nor a job, so `file` and `job` both
+render as their constant empty pair and neither distinguishes one such
+finding from another.
 
 ### A finding with no code
 
@@ -316,36 +366,46 @@ an edited file as new findings.
 - A fingerprint is a **tracking identity, not a primary key**. Two steps in one
   job that reference the same action with no `name:` are indistinguishable and
   share a fingerprint. Group by it; do not assume one row per value.
-- Rules on the message fallback stay sensitive to their own wording.
-- **A subject key holding a non-string is skipped, not coerced**, and the
-  finding drops to the message fallback. A JSON round trip turns a numeric
-  `tag: 7` into a float64, so this is reachable from real payload. Both sides
-  of the recipe read it the same way, so the CLI and a consumer still agree;
-  `subjectFromMessage` is what makes the degradation visible. Coercing would be
-  the better answer, but it would re-key every finding it applies to, so it is
-  a `RecipeVersion` decision rather than a free fix.
-- **A coded finding with no subject key and no message** is identified by
-  `code`, `file` and `job` alone, so every such finding of that control in one
-  job shares a fingerprint. Deterministic, and the narrowest identity the
-  recipe produces.
+- **Key on (project, fingerprint), never the fingerprint alone.** A code with
+  an empty declaration, or one whose declared fields all render empty for a
+  given finding, is a per-project singleton (see The declared fields above):
+  its fingerprint is identical across every project that produces one. A
+  consumer storing fingerprints from more than one project must scope by
+  project too, or two unrelated projects' findings of the same singleton code
+  collide.
+- **No registered rule keys on its prose.** `message` is reserved but declared
+  by no code, so rewording a rule cannot re-key a registered finding; prose
+  identity survives only in the backstop for an undeclared code, which the
+  parity test makes unreachable (see The message fallback above).
+- **A declared field holding a non-string is skipped, not coerced**, and
+  renders as an empty pair, the same as an absent key. A JSON round trip turns
+  a numeric `tag: 7` into a float64, so this is reachable from real payload.
+  Both sides of the recipe read it the same way, so the CLI and a consumer
+  still agree. Coercing would be the better answer, but it would re-key every
+  finding it applies to, so it is a `RecipeVersion` decision rather than a
+  free fix.
+- **A coded finding whose declared fields all render empty** is identified by
+  `code` plus whichever reserved fields its declaration names (typically
+  `file` and `job`), so every such finding of that control in one job shares
+  a fingerprint. Deterministic, and the narrowest identity the recipe
+  produces.
 - `scriptLine` holds the script text, not a line number, so blank lines and
   re-indentation elsewhere in the file do not affect it. One rule
   (`unverified_scripts`, ISSUE-411) stores the line untrimmed, so leading or
   trailing whitespace on that one line is part of its identity;
   `unsafe_variable_expansion` trims first.
-- **Changing the recipe changes every value.** Adding an input, reordering the
-  subject keys, giving a control a subject key it did not have, or rewording a
-  fallback rule's message all shift the identifiers, which a consumer reads as
-  findings resolving and reappearing. Treat the recipe as a contract, and bump
-  `identity.RecipeVersion` with it. Rewording a fallback rule is the one case
-  the version cannot express finding by finding: it re-keys only that rule's
-  findings, so weigh it against the churn before doing it.
+- **Changing the recipe changes every value.** Adding a field to a code's
+  declaration, reordering one, or dropping a field a control stopped emitting
+  all shift the identifiers, which a consumer reads as findings resolving and
+  reappearing. Treat each declaration as a contract, and bump
+  `identity.RecipeVersion` when one changes.
 
-The selection lives in `finding/identity` (`Of`, `Fingerprint`, `SubjectKeys`,
-`RecipeVersion`), a public package, so a consumer outside this module derives
-the same identity Plumber does. `internal/engine/opa` reads it through
-`Finding.Identity()` and `StampFingerprints`, which stamps the hash once per
-run, immediately after findings are finalized.
+The selection lives in `finding/identity` (`Of`, `Fingerprint`, `Declared`,
+`DeclaredCodes`, `RecipeVersion`, and the deprecated `SubjectKeys`), a public
+package, so a consumer outside this module derives the same identity Plumber
+does. `internal/engine/opa` reads it through `Finding.Identity()` and
+`StampFingerprints`, which stamps the hash once per run, immediately after
+findings are finalized.
 
 ### Reading the identity from Plumber's output
 
@@ -356,17 +416,18 @@ it:
 ```json
 {
   "code": "ISSUE-701",
-  "fingerprint": "250f3b7fb7136386",
+  "fingerprint": "93da63ca890b307b",
   "job": "build_debian/build",
   "uses": "element-hq/packages.element.io@master",
   "identity": {
-    "version": 2,
+    "version": 4,
     "subjectFromMessage": false,
     "fields": [
       { "key": "code",  "value": "ISSUE-701" },
       { "key": "file",  "value": ".github/workflows/build_debian.yaml" },
       { "key": "job",   "value": "build_debian/build" },
-      { "key": "uses",  "value": "element-hq/packages.element.io@master" }
+      { "key": "uses",  "value": "element-hq/packages.element.io@master" },
+      { "key": "step",  "value": "" }
     ]
   }
 }
