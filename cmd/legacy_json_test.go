@@ -258,11 +258,15 @@ func TestProjectFindingIdentityMarshalsToTheDocumentedShape(t *testing.T) {
 	}
 }
 
-// The message fallback has to survive the encoding too: it is the flag telling
-// a consumer which findings a copy-edit would re-key.
-func TestProjectFindingIdentityMarshalsTheMessageFallback(t *testing.T) {
+// The message fallback still has to survive the encoding on the one path that
+// can still reach it: an undeclared code, the defensive backstop. Its
+// subjectFromMessage flag is what tells a consumer the finding is re-keyed by a
+// copy-edit. No registered code takes this path now (every one declares a
+// structured or canonical identity); it is exercised here so the serialization
+// cannot silently break.
+func TestProjectFindingIdentityMarshalsTheBackstopMessageFallback(t *testing.T) {
 	f := opaengine.Finding{
-		Code: "ISSUE-803", Job: "build", Message: "job \"build\" runs with overly broad permissions",
+		Code: "ISSUE-UNDECLARED", Job: "build", Message: "job \"build\" hit an undeclared code",
 		Fingerprint: "deadbeefcafef00d",
 	}
 
@@ -312,26 +316,27 @@ func TestProjectFindingIdentityCarriesTheStrippedFile(t *testing.T) {
 	t.Errorf("identity.fields does not carry the file: %v", block["fields"])
 }
 
-// A rule that emits no structured key falls back to its message, which the
-// issue entry also strips. The identity block reports both the fallback value
-// and the fact that it is one, so a consumer knows this finding is re-keyed by
-// a copy-edit.
-func TestProjectFindingIdentityReportsTheMessageFallback(t *testing.T) {
+// A former message-keyed control now reports a structured identity: ISSUE-803
+// identifies on {file, job}, so subjectFromMessage is false and the prose is no
+// longer part of the identity block. Regression guard for the
+// message-elimination pass.
+func TestProjectFindingIdentityReportsStructuredSubjectForFormerMessageCode(t *testing.T) {
 	f := opaengine.Finding{
-		Code: "ISSUE-803", Job: "build", Message: "job \"build\" runs with overly broad permissions",
+		Code: "ISSUE-803", File: ".github/workflows/ci.yml", Job: "build",
+		Message:     "job \"build\" runs with overly broad permissions",
 		Fingerprint: "deadbeefcafef00d",
 	}
 
 	got := projectFinding(f, "job")
 
 	block := got["identity"].(map[string]any)
-	if block["subjectFromMessage"] != true {
-		t.Errorf("subjectFromMessage = %v, want true", block["subjectFromMessage"])
+	if block["subjectFromMessage"] == true {
+		t.Errorf("subjectFromMessage = true, want false for a now-structured code")
 	}
-	fields := block["fields"].([]identity.Field)
-	last := fields[len(fields)-1]
-	if last.Key != "message" || last.Value != f.Message {
-		t.Errorf("subject pair = %+v, want the message fallback", last)
+	for _, p := range block["fields"].([]identity.Field) {
+		if p.Key == "message" {
+			t.Errorf("message entered the identity of a now-structured code: %+v", block["fields"])
+		}
 	}
 }
 

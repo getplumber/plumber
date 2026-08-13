@@ -27,10 +27,11 @@ deny contains finding if {
 	cond := job.conditions[j]
 	regex.match(suspicious_pattern, cond)
 	finding := {
-		"code":     "ISSUE-212",
-		"severity": "medium",
-		"message":  sprintf("job %q calls `contains()` with a literal haystack and an expression needle — arguments likely inverted in %q", [job.name, cond]),
-		"job":      job.name,
+		"code":      "ISSUE-212",
+		"severity":  "medium",
+		"message":   sprintf("job %q calls `contains()` with a literal haystack and an expression needle — arguments likely inverted in %q", [job.name, cond]),
+		"job":       job.name,
+		"condition": cond,
 	}
 }
 

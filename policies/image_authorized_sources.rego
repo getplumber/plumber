@@ -30,7 +30,12 @@ deny contains finding if {
 		"message":  sprintf("job %q uses image from untrusted source: %s", [job.name, _full_ref(job.image)]),
 		"job":      job.name,
 		"link":     _full_ref(job.image),
-		"status":   "unauthorized",
+		# Identity keys on imageRepo (registry/name, no tag): the subject
+		# of an untrusted-source finding is the repository, so a routine
+		# tag bump (ruby:3.2 -> ruby:3.3, still untrusted) must not re-key
+		# it. link stays as informational data / trusted-URL matching.
+		"imageRepo": _image_repo(job.image),
+		"status":    "unauthorized",
 	}
 }
 
@@ -87,3 +92,11 @@ _has_known_registry(img) if {
 	img.registry != ""
 	img.registry != "unknown"
 }
+
+# _image_repo is the tagless, digestless `<registry>/<name>` reference —
+# the identity subject for the untrusted-source finding. Mirrors _full_ref
+# minus the tag, collapsing an unknown/empty registry to the bare name.
+_image_repo(img) := ref if {
+	_has_known_registry(img)
+	ref := sprintf("%s/%s", [img.registry, img.name])
+} else := img.name

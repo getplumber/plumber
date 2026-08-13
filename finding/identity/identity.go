@@ -11,13 +11,16 @@
 //
 // What the recipe selects, and why:
 //
-//   - code, file, job: the canonical coordinates of a finding.
-//   - one subject key: what the rule actually flagged (an action ref, a
-//     component path, a variable). Taken from the rule's structured payload in
-//     the priority order of SubjectKeys, first match only. Preferring this over
-//     the prose message is what makes identity survive a message rewording.
-//   - step, when the workflow resolved one: the last discriminator between two
-//     steps of one job that reference the same action.
+// Every registered code has a declaration (declarations.go): an ordered list
+// of field names that identify one finding instance of that code. Of reads
+// the finding's code, looks up its declaration, and renders exactly those
+// fields, in declared order, as the identity. Reserved names file and job
+// read the canonical finding fields; message, also reserved, reads the prose
+// and flags the finding SubjectFromMessage; every other declared name reads
+// the rule's structured Data payload (an action ref, a component path, a
+// variable, a resolved step). There is no dynamic priority search: what a
+// code declares is what it hashes on, so two rules can declare the same
+// field name without one shadowing the other the way a global list would.
 //
 // What it deliberately leaves out: line and url (they move whenever unrelated
 // code above the finding is edited), advisories (grows as CVEs are published),
@@ -76,7 +79,16 @@ import (
 //	   before hashing. It was the collector's absolute path, so the same finding
 //	   carried a different identity depending on whether it was scanned locally or
 //	   on a runner. Re-keys every finding whose file was recorded absolutely.
-const RecipeVersion = 3
+//	4  (2026-08-12, #411): identity comes from per-code declarations
+//	   (declarations.go) instead of the global subject priority list. The
+//	   canonical form is uniformly `key=value` per declared field, so every
+//	   fingerprint value changes at this bump even where the selected fields
+//	   did not. No declared code keys on its prose: the 29 GitHub controls
+//	   that measured onto message now key on a structured subject (uses /
+//	   variableName / condition / ecosystem) or on canonical coordinates alone
+//	   ({file, job}, {file}, or the {} singleton). message survives only as
+//	   the backstop for an undeclared code. See docs/FINGERPRINT.md.
+const RecipeVersion = 4
 
 // fingerprintLength is how many hex characters of the digest the short
 // fingerprint keeps. 16 hex chars (64 bits) is short enough to read in a CSV
@@ -103,9 +115,11 @@ var subjectKeys = []string{
 	"hardcodedJob", "scriptLine", "detail",
 }
 
-// SubjectKeys returns the subject-key priority list. The caller gets a copy, so
-// sorting or trimming the result cannot re-key the findings this process
-// computes afterwards.
+// SubjectKeys returns the v3 subject-key priority list.
+//
+// Deprecated: recipe v4 selects identity from per-code declarations
+// (Declared) and never consults this list. Kept one release for external
+// consumers still reading v3-stamped records; remove after that.
 func SubjectKeys() []string { return slices.Clone(subjectKeys) }
 
 // Finding is the view of a finding the recipe reads. The CLI fills it from its
@@ -157,71 +171,59 @@ type Field struct {
 	Value string `json:"value"`
 }
 
-// Fields is the identity field set of one finding: everything the recipe
-// selected, as data. Pairs renders it in the order it contributes to identity.
+// Fields is the identity field set of one finding: the code plus the pairs
+// its declaration selected, in declared order.
 type Fields struct {
 	Code string `json:"code"`
-	File string `json:"file"`
-	Job  string `json:"job"`
-	// Subject is the one key/value pair that says what the finding is about.
-	// Its Key is the winning member of SubjectKeys, or "message" when the rule
-	// emitted none of them.
-	Subject Field `json:"subject"`
-	// SubjectFromMessage reports that Subject holds the prose fallback rather
-	// than a structured key. Such a finding's identity is tied to the wording of
-	// its rule, so rewording that rule re-keys it.
+	// Selected holds the declared pairs, in declared (= hash) order.
+	Selected []Field `json:"selected"`
+	// SubjectFromMessage reports that the declaration includes the prose
+	// message, so rewording the rule re-keys this finding.
 	SubjectFromMessage bool `json:"subjectFromMessage"`
-	// Step is the resolved step name, empty when the finding has none.
-	Step string `json:"step,omitempty"`
-	// Version is the RecipeVersion that produced this field set, so a consumer
-	// storing it can tell later which selection it was built from.
+	// Version is the RecipeVersion that produced this field set.
 	Version int `json:"version"`
 }
 
-// Pairs returns the selected key/value pairs in the order they contribute to
-// identity. The step pair is present only when the finding resolved one, so a
-// finding without a step is not confused with one whose step is empty.
+// Pairs returns the full ordered identity: the code pair first, then the
+// declared pairs. This is what the JSON identity block publishes.
 func (f Fields) Pairs() []Field {
-	pairs := []Field{
-		{Key: "code", Value: f.Code},
-		{Key: "file", Value: f.File},
-		{Key: "job", Value: f.Job},
-		f.Subject,
-	}
-	if f.Step != "" {
-		pairs = append(pairs, Field{Key: "step", Value: f.Step})
-	}
-	return pairs
+	return append([]Field{{Key: "code", Value: f.Code}}, f.Selected...)
 }
 
-// Of returns the identity field set of a finding. ok is false for a codeless
-// finding: there is nothing stable to report it against, so it has no identity
-// and gets no fingerprint.
-//
-// A coded finding always has an identity, even a narrow one. With no subject
-// key and no message the subject is an empty "message" pair and the finding is
-// identified by code, file and job alone, so every such finding of that control
-// in one job shares a fingerprint. That is deterministic, not an error.
+// Of returns the identity field set of a finding. ok is false only for a
+// codeless finding. A code missing from the declarations table (unreachable
+// while the parity test is green) gets the deterministic backstop: identity
+// is code + message, flagged SubjectFromMessage.
 func Of(f Finding) (Fields, bool) {
 	if f.Code == "" {
 		return Fields{}, false
 	}
-	fields := Fields{
-		Code:    f.Code,
-		File:    f.File,
-		Job:     f.Job,
-		Step:    stringValue(f.Data, "step"),
-		Version: RecipeVersion,
+	decl, ok := declarations[f.Code]
+	if !ok {
+		return Fields{
+			Code:               f.Code,
+			Selected:           []Field{{Key: messageKey, Value: f.Message}},
+			SubjectFromMessage: true,
+			Version:            RecipeVersion,
+		}, true
 	}
-	for _, k := range subjectKeys {
-		if v := stringValue(f.Data, k); v != "" {
-			fields.Subject = Field{Key: k, Value: v}
-			return fields, true
+	out := Fields{Code: f.Code, Version: RecipeVersion, Selected: make([]Field, 0, len(decl))}
+	for _, key := range decl {
+		var v string
+		switch key {
+		case "file":
+			v = f.File
+		case "job":
+			v = f.Job
+		case messageKey:
+			v = f.Message
+			out.SubjectFromMessage = true
+		default:
+			v = stringValue(f.Data, key)
 		}
+		out.Selected = append(out.Selected, Field{Key: key, Value: v})
 	}
-	fields.Subject = Field{Key: messageKey, Value: f.Message}
-	fields.SubjectFromMessage = true
-	return fields, true
+	return out, true
 }
 
 // Fingerprint returns the short, line-independent identifier of a finding: the
@@ -235,18 +237,14 @@ func Fingerprint(f Finding) string {
 	return hex.EncodeToString(sum[:])[:fingerprintLength]
 }
 
-// canonical renders the field set as the newline-joined string that is hashed.
-// The structured subject contributes "key=value" so two different keys holding
-// the same value cannot collide; the message fallback contributes the message
-// alone, which is what the published fingerprints were computed from.
+// canonical renders the hashed form: the code, then every declared pair as
+// key=value, newline-joined. Empty values render as `key=` so absence is
+// deterministic and cannot shift later segments.
 func (f Fields) canonical() string {
-	subject := f.Subject.Value
-	if !f.SubjectFromMessage {
-		subject = f.Subject.Key + "=" + f.Subject.Value
-	}
-	segments := []string{f.Code, f.File, f.Job, subject}
-	if f.Step != "" {
-		segments = append(segments, f.Step)
+	segments := make([]string, 0, len(f.Selected)+1)
+	segments = append(segments, f.Code)
+	for _, p := range f.Selected {
+		segments = append(segments, p.Key+"="+p.Value)
 	}
 	return strings.Join(segments, "\n")
 }
@@ -254,13 +252,13 @@ func (f Fields) canonical() string {
 // stringValue reads a non-empty string from a payload bag, tolerating both a
 // missing key and a value the rule emitted as something other than a string.
 //
-// A non-string is skipped, not coerced, and a subject key that is skipped drops
-// the finding to prose identity. That is reachable from real payload: a JSON
-// round trip turns a numeric `tag: 7` into a float64. Both sides of the recipe
-// read it the same way, so the CLI and a consumer still agree, and
-// Fields.SubjectFromMessage makes the degradation visible rather than silent.
-// Coercing instead would be a better answer, but it would re-key every finding
-// it applies to, so it is a RecipeVersion decision rather than a free fix.
+// A non-string is skipped, not coerced: the declared field renders as an
+// empty pair (key=), the same as when the rule never set the key at all. That
+// is reachable from real payload: a JSON round trip turns a numeric `tag: 7`
+// into a float64. Both sides of the recipe read it the same way, so the CLI
+// and a consumer still agree. Coercing instead would be a better answer, but
+// it would re-key every finding it applies to, so it is a RecipeVersion
+// decision rather than a free fix.
 func stringValue(data map[string]any, key string) string {
 	v, _ := data[key].(string)
 	return v

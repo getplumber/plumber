@@ -34,10 +34,11 @@ deny contains finding if {
 	cond := job.conditions[j]
 	reason := _unsound_reason(cond)
 	finding := {
-		"code":     "ISSUE-211",
-		"severity": "medium",
-		"message":  sprintf("job %q has an unsound `if:` condition (%s): %q", [job.name, reason, cond]),
-		"job":      job.name,
+		"code":      "ISSUE-211",
+		"severity":  "medium",
+		"message":   sprintf("job %q has an unsound `if:` condition (%s): %q", [job.name, reason, cond]),
+		"job":       job.name,
+		"condition": cond,
 	}
 }
 

@@ -33,6 +33,7 @@ deny contains finding if {
 		"severity": "high",
 		"message":  sprintf("job %q mints a GitHub App token via %q with `skip-token-revoke: true` — the token survives the run and any later leak stays exploitable", [job.name, action.uses]),
 		"job":      job.name,
+		"uses":     action.uses,
 	}
 }
 

@@ -32,7 +32,11 @@ deny contains finding if {
 		"severity": "high",
 		"message":  sprintf("security job %q is weakened: %s", [job.name, reason]),
 		"job":      job.name,
-		"detail":   reason,
+		# detail is the identity discriminator (a job can be weakened in
+		# several ways at once). It is a stable token, NOT the prose reason:
+		# keying identity on the sentence would re-key every finding on a
+		# copy-edit. The wording lives in message only.
+		"detail": "allow_failure",
 	}
 }
 
@@ -48,7 +52,7 @@ deny contains finding if {
 		"severity": "high",
 		"message":  sprintf("security job %q is weakened: %s", [job.name, reason]),
 		"job":      job.name,
-		"detail":   reason,
+		"detail":   "when_manual",
 	}
 }
 
@@ -67,18 +71,25 @@ deny contains finding if {
 	_is_security_job(job.name)
 	input.config.securityJobsWeakened.rulesMustNotBeRedefined == true
 	_rules_redefined_by_project(job)
-	some j
-	rule := job.rules[j]
-	w := rule.when
-	_blocking_when(w)
-	reason := sprintf("rules overridden with 'when: %s', job will not run", [w])
+	_has_blocking_rule(job)
 	finding := {
 		"code":     "ISSUE-410",
 		"severity": "high",
-		"message":  sprintf("security job %q is weakened: %s", [job.name, reason]),
+		"message":  sprintf("security job %q is weakened: rules overridden so the job will not run", [job.name]),
 		"job":      job.name,
-		"detail":   reason,
+		# One finding per job for the rules case: the weakening is "the
+		# rules block neutralises the scan", so the specific when: value
+		# (manual vs never) is incidental and must not split or churn the
+		# identity.
+		"detail": "rules_override",
 	}
+}
+
+# _has_blocking_rule is true when any of the job's rules carries a
+# blocking when: (manual/never) that neutralises the scan.
+_has_blocking_rule(job) if {
+	some j
+	_blocking_when(job.rules[j].when)
 }
 
 _is_security_job(name) if {

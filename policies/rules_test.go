@@ -1493,10 +1493,11 @@ func TestIssue401_HardcodedJobs(t *testing.T) {
 }
 
 // assertSubjectKey pins the structured key a control emits to say what its
-// finding is about. That key is what the finding-identity recipe selects
-// (finding/identity.SubjectKeys); a control emitting none of them falls back to
-// its prose message, so rewording the rule re-keys every finding it ever
-// emitted. Pinning the key here is what keeps that from happening silently.
+// finding is about. That key must be part of the code's v4 declaration
+// (finding/identity.Declared); a control whose Rego payload stops carrying a
+// declared key silently degrades that pair to empty, so dropping or renaming
+// the payload re-keys every finding it ever emitted. Pinning the key here is
+// what keeps that from happening silently.
 //
 // This is also the tripwire the recipe's own tests cannot be: they run on fixed
 // identity.Finding values, so they guard the algorithm and stay green when a
@@ -1505,8 +1506,9 @@ func TestIssue401_HardcodedJobs(t *testing.T) {
 // purpose, bump identity.RecipeVersion in the same change.
 func assertSubjectKey(t *testing.T, findings []opaengine.Finding, code, key string, wantValues []string) {
 	t.Helper()
-	if !slices.Contains(identity.SubjectKeys(), key) {
-		t.Fatalf("%s: key %q is not part of the identity recipe: %v", code, key, identity.SubjectKeys())
+	decl, ok := identity.Declared(code)
+	if !ok || !slices.Contains(decl, key) {
+		t.Fatalf("%s: key %q is not part of the code's identity declaration: %v", code, key, decl)
 	}
 	got := []string{}
 	for _, f := range findings {
@@ -1517,17 +1519,87 @@ func assertSubjectKey(t *testing.T, findings []opaengine.Finding, code, key stri
 		if !ok {
 			t.Fatalf("%s: finding has no identity: %+v", code, f)
 		}
-		if fields.Subject.Key != key {
-			t.Errorf("%s: identity subject is %q=%q, want the structured key %q", code, fields.Subject.Key, fields.Subject.Value, key)
+		value, declared := "", false
+		for _, p := range fields.Selected {
+			if p.Key == key {
+				value, declared = p.Value, true
+				break
+			}
+		}
+		if !declared {
+			t.Errorf("%s: declared fields %v do not include the structured key %q", code, fields.Selected, key)
 			continue
 		}
-		got = append(got, fields.Subject.Value)
+		got = append(got, value)
 	}
 	slices.Sort(got)
 	want := slices.Clone(wantValues)
 	slices.Sort(want)
 	if !slices.Equal(got, want) {
 		t.Errorf("%s: %s values = %v, want %v", code, key, got, want)
+	}
+}
+
+// TestNewV4SubjectValues pins the VALUE of every structured identity subject
+// this control-library PR newly emits, not just its presence. The identity
+// harness proves the declared key appears in some emission; it never checks
+// the value, and each of these values feeds the recipe-v4 fingerprint
+// (identity.Of renders key=value for every declared field). So a rule that
+// regressed to the wrong field (job.name instead of the ref) or an empty value
+// would silently re-key every finding of that code while the suite stayed
+// green. One case per newly-emitted subject; the value is asserted through the
+// finding's own Identity(), the same path the fingerprint hashes.
+func TestNewV4SubjectValues(t *testing.T) {
+	cases := []struct {
+		code, fixture, key string
+		want               []string
+		dependabot         bool
+	}{
+		{"ISSUE-209", "violation_env_bound_body.yml", "variableName", []string{"BODY"}, false},
+		{"ISSUE-210", "violation_actor_dependabot.yml", "condition", []string{"github.actor == 'dependabot[bot]'"}, false},
+		{"ISSUE-211", "violation_tautology.yml", "condition", []string{"always() || github.ref == 'refs/heads/main'"}, false},
+		{"ISSUE-212", "violation_inverted.yml", "condition", []string{"contains('main', github.ref)"}, false},
+		{"ISSUE-302", "violation_inherit.yml", "uses", []string{"acme/shared/.github/workflows/publish.yml@v1"}, false},
+		{"ISSUE-306", "violation_skip_revoke.yml", "uses", []string{"actions/create-github-app-token@v1"}, false},
+		{"ISSUE-901", "violation_allow.yml", "ecosystem", []string{"npm"}, true},
+		{"ISSUE-902", "violation_no_cooldown.yml", "ecosystem", []string{"npm", "pip"}, true},
+	}
+	engine := opaengine.New()
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	for _, tc := range cases {
+		t.Run(tc.code, func(t *testing.T) {
+			tmp := t.TempDir()
+			wfDir := filepath.Join(tmp, ".github", "workflows")
+			if err := os.MkdirAll(wfDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(filepath.Join("testdata", tc.code, "github", tc.fixture))
+			if err != nil {
+				t.Fatalf("read fixture: %v", err)
+			}
+			if tc.dependabot {
+				if err := os.WriteFile(filepath.Join(tmp, ".github", "dependabot.yml"), data, 0o644); err != nil {
+					t.Fatal(err)
+				}
+				minimal := []byte("name: x\non: [push]\njobs:\n  x:\n    runs-on: ubuntu-latest\n    steps:\n      - run: echo x\n")
+				if err := os.WriteFile(filepath.Join(wfDir, "w.yml"), minimal, 0o644); err != nil {
+					t.Fatal(err)
+				}
+			} else if err := os.WriteFile(filepath.Join(wfDir, tc.fixture), data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			pipeline, _, err := githubpkg.ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
+			if err != nil {
+				t.Fatalf("scan: %v", err)
+			}
+			findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+			if err != nil {
+				t.Fatalf("evaluate: %v", err)
+			}
+			assertSubjectKey(t, findings, tc.code, tc.key, tc.want)
+		})
 	}
 }
 
@@ -1604,6 +1676,57 @@ func TestIssue101_ImageAuthorizedSources(t *testing.T) {
 	}
 }
 
+// TestImageRepoIdentityValue pins the value of the imageRepo identity subject
+// for ISSUE-101 and ISSUE-103. imageRepo must be the tagless
+// <registry>/<name>, so a tag bump on the same untrusted / unpinned image does
+// not re-key the finding (the fix for the review point that the tag was
+// polluting image identity). It also pins the registryless cases the GitLab
+// collector actually produces: an empty registry AND the "unknown" literal
+// both collapse to the bare name, and — critically — the two controls'
+// _image_repo helpers must agree on that (they diverged on "unknown" before).
+// A wrong _image_repo (kept the tag, dropped the registry, or left "unknown"
+// in) fails here, which the presence/harness checks alone would not catch.
+func TestImageRepoIdentityValue(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	cfg := map[string]any{
+		// ISSUE-101 fires: the image is not in the trusted list.
+		"imageAuthorizedSources": map[string]any{
+			"trustedUrls": []string{"registry.company.com/*"},
+		},
+		// ISSUE-103 fires: pin-by-digest required and the image is tag-only.
+		"containerImageMustNotUseForbiddenTags": map[string]any{
+			"mustBePinnedByDigest": true,
+		},
+	}
+	cases := []struct {
+		name     string
+		image    ir.Image
+		wantRepo string
+	}{
+		{"known_registry", ir.Image{Name: "attacker/app", Tag: "3.2", Registry: "ghcr.io"}, "ghcr.io/attacker/app"},
+		{"unknown_registry", ir.Image{Name: "attacker/app", Tag: "3.2", Registry: "unknown"}, "attacker/app"},
+		{"no_registry", ir.Image{Name: "attacker/app", Tag: "3.2"}, "attacker/app"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pipeline := &ir.NormalizedPipeline{
+				Provider: ir.ProviderGitLab,
+				Jobs:     []ir.Job{{Name: "build", Image: &tc.image}},
+			}
+			findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+			if err != nil {
+				t.Fatalf("evaluate: %v", err)
+			}
+			// Both controls key on the tagless repo, and must agree on it.
+			assertSubjectKey(t, findings, "ISSUE-101", "imageRepo", []string{tc.wantRepo})
+			assertSubjectKey(t, findings, "ISSUE-103", "imageRepo", []string{tc.wantRepo})
+		})
+	}
+}
+
 // TestIssue410_SecurityJobsWeakened flags SAST-like jobs with
 // allow_failure: true or when: manual.
 func TestIssue410_SecurityJobsWeakened(t *testing.T) {
@@ -1669,13 +1792,16 @@ func TestIssue410_MultipleWeakeningsOnOneJob(t *testing.T) {
 			hits = append(hits, detail)
 		}
 	}
-	// Expect 4 findings on this one job:
-	//   - allow_failure: true masks scan failures
-	//   - when: manual prevents the scan from running automatically
-	//   - rules overridden with 'when: manual', job will not run
-	//   - rules overridden with 'when: never', job will not run
-	if len(hits) != 4 {
-		t.Fatalf("expected 4 distinct ISSUE-410 reasons on the multi-weakened job, got %d: %v", len(hits), hits)
+	// Three distinct weakening TOKENS on this one job. detail is a stable
+	// token (not the prose reason), so identity survives a message rewording:
+	//   - allow_failure  (allow_failure: true)
+	//   - when_manual    (job-level when: manual)
+	//   - rules_override (the rules block pins when: manual/never — one
+	//     finding per job regardless of how many blocking rules, so the two
+	//     rule entries in this fixture collapse into a single finding).
+	slices.Sort(hits)
+	if !slices.Equal(hits, []string{"allow_failure", "rules_override", "when_manual"}) {
+		t.Fatalf("expected the three weakening tokens on the multi-weakened job, got %v", hits)
 	}
 }
 
@@ -4063,7 +4189,7 @@ func TestIssue114_KnownVulnerableAction(t *testing.T) {
 			Jobs: []ir.Job{{
 				Name: "build",
 				Uses: []ir.Action{
-					{Uses: "tj-actions/changed-files@v45", Metadata: &ir.ActionMetadata{RefKind: "tag", RefExists: true, Advisories: []string{"GHSA-mrrh-fwg8-r2c3"}}},
+					{Uses: "tj-actions/changed-files@v45", Line: 10, Name: "Get changed files", Metadata: &ir.ActionMetadata{RefKind: "tag", RefExists: true, Advisories: []string{"GHSA-mrrh-fwg8-r2c3"}}},
 					{Uses: "actions/checkout@v4", Metadata: &ir.ActionMetadata{RefKind: "tag", RefExists: true}},
 				},
 			}},
@@ -4081,6 +4207,9 @@ func TestIssue114_KnownVulnerableAction(t *testing.T) {
 			wantLink := "https://github.com/advisories/GHSA-mrrh-fwg8-r2c3"
 			if !strings.Contains(f.Message, wantLink) {
 				t.Fatalf("ISSUE-703 message missing advisory URL\n  got: %s\n  want substring: %s", f.Message, wantLink)
+			}
+			if step, ok := f.Data["step"].(string); !ok || step != "Get changed files" {
+				t.Errorf("ISSUE-703 finding missing/wrong step field: %v", f.Data["step"])
 			}
 		}
 		if hits != 1 {
@@ -4177,6 +4306,8 @@ func TestIssue714_MutableRemoteExec(t *testing.T) {
 				Name: "build",
 				Uses: []ir.Action{{
 					Uses:     "vendor/action@v1",
+					Line:     10,
+					Name:     "Fetch and run",
 					Metadata: &ir.ActionMetadata{MutableRemoteExec: &ir.MutableRemoteExec{Tier: tier, URL: url}},
 				}},
 			}},
@@ -4252,7 +4383,7 @@ func TestIssue108_ActionArchivedRepo(t *testing.T) {
 			Jobs: []ir.Job{{
 				Name: "release",
 				Uses: []ir.Action{
-					{Uses: "archived-org/release-action@v1", Metadata: &ir.ActionMetadata{RepoArchived: true}},
+					{Uses: "archived-org/release-action@v1", Line: 10, Name: "Release", Metadata: &ir.ActionMetadata{RepoArchived: true}},
 				},
 			}},
 		}
@@ -4268,6 +4399,9 @@ func TestIssue108_ActionArchivedRepo(t *testing.T) {
 			hits++
 			if uses, ok := f.Data["uses"].(string); !ok || uses != "archived-org/release-action@v1" {
 				t.Errorf("ISSUE-702 finding missing/wrong uses field: %v", f.Data["uses"])
+			}
+			if step, ok := f.Data["step"].(string); !ok || step != "Release" {
+				t.Errorf("ISSUE-702 finding missing/wrong step field: %v", f.Data["step"])
 			}
 		}
 		if hits != 1 {
@@ -4377,9 +4511,9 @@ func TestIssue713_ActionAuthorizedSources(t *testing.T) {
 
 	t.Run("unauthorized owner fires", func(t *testing.T) {
 		got := hits713(t, allowlistCfg, []ir.Action{
-			{Uses: "actions/checkout@v4"},   // trusted (official)
-			{Uses: "random/evil-action@v1"}, // not trusted
-			{Uses: "jdx/other-action@v1"},   // jdx exact entry is mise-action only
+			{Uses: "actions/checkout@v4"},                                           // trusted (official)
+			{Uses: "random/evil-action@v1", Line: 10, Name: "Run untrusted action"}, // not trusted
+			{Uses: "jdx/other-action@v1"},                                           // jdx exact entry is mise-action only
 		}, "")
 		want := []string{"jdx/other-action@v1", "random/evil-action@v1"}
 		if !stringSlicesEqual(got, want) {
@@ -5024,11 +5158,11 @@ func TestIssue323_FindingsCarryStructuredEvidence(t *testing.T) {
 			name: "ISSUE-701 step-level action carries uses",
 			pipeline: &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{{
 				Name: "build",
-				Uses: []ir.Action{{Uses: "aquasecurity/trivy-action@0.28.0"}},
+				Uses: []ir.Action{{Uses: "aquasecurity/trivy-action@0.28.0", Line: 10, Name: "Run Trivy scan"}},
 			}}},
 			cfg:  map[string]any{"actionsMustBePinnedByCommitSha": map[string]any{}},
 			code: "ISSUE-701",
-			want: map[string]string{"uses": "aquasecurity/trivy-action@0.28.0"},
+			want: map[string]string{"uses": "aquasecurity/trivy-action@0.28.0", "step": "Run Trivy scan"},
 		},
 		{
 			name: "ISSUE-701 reusable workflow carries uses",
@@ -5044,39 +5178,39 @@ func TestIssue323_FindingsCarryStructuredEvidence(t *testing.T) {
 			name: "ISSUE-307 artipacked carries uses",
 			pipeline: &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{{
 				Name: "build",
-				Uses: []ir.Action{{Uses: "actions/checkout@v4"}},
+				Uses: []ir.Action{{Uses: "actions/checkout@v4", Line: 10, Name: "Checkout"}},
 			}}},
 			code: "ISSUE-307",
-			want: map[string]string{"uses": "actions/checkout@v4"},
+			want: map[string]string{"uses": "actions/checkout@v4", "step": "Checkout"},
 		},
 		{
 			name: "ISSUE-402 ambiguous action ref carries uses",
 			pipeline: &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{{
 				Name: "build",
-				Uses: []ir.Action{{Uses: "owner/repo@v1", Metadata: &ir.ActionMetadata{RefKind: "tag", RefExists: true, RefIsAmbiguous: true}}},
+				Uses: []ir.Action{{Uses: "owner/repo@v1", Line: 10, Name: "Build", Metadata: &ir.ActionMetadata{RefKind: "tag", RefExists: true, RefIsAmbiguous: true}}},
 			}}},
 			code: "ISSUE-402",
-			want: map[string]string{"uses": "owner/repo@v1"},
+			want: map[string]string{"uses": "owner/repo@v1", "step": "Build"},
 		},
 		{
 			name: "ISSUE-421 static publish token carries uses",
 			pipeline: &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{{
 				Name: "publish",
-				Uses: []ir.Action{{Uses: "pypa/gh-action-pypi-publish@v1", With: map[string]any{"password": "${{ secrets.PYPI_TOKEN }}"}}},
+				Uses: []ir.Action{{Uses: "pypa/gh-action-pypi-publish@v1", Line: 10, Name: "Publish to PyPI", With: map[string]any{"password": "${{ secrets.PYPI_TOKEN }}"}}},
 			}}},
 			code: "ISSUE-421",
-			want: map[string]string{"uses": "pypa/gh-action-pypi-publish@v1"},
+			want: map[string]string{"uses": "pypa/gh-action-pypi-publish@v1", "step": "Publish to PyPI"},
 		},
 		{
 			name: "ISSUE-705 unscoped cache restore carries uses",
 			pipeline: &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{{
 				Name:     "publish",
 				Triggers: []string{"release"},
-				Uses:     []ir.Action{{Uses: "actions/cache@v4", With: map[string]any{"key": "build-cache"}}},
+				Uses:     []ir.Action{{Uses: "actions/cache@v4", Line: 10, Name: "Restore cache", With: map[string]any{"key": "build-cache"}}},
 			}}},
 			cfg:  issue705DefaultConfig(),
 			code: "ISSUE-705",
-			want: map[string]string{"uses": "actions/cache@v4"},
+			want: map[string]string{"uses": "actions/cache@v4", "step": "Restore cache"},
 		},
 		{
 			name: "ISSUE-706 dockerfile base carries image",
@@ -5091,19 +5225,19 @@ func TestIssue323_FindingsCarryStructuredEvidence(t *testing.T) {
 			name: "ISSUE-707 impostor commit carries uses",
 			pipeline: &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{{
 				Name: "build",
-				Uses: []ir.Action{{Uses: "actions/checkout@" + deadSHA, Metadata: &ir.ActionMetadata{RefKnownAbsent: true}}},
+				Uses: []ir.Action{{Uses: "actions/checkout@" + deadSHA, Line: 10, Name: "Checkout", Metadata: &ir.ActionMetadata{RefKnownAbsent: true}}},
 			}}},
 			code: "ISSUE-707",
-			want: map[string]string{"uses": "actions/checkout@" + deadSHA},
+			want: map[string]string{"uses": "actions/checkout@" + deadSHA, "step": "Checkout"},
 		},
 		{
 			name: "ISSUE-708 sha/comment mismatch carries uses and comment",
 			pipeline: &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{{
 				Name: "build",
-				Uses: []ir.Action{{Uses: "owner/repo@" + oldSHA, Comment: "v4.1.0", Metadata: &ir.ActionMetadata{CommentVersion: "v4.1.0", CommentTagSha: deadSHA}}},
+				Uses: []ir.Action{{Uses: "owner/repo@" + oldSHA, Line: 10, Name: "Checkout", Comment: "v4.1.0", Metadata: &ir.ActionMetadata{CommentVersion: "v4.1.0", CommentTagSha: deadSHA}}},
 			}}},
 			code: "ISSUE-708",
-			want: map[string]string{"uses": "owner/repo@" + oldSHA, "comment": "v4.1.0"},
+			want: map[string]string{"uses": "owner/repo@" + oldSHA, "comment": "v4.1.0", "step": "Checkout"},
 		},
 		{
 			name: "ISSUE-708 tag/comment mismatch carries uses and comment",
@@ -5118,29 +5252,29 @@ func TestIssue323_FindingsCarryStructuredEvidence(t *testing.T) {
 			name: "ISSUE-709 stale pin carries uses",
 			pipeline: &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{{
 				Name: "build",
-				Uses: []ir.Action{{Uses: "owner/repo@" + oldSHA, Metadata: &ir.ActionMetadata{LatestReleaseSha: deadSHA, LatestTag: "v5"}}},
+				Uses: []ir.Action{{Uses: "owner/repo@" + oldSHA, Line: 10, Name: "Checkout", Metadata: &ir.ActionMetadata{LatestReleaseSha: deadSHA, LatestTag: "v5"}}},
 			}}},
 			code: "ISSUE-709",
-			want: map[string]string{"uses": "owner/repo@" + oldSHA},
+			want: map[string]string{"uses": "owner/repo@" + oldSHA, "step": "Checkout"},
 		},
 		{
 			name: "ISSUE-711 superfluous action carries uses",
 			pipeline: &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{{
 				Name: "build",
-				Uses: []ir.Action{{Uses: "nick-invision/retry@v2"}},
+				Uses: []ir.Action{{Uses: "nick-invision/retry@v2", Line: 10, Name: "Retry"}},
 			}}},
 			code: "ISSUE-711",
-			want: map[string]string{"uses": "nick-invision/retry@v2"},
+			want: map[string]string{"uses": "nick-invision/retry@v2", "step": "Retry"},
 		},
 		{
 			name: "ISSUE-804 pull_request_target head checkout carries uses and ref",
 			pipeline: &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{{
 				Name:     "pwn",
 				Triggers: []string{"pull_request_target"},
-				Uses:     []ir.Action{{Uses: "actions/checkout@v4", With: map[string]any{"ref": "${{ github.event.pull_request.head.sha }}"}}},
+				Uses:     []ir.Action{{Uses: "actions/checkout@v4", Line: 10, Name: "Checkout PR head", With: map[string]any{"ref": "${{ github.event.pull_request.head.sha }}"}}},
 			}}},
 			code: "ISSUE-804",
-			want: map[string]string{"uses": "actions/checkout@v4", "ref": "${{ github.event.pull_request.head.sha }}"},
+			want: map[string]string{"uses": "actions/checkout@v4", "ref": "${{ github.event.pull_request.head.sha }}", "step": "Checkout PR head"},
 		},
 	}
 

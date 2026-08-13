@@ -33,10 +33,11 @@ deny contains finding if {
 	cond := job.conditions[j]
 	_has_spoofable_actor_check(cond)
 	finding := {
-		"code":     "ISSUE-210",
-		"severity": "high",
-		"message":  sprintf("job %q gates on a spoofable actor/bot check — %q cannot be trusted for privileged paths", [job.name, cond]),
-		"job":      job.name,
+		"code":      "ISSUE-210",
+		"severity":  "high",
+		"message":   sprintf("job %q gates on a spoofable actor/bot check — %q cannot be trusted for privileged paths", [job.name, cond]),
+		"job":       job.name,
+		"condition": cond,
 	}
 }
 
