@@ -1,3 +1,20 @@
+## [0.4.37](https://github.com/getplumber/plumber/compare/v0.4.36...v0.4.37) (2026-08-16)
+
+
+### ✨ Features
+
+* **ci:** Add --platform feature to integrate pushing of results per policy ([d6c5d84](https://github.com/getplumber/plumber/commit/d6c5d8480737b3297721631a0c4c6e3f4dae39c4))
+
+
+### 🐛 Bug Fixes
+
+* **ci:** bump Go toolchain to 1.26.6 for stdlib security fixes ([73f5ebe](https://github.com/getplumber/plumber/commit/73f5ebe36ba21a3620b451aa9bb0d0ba0c731915))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.36 refs [skip ci] ([77eb302](https://github.com/getplumber/plumber/commit/77eb302508a01932990e16b31463b3f7cc5014d9))
+
 ## [0.4.36](https://github.com/getplumber/plumber/compare/v0.4.35...v0.4.36) (2026-08-10)
 
 
