@@ -1,8 +1,9 @@
 # Build stage
-# golang:1.26-alpine — pinned to a digest shipping Go 1.26.5 (fixes stdlib
-# advisory GO-2026-4970, High). Bump this digest when go.mod's `toolchain`
-# is raised so the bundled compiler carries stdlib security fixes.
-FROM golang:1.26-alpine@sha256:0178a641fbb4858c5f1b48e34bdaabe0350a330a1b1149aabd498d0699ff5fb2 AS builder
+# golang:1.26-alpine — pinned to a digest shipping Go 1.26.6 (fixes stdlib
+# advisories GO-2026-5026, GO-2026-5972, GO-2026-6089, GO-2026-6090, all High).
+# Bump this digest when go.mod's `toolchain` is raised so the bundled compiler
+# carries stdlib security fixes.
+FROM golang:1.26-alpine@sha256:70b46548e42db77e0966aaf3619fd068734dc6c77584d526b91126504fd95816 AS builder
 
 # Set working directory
 WORKDIR /app
