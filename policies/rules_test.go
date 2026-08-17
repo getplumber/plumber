@@ -1148,6 +1148,143 @@ func TestIssue501_BranchUnprotected(t *testing.T) {
 	}
 }
 
+// countCode counts findings carrying the given code.
+func countCode(findings []opaengine.Finding, code string) int {
+	n := 0
+	for _, f := range findings {
+		if f.Code == code {
+			n++
+		}
+	}
+	return n
+}
+
+// TestIssue201_CicdVariableUnprotected flags settings CI/CD variables that are
+// not protected. These are settings-level findings (no file/job); identity is
+// the variable's name/type/environment. The rule abstains when the settings
+// listing was unreadable (SettingsVariablesKnown=false), so a token without
+// variable-read scope reports not-evaluable rather than a false pass.
+func TestIssue201_CicdVariableUnprotected(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+
+	// Positive: two unprotected variables, one protected (noise).
+	pipeline := &ir.NormalizedPipeline{
+		Provider:               ir.ProviderGitLab,
+		SettingsVariablesKnown: true,
+		SettingsVariables: []ir.SettingsVariable{
+			{Name: "AWS_KEY", Type: "env_var", Environment: "*", Protected: false, Masked: true},
+			{Name: "DEPLOY_TOKEN", Type: "env_var", Environment: "production", Protected: false, Masked: true},
+			{Name: "SAFE", Type: "env_var", Environment: "*", Protected: true, Masked: true},
+		},
+	}
+	findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if got := countCode(findings, "ISSUE-201"); got != 2 {
+		t.Fatalf("expected 2 ISSUE-201 findings, got %d", got)
+	}
+	assertSubjectKey(t, findings, "ISSUE-201", "variableName", []string{"AWS_KEY", "DEPLOY_TOKEN"})
+	assertSubjectKey(t, findings, "ISSUE-201", "environment", []string{"*", "production"})
+
+	// Negative: everything protected -> no findings.
+	clean := &ir.NormalizedPipeline{
+		Provider:               ir.ProviderGitLab,
+		SettingsVariablesKnown: true,
+		SettingsVariables: []ir.SettingsVariable{
+			{Name: "SAFE", Type: "env_var", Environment: "*", Protected: true, Masked: true},
+		},
+	}
+	if f, _ := engine.Evaluate(context.Background(), clean, nil); countCode(f, "ISSUE-201") != 0 {
+		t.Fatalf("expected 0 ISSUE-201 findings when all variables are protected")
+	}
+
+	// Abstain: listing unreadable (Known=false) -> not-evaluable, so no
+	// findings even though a variable is unprotected.
+	unknown := &ir.NormalizedPipeline{
+		Provider:               ir.ProviderGitLab,
+		SettingsVariablesKnown: false,
+		SettingsVariables: []ir.SettingsVariable{
+			{Name: "AWS_KEY", Type: "env_var", Environment: "*", Protected: false},
+		},
+	}
+	if f, _ := engine.Evaluate(context.Background(), unknown, nil); countCode(f, "ISSUE-201") != 0 {
+		t.Fatalf("expected 0 ISSUE-201 findings when the settings listing is unreadable")
+	}
+}
+
+// TestIssue202_CicdVariableUnmasked flags settings CI/CD variables that are
+// not masked (their values print in job logs). Same collector, identity, and
+// abstain semantics as ISSUE-201.
+func TestIssue202_CicdVariableUnmasked(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+
+	// Positive: one unmasked variable, one masked (noise).
+	pipeline := &ir.NormalizedPipeline{
+		Provider:               ir.ProviderGitLab,
+		SettingsVariablesKnown: true,
+		SettingsVariables: []ir.SettingsVariable{
+			{Name: "PLAINTEXT_TOKEN", Type: "env_var", Environment: "*", Protected: true, Masked: false},
+			{Name: "MASKED", Type: "env_var", Environment: "*", Protected: true, Masked: true},
+		},
+	}
+	findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if got := countCode(findings, "ISSUE-202"); got != 1 {
+		t.Fatalf("expected 1 ISSUE-202 finding, got %d", got)
+	}
+	assertSubjectKey(t, findings, "ISSUE-202", "variableName", []string{"PLAINTEXT_TOKEN"})
+
+	// Negative: everything masked -> no findings.
+	clean := &ir.NormalizedPipeline{
+		Provider:               ir.ProviderGitLab,
+		SettingsVariablesKnown: true,
+		SettingsVariables: []ir.SettingsVariable{
+			{Name: "MASKED", Type: "env_var", Environment: "*", Protected: true, Masked: true},
+		},
+	}
+	if f, _ := engine.Evaluate(context.Background(), clean, nil); countCode(f, "ISSUE-202") != 0 {
+		t.Fatalf("expected 0 ISSUE-202 findings when all variables are masked")
+	}
+
+	// Negative: file-type variables cannot be masked in GitLab, so an unmasked
+	// file variable is an unfixable false positive and must NOT fire. Only the
+	// env_var here is flagged. Case-insensitive: the GraphQL enum form "FILE" is
+	// excluded the same as "file".
+	fileVars := &ir.NormalizedPipeline{
+		Provider:               ir.ProviderGitLab,
+		SettingsVariablesKnown: true,
+		SettingsVariables: []ir.SettingsVariable{
+			{Name: "KUBECONFIG", Type: "file", Environment: "*", Protected: true, Masked: false},
+			{Name: "TLS_KEY", Type: "FILE", Environment: "*", Protected: true, Masked: false},
+			{Name: "PLAINTEXT_TOKEN", Type: "env_var", Environment: "*", Protected: true, Masked: false},
+		},
+	}
+	if f, _ := engine.Evaluate(context.Background(), fileVars, nil); countCode(f, "ISSUE-202") != 1 {
+		t.Fatalf("expected exactly 1 ISSUE-202 finding: file-type variables cannot be masked and must be skipped, only the env_var counts")
+	}
+
+	// Abstain: listing unreadable -> not-evaluable.
+	unknown := &ir.NormalizedPipeline{
+		Provider:               ir.ProviderGitLab,
+		SettingsVariablesKnown: false,
+		SettingsVariables: []ir.SettingsVariable{
+			{Name: "PLAINTEXT_TOKEN", Type: "env_var", Environment: "*", Masked: false},
+		},
+	}
+	if f, _ := engine.Evaluate(context.Background(), unknown, nil); countCode(f, "ISSUE-202") != 0 {
+		t.Fatalf("expected 0 ISSUE-202 findings when the settings listing is unreadable")
+	}
+}
+
 // TestIssue505_BranchNonCompliant flags protected branches whose
 // settings fail to meet the declared minimum bar.
 func TestIssue505_BranchNonCompliant(t *testing.T) {

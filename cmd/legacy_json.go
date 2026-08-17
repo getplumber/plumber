@@ -144,8 +144,57 @@ func buildLegacyResult(e control.ControlEntry, result *control.AnalysisResult, p
 		return "jobVariablesOverrideResult", buildJobVariablesOverrideBlock(common, result, findings)
 	case "pipelineMustNotUseDockerInDocker":
 		return "dockerInDockerResult", buildDockerInDockerBlock(common, result, findings)
+	case "cicdVariablesMustBeProtected":
+		return "cicdVariablesProtectedResult", buildCicdVariablesProtectedBlock(common, result, findings)
+	case "cicdVariablesMustBeMasked":
+		return "cicdVariablesMaskedResult", buildCicdVariablesMaskedBlock(common, result, findings)
 	}
 	return "", nil
+}
+
+// buildCicdVariablesProtectedBlock and buildCicdVariablesMaskedBlock emit the
+// legacy JSON blocks for the settings-variable controls. The findings are
+// settings-level (no file/job), so each issue carries the variable identity
+// (variableName / variableType / environment) that projectFindings preserves;
+// the value is never present, per the #370 variable-sensitivity tiers.
+func buildCicdVariablesProtectedBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	return map[string]any{
+		"issues": projectFindings(findings, "job"),
+		"metrics": map[string]any{
+			"totalVariablesChecked": variablesCheckedCount(result),
+			"unprotectedFound":      len(findings),
+		},
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
+	}
+}
+
+func buildCicdVariablesMaskedBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	return map[string]any{
+		"issues": projectFindings(findings, "job"),
+		"metrics": map[string]any{
+			"totalVariablesChecked": variablesCheckedCount(result),
+			"unmaskedFound":         len(findings),
+		},
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
+	}
+}
+
+// variablesCheckedCount is the denominator for the settings-variable JSON
+// blocks: how many variables were read (0 when the listing was unreadable or
+// not collected — the block's status:error then carries the not-evaluable
+// signal). Mirrors the totalVariablesChecked metric on the comparable
+// pipelineMustNotOverrideJobVariables block.
+func variablesCheckedCount(result *control.AnalysisResult) int {
+	if result != nil && result.VariablesData != nil {
+		return len(result.VariablesData.Variables)
+	}
+	return 0
 }
 
 // legacyCommon carries the bookkeeping fields shared by every

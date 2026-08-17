@@ -192,6 +192,22 @@ func caveatStatLines(g findingGroup) []statLine {
 	return out
 }
 
+// variablesUnreadableCaveat returns a single ⚠ caveat stat line when the
+// settings-variable listing could not be read (nil VariablesData, or Known
+// false from a 401/403/null-project). Both variable-control stat builders use
+// it so an unreadable listing shows the caveat instead of a bare green "passed"
+// — the JSON status is already error via StatusFor, this closes the terminal
+// gap. Returns nil when the listing was read authoritatively.
+func variablesUnreadableCaveat(result *control.AnalysisResult) []statLine {
+	if result != nil && result.VariablesData != nil && result.VariablesData.Known {
+		return nil
+	}
+	return []statLine{{
+		Label: statCaveatPrefix + " Variables not evaluated",
+		Value: "CI/CD variables could not be read — token lacks permission or the API returned no data",
+	}}
+}
+
 // renderSkippedControlsSummary prints the "Skipped Controls" section: a
 // top-level section header followed by each skipped control with its
 // skip reason.
@@ -851,6 +867,22 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 		return []statLine{
 			{Label: statActionRefsChecked, Value: fmt.Sprintf("%d", actionRefs)},
 			{Label: "Mutable Remote Exec Found", Value: fmt.Sprintf("%d", findingsCount)},
+		}
+	case "cicdVariablesMustBeProtected":
+		if lines := variablesUnreadableCaveat(result); lines != nil {
+			return lines
+		}
+		return []statLine{
+			{Label: "Variables Checked", Value: fmt.Sprintf("%d", len(result.VariablesData.Variables))},
+			{Label: "Unprotected Variables", Value: fmt.Sprintf("%d", findingsCount)},
+		}
+	case "cicdVariablesMustBeMasked":
+		if lines := variablesUnreadableCaveat(result); lines != nil {
+			return lines
+		}
+		return []statLine{
+			{Label: "Variables Checked", Value: fmt.Sprintf("%d", len(result.VariablesData.Variables))},
+			{Label: "Unmasked Variables", Value: fmt.Sprintf("%d", findingsCount)},
 		}
 	case "branchMustBeProtected":
 		total, toProtect, protected, unprotected := _branchProtectionCounts(result, pc)

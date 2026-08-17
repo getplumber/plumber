@@ -53,6 +53,16 @@ func GitLabControls(pc *configuration.PlumberConfig) []ControlEntry {
 		Skipped:     c.BranchMustBeProtected == nil || !c.BranchMustBeProtected.IsEnabled(),
 	})
 	entries = append(entries, ControlEntry{
+		DisplayName: "CI/CD variables must be protected",
+		ControlName: "cicdVariablesMustBeProtected",
+		Skipped:     c.CicdVariablesMustBeProtected == nil || !c.CicdVariablesMustBeProtected.IsEnabled(),
+	})
+	entries = append(entries, ControlEntry{
+		DisplayName: "CI/CD variables must be masked",
+		ControlName: "cicdVariablesMustBeMasked",
+		Skipped:     c.CicdVariablesMustBeMasked == nil || !c.CicdVariablesMustBeMasked.IsEnabled(),
+	})
+	entries = append(entries, ControlEntry{
 		DisplayName: "Pipeline must not include hardcoded jobs",
 		ControlName: "pipelineMustNotIncludeHardcodedJobs",
 		Skipped:     c.PipelineMustNotIncludeHardcodedJobs == nil || !c.PipelineMustNotIncludeHardcodedJobs.IsEnabled(),
@@ -314,6 +324,12 @@ func DisabledControlNames(c *configuration.ControlsConfig) map[string]bool {
 	}
 	if cfg := c.BranchMustBeProtected; cfg == nil || !cfg.IsEnabled() {
 		out["branchMustBeProtected"] = true
+	}
+	if cfg := c.CicdVariablesMustBeProtected; cfg == nil || !cfg.IsEnabled() {
+		out["cicdVariablesMustBeProtected"] = true
+	}
+	if cfg := c.CicdVariablesMustBeMasked; cfg == nil || !cfg.IsEnabled() {
+		out["cicdVariablesMustBeMasked"] = true
 	}
 	if cfg := c.PipelineMustNotIncludeHardcodedJobs; cfg == nil || !cfg.IsEnabled() {
 		out["pipelineMustNotIncludeHardcodedJobs"] = true
