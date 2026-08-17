@@ -25,6 +25,15 @@ func degradedReasonIsBranchProtection(reason string) bool {
 	return strings.HasPrefix(reason, degradedReasonBranchProtectionPrefix)
 }
 
+// degradedReasonIsVariables classifies a DegradedReasons entry as the
+// settings-variable fetch failure. Carved out the same way as branch
+// protection so a variables network failure does not flip every unrelated
+// CI-file control to error — only the two variable controls report it (via
+// their VariablesData.Known check below).
+func degradedReasonIsVariables(reason string) bool {
+	return strings.HasPrefix(reason, degradedReasonVariablesPrefix)
+}
+
 // StatusFor derives a control's evaluation status for a run.
 //
 // Order matters: findings trump degradation — when a control found real
@@ -88,11 +97,25 @@ func StatusFor(e ControlEntry, result *AnalysisResult, findingCount int) string 
 		}
 		return StatusPassed
 	}
+	if e.ControlName == "cicdVariablesMustBeProtected" || e.ControlName == "cicdVariablesMustBeMasked" {
+		// Settings-variable controls are independent of the CI file: they
+		// evaluate the project's settings variables, not the pipeline, so
+		// the CiMissing / CiValid check below does not apply. The listing
+		// is authoritative only when the collection ran and succeeded
+		// (VariablesData set, Known=true). A nil VariablesData (the
+		// control's collection never ran) or Known=false (a 401/403 from a
+		// token that cannot read variables) means the control never truly
+		// evaluated: an empty findings list here must not read as a pass.
+		if result.VariablesData == nil || !result.VariablesData.Known {
+			return StatusError
+		}
+		return StatusPassed
+	}
 	if result.CiMissing || !result.CiValid {
 		return StatusError
 	}
 	for _, r := range result.DegradedReasons {
-		if !degradedReasonIsBranchProtection(r) {
+		if !degradedReasonIsBranchProtection(r) && !degradedReasonIsVariables(r) {
 			return StatusError
 		}
 	}

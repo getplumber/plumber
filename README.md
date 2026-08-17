@@ -313,6 +313,7 @@ Plumber ships controls for:
 
 - container image pinning and authorized sources
 - branch protection
+- GitLab CI/CD settings variables that must be protected and masked
 - unverified script execution (`curl | bash`, `base64 -d | bash`, etc.)
 - Docker-in-Docker
 - weakened security jobs

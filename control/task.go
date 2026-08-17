@@ -34,6 +34,26 @@ const opaEvaluateTimeout = 2 * time.Minute
 const controlBranchMustBeProtected = "branchMustBeProtected"
 const controlMutableRemoteExec = "actionsMustNotExecuteMutableRemoteCode"
 
+// controlCicdVariablesMustBeProtected / ...Masked are the two .plumber.yaml
+// control keys the task flow references directly, to decide whether to fetch
+// the project's settings-variable listing (an extra API call) before invoking
+// the Rego engine. Both share one collector (CollectGitlabVariables).
+const controlCicdVariablesMustBeProtected = "cicdVariablesMustBeProtected"
+const controlCicdVariablesMustBeMasked = "cicdVariablesMustBeMasked"
+
+// cicdVariableControlEnabled reports whether either settings-variable control
+// is active for this run, so the variable listing is fetched only when a
+// control needs it.
+func cicdVariableControlEnabled(conf *configuration.Configuration) bool {
+	if p := conf.PlumberConfig.GetCicdVariablesMustBeProtectedConfig(); p != nil && p.IsEnabled() && shouldRunControl(controlCicdVariablesMustBeProtected, conf) {
+		return true
+	}
+	if m := conf.PlumberConfig.GetCicdVariablesMustBeMaskedConfig(); m != nil && m.IsEnabled() && shouldRunControl(controlCicdVariablesMustBeMasked, conf) {
+		return true
+	}
+	return false
+}
+
 // shouldScanMutableExec reports whether the collector should fetch and
 // scan action source for actionsMustNotExecuteMutableRemoteCode
 // (ISSUE-714/715). The scan is expensive (up to ~7 sequential HTTP
@@ -119,6 +139,7 @@ func runRegoEngine(
 	originData *gitlab.GitlabPipelineOriginData,
 	imageData *gitlab.GitlabPipelineImageData,
 	protectionData *gitlab.GitlabProtectionAnalysisData,
+	variablesData *gitlab.GitlabVariablesAnalysisData,
 ) []opaengine.Finding {
 	pipeline := gitlab.ToNormalizedPipeline(
 		conf.ProjectPath,
@@ -127,6 +148,7 @@ func runRegoEngine(
 		originData,
 		imageData,
 		protectionData,
+		variablesData,
 	)
 	return evaluatePolicies(l, conf, "gitlab", pipeline)
 }
@@ -646,11 +668,31 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 		}
 	}
 
+	// Fetch settings-variable metadata when either variable control is
+	// enabled — the Rego policies need the protected/masked flags, and the
+	// (extra API call) listing is fetched only when a control needs it. The
+	// variable values never reach the IR (per the #370 sensitivity tiers).
+	var variablesData *gitlab.GitlabVariablesAnalysisData
+	if cicdVariableControlEnabled(conf) {
+		reportProgress(conf, 10, analysisStepCount, "Checking CI/CD variables")
+		var vErr error
+		variablesData, vErr = gitlab.CollectGitlabVariables(conf.ProjectPath, conf.GitlabToken, conf)
+		if vErr != nil && isNetworkError(vErr) {
+			// A transient network failure fetching variables degrades the run
+			// (exit 3), matching the branch/image collectors (#220). A
+			// permission failure (401/403 or a null project) is NOT network, so
+			// it stays a plain not-evaluable — variablesData.Known is false and
+			// StatusFor reports it without failing an otherwise-complete run.
+			markDegraded(result, degradedReasonVariablesPrefix+" (network or timeout)")
+		}
+	}
+
 	// Rego/OPA rule engine evaluation — the single authoritative
 	// compliance path (the legacy Go controls were retired in
 	// docs/REFACTOR_MULTI_PROVIDER.md §8 Phase A).
-	result.Findings = runRegoEngine(l, conf, project, pipelineOriginData, pipelineImageData, protectionData)
+	result.Findings = runRegoEngine(l, conf, project, pipelineOriginData, pipelineImageData, protectionData, variablesData)
 	result.ProtectionData = protectionData
+	result.VariablesData = variablesData
 
 	reportProgress(conf, analysisStepCount, analysisStepCount, "Analysis complete")
 

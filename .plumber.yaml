@@ -147,6 +147,20 @@ gitlab:
         - gcr.io/go-containerregistry/* # google/go-containerregistry (crane, gcrane)
         - gcr.io/google.com/cloudsdktool/* # Google Cloud SDK (gcloud) official
     # ===========================================
+    # CI/CD variables must be protected
+    # ===========================================
+    # Flags project CI/CD settings variables that are not marked
+    # protected, so they are exposed to pipelines on unprotected
+    # branches. GitLab-only.
+    cicdVariablesMustBeProtected:
+      enabled: true
+    # ===========================================
+    # CI/CD variables must be masked
+    # ===========================================
+    # Flags project CI/CD settings variables that are not masked, so
+    # their values print in job logs. GitLab-only.
+    cicdVariablesMustBeMasked:
+      enabled: true
     # Branch must be protected
     # ===========================================
     # Checks that repository branches have proper protection settings.

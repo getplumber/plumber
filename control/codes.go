@@ -59,6 +59,10 @@ const (
 
 // Issue codes for CI/CD variable controls (2xx)
 const (
+	// ISSUE-201: CI/CD settings variable is not protected (exposed to pipelines on unprotected branches)
+	CodeCicdVariableUnprotected ErrorCode = "ISSUE-201"
+	// ISSUE-202: CI/CD settings variable is not masked (its value prints in job logs)
+	CodeCicdVariableUnmasked ErrorCode = "ISSUE-202"
 	// ISSUE-203: Pipeline enables CI debug trace (CI_DEBUG_TRACE or CI_DEBUG_SERVICES)
 	CodeDebugTraceEnabled ErrorCode = "ISSUE-203"
 	// ISSUE-204: Unsafe variable expansion in shell re-interpretation context (eval, sh -c, etc.)
@@ -401,6 +405,24 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 	},
 
 	// CI/CD variable controls (2xx)
+	CodeCicdVariableUnprotected: {
+		Code:        CodeCicdVariableUnprotected,
+		Severity:    SeverityMedium,
+		Title:       "CI/CD settings variable is not protected",
+		Description: "A project CI/CD settings variable is not marked protected, so it is injected into pipelines running on unprotected branches. Anyone who can push to such a branch can exfiltrate its value.",
+		Remediation: "Mark the variable protected in Settings > CI/CD > Variables so it is only exposed to pipelines on protected branches and tags.",
+		DocURL:      docsBaseURL + string(CodeCicdVariableUnprotected),
+		ControlName: "cicdVariablesMustBeProtected",
+	},
+	CodeCicdVariableUnmasked: {
+		Code:        CodeCicdVariableUnmasked,
+		Severity:    SeverityMedium,
+		Title:       "CI/CD settings variable is not masked",
+		Description: "A project CI/CD settings variable is not masked, so its value prints verbatim in every job log a project member can read.",
+		Remediation: "Enable masking in Settings > CI/CD > Variables. GitLab requires a value of at least 8 characters; restructure the secret if it cannot be masked by length.",
+		DocURL:      docsBaseURL + string(CodeCicdVariableUnmasked),
+		ControlName: "cicdVariablesMustBeMasked",
+	},
 	CodeDebugTraceEnabled: {
 		Code:        CodeDebugTraceEnabled,
 		Severity:    SeverityCritical,

@@ -320,6 +320,8 @@ func TestFingerprint_MatchesTheShippedValues(t *testing.T) {
 func TestDeclarations_EveryCodeFingerprintIsPinned(t *testing.T) {
 	golden := map[string]string{
 		"ISSUE-101": "042bff0ebb1d89ee",
+		"ISSUE-201": "ded1b4bbe17f4b90",
+		"ISSUE-202": "df6d1d45432e1cb5",
 		"ISSUE-102": "32b497995ae3be65",
 		"ISSUE-103": "ae7c300b437b0bb0",
 		"ISSUE-203": "0ebe5475110580fc",

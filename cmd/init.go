@@ -28,7 +28,7 @@ const (
 	catImages      = "Container image security (tags, trusted registries)"
 	catComposition = "Pipeline composition (includes, scripts, security jobs, DinD)"
 	catAccess      = "Access control (branch protection)"
-	catVariables   = "Variable security (debug trace, unsafe expansion)"
+	catVariables   = "Variable security (settings variables, debug trace, unsafe expansion)"
 
 	// GitLab-applicable composition checks (existing).
 	compHardcoded    = "Disallow hardcoded jobs (use includes/components)"
@@ -146,6 +146,8 @@ type initWizardState struct {
 
 	DebugTraceEnabled      bool
 	UnsafeExpansionEnabled bool
+	VarsProtectedEnabled   bool
+	VarsMaskedEnabled      bool
 
 	RequireComponents      bool
 	RequiredComponentsExpr string
@@ -504,6 +506,12 @@ func (st *initWizardState) askAccessQuestions() error {
 
 func (st *initWizardState) askVariableQuestions() error {
 	printInitSection("Variable security")
+	if err := survey.AskOne(&survey.Confirm{Message: "Flag CI/CD settings variables (Settings > CI/CD > Variables) that are not protected?", Help: "Unprotected variables are exposed to pipelines on unprotected branches. Requires a GitLab token that can read variables. Ships off by default.", Default: defaultCicdVariablesProtectedEnabled()}, &st.VarsProtectedEnabled); err != nil {
+		return err
+	}
+	if err := survey.AskOne(&survey.Confirm{Message: "Flag CI/CD settings variables that are not masked?", Help: "Unmasked variables print verbatim in job logs. Ships off by default.", Default: defaultCicdVariablesMaskedEnabled()}, &st.VarsMaskedEnabled); err != nil {
+		return err
+	}
 	if err := survey.AskOne(&survey.Confirm{Message: "Flag pipelines that enable CI_DEBUG_TRACE or CI_DEBUG_SERVICES?", Default: true}, &st.DebugTraceEnabled); err != nil {
 		return err
 	}
@@ -772,6 +780,23 @@ var embeddedDefault = sync.OnceValue(func() *configuration.PlumberConfig {
 
 func defaultGitLabControls() configuration.ControlsConfig { return embeddedDefault().GitLab.Controls }
 func defaultGitHubControls() configuration.ControlsConfig { return embeddedDefault().GitHub.Controls }
+
+// defaultCicdVariablesProtectedEnabled / ...Masked source the wizard's
+// Confirm defaults from the shipped default (both ship disabled), so the
+// wizard prompt and the zero-config baseline cannot drift.
+func defaultCicdVariablesProtectedEnabled() bool {
+	if c := defaultGitLabControls().CicdVariablesMustBeProtected; c != nil {
+		return c.IsEnabled()
+	}
+	return false
+}
+
+func defaultCicdVariablesMaskedEnabled() bool {
+	if c := defaultGitLabControls().CicdVariablesMustBeMasked; c != nil {
+		return c.IsEnabled()
+	}
+	return false
+}
 
 // defaultForbiddenTags is the CSV prompt default for forbidden image tags,
 // sourced from the GitLab containerImageMustNotUseForbiddenTags default.
@@ -1044,6 +1069,12 @@ func (st *initWizardState) applyVariableControls(gl *configuration.ProviderConfi
 			DangerousVariables: danger,
 			AllowedPatterns:    parseLinesInit(st.AllowedPatternsMultiline),
 		}
+	}
+	if st.VarsProtectedEnabled {
+		gl.Controls.CicdVariablesMustBeProtected = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
+	}
+	if st.VarsMaskedEnabled {
+		gl.Controls.CicdVariablesMustBeMasked = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
 	}
 }
 

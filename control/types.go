@@ -55,6 +55,11 @@ type AnalysisResult struct {
 	PipelineImageData  *gitlab.GitlabPipelineImageData      `json:"-"`
 	PipelineOriginData *gitlab.GitlabPipelineOriginData     `json:"-"`
 	ProtectionData     *gitlab.GitlabProtectionAnalysisData `json:"-"`
+	// VariablesData records the settings-variable collection for the
+	// cicdVariablesMustBe* controls. Set only after the collection ran;
+	// nil (never ran) or Known=false (401/403) makes those controls
+	// report not-evaluable rather than a false pass (see StatusFor).
+	VariablesData *gitlab.GitlabVariablesAnalysisData `json:"-"`
 
 	// GitHubStats holds per-control denominators computed from the
 	// GitHub IR after a GitHub analysis. Used by the GitHub renderer

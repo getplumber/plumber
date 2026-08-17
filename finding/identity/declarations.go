@@ -81,6 +81,10 @@ var declarations = map[string][]string{
 	"ISSUE-102": {"file", "job", "link"},
 	// Image not pinned by digest: keyed on the image repository (registry/name, no tag) so a tag bump on a still-digestless image does not re-key.
 	"ISSUE-103": {"file", "job", "imageRepo"},
+	// CI/CD settings variable not protected: keyed on the variable identity (settings-level, no file or job), mirroring the platform IdOnly (Name/Type/Environment).
+	"ISSUE-201": {"variableName", "variableType", "environment"},
+	// CI/CD settings variable not masked: keyed on the variable identity (settings-level, no file or job), same shape as ISSUE-201.
+	"ISSUE-202": {"variableName", "variableType", "environment"},
 	// CI debug trace enabled: keyed on the variable name.
 	"ISSUE-203": {"file", "job", "variableName"},
 	// Unsafe variable expansion: keyed on the variable name.
