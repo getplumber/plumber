@@ -1,3 +1,15 @@
+## [0.4.38](https://github.com/getplumber/plumber/compare/v0.4.37...v0.4.38) (2026-08-17)
+
+
+### ✨ Features
+
+* **ci:** restore the contract platform push, key results by policy_id, act on the gate block ([43dd0f8](https://github.com/getplumber/plumber/commit/43dd0f8ad165627350af8d4669fadb01e78c1ffc)), closes [#410](https://github.com/getplumber/plumber/issues/410)
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.37 refs [skip ci] ([c1a149f](https://github.com/getplumber/plumber/commit/c1a149fc13a719e337d9a310ed4cca807996c03b))
+
 ## [0.4.37](https://github.com/getplumber/plumber/compare/v0.4.36...v0.4.37) (2026-08-16)
 
 
