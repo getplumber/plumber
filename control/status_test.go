@@ -9,6 +9,7 @@ import (
 func TestStatusFor(t *testing.T) {
 	content := ControlEntry{ControlName: "actionsMustBePinnedByCommitSha"}
 	branch := ControlEntry{ControlName: "branchMustBeProtected"}
+	variables := ControlEntry{ControlName: "cicdVariablesMustBeProtected"}
 	healthy := &AnalysisResult{CiValid: true}
 
 	cases := []struct {
@@ -34,6 +35,11 @@ func TestStatusFor(t *testing.T) {
 		{"branch control on github ignores content-only degradation", branch, &AnalysisResult{CiValid: true, GitHubStats: &GitHubAnalysisStats{}, DegradedReasons: []string{"2 workflow file(s) could not be fetched and were skipped"}}, 0, StatusPassed},
 		{"branch control on gitlab ignores content-only degradation when its own collection ran", branch, &AnalysisResult{CiValid: true, ProtectionData: &gitlab.GitlabProtectionAnalysisData{}, DegradedReasons: []string{"2 include(s) could not be resolved; their jobs were not analysed"}}, 0, StatusPassed},
 		{"nil result defaults to passed (hand-built test fixtures)", content, nil, 0, StatusPassed},
+		{"variable control passes when the listing was read and clean", variables, &AnalysisResult{CiValid: true, VariablesData: &gitlab.GitlabVariablesAnalysisData{Known: true}}, 0, StatusPassed},
+		{"variable control ignores missing CI config (settings-independent) when the listing was read", variables, &AnalysisResult{CiMissing: true, VariablesData: &gitlab.GitlabVariablesAnalysisData{Known: true}}, 0, StatusPassed},
+		{"variable control errors when its collection never ran", variables, &AnalysisResult{CiValid: true}, 0, StatusError},
+		{"variable control errors on an unreadable listing (401/403, Known=false): empty findings are not a pass", variables, &AnalysisResult{CiValid: true, VariablesData: &gitlab.GitlabVariablesAnalysisData{Known: false}}, 0, StatusError},
+		{"variable control with findings is failed regardless of CI state", variables, &AnalysisResult{CiValid: true, VariablesData: &gitlab.GitlabVariablesAnalysisData{Known: true}}, 3, StatusFailed},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

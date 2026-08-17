@@ -31,6 +31,8 @@ const (
 var controlsMeta = map[string]ControlMeta{
 	// Cross-provider (same control name + rego logic, provider-specific values).
 	"branchMustBeProtected":                       {Providers: []string{ProviderGitLab, ProviderGitHub}},
+	"cicdVariablesMustBeProtected":                {Providers: []string{ProviderGitLab}},
+	"cicdVariablesMustBeMasked":                   {Providers: []string{ProviderGitLab}},
 	"containerImageMustComeFromAuthorizedSources": {Providers: []string{ProviderGitLab, ProviderGitHub}},
 	"containerImageMustNotUseForbiddenTags":       {Providers: []string{ProviderGitLab, ProviderGitHub}},
 	"externalRefsMustNotCollide":                  {Providers: []string{ProviderGitLab, ProviderGitHub}},

@@ -33,6 +33,7 @@ func ToNormalizedPipeline(
 	origin *GitlabPipelineOriginData,
 	images *GitlabPipelineImageData,
 	protection *GitlabProtectionAnalysisData,
+	variables *GitlabVariablesAnalysisData,
 ) *ir.NormalizedPipeline {
 	pipeline := &ir.NormalizedPipeline{
 		Provider:      ir.ProviderGitLab,
@@ -47,6 +48,7 @@ func ToNormalizedPipeline(
 	pipeline.Includes = buildIncludes(origin, ciConfigPath)
 	pipeline.Jobs = buildJobs(origin, imagesByJob, ciConfigPath, pipeline.Includes)
 	pipeline.Branches = buildBranches(protection)
+	pipeline.SettingsVariables, pipeline.SettingsVariablesKnown = buildSettingsVariables(variables)
 	if origin != nil && origin.MergedConf != nil {
 		if globals := extractGitLabVariables(origin.MergedConf.GlobalVariables); len(globals) > 0 {
 			pipeline.GlobalVariables = globals
@@ -59,6 +61,29 @@ func ToNormalizedPipeline(
 	}
 
 	return pipeline
+}
+
+// buildSettingsVariables projects the collected settings CI/CD variables onto
+// the IR, carrying identity and flags only — never the value (per the #370
+// variable-sensitivity tiers). The second return is SettingsVariablesKnown:
+// false when the listing was unreadable (nil data, or a 401/403 the collector
+// recorded as Known=false), so a control keyed on these variables reports
+// not-evaluable rather than a false pass.
+func buildSettingsVariables(variables *GitlabVariablesAnalysisData) ([]ir.SettingsVariable, bool) {
+	if variables == nil {
+		return nil, false
+	}
+	out := make([]ir.SettingsVariable, 0, len(variables.Variables))
+	for _, v := range variables.Variables {
+		out = append(out, ir.SettingsVariable{
+			Name:        v.Name,
+			Type:        v.Type,
+			Environment: v.Environment,
+			Protected:   v.Protected,
+			Masked:      v.Masked,
+		})
+	}
+	return out, variables.Known
 }
 
 // buildBranches flattens the GitLab protection API response into

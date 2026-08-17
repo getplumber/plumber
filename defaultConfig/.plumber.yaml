@@ -209,6 +209,31 @@ gitlab:
         - redhat/* # = docker.io/redhat/* (bare ref, unresolved-$VAR case)
         - opensuse/* # = docker.io/opensuse/* (bare ref, unresolved-$VAR case)
     # ===========================================
+    # CI/CD variables must be protected
+    # ===========================================
+    # Flags project CI/CD settings variables (Settings > CI/CD >
+    # Variables) that are not marked protected, so they are exposed to
+    # pipelines on unprotected branches that any developer can push to.
+    # Requires a GitLab API token with read access to variables; on a
+    # 401/403 the control reports not-evaluable rather than a false pass.
+    #
+    # Ships disabled: enable it once you have reviewed which settings
+    # variables are intentionally unprotected.
+    cicdVariablesMustBeProtected:
+      # Set to true to enable this control
+      enabled: false
+    # ===========================================
+    # CI/CD variables must be masked
+    # ===========================================
+    # Flags project CI/CD settings variables that are not masked, so
+    # their values print verbatim in every job log a project member can
+    # read. GitLab cannot mask values shorter than 8 characters; such
+    # variables are still flagged because the exposure is real.
+    #
+    # Ships disabled: enable it after reviewing your variables.
+    cicdVariablesMustBeMasked:
+      # Set to true to enable this control
+      enabled: false
     # Branch must be protected
     # ===========================================
     # Checks that repository branches have proper protection settings.

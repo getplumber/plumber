@@ -36,6 +36,12 @@ var validControlSchema = map[string][]string{
 		"allowForcePush", "codeOwnerApprovalRequired",
 		"minMergeAccessLevel", "minPushAccessLevel",
 	},
+	"cicdVariablesMustBeProtected": {
+		"enabled",
+	},
+	"cicdVariablesMustBeMasked": {
+		"enabled",
+	},
 	"pipelineMustNotIncludeHardcodedJobs": {
 		"enabled",
 	},
@@ -257,6 +263,18 @@ type ControlsConfig struct {
 
 	// BranchMustBeProtected control configuration
 	BranchMustBeProtected *BranchProtectionControlConfig `yaml:"branchMustBeProtected,omitempty"`
+
+	// CicdVariablesMustBeProtected control configuration (GitLab only).
+	// Flags project CI/CD settings variables that are not marked
+	// protected, so they are exposed to pipelines running on unprotected
+	// branches (ISSUE-201). Config-free; toggle via `enabled`.
+	CicdVariablesMustBeProtected *EnabledOnlyControlConfig `yaml:"cicdVariablesMustBeProtected,omitempty"`
+
+	// CicdVariablesMustBeMasked control configuration (GitLab only).
+	// Flags project CI/CD settings variables that are not masked, so
+	// their values print verbatim in every job log a project member can
+	// read (ISSUE-202). Config-free; toggle via `enabled`.
+	CicdVariablesMustBeMasked *EnabledOnlyControlConfig `yaml:"cicdVariablesMustBeMasked,omitempty"`
 
 	// PipelineMustNotIncludeHardcodedJobs control configuration
 	PipelineMustNotIncludeHardcodedJobs *HardcodedJobsControlConfig `yaml:"pipelineMustNotIncludeHardcodedJobs,omitempty"`
@@ -1129,6 +1147,20 @@ func (c *PlumberConfig) GetBranchMustBeProtectedConfig() *BranchProtectionContro
 		return nil
 	}
 	return c.ControlsFor("gitlab").BranchMustBeProtected
+}
+
+func (c *PlumberConfig) GetCicdVariablesMustBeProtectedConfig() *EnabledOnlyControlConfig {
+	if c == nil {
+		return nil
+	}
+	return c.ControlsFor("gitlab").CicdVariablesMustBeProtected
+}
+
+func (c *PlumberConfig) GetCicdVariablesMustBeMaskedConfig() *EnabledOnlyControlConfig {
+	if c == nil {
+		return nil
+	}
+	return c.ControlsFor("gitlab").CicdVariablesMustBeMasked
 }
 
 // IsEnabled returns whether the control is enabled

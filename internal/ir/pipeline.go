@@ -66,6 +66,24 @@ type NormalizedPipeline struct {
 	// (root, .github/, or docs/). Empty when the file is absent.
 	SecurityPolicyPath string `json:"securityPolicyPath,omitempty"`
 
+	// SettingsVariables are the project's CI/CD settings variables
+	// (GitLab: Settings > CI/CD > Variables), each with its security
+	// flags — NOT the CI file's `variables:` block (that lives in
+	// GlobalVariables / job Variables). The value is deliberately never
+	// projected, per the #370 variable-sensitivity tiers, so a scan
+	// report never carries secret material. Empty on providers without
+	// settings variables.
+	SettingsVariables []SettingsVariable `json:"settingsVariables,omitempty"`
+
+	// SettingsVariablesKnown is true when the settings-variable listing
+	// was fetched authoritatively (an empty SettingsVariables then means
+	// "no variables", a pass). It is false when the listing could not be
+	// read — a 401/403 on the settings API, or a provider that has no
+	// such concept — so a control keyed on these variables reports
+	// not-evaluable rather than a false pass. Mirrors Branch.
+	// ProtectionDetailsKnown.
+	SettingsVariablesKnown bool `json:"settingsVariablesKnown,omitempty"`
+
 	// Dockerfiles lists every Dockerfile the collector scanned at the
 	// repo root and under common build directories, with each FROM
 	// base-image extracted so policies can check pinning state.
@@ -399,4 +417,23 @@ type Branch struct {
 	MinPushAccessLevel        int    `json:"minPushAccessLevel,omitempty"`
 	MinMergeAccessLevel       int    `json:"minMergeAccessLevel,omitempty"`
 	ProtectionDetailsKnown    bool   `json:"protectionDetailsKnown,omitempty"`
+}
+
+// SettingsVariable is one project CI/CD settings variable (GitLab: Settings >
+// CI/CD > Variables). It carries the variable's identity and its
+// security-relevant flags only: the value is never projected, per the #370
+// variable-sensitivity tiers, so a finding can name an exposed variable
+// without carrying its secret. Type is GitLab's variable_type ("env_var" or
+// "file"); Environment is the environment scope ("*" for all).
+type SettingsVariable struct {
+	Name string `json:"name"`
+	// Type and Environment always serialize (no omitempty): both are
+	// identity fields for the cicdVariablesMustBe* controls, and the rules
+	// read them unconditionally, so an absent key would break the finding
+	// or leave an inconsistent identity. GitLab always supplies both
+	// ("env_var"/"file" and the environment scope, "*" for all).
+	Type        string `json:"type"`
+	Environment string `json:"environment"`
+	Protected   bool   `json:"protected"`
+	Masked      bool   `json:"masked"`
 }

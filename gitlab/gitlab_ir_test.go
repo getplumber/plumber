@@ -6,8 +6,42 @@ import (
 	"github.com/getplumber/plumber/internal/ir"
 )
 
+func TestBuildSettingsVariables(t *testing.T) {
+	// nil collector data -> not known, no variables, so a control keyed on
+	// these reports not-evaluable rather than a false pass.
+	if got, known := buildSettingsVariables(nil); got != nil || known {
+		t.Fatalf("nil data: got %v known %v, want nil/false", got, known)
+	}
+
+	// An unreadable listing (a 401/403 the collector recorded) stays
+	// known=false even if variables are somehow present.
+	if _, known := buildSettingsVariables(&GitlabVariablesAnalysisData{Known: false}); known {
+		t.Fatal("unreadable listing must report known=false")
+	}
+
+	// A known listing projects identity + flags. The value is fetched but
+	// never projected: ir.SettingsVariable has no Value field, so the secret
+	// cannot leak through the IR.
+	data := &GitlabVariablesAnalysisData{
+		Known: true,
+		Variables: []CICDVariable{
+			{Name: "AWS_KEY", Type: "env_var", Environment: "*", Protected: false, Masked: true, Value: "supersecretvalue"},
+		},
+	}
+	got, known := buildSettingsVariables(data)
+	if !known {
+		t.Fatal("known listing must report known=true")
+	}
+	if len(got) != 1 {
+		t.Fatalf("want 1 projected variable, got %d", len(got))
+	}
+	if v := got[0]; v.Name != "AWS_KEY" || v.Type != "env_var" || v.Environment != "*" || v.Protected || !v.Masked {
+		t.Fatalf("projection mismatch: %+v", v)
+	}
+}
+
 func TestToNormalizedPipeline_Empty(t *testing.T) {
-	pipeline := ToNormalizedPipeline("group/project", "main", "", nil, nil, nil)
+	pipeline := ToNormalizedPipeline("group/project", "main", "", nil, nil, nil, nil)
 	if pipeline.Provider != ir.ProviderGitLab {
 		t.Fatalf("expected provider gitlab, got %q", pipeline.Provider)
 	}
@@ -37,7 +71,7 @@ func TestToNormalizedPipeline_JobsAndImages(t *testing.T) {
 		},
 	}
 
-	pipeline := ToNormalizedPipeline("grp/proj", "main", "", origin, images, nil)
+	pipeline := ToNormalizedPipeline("grp/proj", "main", "", origin, images, nil, nil)
 
 	if got := len(pipeline.Jobs); got != 3 {
 		t.Fatalf("expected 3 jobs, got %d", got)
@@ -71,7 +105,7 @@ func TestToNormalizedPipeline_NilJobInMap(t *testing.T) {
 		},
 	}
 
-	pipeline := ToNormalizedPipeline("grp/proj", "main", "", origin, nil, nil)
+	pipeline := ToNormalizedPipeline("grp/proj", "main", "", origin, nil, nil, nil)
 	if got := len(pipeline.Jobs); got != 1 {
 		t.Fatalf("expected 1 job (nil entry skipped), got %d", got)
 	}

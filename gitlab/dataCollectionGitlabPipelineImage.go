@@ -1,6 +1,7 @@
 package gitlab
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 
@@ -727,8 +728,17 @@ func (dc *GitlabPipelineImageDataCollection) Run(project *ProjectInfo, token str
 	// Get project variables
 	projectVarsResult, err := GetGitlabProjectVariables(project.Path, token, conf.GitlabURL, conf)
 	if err != nil {
-		l.WithError(err).Error("Unable to retrieve project variables")
-		return data, metrics, err
+		if errors.Is(err, ErrProjectVariablesUnreadable) {
+			// The token cannot read project variables; they are only used here
+			// to resolve image-ref placeholders like $CI_REGISTRY, so proceed
+			// without them rather than failing the whole image collection. This
+			// preserves the pre-#418 graceful degradation for image analysis.
+			l.WithError(err).Warn("project variables not readable; image analysis proceeds without them")
+			projectVarsResult = nil
+		} else {
+			l.WithError(err).Error("Unable to retrieve project variables")
+			return data, metrics, err
+		}
 	}
 	data.ProjectVars = ConvertCICDVariableToMap(projectVarsResult)
 	l.WithField("projectVarKeys", GetMapKeys(data.ProjectVars)).Debug("Project vars found")

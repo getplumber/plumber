@@ -2,12 +2,24 @@ package gitlab
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/getplumber/plumber/configuration"
 	"github.com/machinebox/graphql"
 	"github.com/sirupsen/logrus"
 )
+
+// ErrProjectVariablesUnreadable signals that GetGitlabProjectVariables got a
+// well-formed HTTP 200 whose GraphQL `project`/`ciVariables` resolved to null —
+// the token authenticated but lacks the role to read CI/CD variables
+// (Maintainer+ / admin_cicd_variables). Callers that must never turn
+// "unreadable" into a silent empty pass (the settings-variable controls, #418)
+// treat any error as not-evaluable. Callers that only want the values
+// opportunistically (image-ref resolution) check errors.Is for this sentinel
+// and proceed with no project variables instead of failing the whole run.
+var ErrProjectVariablesUnreadable = errors.New("project CI/CD variables not readable (insufficient token permissions)")
 
 // GetGitlabProjectInheritedVariables returns all project inherited variables
 func GetGitlabProjectInheritedVariables(fullPath string, token string, instanceUrl string, conf *configuration.Configuration) ([]CICDVariable, error) {
@@ -281,9 +293,16 @@ func GetGitlabProjectVariables(fullPath string, token string, instanceUrl string
 			EndCursor   string `json:"endCursor"`
 		} `json:"pageInfo"`
 	}
+	// Project and CiVariables are pointers so a GraphQL `project: null` or
+	// `ciVariables: null` is distinguishable from an empty list. GitLab returns
+	// null there (HTTP 200, no transport error) when the token authenticates but
+	// lacks the role to read CI/CD variables (Maintainer+ / admin_cicd_variables),
+	// or when the project is not visible. A value struct would silently
+	// deserialize that to zero variables — a false "no variables" pass. Detecting
+	// null and erroring keeps the not-evaluable guarantee honest (#418).
 	type response struct {
-		Project struct {
-			CiVariables ciVariables `json:"ciVariables"`
+		Project *struct {
+			CiVariables *ciVariables `json:"ciVariables"`
 		} `json:"project"`
 	}
 
@@ -305,6 +324,16 @@ func GetGitlabProjectVariables(fullPath string, token string, instanceUrl string
 			return variables, err
 		}
 
+		if respData.Project == nil || respData.Project.CiVariables == nil {
+			// Null project/ciVariables with no transport error means the token
+			// cannot read the variables. Return the sentinel so the settings
+			// controls report not-evaluable (#418) while opportunistic callers
+			// (image-ref resolution) can tolerate it via errors.Is.
+			err := fmt.Errorf("GitLab returned a null project/ciVariables for %q (needs Maintainer+ / admin_cicd_variables): %w", fullPath, ErrProjectVariablesUnreadable)
+			l.WithError(err).Warn("project CI/CD variables not readable")
+			return variables, err
+		}
+
 		allNodes = append(allNodes, respData.Project.CiVariables.Nodes...)
 		hasNextPage = respData.Project.CiVariables.PageInfo.HasNextPage
 		cursor = respData.Project.CiVariables.PageInfo.EndCursor
@@ -312,9 +341,13 @@ func GetGitlabProjectVariables(fullPath string, token string, instanceUrl string
 
 	for _, v := range allNodes {
 		newVar := CICDVariable{
-			Name:        v.Key,
-			Value:       v.Value,
-			Type:        string(v.VariableType),
+			Name: v.Key,
+			Value: v.Value,
+			// Normalise the GraphQL enum (ENV_VAR / FILE) to the lower-case form
+			// the rest of the pipeline and the REST API use ("env_var" / "file"),
+			// so the masked rule's file-type exclusion and the identity value stay
+			// consistent between real runs and fixtures.
+			Type:        strings.ToLower(string(v.VariableType)),
 			Protected:   v.Protected,
 			Masked:      v.Masked,
 			Hidden:      v.Hidden,

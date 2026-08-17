@@ -63,6 +63,14 @@ func markDegraded(result *AnalysisResult, reason string) {
 // status classification, so both writers build their strings from it.
 const degradedReasonBranchProtectionPrefix = "branch protection could not be fetched"
 
+// degradedReasonVariablesPrefix is the shared prefix of the settings-variable
+// fetch degraded reason. Like the branch-protection prefix, it is the
+// compile-time contract between task.go (the writer) and StatusFor's
+// degradedReasonIsVariables classifier, so a network failure fetching the
+// variables listing degrades only the two variable controls rather than
+// flipping every unrelated CI-file control to error.
+const degradedReasonVariablesPrefix = "CI/CD variables could not be fetched"
+
 // degradedReasonsFromGitHubCollection builds the human-readable list of
 // collection failures behind a degraded GitHub run (#220). partialCount
 // is the number of workflow files that could not be fetched/parsed and

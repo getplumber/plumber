@@ -252,6 +252,8 @@ func writeIssueDetails(b *strings.Builder, result *AnalysisResult) {
 		{"containerImageMustNotUseForbiddenTags", "Container images must not use forbidden tags"},
 		{"containerImageMustComeFromAuthorizedSources", "Container images must come from authorized sources"},
 		{"branchMustBeProtected", "Branch must be protected"},
+		{"cicdVariablesMustBeProtected", "CI/CD variables must be protected"},
+		{"cicdVariablesMustBeMasked", "CI/CD variables must be masked"},
 		{"pipelineMustNotIncludeHardcodedJobs", "Pipeline must not include hardcoded jobs"},
 		{"includesMustBeUpToDate", "Includes must be up to date"},
 		{"includesMustNotUseForbiddenVersions", "Includes must not use forbidden versions"},
