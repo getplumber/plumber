@@ -251,27 +251,44 @@ func fetchGitHubActionsIDToken(reqURL, reqToken, audience string) (string, error
 // postScoreReport POSTs the report JSON to the score service. Any non-2xx is
 // an error (the caller turns it into a warning, never a failure).
 func postScoreReport(target, token string, payload []byte) error {
+	_, _, err := postScoreReportForBody(target, token, payload)
+	return err
+}
+
+// postScoreReportForBody is postScoreReport plus the 2xx response body and
+// status code, which the platform push needs to parse the gate block and
+// classify a failure into its fail-open class (see evaluatePlatformGate and
+// platformGateFailOpenLine). statusCode is 0 for a transport-level failure
+// (timeout, DNS, connection refused) where no response was ever received -
+// callers that only need the pass/fail outcome go through postScoreReport
+// instead, which never had a status code to report.
+func postScoreReportForBody(target, token string, payload []byte) (body []byte, statusCode int, err error) {
 	req, err := http.NewRequest(http.MethodPost, target, bytes.NewReader(payload))
 	if err != nil {
-		return err
+		return nil, 0, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := (&http.Client{Timeout: scorePushHTTPTimeout}).Do(req)
 	if err != nil {
-		return err
+		return nil, 0, err
 	}
 	defer func() { _ = resp.Body.Close() }()
+	statusCode = resp.StatusCode
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		msg := strings.TrimSpace(string(body))
+		errBody, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		msg := strings.TrimSpace(string(errBody))
 		if msg == "" {
-			return fmt.Errorf("%s", resp.Status)
+			return nil, statusCode, fmt.Errorf("%s", resp.Status)
 		}
-		return fmt.Errorf("%s: %s", resp.Status, msg)
+		return nil, statusCode, fmt.Errorf("%s: %s", resp.Status, msg)
 	}
-	return nil
+	body, err = io.ReadAll(resp.Body)
+	if err != nil {
+		return nil, statusCode, fmt.Errorf("read response body: %w", err)
+	}
+	return body, statusCode, nil
 }
 
 // hostOf extracts the host from a (possibly scheme-less) URL.

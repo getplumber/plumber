@@ -182,3 +182,23 @@ func TestComputePlumberScore_KeepsUnclampedRawPoints(t *testing.T) {
 		t.Errorf("RawPointsUnclamped = %v, want %v (100 minus summed capped losses)", got.RawPointsUnclamped, want)
 	}
 }
+
+// When losses stay under 100 the clamp is a no-op, so the two raw values must
+// be the SAME number — a divergence here would mean the unclamped computation
+// drifted on the ordinary runs that make up virtually all real analyses, not
+// just the pathological >100-loss case the test above pins.
+func TestComputePlumberScore_UnclampedEqualsRawWithoutClamping(t *testing.T) {
+	got := ComputePlumberScore(map[ErrorCode]int{CodeDebugTraceEnabled: 1})
+
+	if got.RawPoints <= 0 || got.RawPoints >= 100 {
+		t.Fatalf("RawPoints = %v: the fixture must land strictly between 0 and 100 for this test to mean anything", got.RawPoints)
+	}
+	if got.RawPointsUnclamped != got.RawPoints {
+		t.Errorf("RawPointsUnclamped = %v, RawPoints = %v: must be equal when no clamping occurs", got.RawPointsUnclamped, got.RawPoints)
+	}
+
+	clean := ComputePlumberScore(map[ErrorCode]int{})
+	if clean.RawPoints != 100 || clean.RawPointsUnclamped != 100 {
+		t.Errorf("clean run: RawPoints = %v, RawPointsUnclamped = %v, want both 100", clean.RawPoints, clean.RawPointsUnclamped)
+	}
+}

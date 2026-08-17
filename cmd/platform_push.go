@@ -3,12 +3,15 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
+	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	providerPkg "github.com/getplumber/plumber/provider"
 )
 
@@ -35,60 +38,146 @@ func effectivePlatformPush() (push bool, endpoint string) {
 	return endpoint != "", endpoint
 }
 
-// platformEnvelope is the body POSTed to the platform. It exists so the
-// analysis document can be pushed unchanged: everything the platform needs to
-// know that the document does not carry lives here, not in the report.
-//
-// results is an array from the first release even though local policy
-// resolution yields exactly one entry, because #368 makes it one entry per
-// policy. Growing it must not change the shape of anything else.
-type platformEnvelope struct {
-	SchemaVersion int              `json:"schemaVersion"`
-	Results       []platformResult `json:"results"`
+// The types below mirror the platform's ingestion.Push contract
+// (platform/backend/ingestion/contract.go in the monorepo) field-for-field:
+// same shape, same json tags, same optionality, snake_case throughout. That
+// file is the source of truth. A prior version of this file diverged from
+// it — results[].policy was sent as a {name,source,ref} object where the
+// contract declares a plain string — and every push was rejected by the real
+// parser (json.Unmarshal into a string field fails on an object) as a
+// result. See docs/platform-push-testing.md for how a push's raw wire bytes
+// are captured and checked against that contract shape, not just decoded
+// back into this package's own types.
+type platformPush struct {
+	SchemaVersion int                    `json:"schema_version"`
+	Provider      string                 `json:"provider,omitempty"`
+	Instance      string                 `json:"instance,omitempty"`
+	Project       platformProject        `json:"project"`
+	Ref           platformRef            `json:"ref"`
+	Pipeline      platformPipeline       `json:"pipeline"`
+	CLI           platformCLI            `json:"cli"`
+	Collection    platformCollectionMeta `json:"collection"`
+	// Results carries one entry per policy. Local policy resolution always
+	// yields exactly one; a multi-policy platform grows this array without
+	// changing the shape of anything else.
+	Results []platformPolicyResult `json:"results"`
 }
 
-// platformResult is one policy's verdict on this project.
-//
-// Degraded and DegradedReasons sit here rather than in the report because the
-// analysis JSON document carries no degradation signal at all: the flag reaches
-// SARIF (as invocations) and GitLab SAST (as scan.messages) and stops there.
-// Without them the platform would receive a partial scan and render it as a
-// complete one, with a score computed from missing data.
-type platformResult struct {
-	Policy          platformPolicy  `json:"policy"`
-	Degraded        bool            `json:"degraded"`
-	DegradedReasons []string        `json:"degradedReasons"`
-	Report          json.RawMessage `json:"report"`
+// platformProject is the informational project identity carried in the
+// body — NOT the authoritative one. The platform derives the authoritative
+// identity from the verified CI OIDC claims server-side (ADR-0003); this is
+// a convenience for display/search only.
+type platformProject struct {
+	Path string `json:"path,omitempty"`
+	ID   string `json:"id,omitempty"`
 }
 
-// platformPolicy identifies which policy produced the sibling report. Today
-// Source is either "local" (Ref names the .plumber.yaml file that was
-// actually read from disk) or "embedded" (the run used the config compiled
-// into the binary — a zero-config run, Ref empty, because no file was read
-// and claiming one would name a path that may not exist). Under #368 Source
-// also becomes "platform", with Name and Ref carrying what the platform
-// returned. A backend written against this keeps working across that change.
-type platformPolicy struct {
-	Name   string `json:"name"`
-	Source string `json:"source"`
-	Ref    string `json:"ref"`
+// platformRef is the analyzed git ref, read straight from the CI environment
+// (see platformRefFor). Tag is not populated by this build — the CLI has no
+// tag-pipeline source wired to this call site yet.
+type platformRef struct {
+	Branch string `json:"branch,omitempty"`
+	Tag    string `json:"tag,omitempty"`
+	SHA    string `json:"sha,omitempty"`
 }
 
-// platformPolicySourceLocal marks a policy descriptor whose Ref names a
-// .plumber.yaml file that was actually read from disk.
-const platformPolicySourceLocal = "local"
+// platformPipeline identifies the CI run that produced this push, read
+// straight from the CI environment (see platformPipelineFor). StartedAt is
+// not populated by this build (no CLI-side source for it yet).
+type platformPipeline struct {
+	ID        string `json:"id,omitempty"`
+	JobID     string `json:"job_id,omitempty"`
+	StartedAt string `json:"started_at,omitempty"`
+}
 
-// platformPolicySourceEmbedded marks a policy descriptor for a run that used
-// the config embedded in the binary (no .plumber.yaml on disk, no --config
-// pointing at a real file). Ref is empty in this case: the flag default
-// (".plumber.yaml") names no file that was actually read, and asserting it
-// as the descriptor's Ref would claim a local file that may not exist.
-const platformPolicySourceEmbedded = "embedded"
+// platformCLI carries the CLI version that produced the push. ComponentVersion
+// is not populated by this build — the GitLab component version is not
+// currently threaded through to the binary at this call site.
+type platformCLI struct {
+	Version          string `json:"version,omitempty"`
+	ComponentVersion string `json:"component_version,omitempty"`
+}
+
+// platformCollectionMeta is the honest degradation signal: whether data
+// collection was degraded this run. SnapshotCollectedAt is not populated —
+// the CLI has no snapshot concept yet. MissingFields is deliberately left
+// omitted too: result.DegradedReasons is human prose ("branch protection
+// could not be fetched (network or timeout)"), not the field-name list this
+// key expects, and forcing prose through it would misrepresent the contract
+// rather than honor it.
+type platformCollectionMeta struct {
+	Degraded            bool     `json:"degraded,omitempty"`
+	SnapshotCollectedAt string   `json:"snapshot_collected_at,omitempty"`
+	MissingFields       []string `json:"missing_fields,omitempty"`
+}
+
+// platformPolicyResult is one policy's verdict: what it ran (EffectiveConfig),
+// its explicit per-control findings, and the resulting score. Policy is a
+// plain string — the platform's contract has no name/source/ref object here
+// (a prior version of this file sent one; see the package doc above).
+type platformPolicyResult struct {
+	Policy string `json:"policy"`
+	// PolicyID is the /context-resolved uuid for Policy, when the run could
+	// resolve one (resolvePlatformPolicyID). A string, not a uuid type, and
+	// deliberately left "" rather than a placeholder when unresolved: with
+	// omitempty that means the key is genuinely absent from the wire, never
+	// present with a zero value — the CLI must never emit the literal
+	// all-zero uuid (see resolvePlatformPolicyID and
+	// matchPlatformContextPolicyID for how "" is reached).
+	PolicyID        string            `json:"policy_id,omitempty"`
+	EffectiveConfig json.RawMessage   `json:"effective_config,omitempty"`
+	Findings        []platformFinding `json:"findings"`
+	Score           platformScore     `json:"score"`
+}
+
+// platformFinding is one EXPLICIT per-control result entry — see
+// platformFindingsFor for how the list is built. A failed control
+// contributes one of these per underlying finding (Data populated); a
+// passed or not-evaluable control contributes exactly one with no Data.
+// Version/Requirement are not populated by this build (no CLI-side source
+// for either yet).
+type platformFinding struct {
+	Control     string          `json:"control"`
+	Version     string          `json:"version,omitempty"`
+	Requirement string          `json:"requirement,omitempty"`
+	Status      string          `json:"status"`
+	Data        json.RawMessage `json:"data,omitempty"`
+}
+
+// Finding-status vocabulary the platform's contract defines.
+// platformStatusNotEvaluable is never omitted for a degraded/could-not-
+// evaluate control — see platformFindingsFor.
+const (
+	platformStatusPass         = "pass"
+	platformStatusFail         = "fail"
+	platformStatusNotEvaluable = "not_evaluable"
+)
+
+// platformScore is the entry's Plumber Score. Points is
+// PlumberScoreResult.RawPointsUnclamped rounded to the nearest int — see
+// platformScoreFrom.
+type platformScore struct {
+	Letter string `json:"letter,omitempty"`
+	Points int    `json:"points"`
+}
+
+// platformScoreFrom converts the already-computed Plumber Score to the wire
+// shape. Points is RawPointsUnclamped — the SIGNED deficit with no floor at
+// zero (the contract stores it unclamped; the gate/badge's floored-at-zero
+// RawPoints is display-only) — rounded to the nearest int, matching what the
+// contract's Score.Points type actually is. Tolerates a nil score (no
+// production caller passes one today, but a best-effort push should never
+// panic a run over a nil pointer) by sending the zero value.
+func platformScoreFrom(score *control.PlumberScoreResult) platformScore {
+	if score == nil {
+		return platformScore{}
+	}
+	return platformScore{Letter: score.Score, Points: int(math.Round(score.RawPointsUnclamped))}
+}
 
 // policyNameFor derives a stable, human-meaningful policy name from the config
 // path: ".plumber.yaml" is the unnamed default, and any leading qualifier
-// ("team.plumber.yml", ".plumber.strict.yaml") names the policy. Under #368 the
-// platform supplies the name instead and this is not consulted.
+// ("team.plumber.yml", ".plumber.strict.yaml") names the policy.
 func policyNameFor(configPath string) string {
 	base := filepath.Base(strings.TrimSpace(configPath))
 	if base == "" || base == "." || base == string(filepath.Separator) {
@@ -108,54 +197,213 @@ func policyNameFor(configPath string) string {
 	}
 }
 
-// buildPlatformEnvelope wraps the analysis document for the platform. report
-// is embedded as json.RawMessage from the SAME buildAnalysisJSONReport call
-// that produced the --output file, so the two can never carry different DATA.
-// The bytes on the wire are not byte-identical to the --output file, though:
-// json.Marshal on the envelope re-serializes report compactly (as one field
-// nested inside a larger document) and HTML-escapes '<', '>', '&' in any
-// string values. That is intentional and left as-is — whitespace carries no
-// semantic meaning, and no real report contains those characters — but callers
-// must not assume the transmitted copy is a byte-for-byte match of the file.
-func buildPlatformEnvelope(report []byte, configPath string, degraded bool, reasons []string) ([]byte, error) {
-	if len(report) == 0 {
-		return nil, fmt.Errorf("empty analysis report")
+// platformPolicyNameFor is policyNameFor with one normalization on top:
+// builtinDefaultConfigSource ("built-in default") is the label
+// conf.ConfigFilePath carries for a zero-config run that read the config
+// embedded in the binary, not a real file — passing it to policyNameFor
+// unchanged would leak that internal sentinel string as the policy name
+// ("built-in default") instead of the clean "default" every other
+// zero-config path produces. Treated the same as an empty/unresolved path,
+// mirroring the special case the pre-contract-rework policy descriptor used
+// to apply (platformPolicyFor, since removed).
+func platformPolicyNameFor(configPath string) string {
+	if strings.TrimSpace(configPath) == builtinDefaultConfigSource {
+		return policyNameFor("")
 	}
-	if reasons == nil {
-		reasons = []string{}
+	return policyNameFor(configPath)
+}
+
+// buildPlatformPush builds the body POSTed to the platform, matching
+// ingestion.Push field-for-field (see the type doc comments above).
+// configPath is the resolved config path the caller computed
+// (conf.ConfigFilePath, falling back to the --config flag); it decides only
+// the policy NAME via platformPolicyNameFor. policyID is the /context-resolved
+// uuid for that name (resolvePlatformPolicyID), or "" when none was resolved;
+// it is threaded straight onto the single result entry's PolicyID field,
+// whose omitempty tag drops the key entirely when policyID is "".
+func buildPlatformPush(p providerPkg.Provider, conf *configuration.Configuration, result *control.AnalysisResult, score *control.PlumberScoreResult, configPath, policyID string) ([]byte, error) {
+	forgeHost, projectPath, _ := resolveScoreTarget(p, conf)
+
+	var pc *configuration.PlumberConfig
+	var includeOnly, skip []string
+	if conf != nil {
+		pc = conf.PlumberConfig
+		includeOnly, skip = conf.ControlsFilter, conf.SkipControlsFilter
 	}
-	env := platformEnvelope{
+
+	push := platformPush{
 		SchemaVersion: 1,
-		Results: []platformResult{{
-			Policy:          platformPolicyFor(configPath),
-			Degraded:        degraded,
-			DegradedReasons: reasons,
-			Report:          json.RawMessage(report),
+		Provider:      p.Name(),
+		Instance:      forgeHost,
+		Project:       platformProject{Path: projectPath, ID: platformProjectID(p, conf)},
+		Ref:           platformRefFor(p),
+		Pipeline:      platformPipelineFor(p),
+		CLI:           platformCLI{Version: strings.TrimPrefix(Version, "v")},
+		Collection:    platformCollectionMeta{Degraded: result != nil && result.DataCollectionDegraded},
+		Results: []platformPolicyResult{{
+			Policy:          platformPolicyNameFor(configPath),
+			PolicyID:        policyID,
+			EffectiveConfig: platformEffectiveConfigRaw(pc),
+			Findings:        platformFindingsFor(p, result, pc, includeOnly, skip),
+			Score:           platformScoreFrom(score),
 		}},
 	}
-	body, err := json.Marshal(env)
+
+	body, err := json.Marshal(push)
 	if err != nil {
-		return nil, fmt.Errorf("marshal platform envelope: %w", err)
+		return nil, fmt.Errorf("marshal platform push: %w", err)
 	}
 	return body, nil
 }
 
-// platformPolicyFor derives the policy descriptor from the resolved config
-// path (the *configuration.Configuration's ConfigFilePath, see
-// maybePushPlatform). configPath is empty or equal to
-// builtinDefaultConfigSource ("built-in default", set by
-// loadEmbeddedDefaultConfig) exactly when the run never read a local
-// .plumber.yaml — the --config flag's own default is ".plumber.yaml"
-// regardless of whether that file exists, so it cannot be trusted to tell
-// the two cases apart. Only when a real file was read does the descriptor
-// claim "local" and carry its path; otherwise it claims "embedded" with no
-// Ref, so the descriptor never names a file that may not exist on disk.
-func platformPolicyFor(configPath string) platformPolicy {
-	ref := strings.TrimSpace(configPath)
-	if ref == "" || ref == builtinDefaultConfigSource {
-		return platformPolicy{Name: policyNameFor(""), Source: platformPolicySourceEmbedded, Ref: ""}
+// platformProjectID returns the project's stable numeric GitLab id when it is
+// cheaply available — conf.ProjectID, or the CI_PROJECT_ID env var GitLab CI
+// always exports — without an extra API round trip. GitHub has no equivalent
+// cheap numeric id at this call site, so this only ever returns non-empty for
+// a GitLab-shaped provider.
+func platformProjectID(p providerPkg.Provider, conf *configuration.Configuration) string {
+	if p.Name() == "github" {
+		return ""
 	}
-	return platformPolicy{Name: policyNameFor(ref), Source: platformPolicySourceLocal, Ref: ref}
+	if conf != nil && conf.ProjectID != 0 {
+		return strconv.Itoa(conf.ProjectID)
+	}
+	return strings.TrimSpace(os.Getenv("CI_PROJECT_ID"))
+}
+
+// platformRefFor reads the analyzed ref straight from the CI environment: the
+// running branch (ciRunBranch, already provider-aware) and the head commit
+// SHA via the provider's own CIEnvMapping (CI_COMMIT_SHA / GITHUB_SHA — the
+// same mapping resolveScoreTarget and the source-link builder use). Both are
+// "" outside CI; the omitempty tags on platformRef drop them rather than
+// sending a fabricated value.
+func platformRefFor(p providerPkg.Provider) platformRef {
+	return platformRef{
+		Branch: ciRunBranch(p),
+		SHA:    strings.TrimSpace(os.Getenv(p.CIEnvVars().CommitSHA)),
+	}
+}
+
+// platformPipelineFor reads the CI run's own identifiers straight from the
+// environment — GitLab's CI_PIPELINE_ID/CI_JOB_ID, GitHub's
+// GITHUB_RUN_ID/GITHUB_JOB. Never fabricated for a local run: both env vars
+// are simply unset there, and the omitempty tags drop them.
+func platformPipelineFor(p providerPkg.Provider) platformPipeline {
+	if p.Name() == "github" {
+		return platformPipeline{
+			ID:    strings.TrimSpace(os.Getenv("GITHUB_RUN_ID")),
+			JobID: strings.TrimSpace(os.Getenv("GITHUB_JOB")),
+		}
+	}
+	return platformPipeline{
+		ID:    strings.TrimSpace(os.Getenv("CI_PIPELINE_ID")),
+		JobID: strings.TrimSpace(os.Getenv("CI_JOB_ID")),
+	}
+}
+
+// platformEffectiveConfigRaw runs pc through buildPlumberConfigBlock — the
+// SAME builder the JSON report's plumberConfig block uses, so the platform
+// and the report describe this run's policy identically — and marshals it
+// for the wire. buildPlumberConfigBlock already falls back to the embedded
+// default when pc is nil or has no Raw, so this comes back empty only if
+// that builder itself ever does; the omitempty tag on EffectiveConfig then
+// drops it rather than sending "{}" or "null".
+func platformEffectiveConfigRaw(pc *configuration.PlumberConfig) json.RawMessage {
+	block := buildPlumberConfigBlock(pc)
+	if len(block) == 0 {
+		return nil
+	}
+	raw, err := json.Marshal(block)
+	if err != nil {
+		return nil
+	}
+	return raw
+}
+
+// platformFindingsFor builds the explicit-results findings list: one entry
+// per applicable control this run evaluated, reusing control.StatusFor — the
+// SAME four-state verdict (passed/failed/skipped/error) the --output JSON,
+// CSV and OCSF renderers already compute per control — rather than deriving
+// a second, possibly-diverging notion of "did this control pass" here.
+//
+//   - failed:  one entry PER underlying finding, status=fail, Data carrying
+//     that finding serialized exactly as opaengine.Finding.MarshalJSON
+//     already produces it.
+//   - passed:  one entry, status=pass, no Data.
+//   - error:   one entry, status=not_evaluable, no Data — NEVER omitted,
+//     because an empty findings list for a control that could not really be
+//     evaluated must not read as a silent pass.
+//   - skipped: OMITTED entirely. A control disabled in .plumber.yaml (or
+//     excluded via --controls/--skip-controls) is still visible in
+//     effective_config; "not evaluated by choice" is a different fact from
+//     "could not be evaluated" (not_evaluable), and folding them together
+//     would hide operator intent from the platform.
+//
+// includeOnly/skip are conf.ControlsFilter/SkipControlsFilter, applied via
+// control.MarkSkippedByFilter exactly as the terminal/JSON renderers do, so a
+// --skip-controls run's platform push agrees with what it printed.
+func platformFindingsFor(p providerPkg.Provider, result *control.AnalysisResult, pc *configuration.PlumberConfig, includeOnly, skip []string) []platformFinding {
+	out := []platformFinding{}
+	if pc == nil {
+		return out
+	}
+	entries := p.Controls(pc)
+	control.MarkSkippedByFilter(entries, includeOnly, skip)
+
+	var findings []opaengine.Finding
+	if result != nil {
+		findings = result.Findings
+	}
+	findingsByControl := control.FindingsByControl(findings)
+
+	for _, e := range entries {
+		fs := findingsByControl[e.ControlName]
+		switch control.StatusFor(e, result, len(fs)) {
+		case control.StatusSkipped:
+			continue
+		case control.StatusFailed:
+			for _, f := range fs {
+				out = append(out, platformFinding{
+					Control: platformFindingControlName(f),
+					Status:  platformStatusFail,
+					Data:    platformFindingDataRaw(f),
+				})
+			}
+		case control.StatusError:
+			out = append(out, platformFinding{Control: e.ControlName, Status: platformStatusNotEvaluable})
+		default: // control.StatusPassed
+			out = append(out, platformFinding{Control: e.ControlName, Status: platformStatusPass})
+		}
+	}
+	return out
+}
+
+// platformFindingControlName names a failed finding's control via the same
+// registry lookup FindingsByControl itself buckets by (control.LookupCode),
+// re-derived per finding rather than reused from the enclosing ControlEntry.
+// Falls back to the raw code string when the code has no registry entry —
+// never to the enclosing control's name, which would misattribute an
+// unclassified finding as belonging to it.
+func platformFindingControlName(f opaengine.Finding) string {
+	if info := control.LookupCode(control.ErrorCode(f.Code)); info != nil {
+		return info.ControlName
+	}
+	return f.Code
+}
+
+// platformFindingDataRaw serializes f exactly as opaengine.Finding.MarshalJSON
+// already produces it (code/severity/message/job/file/line/url/fingerprint +
+// Data keys, existing casing) — the flat shape the platform's finding
+// vocabulary is built to consume, not re-shaped or re-cased here. Marshal
+// only fails for a JSON-incompatible value inside f.Data (a channel, a
+// function), which Rego cannot produce; nil (omitted) is the safe fallback
+// if it ever did.
+func platformFindingDataRaw(f opaengine.Finding) json.RawMessage {
+	raw, err := json.Marshal(f)
+	if err != nil {
+		return nil
+	}
+	return raw
 }
 
 // PlatformTokenError reports that the run could not obtain the CI OIDC
@@ -185,17 +433,18 @@ func platformTokenFailure(reason string) error {
 }
 
 // maybePushPlatform pushes the analysis result to the configured platform.
-// It returns non-nil ONLY for a token failure; see PlatformTokenError. conf's
-// only use here is resolving which config file (if any) produced this run's
-// policy — for the platform record's policy descriptor — via
-// conf.ConfigFilePath, the RESOLVED path set once at load time (falling back
-// to the --config flag when conf is nil or the field is empty, e.g. in tests
-// that construct the payload directly). Project identity for the platform
-// record is a separate matter and still comes from the verified OIDC claims
-// server-side, never from operator-supplied config.
-func maybePushPlatform(p providerPkg.Provider, conf *configuration.Configuration, result *control.AnalysisResult, payload []byte) error {
+// It returns non-nil ONLY for a token failure; see PlatformTokenError. conf
+// supplies the resolved config path/PlumberConfig/ProjectID/control filters
+// buildPlatformPush needs (falling back to the --config flag when conf is
+// nil or has no resolved path, e.g. in tests that call this directly);
+// result and score are threaded straight through so the platform, the
+// terminal banner and the JSON report can never disagree about a run's
+// findings or score. Project identity for the platform record is a separate
+// matter and still comes from the verified OIDC claims server-side, never
+// from operator-supplied config.
+func maybePushPlatform(p providerPkg.Provider, conf *configuration.Configuration, result *control.AnalysisResult, score *control.PlumberScoreResult) error {
 	push, endpoint := effectivePlatformPush()
-	if !push || len(payload) == 0 {
+	if !push {
 		return nil
 	}
 
@@ -227,7 +476,8 @@ func maybePushPlatform(p providerPkg.Provider, conf *configuration.Configuration
 			configPath = resolved
 		}
 	}
-	body, err := buildPlatformEnvelope(payload, configPath, result.DataCollectionDegraded, result.DegradedReasons)
+	policyID := resolvePlatformPolicyID(p, conf, endpoint, token, configPath)
+	body, err := buildPlatformPush(p, conf, result, score, configPath, policyID)
 	if err != nil {
 		scoreWarn(fmt.Sprintf("platform push skipped: %v", err))
 		return nil
@@ -236,11 +486,15 @@ func maybePushPlatform(p providerPkg.Provider, conf *configuration.Configuration
 	// Every remote condition lands here, including 413 for an oversized body:
 	// the server is the authority on its own limit, so the CLI enforces none.
 	// The push is skipped whole rather than truncated, because the platform
-	// renders the record as the complete picture.
-	if err := postScoreReport(endpoint+"/api/v1/results", token, body); err != nil {
-		scoreWarn(fmt.Sprintf("platform push failed: %v", err))
+	// renders the record as the complete picture. On failure this is also
+	// the gate deadline: the same 15s transport timeout (scorePushHTTPTimeout)
+	// bounds both the push and the gate verdict it carries, so no separate
+	// gate timeout knob exists.
+	respBody, statusCode, err := postScoreReportForBody(endpoint+"/api/v1/pushes", token, body)
+	if err != nil {
+		scoreWarn(fmt.Sprintf("%s: %v", platformGateFailOpenLine(statusCode), err))
 		return nil
 	}
 	fmt.Fprintf(os.Stderr, "✓ Results pushed to the platform: %s\n", endpoint)
-	return nil
+	return evaluatePlatformGate(respBody)
 }

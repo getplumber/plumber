@@ -218,7 +218,24 @@ Display it with a badge in your README (swap in your platform/owner/repo):
 | Flag | Purpose |
 |---|---|
 | `--score-endpoint` | Score service base URL (default `https://score.getplumber.io`). Override only for a self-hosted score service. |
-| `--platform` | Plumber platform base URL. Setting it pushes this run's full results there over CI OIDC, and takes precedence over `--score-push`. Requires an id-token grant: `permissions: id-token: write` on GitHub, the component's `id_tokens:` block on GitLab. A platform that is down or unreachable warns and never changes the run's outcome. |
+| `--platform` | Plumber platform base URL. Setting it pushes this run's full results there over CI OIDC, and takes precedence over `--score-push`. Requires an id-token grant: `permissions: id-token: write` on GitHub, the component's `id_tokens:` block on GitLab. Results are automatically keyed to the platform's own policies (fetched via `/context`) when the local policy name matches one exactly; no match, and the push still succeeds by name alone. |
+
+The platform can gate the run: if it returns a blocking decision for this
+push, the job exits `1` with a line naming every blocking policy. A platform
+that is down, slow, or erroring **never blocks**: the gate only ever fails
+open, and the two sentences below are exact so you can alert on them:
+
+- `gate unavailable, letting through`: the platform itself is unreachable
+  (timeout, connection error, 5xx). The run proceeds.
+- `gate NOT RUN: authentication/configuration failed`: the request reached
+  the platform but was rejected (expired/invalid token, misconfigured
+  project). The run proceeds.
+
+A third, informational line is deliberately distinct from both, so alerts on
+the sentences above stay precise: `platform returned no gate verdict,
+letting through` means the push was accepted (2xx) but the response carried
+no usable gate decision - typically a platform version that predates the
+gate. Routine during a platform rollout; the run proceeds.
 
 ## Configuration
 
