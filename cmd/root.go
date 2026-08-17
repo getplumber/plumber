@@ -72,17 +72,26 @@ func Execute() {
 //     threshold, so the reason is emitted only when the report was suppressed
 //     (--print=false, JSON/PBOM-only, CI capturing stderr), where it is the
 //     sole human-readable failure reason.
+//   - PlatformGateError → "Blocked", exit 1, same class as the local score
+//     gate - also a verdict on the project. Always emitted, unlike the local
+//     gate: the terminal report reflects only the local score, so on a run
+//     that passes locally but is blocked by the platform, the report would
+//     say "PASSED" while the process exits 1 unless this reason is printed
+//     regardless of --print.
 //   - DegradedError / IncompleteDataError → "Incomplete", exit 3. The run could
 //     not fully verify the project — also not a program error.
 //   - anything else → "Error", exit 2.
 func classifyExecError(err error, printOutput bool) (prefix string, code int, emit bool) {
 	var gateErr *ScoreGateError
 	var complianceErr *ComplianceError
+	var platformGateErr *PlatformGateError
 	var degradedErr *DegradedError
 	var incompleteErr *IncompleteDataError
 	switch {
 	case errors.As(err, &gateErr), errors.As(err, &complianceErr):
 		return "Blocked", 1, !printOutput
+	case errors.As(err, &platformGateErr):
+		return "Blocked", 1, true
 	case errors.As(err, &degradedErr), errors.As(err, &incompleteErr):
 		return "Incomplete", 3, true
 	default:

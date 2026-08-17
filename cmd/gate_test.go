@@ -501,6 +501,41 @@ func TestBuildAnalysisJSONReport_GateContract(t *testing.T) {
 	})
 }
 
+// rawPointsUnclamped exists ONLY to be read out of the pushed report (the
+// platform stores score history and wants the true signed deficit), so its
+// presence in the serialized JSON is the contract — the struct field alone
+// proves nothing if a projection or an omitempty tag ever drops it from the
+// document. A negative fixture value also pins that the emitted number is the
+// unclamped one, not a copy of the floored rawPoints sitting next to it.
+func TestBuildAnalysisJSONReport_EmitsRawPointsUnclamped(t *testing.T) {
+	score := &control.PlumberScoreResult{RawPoints: 0, RawPointsUnclamped: -37.5, Score: "E"}
+	s := complianceSummary{minPoints: 100, score: score, scoreMode: true, controlCount: 1}
+
+	payload, err := buildAnalysisJSONReport(&control.AnalysisResult{CiValid: true}, confWithDebugTrace().PlumberConfig, s, jsonOutputParams{provider: "gitlab"})
+	if err != nil {
+		t.Fatalf("buildAnalysisJSONReport: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(payload, &m); err != nil {
+		t.Fatalf("report is not valid JSON: %v", err)
+	}
+
+	ps, ok := m["plumberScore"].(map[string]any)
+	if !ok {
+		t.Fatalf("plumberScore block missing from the report, got keys %v", m)
+	}
+	got, ok := ps["rawPointsUnclamped"]
+	if !ok {
+		t.Fatalf("rawPointsUnclamped missing from plumberScore: the platform's deficit-depth signal is gone, got %v", ps)
+	}
+	if got != -37.5 {
+		t.Errorf("rawPointsUnclamped = %v, want -37.5 (the unclamped value, not the floored rawPoints)", got)
+	}
+	if ps["rawPoints"] != 0.0 {
+		t.Errorf("rawPoints = %v, want 0: the clamped value next to it must stay floored", ps["rawPoints"])
+	}
+}
+
 // ---------------------------------------------------------------------------
 // finalizeRun — exit-code gate priority order
 // ---------------------------------------------------------------------------

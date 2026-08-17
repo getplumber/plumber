@@ -50,7 +50,7 @@ func runWithProvider(p provider.Provider, cmd *cobra.Command, conf *configuratio
 
 	jsonPayload := buildPublishPayload(p, conf, result, summary)
 	handleScorePublishing(p, conf, result, summary, jsonPayload)
-	platformErr := maybePushPlatform(p, conf, result, jsonPayload)
+	platformErr := maybePushPlatform(p, conf, result, summary.score)
 
 	pas := provider.PostActionSummary{
 		Passed:     summary.passed(),
@@ -248,7 +248,7 @@ func presentResultWithProvider(p provider.Provider, cmd *cobra.Command, result *
 	}
 	jsonPayload := buildPublishPayload(p, conf, result, summary)
 	handleScorePublishing(p, conf, result, summary, jsonPayload)
-	platformErr := maybePushPlatform(p, conf, result, jsonPayload)
+	platformErr := maybePushPlatform(p, conf, result, summary.score)
 	pas := provider.PostActionSummary{
 		Passed:     summary.passed(),
 		GateLine:   summary.gateLine(),
@@ -313,16 +313,17 @@ func computeScoreResult(result *control.AnalysisResult, scoreMode bool) *control
 	return &s
 }
 
-// buildPublishPayload builds the analysis JSON payload shared by the score
-// badge and the platform push, so the two destinations can never diverge on
-// what "the report" contains — both send the exact bytes buildAnalysisJSONReport
-// produced. Built once here (rather than separately inside each consumer) and
-// skipped (nil) when neither push is configured, so a plain local run pays no
+// buildPublishPayload builds the analysis JSON payload for the score badge
+// push (handleScorePublishing): the exact bytes buildAnalysisJSONReport
+// produced for --output, so the badge record and the file on disk can never
+// diverge. The platform push does NOT consume this payload — maybePushPlatform
+// builds its own structured envelope directly from result/conf/score — so the
+// gate below is scorePush alone; skipped (nil) when the badge push is not
+// configured, so a plain local run (or a --platform-only run) pays no
 // marshal/hash cost for a payload nobody sends.
 func buildPublishPayload(p provider.Provider, conf *configuration.Configuration, result *control.AnalysisResult, summary complianceSummary) []byte {
 	scorePush, _ := effectiveScorePush()
-	platformPush, _ := effectivePlatformPush()
-	if !scorePush && !platformPush {
+	if !scorePush {
 		return nil
 	}
 	var pc *configuration.PlumberConfig
