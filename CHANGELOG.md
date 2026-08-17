@@ -1,3 +1,15 @@
+## [0.4.39](https://github.com/getplumber/plumber/compare/v0.4.38...v0.4.39) (2026-08-17)
+
+
+### ✨ Features
+
+* **ci:** Add findings control library ([8864b2d](https://github.com/getplumber/plumber/commit/8864b2d14d7c1b43c0565afbfe26cfb97be34e98))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.38 refs [skip ci] ([a5fccb7](https://github.com/getplumber/plumber/commit/a5fccb72f5f47c68d97880f39448f5d64a6ca826))
+
 ## [0.4.38](https://github.com/getplumber/plumber/compare/v0.4.37...v0.4.38) (2026-08-17)
 
 
