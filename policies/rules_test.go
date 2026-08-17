@@ -1752,6 +1752,29 @@ func TestIssue414_ComponentAuthorizedSources(t *testing.T) {
 			}
 		})
 	}
+
+	// Identity pins (finding/identity): an untrusted component identifies on
+	// componentPath, like the other component controls (ISSUE-408/409), and
+	// never puts its source in the job field.
+	t.Run("identity_pins", func(t *testing.T) {
+		pipeline := &ir.NormalizedPipeline{
+			Provider:    ir.ProviderGitLab,
+			ProjectPath: "my-group/my-project",
+			Includes:    []ir.Include{{Kind: "component", Source: "gitlab.example.com/attacker/evil-component"}},
+		}
+		cfg := map[string]any{
+			"componentAuthorizedSources": map[string]any{
+				"trustedComponents": []string{"gitlab.example.com/my-group/my-project/*"},
+			},
+		}
+		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		assertSubjectKey(t, findings, "ISSUE-414", "componentPath",
+			[]string{"gitlab.example.com/attacker/evil-component"})
+		assertNoJob(t, findings, "ISSUE-414")
+	})
 }
 
 // TestIssue415_FunctionAuthorizedSources exercises
@@ -1932,6 +1955,54 @@ func TestIssue415_FunctionAuthorizedSources(t *testing.T) {
 			}
 		})
 	}
+
+	// Identity pins (finding/identity): an untrusted function identifies on
+	// link (the ref), scoped by the real CI job in the job field, with the
+	// step name as the discriminator between two steps of one job that
+	// reference the same function.
+	t.Run("identity_pins", func(t *testing.T) {
+		pipeline := &ir.NormalizedPipeline{
+			Provider:    ir.ProviderGitLab,
+			ProjectPath: "my-group/my-project",
+			Jobs: []ir.Job{{
+				Name:       "build",
+				OriginFile: ".gitlab-ci.yml",
+				OriginLine: 12,
+				Functions: []ir.Function{
+					{Name: "step_a", Ref: "registry.evil.example/x/backdoor:1", Kind: "oci"},
+					{Name: "step_b", Ref: "registry.evil.example/x/backdoor:1", Kind: "oci"},
+				},
+			}},
+		}
+		cfg := map[string]any{"functionAuthorizedSources": map[string]any{}}
+		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		opaengine.StampFingerprints(findings, "")
+		assertSubjectKey(t, findings, "ISSUE-415", "link",
+			[]string{"registry.evil.example/x/backdoor:1", "registry.evil.example/x/backdoor:1"})
+		fingerprints := map[string]string{}
+		for _, f := range findings {
+			if f.Code != "ISSUE-415" {
+				continue
+			}
+			if f.Job != "build" {
+				t.Fatalf("ISSUE-415: job = %q, want the real CI job name \"build\"", f.Job)
+			}
+			if f.File != ".gitlab-ci.yml" {
+				t.Fatalf("ISSUE-415: file = %q, want the job's origin file", f.File)
+			}
+			step, _ := f.Data["step"].(string)
+			if prev, dup := fingerprints[f.Fingerprint]; dup {
+				t.Fatalf("ISSUE-415: steps %q and %q collide on fingerprint %s", prev, step, f.Fingerprint)
+			}
+			fingerprints[f.Fingerprint] = step
+		}
+		if len(fingerprints) != 2 {
+			t.Fatalf("ISSUE-415: want 2 distinctly-fingerprinted findings, got %d", len(fingerprints))
+		}
+	})
 }
 
 // TestIssue410_SecurityJobsWeakened flags SAST-like jobs with
