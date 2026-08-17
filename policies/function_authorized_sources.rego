@@ -46,6 +46,13 @@ deny contains finding if {
 		"severity": "high",
 		"message":  sprintf("job %q uses function %q from untrusted source: %s", [job.name, _fn_name(fn), fn.ref]),
 		"job":      job.name,
+		# step discriminates two `run:` steps in one job that reference the
+		# same function (same code/file/job/link would otherwise collide to
+		# one fingerprint). Empty when the author set no step `name:`, in
+		# which case the identity recipe skips the segment (finding/identity).
+		"step":     object.get(fn, "name", ""),
+		"file":     object.get(job, "originFile", ""),
+		"line":     object.get(job, "originLine", 0),
 		"link":     fn.ref,
 		"status":   "unauthorized",
 	}

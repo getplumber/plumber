@@ -30,10 +30,14 @@ deny contains finding if {
 	inc.source != ""
 	not _is_authorized(inc.source)
 	finding := {
-		"code":                  "ISSUE-414",
-		"severity":              "high",
-		"message":               sprintf("component %q comes from untrusted source: %s", [object.get(inc, "componentName", inc.source), inc.source]),
-		"job":                   inc.source,
+		"code":     "ISSUE-414",
+		"severity": "high",
+		"message":  sprintf("component %q comes from untrusted source: %s", [object.get(inc, "componentName", inc.source), inc.source]),
+		# No "job": an include is not a CI job, and the job field is a hashed
+		# identity segment (finding/identity). componentPath names what this
+		# finding is about and is the subject key the identity recipe selects,
+		# matching the other component controls (ISSUE-408/409).
+		"componentPath":         inc.source,
 		"link":                  inc.source,
 		"status":                "unauthorized",
 		"file":                  object.get(inc, "originFile", ""),
