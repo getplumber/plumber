@@ -13,7 +13,7 @@ require (
 	github.com/machinebox/graphql v0.2.2
 	github.com/open-policy-agent/opa v1.19.0
 	github.com/schollz/progressbar/v3 v3.19.1
-	github.com/sirupsen/logrus v1.9.4
+	github.com/sirupsen/logrus v1.10.0
 	github.com/spf13/cobra v1.10.2
 	gitlab.com/gitlab-org/api/client-go v1.46.0
 	golang.org/x/term v0.45.0
