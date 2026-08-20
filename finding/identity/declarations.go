@@ -167,6 +167,8 @@ var declarations = map[string][]string{
 	"ISSUE-504": {},
 	// Branch protection not compliant: keyed on the branch name.
 	"ISSUE-505": {"file", "job", "branchName"},
+	// MR settings not compliant: singleton finding (one per project); the platform IdOnly was empty, so the identity is the code alone. Deliberate consequence: changing WHICH settings deviate does not re-key the finding.
+	"ISSUE-506": {},
 	// Workflow has no explicit name: one finding per workflow file, keyed on the file (benched, not yet live: declaration provisional, revisit on unbench).
 	"ISSUE-601": {"file"},
 	// Action not pinned by commit SHA: keyed on the action ref (uses); step separates a reused action.

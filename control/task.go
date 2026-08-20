@@ -36,6 +36,7 @@ const controlMutableRemoteExec = "actionsMustNotExecuteMutableRemoteCode"
 const controlMRApprovalRulesMinApprovals = "mergeRequestApprovalRulesMustRequireMinimumApprovals"
 const controlMRApprovalRulesCoverAllBranches = "mergeRequestApprovalRulesMustCoverAllProtectedBranches"
 const controlMRApprovalSettings = "mergeRequestApprovalSettingsMustBeCompliant"
+const controlMRSettings = "mergeRequestSettingsMustBeCompliant"
 
 // mrApprovalRuleControlEnabled reports whether either merge-request
 // approval-rule control (ISSUE-502/504) is active for this run. Both read the
@@ -116,9 +117,43 @@ func mrApprovalSettingsControlEnabled(conf *configuration.Configuration) bool {
 	return c != nil && c.IsEnabled() && shouldRunControl(controlMRApprovalSettings, conf)
 }
 
+// mrSettingsControlEnabled reports whether the merge-request settings control
+// (ISSUE-506) is active for this run. It reads the project MR settings the
+// GitLab protection collection fetches, so that collection must run when it is
+// enabled even if no other protection control is.
+func mrSettingsControlEnabled(conf *configuration.Configuration) bool {
+	c := conf.PlumberConfig.GetMergeRequestSettingsMustBeCompliantConfig()
+	return c != nil && c.IsEnabled() && shouldRunControl(controlMRSettings, conf)
+}
+
+// mrSettingsPremiumFieldsNeedingUpgrade returns the Premium/Ultimate MR-setting
+// expectations that read as OFF while the config expects them ON (merge trains,
+// merged-results pipelines). These features require a paid tier and the project
+// payload carries no tier signal, so an OFF read is ambiguous: a Free project
+// that cannot enable them, or a paid project that simply left them off. An
+// expectation of false is satisfiable on any tier and never appears here. The
+// renderers turn this into a CONDITIONAL caveat next to ISSUE-506 (disable the
+// expectation on Free; enable the feature on a paid tier) rather than asserting
+// which tier the project is on, since the API cannot tell us.
+func mrSettingsPremiumFieldsNeedingUpgrade(conf *configuration.Configuration, protectionData *gitlab.GitlabProtectionAnalysisData) []string {
+	if !mrSettingsControlEnabled(conf) || protectionData == nil || protectionData.MRSettings == nil {
+		return nil
+	}
+	c := conf.PlumberConfig.GetMergeRequestSettingsMustBeCompliantConfig()
+	s := protectionData.MRSettings
+	var fields []string
+	if c.MergePipelinesEnabled != nil && *c.MergePipelinesEnabled && !s.MergePipelinesEnabled {
+		fields = append(fields, "mergePipelinesEnabled")
+	}
+	if c.MergeTrainsEnabled != nil && *c.MergeTrainsEnabled && !s.MergeTrainsEnabled {
+		fields = append(fields, "mergeTrainsEnabled")
+	}
+	return fields
+}
+
 // protectionDataNeeded reports whether any control needs the GitLab protection
-// collection this run: branchMustBeProtected, either approval-rule control, or
-// the approval-settings control (they all read the one
+// collection this run: branchMustBeProtected, either approval-rule control, the
+// approval-settings control, or the MR-settings control (they all read the one
 // GitlabProtectionAnalysisData).
 func protectionDataNeeded(conf *configuration.Configuration) bool {
 	if shouldRunControl(controlBranchMustBeProtected, conf) {
@@ -126,7 +161,7 @@ func protectionDataNeeded(conf *configuration.Configuration) bool {
 			return true
 		}
 	}
-	return mrApprovalRuleControlEnabled(conf) || mrApprovalSettingsControlEnabled(conf)
+	return mrApprovalRuleControlEnabled(conf) || mrApprovalSettingsControlEnabled(conf) || mrSettingsControlEnabled(conf)
 }
 
 // controlCicdVariablesMustBeProtected / ...Masked are the two .plumber.yaml
@@ -426,6 +461,38 @@ func buildEngineConfig(controls *configuration.ControlsConfig) map[string]any {
 			entry["behaviorWhenCommitIsAdded"] = *c.BehaviorWhenCommitIsAdded
 		}
 		cfg["mergeRequestApprovalSettingsMustBeCompliant"] = entry
+	}
+
+	if c := controls.MergeRequestSettingsMustBeCompliant; c != nil {
+		// Only SET expectations reach the engine: the Rego rule treats an
+		// absent key as "not checked", which is what makes every expectation
+		// optional (unlike the legacy platform's unconditional equality).
+		entry := map[string]any{}
+		if c.MergeMethod != nil {
+			entry["mergeMethod"] = *c.MergeMethod
+		}
+		if c.SquashOption != nil {
+			entry["squashOption"] = *c.SquashOption
+		}
+		if c.MergePipelinesEnabled != nil {
+			entry["mergePipelinesEnabled"] = *c.MergePipelinesEnabled
+		}
+		if c.MergeTrainsEnabled != nil {
+			entry["mergeTrainsEnabled"] = *c.MergeTrainsEnabled
+		}
+		if c.AllowMergeOnSkippedPipeline != nil {
+			entry["allowMergeOnSkippedPipeline"] = *c.AllowMergeOnSkippedPipeline
+		}
+		if c.ResolveOutdatedDiffDiscussions != nil {
+			entry["resolveOutdatedDiffDiscussions"] = *c.ResolveOutdatedDiffDiscussions
+		}
+		if c.PrintingMergeRequestLinkEnabled != nil {
+			entry["printingMergeRequestLinkEnabled"] = *c.PrintingMergeRequestLinkEnabled
+		}
+		if c.RemoveSourceBranchAfterMerge != nil {
+			entry["removeSourceBranchAfterMerge"] = *c.RemoveSourceBranchAfterMerge
+		}
+		cfg["mergeRequestSettingsMustBeCompliant"] = entry
 	}
 
 	if c := controls.IncludesMustNotUseForbiddenVersions; c != nil {
@@ -827,6 +894,11 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	// every protection off), so "no protection in effect" is the only heuristic;
 	// surface the same Premium/Ultimate caveat next to ISSUE-503.
 	result.MRApprovalSettingsTierCaveat = mrApprovalSettingsTierCaveatApplies(conf, protectionData)
+	// ISSUE-506 can require Premium/Ultimate MR settings (merge trains, merged-
+	// results pipelines) the project cannot turn on without a paid tier; flag
+	// those so the renderers advise disabling the specific expectation rather
+	// than presenting an unfixable failure.
+	result.MRSettingsPremiumCaveatFields = mrSettingsPremiumFieldsNeedingUpgrade(conf, protectionData)
 
 	reportProgress(conf, analysisStepCount, analysisStepCount, "Analysis complete")
 

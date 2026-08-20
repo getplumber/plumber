@@ -52,6 +52,7 @@ func ToNormalizedPipeline(
 	pipeline.MRApprovalRules, pipeline.MRApprovalRulesKnown = buildApprovalRules(protection)
 	pipeline.SettingsVariables, pipeline.SettingsVariablesKnown = buildSettingsVariables(variables)
 	pipeline.MRApprovalSettings = buildApprovalSettings(protection)
+	pipeline.MRSettings = buildMRSettings(protection)
 	if origin != nil && origin.MergedConf != nil {
 		if globals := extractGitLabVariables(origin.MergedConf.GlobalVariables); len(globals) > 0 {
 			pipeline.GlobalVariables = globals
@@ -148,6 +149,30 @@ func buildApprovalSettings(protection *GitlabProtectionAnalysisData) *ir.MRAppro
 		PreventEditingApprovalRulesInMR: s.DisableOverridingApproversPerMergeRequest,
 		RequireReAuthToApprove:          s.RequirePasswordToApprove,
 		BehaviorWhenCommitIsAdded:       behavior,
+	}
+}
+
+// buildMRSettings projects the project-level merge-request/merge settings from
+// the collected GitLab project payload onto the IR in raw form, so the
+// mergeRequestSettingsMustBeCompliant control (ISSUE-506) can compare each field
+// against the configured expectation for exact equality. The enum values
+// (MergeMethod, SquashOption) are GitLab typed strings, carried as plain
+// strings. Returns nil when the project payload was not read, so the control
+// abstains and reports not-evaluable rather than a false pass.
+func buildMRSettings(protection *GitlabProtectionAnalysisData) *ir.MRSettings {
+	if protection == nil || protection.MRSettings == nil {
+		return nil
+	}
+	p := protection.MRSettings
+	return &ir.MRSettings{
+		MergeMethod:                     string(p.MergeMethod),
+		SquashOption:                    string(p.SquashOption),
+		MergePipelinesEnabled:           p.MergePipelinesEnabled,
+		MergeTrainsEnabled:              p.MergeTrainsEnabled,
+		AllowMergeOnSkippedPipeline:     p.AllowMergeOnSkippedPipeline,
+		ResolveOutdatedDiffDiscussions:  p.ResolveOutdatedDiffDiscussions,
+		PrintingMergeRequestLinkEnabled: p.PrintingMergeRequestLinkEnabled,
+		RemoveSourceBranchAfterMerge:    p.RemoveSourceBranchAfterMerge,
 	}
 }
 

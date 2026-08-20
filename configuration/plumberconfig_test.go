@@ -374,6 +374,7 @@ func TestValidControlNames(t *testing.T) {
 		"mergeRequestApprovalRulesMustCoverAllProtectedBranches",
 		"mergeRequestApprovalRulesMustRequireMinimumApprovals",
 		"mergeRequestApprovalSettingsMustBeCompliant",
+		"mergeRequestSettingsMustBeCompliant",
 		"pipelineMustIncludeComponent",
 		"pipelineMustIncludeTemplate",
 		"pipelineMustNotEnableDebugTrace",
@@ -439,6 +440,40 @@ func TestMRApprovalSettingsBehaviorValidation(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), invalid) || !strings.Contains(err.Error(), "remove_approvals_by_code_owners") {
 		t.Fatalf("the error must name the bad value and the accepted ladder, got %v", err)
+	}
+}
+
+// mergeMethod and squashOption are validated AT CONFIG LOAD because the Rego
+// rule compares them for exact equality against GitLab's value: an unknown
+// expectation would never equal a real setting and would flag every project, so
+// a typo must fail loudly here instead.
+func TestMRSettingsEnumValidation(t *testing.T) {
+	enabled := true
+	strPtr := func(s string) *string { return &s }
+	mk := func(mutate func(*MRSettingsControlConfig)) *PlumberConfig {
+		c := &MRSettingsControlConfig{Enabled: &enabled}
+		mutate(c)
+		return &PlumberConfig{Version: "2.0", GitLab: &ProviderConfig{Controls: ControlsConfig{
+			MergeRequestSettingsMustBeCompliant: c,
+		}}}
+	}
+
+	if err := mk(func(c *MRSettingsControlConfig) {}).Validate(); err != nil {
+		t.Fatalf("unset enum expectations must validate, got %v", err)
+	}
+	if err := mk(func(c *MRSettingsControlConfig) {
+		c.MergeMethod = strPtr("ff")
+		c.SquashOption = strPtr("default_on")
+	}).Validate(); err != nil {
+		t.Fatalf("valid enum expectations must validate, got %v", err)
+	}
+	err := mk(func(c *MRSettingsControlConfig) { c.MergeMethod = strPtr("squash") }).Validate()
+	if err == nil || !strings.Contains(err.Error(), "squash") || !strings.Contains(err.Error(), "rebase_merge") {
+		t.Fatalf("an unknown mergeMethod must fail validation naming the bad value and the accepted set, got %v", err)
+	}
+	err = mk(func(c *MRSettingsControlConfig) { c.SquashOption = strPtr("sometimes") }).Validate()
+	if err == nil || !strings.Contains(err.Error(), "sometimes") || !strings.Contains(err.Error(), "default_off") {
+		t.Fatalf("an unknown squashOption must fail validation naming the bad value and the accepted set, got %v", err)
 	}
 }
 

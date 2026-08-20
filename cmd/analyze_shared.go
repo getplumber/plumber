@@ -106,6 +106,7 @@ func outputTextWithProvider(p provider.Provider, result *control.AnalysisResult,
 	renderWarnings(result.Warnings)
 	renderApprovalRulesTierCaveat(result)
 	renderMRApprovalSettingsTierCaveat(result)
+	renderMRSettingsPremiumCaveat(result)
 
 	printSectionHeader("Summary")
 	fmt.Println()

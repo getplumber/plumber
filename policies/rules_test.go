@@ -1353,6 +1353,96 @@ func TestIssue503_MRApprovalSettingsCompliant(t *testing.T) {
 	}
 }
 
+// TestIssue506_MRSettingsCompliant flags a project whose merge-request/merge
+// settings do not exactly match the configured expectations. Every expectation
+// is optional (unset = not checked); a set expectation must equal the project's
+// actual value.
+func TestIssue506_MRSettingsCompliant(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+
+	// Positive: three configured expectations diverge (merge method, merge
+	// trains, remove-source-branch); squashOption is not configured, so the
+	// project's differing squash value is NOT a deviation.
+	cfg := map[string]any{
+		"mergeRequestSettingsMustBeCompliant": map[string]any{
+			"mergeMethod":                  "ff",
+			"mergeTrainsEnabled":           true,
+			"removeSourceBranchAfterMerge": true,
+		},
+	}
+	deviating := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitLab,
+		MRSettings: &ir.MRSettings{
+			MergeMethod:                  "merge", // != ff
+			SquashOption:                 "never", // not checked
+			MergeTrainsEnabled:           false,   // != true
+			RemoveSourceBranchAfterMerge: false,   // != true
+		},
+	}
+	findings, err := engine.Evaluate(context.Background(), deviating, cfg)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if got := countCode(findings, "ISSUE-506"); got != 1 {
+		t.Fatalf("expected 1 ISSUE-506 finding (singleton), got %d", got)
+	}
+	for _, f := range findings {
+		if f.Code != "ISSUE-506" {
+			continue
+		}
+		devKeys := map[string]bool{}
+		for _, d := range f.Data["deviatingSettings"].([]any) {
+			if s, ok := d.(string); ok {
+				devKeys[s] = true
+			}
+		}
+		for _, want := range []string{"mergeMethod", "mergeTrainsEnabled", "removeSourceBranchAfterMerge"} {
+			if !devKeys[want] {
+				t.Errorf("deviatingSettings must include %q, got %v", want, f.Data["deviatingSettings"])
+			}
+		}
+		if devKeys["squashOption"] {
+			t.Errorf("squashOption is not configured, must not deviate: %v", f.Data["deviatingSettings"])
+		}
+		// The message reads as current-vs-expected prose.
+		for _, want := range []string{"merge method", "expected"} {
+			if !strings.Contains(f.Message, want) {
+				t.Errorf("message should read as current-vs-expected prose containing %q, got %q", want, f.Message)
+			}
+		}
+	}
+
+	// Negative: every configured expectation matches -> no finding.
+	compliant := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitLab,
+		MRSettings: &ir.MRSettings{
+			MergeMethod:                  "ff",
+			SquashOption:                 "never",
+			MergeTrainsEnabled:           true,
+			RemoveSourceBranchAfterMerge: true,
+		},
+	}
+	if f, _ := engine.Evaluate(context.Background(), compliant, cfg); countCode(f, "ISSUE-506") != 0 {
+		t.Fatal("expected 0 ISSUE-506 findings when every configured expectation matches")
+	}
+
+	// Negative: no expectations configured -> nothing to check, no finding even
+	// though the project settings are all set.
+	noCfg := map[string]any{"mergeRequestSettingsMustBeCompliant": map[string]any{}}
+	if f, _ := engine.Evaluate(context.Background(), deviating, noCfg); countCode(f, "ISSUE-506") != 0 {
+		t.Fatal("expected 0 ISSUE-506 findings when no expectation is configured")
+	}
+
+	// Abstain: settings unreadable (nil projection) -> no finding: not-evaluable.
+	unknown := &ir.NormalizedPipeline{Provider: ir.ProviderGitLab}
+	if f, _ := engine.Evaluate(context.Background(), unknown, cfg); countCode(f, "ISSUE-506") != 0 {
+		t.Fatal("expected 0 ISSUE-506 findings when the settings could not be read")
+	}
+}
+
 // TestIssue504_MRApprovalRulesCoverAllBranches flags a project where no
 // approval rule applies to all protected branches (a singleton finding). It
 // fires on zero rules too (no coverage at all), matching the legacy control,

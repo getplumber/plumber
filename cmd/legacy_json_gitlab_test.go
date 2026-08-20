@@ -203,3 +203,38 @@ func TestMRApprovalSettingsTierCaveatJSON(t *testing.T) {
 		t.Errorf("tierCaveat present when the run did not flag it")
 	}
 }
+
+// TestMRSettingsPremiumCaveatJSON pins the ISSUE-506 tierCaveat: when the run
+// flagged Premium expectations the project can't satisfy, the block carries the
+// offending field list. It attaches only to the MR-settings control and only
+// when the field list is non-empty.
+func TestMRSettingsPremiumCaveatJSON(t *testing.T) {
+	flagged := &control.AnalysisResult{CiValid: true, MRSettingsPremiumCaveatFields: []string{"mergePipelinesEnabled"}}
+	settings := control.ControlEntry{ControlName: "mergeRequestSettingsMustBeCompliant"}
+
+	block := _withControlMeta(map[string]any{"issues": []map[string]any{}}, settings, flagged, 1)
+	m := block.(map[string]any)
+	tc, ok := m["tierCaveat"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected a tierCaveat on the MR-settings block, got %v", m)
+	}
+	if tc["reason"] != "premium-settings-expected-on" || tc["requiresTier"] != "premium_or_ultimate" {
+		t.Errorf("tierCaveat shape mismatch: %v", tc)
+	}
+	fields, _ := tc["fields"].([]string)
+	if len(fields) != 1 || fields[0] != "mergePipelinesEnabled" {
+		t.Errorf("tierCaveat must carry the offending fields, got %v", tc["fields"])
+	}
+
+	// A non-MR-settings control must NOT get the caveat, even when the flag is set.
+	other := _withControlMeta(map[string]any{}, control.ControlEntry{ControlName: "branchMustBeProtected"}, flagged, 0)
+	if _, present := other.(map[string]any)["tierCaveat"]; present {
+		t.Errorf("tierCaveat leaked onto a non-MR-settings control")
+	}
+
+	// Empty field list (a Free-satisfiable config): no caveat.
+	clean := &control.AnalysisResult{CiValid: true}
+	if _, present := _withControlMeta(map[string]any{}, settings, clean, 1).(map[string]any)["tierCaveat"]; present {
+		t.Errorf("tierCaveat present when no premium field was flagged")
+	}
+}

@@ -34,6 +34,7 @@ var controlsMeta = map[string]ControlMeta{
 	"mergeRequestApprovalRulesMustRequireMinimumApprovals":   {Providers: []string{ProviderGitLab}},
 	"mergeRequestApprovalRulesMustCoverAllProtectedBranches": {Providers: []string{ProviderGitLab}},
 	"mergeRequestApprovalSettingsMustBeCompliant":            {Providers: []string{ProviderGitLab}},
+	"mergeRequestSettingsMustBeCompliant":                    {Providers: []string{ProviderGitLab}},
 	"cicdVariablesMustBeProtected":                           {Providers: []string{ProviderGitLab}},
 	"cicdVariablesMustBeMasked":                              {Providers: []string{ProviderGitLab}},
 	"containerImageMustComeFromAuthorizedSources":            {Providers: []string{ProviderGitLab, ProviderGitHub}},

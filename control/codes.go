@@ -190,6 +190,8 @@ const (
 	CodeMRApprovalRulesAllBranchesMissing ErrorCode = "ISSUE-504"
 	// ISSUE-505: Branch has non-compliant protection settings
 	CodeBranchNonCompliant ErrorCode = "ISSUE-505"
+	// ISSUE-506: The project's merge-request/merge settings do not meet the configured expectations
+	CodeMRSettingsNonCompliant ErrorCode = "ISSUE-506"
 	// ISSUE-803: Job runs with overly broad permissions (write-all)
 	CodeExcessivePermissions ErrorCode = "ISSUE-803"
 )
@@ -613,6 +615,15 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Update branch protection settings in GitLab: Settings > Repository > Protected Branches. Ensure force push is disabled, access levels meet the minimum, and code owner approval is required per your .plumber.yaml configuration.",
 		DocURL:      docsBaseURL + string(CodeBranchNonCompliant),
 		ControlName: "branchMustBeProtected",
+	},
+	CodeMRSettingsNonCompliant: {
+		Code:        CodeMRSettingsNonCompliant,
+		Severity:    SeverityMedium,
+		Title:       "MR settings are not compliant",
+		Description: "The project's merge-request/merge settings (merge method, squash policy, merge trains, source-branch removal, and related options) do not match the configured expectations, so merges can happen in a way the policy does not allow.",
+		Remediation: "Align the project's merge-request settings in Settings > Merge requests with your policy: set the required merge method and squash option, and toggle the merge-train, skipped-pipeline, discussion-resolution, and source-branch-removal options to the expected values.",
+		DocURL:      docsBaseURL + string(CodeMRSettingsNonCompliant),
+		ControlName: "mergeRequestSettingsMustBeCompliant",
 	},
 	CodeTemplateInjection: {
 		Code:        CodeTemplateInjection,

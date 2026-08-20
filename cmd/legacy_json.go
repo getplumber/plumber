@@ -119,6 +119,18 @@ func _withControlMeta(block any, e control.ControlEntry, result *control.Analysi
 				"message":      mrApprovalSettingsTierCaveatMessage,
 			}
 		}
+		if result != nil && len(result.MRSettingsPremiumCaveatFields) > 0 && e.ControlName == "mergeRequestSettingsMustBeCompliant" {
+			// One or more configured MR-setting expectations require a Premium/
+			// Ultimate feature the project cannot turn on (merge trains, merged-
+			// results pipelines). Keyed with the offending fields so a consumer can
+			// annotate ISSUE-506 or advise disabling just those expectations.
+			m["tierCaveat"] = map[string]any{
+				"reason":       "premium-settings-expected-on",
+				"requiresTier": "premium_or_ultimate",
+				"fields":       result.MRSettingsPremiumCaveatFields,
+				"message":      mrSettingsTierCaveatMessage,
+			}
+		}
 	}
 	return block
 }
@@ -133,6 +145,12 @@ const approvalRulesTierCaveatMessage = "MR approval rules are a GitLab Premium/U
 // approval protection in effect. Shared by the terminal caveat
 // (render_details.go) and the JSON tierCaveat.
 const mrApprovalSettingsTierCaveatMessage = "MR approval settings are a GitLab Premium/Ultimate feature and this project has no approval protections in effect. If you're not on GitLab Premium or Ultimate you can't set them — disable this control."
+
+// mrSettingsTierCaveatMessage explains that one or more configured MR-setting
+// expectations (see the tierCaveat "fields") require a GitLab Premium/Ultimate
+// feature the project cannot turn on. Shared by the terminal caveat
+// (render_details.go) and the JSON tierCaveat.
+const mrSettingsTierCaveatMessage = "One or more expected MR settings are GitLab Premium/Ultimate features that read as off (see fields). The API gives no tier signal, so this may be a Free project that cannot enable them or a paid project that left them off. If this project is not on GitLab Premium/Ultimate, set those expectations to false or remove them from mergeRequestSettingsMustBeCompliant; if it is, enable the feature to satisfy the check."
 
 // isApprovalRuleControl reports whether a control name is one of the two
 // GitLab MR approval-rule controls the tier caveat applies to.
@@ -193,6 +211,8 @@ func buildLegacyResult(e control.ControlEntry, result *control.AnalysisResult, p
 		return "cicdVariablesMaskedResult", buildCicdVariablesMaskedBlock(common, result, findings)
 	case "mergeRequestApprovalSettingsMustBeCompliant":
 		return "mrApprovalSettingsResult", buildMRApprovalSettingsBlock(common, findings)
+	case "mergeRequestSettingsMustBeCompliant":
+		return "mrSettingsResult", buildMRSettingsBlock(common, findings)
 	}
 	return "", nil
 }
@@ -280,6 +300,23 @@ func variablesCheckedCount(result *control.AnalysisResult) int {
 // project's behaviorWhenCommitIsAdded ride in the issue's data, preserved by
 // projectFindings.
 func buildMRApprovalSettingsBlock(c legacyCommon, findings []opaengine.Finding) map[string]any {
+	return map[string]any{
+		"issues": projectFindings(findings, "job"),
+		"metrics": map[string]any{
+			"hasNonCompliantSettings": len(findings),
+		},
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
+	}
+}
+
+// buildMRSettingsBlock emits the legacy JSON block for the merge-request
+// settings control (ISSUE-506). The finding is a settings-level singleton (no
+// file/job); its deviatingSettings list rides in the issue's data, preserved by
+// projectFindings.
+func buildMRSettingsBlock(c legacyCommon, findings []opaengine.Finding) map[string]any {
 	return map[string]any{
 		"issues": projectFindings(findings, "job"),
 		"metrics": map[string]any{

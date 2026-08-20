@@ -227,6 +227,25 @@ gitlab:
       requireReAuthToApprove: false
       behaviorWhenCommitIsAdded: remove_all_approvals
     # ===========================================
+    # MR settings must be compliant
+    # ===========================================
+    # Requires the project's merge-request/merge settings (Settings > Merge
+    # requests) to match the values below exactly. Every field is optional:
+    # remove any you don't want enforced. mergeMethod is one of merge, ff,
+    # rebase_merge; squashOption is one of never, always, default_on,
+    # default_off. mergePipelinesEnabled and mergeTrainsEnabled are GitLab
+    # Premium/Ultimate (always false on Free, so drop them there).
+    mergeRequestSettingsMustBeCompliant:
+      enabled: false
+      mergeMethod: ff                      # linear history, no merge commits
+      squashOption: default_on             # squash to one commit by default
+      mergePipelinesEnabled: true          # run the pipeline on the merged result
+      mergeTrainsEnabled: false
+      allowMergeOnSkippedPipeline: false   # never merge when CI was skipped
+      resolveOutdatedDiffDiscussions: true # auto-resolve stale review threads
+      printingMergeRequestLinkEnabled: true
+      removeSourceBranchAfterMerge: true   # clean up the branch after merge
+    # ===========================================
     # Pipeline must not include hardcoded jobs
     # ===========================================
     # Detects CI/CD jobs that are defined directly in the .gitlab-ci.yml file
