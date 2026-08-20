@@ -386,7 +386,11 @@ an edited file as new findings.
   controls follow the same discipline — ISSUE-101/103 key on the tagless image
   repository (`imageRepo`), not the mutable tag — so a routine tag or name
   change never re-keys a finding. ISSUE-504, a per-project singleton, keys on
-  `code` alone (the platform's identity was likewise empty).
+  `code` alone (the platform's identity was likewise empty). ISSUE-503 (MR
+  approval settings not compliant) is the same per-project singleton: the
+  deviating-settings list is data, not identity, so a project drifting from
+  three deviations to one keeps the same finding rather than spawning a new
+  one per combination.
 - **A declared field holding a non-string is skipped, not coerced**, and
   renders as an empty pair, the same as an absent key. A JSON round trip turns
   a numeric `tag: 7` into a float64, so this is reachable from real payload.

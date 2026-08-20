@@ -35,6 +35,7 @@ const controlBranchMustBeProtected = "branchMustBeProtected"
 const controlMutableRemoteExec = "actionsMustNotExecuteMutableRemoteCode"
 const controlMRApprovalRulesMinApprovals = "mergeRequestApprovalRulesMustRequireMinimumApprovals"
 const controlMRApprovalRulesCoverAllBranches = "mergeRequestApprovalRulesMustCoverAllProtectedBranches"
+const controlMRApprovalSettings = "mergeRequestApprovalSettingsMustBeCompliant"
 
 // mrApprovalRuleControlEnabled reports whether either merge-request
 // approval-rule control (ISSUE-502/504) is active for this run. Both read the
@@ -69,16 +70,63 @@ func approvalRulesTierCaveatApplies(conf *configuration.Configuration, protectio
 	return mrApprovalRuleControlEnabled(conf) && approvalRulesReturnedNone(protectionData)
 }
 
+// mrApprovalSettingsHasNoProtections reports whether the protection collection
+// read the project's approval settings and NONE of them are locked down — the
+// fully-unlocked state a GitLab Free project returns, where the feature does not
+// exist and the approvals API 200-defaults every protection off. Unlike the
+// approval RULES case (a 200-empty list), the settings API gives no other tier
+// signal, so "no protection in effect" is the only heuristic available.
+//
+// The author field has INVERTED polarity: MergeRequestsAuthorApproval == true
+// means authors CAN approve (no protection), so unlocked wants it true while the
+// other five flags must be false. The check is deliberately conservative: any
+// single protection active proves the project CAN lock a setting down (so it is
+// on a paid tier) and suppresses the caveat.
+func mrApprovalSettingsHasNoProtections(protectionData *gitlab.GitlabProtectionAnalysisData) bool {
+	if protectionData == nil || protectionData.MRApprovalSettings == nil {
+		return false
+	}
+	s := protectionData.MRApprovalSettings
+	return s.MergeRequestsAuthorApproval && // authors CAN approve == not locked down
+		!s.MergeRequestsDisableCommittersApproval &&
+		!s.DisableOverridingApproversPerMergeRequest &&
+		!s.RequirePasswordToApprove &&
+		!s.ResetApprovalsOnPush &&
+		!s.SelectiveCodeOwnerRemovals
+}
+
+// mrApprovalSettingsTierCaveatApplies reports whether to surface the
+// Premium/Ultimate caveat for the approval-settings control (ISSUE-503): the
+// control ran (mrApprovalSettingsControlEnabled) AND the project has no approval
+// protection in effect (mrApprovalSettingsHasNoProtections), the tell-tale
+// GitLab-Free signature. The enabled guard is load-bearing the same way it is
+// for the rules caveat — a run that never turned this control on must not show
+// the caveat.
+func mrApprovalSettingsTierCaveatApplies(conf *configuration.Configuration, protectionData *gitlab.GitlabProtectionAnalysisData) bool {
+	return mrApprovalSettingsControlEnabled(conf) && mrApprovalSettingsHasNoProtections(protectionData)
+}
+
+// mrApprovalSettingsControlEnabled reports whether the merge-request
+// approval-settings control (ISSUE-503) is active for this run. It reads the
+// approval settings the GitLab protection collection fetches, so that
+// collection must run when it is enabled even if no other protection control
+// is.
+func mrApprovalSettingsControlEnabled(conf *configuration.Configuration) bool {
+	c := conf.PlumberConfig.GetMergeRequestApprovalSettingsMustBeCompliantConfig()
+	return c != nil && c.IsEnabled() && shouldRunControl(controlMRApprovalSettings, conf)
+}
+
 // protectionDataNeeded reports whether any control needs the GitLab protection
-// collection this run: branchMustBeProtected, or either approval-rule control
-// (they all read the one GitlabProtectionAnalysisData).
+// collection this run: branchMustBeProtected, either approval-rule control, or
+// the approval-settings control (they all read the one
+// GitlabProtectionAnalysisData).
 func protectionDataNeeded(conf *configuration.Configuration) bool {
 	if shouldRunControl(controlBranchMustBeProtected, conf) {
 		if cfg := conf.PlumberConfig.GetBranchMustBeProtectedConfig(); cfg != nil && cfg.IsEnabled() {
 			return true
 		}
 	}
-	return mrApprovalRuleControlEnabled(conf)
+	return mrApprovalRuleControlEnabled(conf) || mrApprovalSettingsControlEnabled(conf)
 }
 
 // controlCicdVariablesMustBeProtected / ...Masked are the two .plumber.yaml
@@ -355,6 +403,29 @@ func buildEngineConfig(controls *configuration.ControlsConfig) map[string]any {
 			entry["minimumRequiredApprovals"] = *c.MinimumRequiredApprovals
 		}
 		cfg["mergeRequestApprovalRulesMustRequireMinimumApprovals"] = entry
+	}
+
+	if c := controls.MergeRequestApprovalSettingsMustBeCompliant; c != nil {
+		// Only SET expectations reach the engine: the Rego rule treats an
+		// absent key as "not checked", which is what makes every expectation
+		// optional.
+		entry := map[string]any{}
+		if c.PreventApprovalByAuthor != nil {
+			entry["preventApprovalByAuthor"] = *c.PreventApprovalByAuthor
+		}
+		if c.PreventApprovalsByCommitters != nil {
+			entry["preventApprovalsByCommitters"] = *c.PreventApprovalsByCommitters
+		}
+		if c.PreventEditingApprovalRulesInMR != nil {
+			entry["preventEditingApprovalRulesInMR"] = *c.PreventEditingApprovalRulesInMR
+		}
+		if c.RequireReAuthToApprove != nil {
+			entry["requireReAuthToApprove"] = *c.RequireReAuthToApprove
+		}
+		if c.BehaviorWhenCommitIsAdded != nil {
+			entry["behaviorWhenCommitIsAdded"] = *c.BehaviorWhenCommitIsAdded
+		}
+		cfg["mergeRequestApprovalSettingsMustBeCompliant"] = entry
 	}
 
 	if c := controls.IncludesMustNotUseForbiddenVersions; c != nil {
@@ -752,6 +823,10 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	// on Free). Flag it so the renderers can surface a Premium/Ultimate caveat.
 	result.ApprovalRulesTierCaveat = approvalRulesTierCaveatApplies(conf, protectionData)
 	result.VariablesData = variablesData
+	// The approval-settings API gives no tier signal at all (Free 200-defaults
+	// every protection off), so "no protection in effect" is the only heuristic;
+	// surface the same Premium/Ultimate caveat next to ISSUE-503.
+	result.MRApprovalSettingsTierCaveat = mrApprovalSettingsTierCaveatApplies(conf, protectionData)
 
 	reportProgress(conf, analysisStepCount, analysisStepCount, "Analysis complete")
 

@@ -63,6 +63,11 @@ func GitLabControls(pc *configuration.PlumberConfig) []ControlEntry {
 		Skipped:     c.MergeRequestApprovalRulesMustCoverAllProtectedBranches == nil || !c.MergeRequestApprovalRulesMustCoverAllProtectedBranches.IsEnabled(),
 	})
 	entries = append(entries, ControlEntry{
+		DisplayName: "MR approval settings must be compliant",
+		ControlName: "mergeRequestApprovalSettingsMustBeCompliant",
+		Skipped:     c.MergeRequestApprovalSettingsMustBeCompliant == nil || !c.MergeRequestApprovalSettingsMustBeCompliant.IsEnabled(),
+	})
+	entries = append(entries, ControlEntry{
 		DisplayName: "CI/CD variables must be protected",
 		ControlName: "cicdVariablesMustBeProtected",
 		Skipped:     c.CicdVariablesMustBeProtected == nil || !c.CicdVariablesMustBeProtected.IsEnabled(),
@@ -340,6 +345,9 @@ func DisabledControlNames(c *configuration.ControlsConfig) map[string]bool {
 	}
 	if cfg := c.MergeRequestApprovalRulesMustCoverAllProtectedBranches; cfg == nil || !cfg.IsEnabled() {
 		out["mergeRequestApprovalRulesMustCoverAllProtectedBranches"] = true
+	}
+	if cfg := c.MergeRequestApprovalSettingsMustBeCompliant; cfg == nil || !cfg.IsEnabled() {
+		out["mergeRequestApprovalSettingsMustBeCompliant"] = true
 	}
 	if cfg := c.CicdVariablesMustBeProtected; cfg == nil || !cfg.IsEnabled() {
 		out["cicdVariablesMustBeProtected"] = true

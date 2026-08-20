@@ -73,6 +73,7 @@ func controlsConfigIsZero(c ControlsConfig) bool {
 		c.BranchMustBeProtected == nil &&
 		c.MergeRequestApprovalRulesMustRequireMinimumApprovals == nil &&
 		c.MergeRequestApprovalRulesMustCoverAllProtectedBranches == nil &&
+		c.MergeRequestApprovalSettingsMustBeCompliant == nil &&
 		c.CicdVariablesMustBeProtected == nil &&
 		c.CicdVariablesMustBeMasked == nil &&
 		c.PipelineMustNotIncludeHardcodedJobs == nil &&
@@ -102,6 +103,7 @@ func controlsConfigEqual(a, b ControlsConfig) bool {
 		a.BranchMustBeProtected == b.BranchMustBeProtected &&
 		a.MergeRequestApprovalRulesMustRequireMinimumApprovals == b.MergeRequestApprovalRulesMustRequireMinimumApprovals &&
 		a.MergeRequestApprovalRulesMustCoverAllProtectedBranches == b.MergeRequestApprovalRulesMustCoverAllProtectedBranches &&
+		a.MergeRequestApprovalSettingsMustBeCompliant == b.MergeRequestApprovalSettingsMustBeCompliant &&
 		a.CicdVariablesMustBeProtected == b.CicdVariablesMustBeProtected &&
 		a.CicdVariablesMustBeMasked == b.CicdVariablesMustBeMasked &&
 		a.PipelineMustNotIncludeHardcodedJobs == b.PipelineMustNotIncludeHardcodedJobs &&

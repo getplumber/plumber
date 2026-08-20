@@ -313,7 +313,7 @@ Plumber ships controls for:
 
 - container image pinning and authorized sources
 - branch protection
-- GitLab merge request approval rules (minimum approvals, coverage of all protected branches)
+- GitLab merge request approval rules (minimum approvals, coverage of all protected branches) and approval settings (author/committer approval, per-MR overrides, re-authentication, approval reset)
 - GitLab CI/CD settings variables that must be protected and masked
 - unverified script execution (`curl | bash`, `base64 -d | bash`, etc.)
 - Docker-in-Docker

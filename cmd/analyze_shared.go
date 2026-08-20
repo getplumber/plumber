@@ -105,6 +105,7 @@ func outputTextWithProvider(p provider.Provider, result *control.AnalysisResult,
 	renderFindingGroups(filterGroupsForDegraded(groups, result.DataCollectionDegraded))
 	renderWarnings(result.Warnings)
 	renderApprovalRulesTierCaveat(result)
+	renderMRApprovalSettingsTierCaveat(result)
 
 	printSectionHeader("Summary")
 	fmt.Println()

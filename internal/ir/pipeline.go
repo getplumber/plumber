@@ -101,6 +101,15 @@ type NormalizedPipeline struct {
 	// ProtectionDetailsKnown.
 	SettingsVariablesKnown bool `json:"settingsVariablesKnown,omitempty"`
 
+	// MRApprovalSettings are the project's merge-request approval settings
+	// (GitLab: Settings > Merge requests), normalized to positive-security
+	// form. nil when the settings could not be read (a 401/403 from a token
+	// without scope), so the mergeRequestApprovalSettingsMustBeCompliant
+	// control (ISSUE-503) abstains and reports not-evaluable rather than a
+	// false pass. Projected from the same protection collection as
+	// MRApprovalRules.
+	MRApprovalSettings *MRApprovalSettings `json:"mrApprovalSettings,omitempty"`
+
 	// Dockerfiles lists every Dockerfile the collector scanned at the
 	// repo root and under common build directories, with each FROM
 	// base-image extracted so policies can check pinning state.
@@ -478,4 +487,41 @@ type SettingsVariable struct {
 	Environment string `json:"environment"`
 	Protected   bool   `json:"protected"`
 	Masked      bool   `json:"masked"`
+}
+
+// BehaviorWhenCommitIsAdded values, ordered by strictness: what happens to
+// existing approvals when a new commit lands on an open merge request.
+// ISSUE-503 treats the configured expectation as a minimum on this ladder
+// (keep < remove code-owner approvals < remove all), matching the legacy
+// platform's ordinal comparison.
+const (
+	MRApprovalBehaviorKeepApprovals            = "keep_approvals"
+	MRApprovalBehaviorRemoveCodeOwnerApprovals = "remove_approvals_by_code_owners"
+	MRApprovalBehaviorRemoveAllApprovals       = "remove_all_approvals"
+)
+
+// MRApprovalSettings are the project-level merge-request approval settings
+// (GitLab: Settings > Merge requests), normalized to positive-security form:
+// every boolean is true when the safer choice is in effect, regardless of the
+// polarity GitLab's API uses (merge_requests_author_approval, for example, is
+// inverted at projection). Read by the
+// mergeRequestApprovalSettingsMustBeCompliant control (ISSUE-503).
+type MRApprovalSettings struct {
+	// PreventApprovalByAuthor is true when MR authors cannot approve their
+	// own merge requests (GitLab: !merge_requests_author_approval).
+	PreventApprovalByAuthor bool `json:"preventApprovalByAuthor"`
+	// PreventApprovalsByCommitters is true when users who committed to an MR
+	// cannot approve it (GitLab: merge_requests_disable_committers_approval).
+	PreventApprovalsByCommitters bool `json:"preventApprovalsByCommitters"`
+	// PreventEditingApprovalRulesInMR is true when approval rules cannot be
+	// overridden per merge request
+	// (GitLab: disable_overriding_approvers_per_merge_request).
+	PreventEditingApprovalRulesInMR bool `json:"preventEditingApprovalRulesInMR"`
+	// RequireReAuthToApprove is true when approving requires
+	// re-authentication (GitLab: require_password_to_approve).
+	RequireReAuthToApprove bool `json:"requireReAuthToApprove"`
+	// BehaviorWhenCommitIsAdded is one of the MRApprovalBehavior* values,
+	// derived from GitLab's reset_approvals_on_push and
+	// selective_code_owner_removals flags.
+	BehaviorWhenCommitIsAdded string `json:"behaviorWhenCommitIsAdded"`
 }

@@ -4,7 +4,9 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"sort"
+	"strings"
 
 	defaultconfig "github.com/getplumber/plumber/defaultConfig"
 	"github.com/getplumber/plumber/utils"
@@ -41,6 +43,11 @@ var validControlSchema = map[string][]string{
 	},
 	"mergeRequestApprovalRulesMustCoverAllProtectedBranches": {
 		"enabled",
+	},
+	"mergeRequestApprovalSettingsMustBeCompliant": {
+		"enabled", "preventApprovalByAuthor", "preventApprovalsByCommitters",
+		"preventEditingApprovalRulesInMR", "requireReAuthToApprove",
+		"behaviorWhenCommitIsAdded",
 	},
 	"cicdVariablesMustBeProtected": {
 		"enabled",
@@ -293,6 +300,11 @@ type ControlsConfig struct {
 	// their values print verbatim in every job log a project member can
 	// read (ISSUE-202). Config-free; toggle via `enabled`.
 	CicdVariablesMustBeMasked *EnabledOnlyControlConfig `yaml:"cicdVariablesMustBeMasked,omitempty"`
+
+	// MergeRequestApprovalSettingsMustBeCompliant control configuration
+	// (GitLab only). Checks the project's merge-request approval settings
+	// against per-setting optional expectations (ISSUE-503).
+	MergeRequestApprovalSettingsMustBeCompliant *MRApprovalSettingsControlConfig `yaml:"mergeRequestApprovalSettingsMustBeCompliant,omitempty"`
 
 	// PipelineMustNotIncludeHardcodedJobs control configuration
 	PipelineMustNotIncludeHardcodedJobs *HardcodedJobsControlConfig `yaml:"pipelineMustNotIncludeHardcodedJobs,omitempty"`
@@ -664,6 +676,75 @@ func (c *MRApprovalRulesMinApprovalsControlConfig) IsEnabled() bool {
 		return false
 	}
 	return *c.Enabled
+}
+
+// MRApprovalSettingsControlConfig configures the GitLab merge-request
+// approval-settings check (ISSUE-503). GitLab-only. Every expectation is
+// optional: an unset field is not checked. The booleans check only when set
+// true — an explicit false is the same as unset, matching the legacy
+// platform's conf semantics (there is no "expect the unsafe setting" mode).
+type MRApprovalSettingsControlConfig struct {
+	// Enabled controls whether this check runs.
+	Enabled *bool `yaml:"enabled,omitempty"`
+
+	// PreventApprovalByAuthor, when true, expects that MR authors cannot
+	// approve their own merge requests.
+	PreventApprovalByAuthor *bool `yaml:"preventApprovalByAuthor,omitempty"`
+
+	// PreventApprovalsByCommitters, when true, expects that users who
+	// committed to an MR cannot approve it.
+	PreventApprovalsByCommitters *bool `yaml:"preventApprovalsByCommitters,omitempty"`
+
+	// PreventEditingApprovalRulesInMR, when true, expects that approval
+	// rules cannot be overridden per merge request.
+	PreventEditingApprovalRulesInMR *bool `yaml:"preventEditingApprovalRulesInMR,omitempty"`
+
+	// RequireReAuthToApprove, when true, expects that approving requires
+	// re-authentication.
+	RequireReAuthToApprove *bool `yaml:"requireReAuthToApprove,omitempty"`
+
+	// BehaviorWhenCommitIsAdded is the MINIMUM required strictness for what
+	// happens to existing approvals when a commit is added to an open MR:
+	// "keep_approvals" < "remove_approvals_by_code_owners" <
+	// "remove_all_approvals". A project below the configured rung is
+	// flagged; any other value fails config validation.
+	BehaviorWhenCommitIsAdded *string `yaml:"behaviorWhenCommitIsAdded,omitempty"`
+}
+
+// IsEnabled reports whether the control is enabled. Returns false when the
+// wrapper or the field is nil — same convention as every other IsEnabled().
+func (c *MRApprovalSettingsControlConfig) IsEnabled() bool {
+	if c == nil || c.Enabled == nil {
+		return false
+	}
+	return *c.Enabled
+}
+
+// mrApprovalBehaviorValues are the accepted behaviorWhenCommitIsAdded
+// expectations, in strictness order. Kept in the configuration package (the
+// validation site) and mirrored by the ir.MRApprovalBehavior* constants the
+// projection emits; TestMRApprovalBehaviorValuesMatchIR pins the two lists
+// together.
+var mrApprovalBehaviorValues = []string{
+	"keep_approvals",
+	"remove_approvals_by_code_owners",
+	"remove_all_approvals",
+}
+
+// validateBehaviorWhenCommitIsAdded rejects a behaviorWhenCommitIsAdded
+// expectation outside the known ladder AT CONFIG LOAD. Load-bearing: the Rego
+// rule looks the value up in its rank map and an unknown string would make
+// that lookup undefined, silently disabling the check — a typo like
+// "keep-approvals" would read as "not checked" forever.
+func (c *MRApprovalSettingsControlConfig) validateBehaviorWhenCommitIsAdded() error {
+	if c == nil || c.BehaviorWhenCommitIsAdded == nil {
+		return nil
+	}
+	if slices.Contains(mrApprovalBehaviorValues, *c.BehaviorWhenCommitIsAdded) {
+		return nil
+	}
+	return fmt.Errorf("mergeRequestApprovalSettingsMustBeCompliant.behaviorWhenCommitIsAdded: unknown value %q (expected one of %s)",
+		*c.BehaviorWhenCommitIsAdded, strings.Join(mrApprovalBehaviorValues, ", "))
 }
 
 type BranchProtectionControlConfig struct {
@@ -1133,6 +1214,9 @@ func validateControlsConfig(c *ControlsConfig) error {
 			return err
 		}
 	}
+	if err := c.MergeRequestApprovalSettingsMustBeCompliant.validateBehaviorWhenCommitIsAdded(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -1221,6 +1305,13 @@ func (c *PlumberConfig) GetCicdVariablesMustBeMaskedConfig() *EnabledOnlyControl
 		return nil
 	}
 	return c.ControlsFor("gitlab").CicdVariablesMustBeMasked
+}
+
+func (c *PlumberConfig) GetMergeRequestApprovalSettingsMustBeCompliantConfig() *MRApprovalSettingsControlConfig {
+	if c == nil {
+		return nil
+	}
+	return c.ControlsFor("gitlab").MergeRequestApprovalSettingsMustBeCompliant
 }
 
 // IsEnabled returns whether the control is enabled

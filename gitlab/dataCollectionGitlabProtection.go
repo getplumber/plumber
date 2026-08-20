@@ -129,7 +129,8 @@ func (dc *GitlabProtectionDataCollection) Run(
 			return nil, metrics, err
 		}
 		l.WithError(err).Warn("MR approval settings not available (may require premium)")
-		// If 403/404 error, MRApprovalSettings will be nil which controls can handle
+		// If 403/404 error, MRApprovalSettings stays nil, so ISSUE-503 reports
+		// not-evaluable, not a false pass (the nil pointer is the Known signal).
 	} else {
 		returnedData.MRApprovalSettings = approvalSettings
 	}

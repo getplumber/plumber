@@ -80,6 +80,68 @@ func TestBuildSettingsVariables(t *testing.T) {
 	}
 }
 
+// TestBuildApprovalSettings covers the approval-settings projection: unread
+// settings project to nil (so ISSUE-503 reports not-evaluable), booleans are
+// normalized to positive-security form (author-approval polarity inverted),
+// and the two GitLab reset flags collapse onto the behaviorWhenCommitIsAdded
+// ladder the way the legacy platform derived it.
+func TestBuildApprovalSettings(t *testing.T) {
+	// nil protection, or settings the collector could not read -> nil.
+	if got := buildApprovalSettings(nil); got != nil {
+		t.Fatalf("nil protection: got %+v, want nil", got)
+	}
+	if got := buildApprovalSettings(&GitlabProtectionAnalysisData{}); got != nil {
+		t.Fatalf("unread settings (403/404): got %+v, want nil", got)
+	}
+
+	// Polarity: author approval ALLOWED and committers/editing/re-auth all
+	// off must project to all-false prevent* fields.
+	weak := buildApprovalSettings(&GitlabProtectionAnalysisData{
+		MRApprovalSettings: &glab.ProjectApprovals{
+			MergeRequestsAuthorApproval: true,
+		},
+	})
+	if weak == nil || weak.PreventApprovalByAuthor || weak.PreventApprovalsByCommitters ||
+		weak.PreventEditingApprovalRulesInMR || weak.RequireReAuthToApprove {
+		t.Fatalf("weak settings projection mismatch: %+v", weak)
+	}
+	if weak.BehaviorWhenCommitIsAdded != ir.MRApprovalBehaviorKeepApprovals {
+		t.Fatalf("neither reset flag set must project keep_approvals, got %q", weak.BehaviorWhenCommitIsAdded)
+	}
+
+	// Polarity: everything locked down projects to all-true prevent* fields.
+	strict := buildApprovalSettings(&GitlabProtectionAnalysisData{
+		MRApprovalSettings: &glab.ProjectApprovals{
+			MergeRequestsAuthorApproval:               false,
+			MergeRequestsDisableCommittersApproval:    true,
+			DisableOverridingApproversPerMergeRequest: true,
+			RequirePasswordToApprove:                  true,
+			ResetApprovalsOnPush:                      true,
+		},
+	})
+	if strict == nil || !strict.PreventApprovalByAuthor || !strict.PreventApprovalsByCommitters ||
+		!strict.PreventEditingApprovalRulesInMR || !strict.RequireReAuthToApprove {
+		t.Fatalf("strict settings projection mismatch: %+v", strict)
+	}
+	if strict.BehaviorWhenCommitIsAdded != ir.MRApprovalBehaviorRemoveAllApprovals {
+		t.Fatalf("reset_approvals_on_push alone must project remove_all_approvals, got %q", strict.BehaviorWhenCommitIsAdded)
+	}
+
+	// selective_code_owner_removals wins the ladder's middle rung whenever it
+	// is set, even alongside reset_approvals_on_push (legacy derivation).
+	for _, reset := range []bool{false, true} {
+		selective := buildApprovalSettings(&GitlabProtectionAnalysisData{
+			MRApprovalSettings: &glab.ProjectApprovals{
+				ResetApprovalsOnPush:       reset,
+				SelectiveCodeOwnerRemovals: true,
+			},
+		})
+		if selective.BehaviorWhenCommitIsAdded != ir.MRApprovalBehaviorRemoveCodeOwnerApprovals {
+			t.Fatalf("selective_code_owner_removals (reset=%v) must project remove_approvals_by_code_owners, got %q", reset, selective.BehaviorWhenCommitIsAdded)
+		}
+	}
+}
+
 func TestToNormalizedPipeline_Empty(t *testing.T) {
 	pipeline := ToNormalizedPipeline("group/project", "main", "", nil, nil, nil, nil)
 	if pipeline.Provider != ir.ProviderGitLab {

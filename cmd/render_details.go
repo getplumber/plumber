@@ -90,6 +90,20 @@ func renderApprovalRulesTierCaveat(result *control.AnalysisResult) {
 	fmt.Printf("    %s•%s Disable these controls if you don't have GitLab Premium or Ultimate.\n", colorYellow, colorReset)
 }
 
+// renderMRApprovalSettingsTierCaveat prints a caveat when the MR
+// approval-settings control ran against a project with no approval protection in
+// effect: the feature requires GitLab Premium/Ultimate, and on Free the API
+// 200-defaults every protection off, so the operator cannot lock any of them
+// down (see AnalysisResult.MRApprovalSettingsTierCaveat). No-op otherwise.
+func renderMRApprovalSettingsTierCaveat(result *control.AnalysisResult) {
+	if result == nil || !result.MRApprovalSettingsTierCaveat {
+		return
+	}
+	fmt.Println()
+	fmt.Printf("  %s⚠ MR approval settings are a GitLab Premium/Ultimate feature.%s\n", colorYellow, colorReset)
+	fmt.Printf("    %s•%s No approval protections are in effect — if you're not on GitLab Premium or Ultimate you can't set them, so disable this control.\n", colorYellow, colorReset)
+}
+
 // renderDegradedCaveat prints an up-front warning that the run scored
 // against incomplete data because one or more collection/enrichment
 // steps failed (#220). Without it a partial GitHub run looks identical
@@ -928,6 +942,10 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 		return []statLine{
 			{Label: "Variables Checked", Value: fmt.Sprintf("%d", len(result.VariablesData.Variables))},
 			{Label: "Unmasked Variables", Value: fmt.Sprintf("%d", findingsCount)},
+		}
+	case "mergeRequestApprovalSettingsMustBeCompliant":
+		return []statLine{
+			{Label: "Non-Compliant Approval Settings", Value: fmt.Sprintf("%d", findingsCount)},
 		}
 	case "branchMustBeProtected":
 		total, toProtect, protected, unprotected := _branchProtectionCounts(result, pc)
