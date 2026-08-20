@@ -145,3 +145,81 @@ func TestMRApprovalSettingsConfigContract(t *testing.T) {
 		t.Fatalf("one expectation set: expected exactly [preventApprovalByAuthor], got %v", devs)
 	}
 }
+
+// TestMRSettingsConfigContract pins the struct -> map -> rego chain for
+// ISSUE-506. Every expectation is optional and the rego reads an absent key as
+// "not checked", so a key rename on either side would silently make the control
+// assert nothing forever with the rego-only tests (which hand-build
+// input.config) still green.
+func TestMRSettingsConfigContract(t *testing.T) {
+	boolPtr := func(b bool) *bool { return &b }
+	strPtr := func(s string) *string { return &s }
+
+	engine := opaengine.New()
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
+		t.Fatalf("load policies: %v", err)
+	}
+	// A project whose every setting differs from the configured expectation, so
+	// the deviation list mirrors exactly which config keys survived projection.
+	pipeline := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitLab,
+		MRSettings: &ir.MRSettings{
+			MergeMethod:                     "merge",
+			SquashOption:                    "never",
+			MergePipelinesEnabled:           false,
+			MergeTrainsEnabled:              false,
+			AllowMergeOnSkippedPipeline:     false,
+			ResolveOutdatedDiffDiscussions:  false,
+			PrintingMergeRequestLinkEnabled: false,
+			RemoveSourceBranchAfterMerge:    false,
+		},
+	}
+	deviations506 := func(engineCfg map[string]any) []any {
+		findings, err := engine.Evaluate(context.Background(), pipeline, engineCfg)
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		for _, f := range findings {
+			if f.Code == "ISSUE-506" {
+				devs, _ := f.Data["deviatingSettings"].([]any)
+				return devs
+			}
+		}
+		return nil
+	}
+
+	// All eight expectations set (each the opposite of the pipeline's value),
+	// via the REAL buildEngineConfig projection: all eight must deviate.
+	cfgAll := buildEngineConfig(&configuration.ControlsConfig{
+		MergeRequestSettingsMustBeCompliant: &configuration.MRSettingsControlConfig{
+			Enabled:                         boolPtr(true),
+			MergeMethod:                     strPtr("ff"),
+			SquashOption:                    strPtr("always"),
+			MergePipelinesEnabled:           boolPtr(true),
+			MergeTrainsEnabled:              boolPtr(true),
+			AllowMergeOnSkippedPipeline:     boolPtr(true),
+			ResolveOutdatedDiffDiscussions:  boolPtr(true),
+			PrintingMergeRequestLinkEnabled: boolPtr(true),
+			RemoveSourceBranchAfterMerge:    boolPtr(true),
+		},
+	})
+	if _, ok := cfgAll["mergeRequestSettingsMustBeCompliant"]; !ok {
+		t.Fatal("buildEngineConfig did not project a mergeRequestSettingsMustBeCompliant block")
+	}
+	if devs := deviations506(cfgAll); len(devs) != 8 {
+		t.Fatalf("all 8 expectations through the real config projection: expected 8 deviations, got %v — the struct->map->rego key contract is broken", devs)
+	}
+
+	// Only one expectation set -> exactly that one deviation: unset fields must
+	// NOT be projected (the rego reads an absent key as "not checked").
+	cfgOne := buildEngineConfig(&configuration.ControlsConfig{
+		MergeRequestSettingsMustBeCompliant: &configuration.MRSettingsControlConfig{
+			Enabled:     boolPtr(true),
+			MergeMethod: strPtr("ff"),
+		},
+	})
+	devs := deviations506(cfgOne)
+	if len(devs) != 1 || devs[0] != "mergeMethod" {
+		t.Fatalf("one expectation set: expected exactly [mergeMethod], got %v", devs)
+	}
+}

@@ -150,6 +150,78 @@ func TestMrApprovalSettingsControlEnabled(t *testing.T) {
 	}
 }
 
+// mrSettingsControlEnabled gates the protection collection for an MR-settings-
+// only run the same way its siblings do: wrongly false means protectionData
+// stays nil and ISSUE-506 silently reports not-evaluable on every run.
+func TestMrSettingsControlEnabled(t *testing.T) {
+	cfgWith := func(c *configuration.MRSettingsControlConfig) *configuration.Configuration {
+		return &configuration.Configuration{PlumberConfig: &configuration.PlumberConfig{
+			GitLab: &configuration.ProviderConfig{Controls: configuration.ControlsConfig{
+				MergeRequestSettingsMustBeCompliant: c,
+			}},
+		}}
+	}
+
+	if mrSettingsControlEnabled(&configuration.Configuration{}) {
+		t.Fatal("expected false when PlumberConfig is nil")
+	}
+	if mrSettingsControlEnabled(cfgWith(nil)) {
+		t.Fatal("expected false when the control is not configured")
+	}
+	if mrSettingsControlEnabled(cfgWith(&configuration.MRSettingsControlConfig{Enabled: boolPtrT(false)})) {
+		t.Fatal("expected false when the control is disabled")
+	}
+	if !mrSettingsControlEnabled(cfgWith(&configuration.MRSettingsControlConfig{Enabled: boolPtrT(true)})) {
+		t.Fatal("expected true when the control is enabled")
+	}
+	skipped := cfgWith(&configuration.MRSettingsControlConfig{Enabled: boolPtrT(true)})
+	skipped.SkipControlsFilter = []string{controlMRSettings}
+	if mrSettingsControlEnabled(skipped) {
+		t.Fatal("expected false when the control is in --skip-controls")
+	}
+}
+
+// mrSettingsPremiumFieldsNeedingUpgrade flags only the Premium expectations the
+// project cannot satisfy: feature expected ON but read back OFF. Expecting OFF,
+// or a project that has the feature ON, is not a tier problem.
+func TestMRSettingsPremiumFieldsNeedingUpgrade(t *testing.T) {
+	cfgWith := func(c *configuration.MRSettingsControlConfig) *configuration.Configuration {
+		return &configuration.Configuration{PlumberConfig: &configuration.PlumberConfig{
+			GitLab: &configuration.ProviderConfig{Controls: configuration.ControlsConfig{
+				MergeRequestSettingsMustBeCompliant: c,
+			}},
+		}}
+	}
+	expectPremiumOn := &configuration.MRSettingsControlConfig{
+		Enabled:               boolPtrT(true),
+		MergePipelinesEnabled: boolPtrT(true),
+		MergeTrainsEnabled:    boolPtrT(true),
+	}
+	freeProject := &gitlab.GitlabProtectionAnalysisData{MRSettings: &glab.Project{}} // both off
+	premiumProject := &gitlab.GitlabProtectionAnalysisData{MRSettings: &glab.Project{MergePipelinesEnabled: true, MergeTrainsEnabled: true}}
+
+	if got := mrSettingsPremiumFieldsNeedingUpgrade(cfgWith(&configuration.MRSettingsControlConfig{Enabled: boolPtrT(false)}), freeProject); got != nil {
+		t.Fatalf("disabled control must yield no caveat fields, got %v", got)
+	}
+	if got := mrSettingsPremiumFieldsNeedingUpgrade(cfgWith(expectPremiumOn), freeProject); len(got) != 2 {
+		t.Fatalf("both premium fields expected-on-but-off must be flagged, got %v", got)
+	}
+	if got := mrSettingsPremiumFieldsNeedingUpgrade(cfgWith(expectPremiumOn), premiumProject); got != nil {
+		t.Fatalf("a project with the premium features ON needs no caveat, got %v", got)
+	}
+	expectOff := &configuration.MRSettingsControlConfig{
+		Enabled:               boolPtrT(true),
+		MergePipelinesEnabled: boolPtrT(false),
+		MergeTrainsEnabled:    boolPtrT(false),
+	}
+	if got := mrSettingsPremiumFieldsNeedingUpgrade(cfgWith(expectOff), freeProject); got != nil {
+		t.Fatalf("expecting the features off is satisfiable on any tier, got %v", got)
+	}
+	if got := mrSettingsPremiumFieldsNeedingUpgrade(cfgWith(expectPremiumOn), &gitlab.GitlabProtectionAnalysisData{}); got != nil {
+		t.Fatalf("nil settings must yield no caveat fields, got %v", got)
+	}
+}
+
 // approvalRulesTierCaveatApplies composes the enabled gate with the zero-rules
 // signal. The enabled guard is the load-bearing half: a branch-protection-only
 // run on a zero-rules project satisfies approvalRulesReturnedNone but must NOT

@@ -104,6 +104,21 @@ func renderMRApprovalSettingsTierCaveat(result *control.AnalysisResult) {
 	fmt.Printf("    %s•%s No approval protections are in effect — if you're not on GitLab Premium or Ultimate you can't set them, so disable this control.\n", colorYellow, colorReset)
 }
 
+// renderMRSettingsPremiumCaveat prints a caveat when ISSUE-506 requires
+// Premium/Ultimate MR settings the project cannot turn on (merge trains,
+// merged-results pipelines). It names the specific expectations so the operator
+// can set them false or remove them instead of hitting an unfixable failure
+// (see AnalysisResult.MRSettingsPremiumCaveatFields). No-op otherwise.
+func renderMRSettingsPremiumCaveat(result *control.AnalysisResult) {
+	if result == nil || len(result.MRSettingsPremiumCaveatFields) == 0 {
+		return
+	}
+	fields := strings.Join(result.MRSettingsPremiumCaveatFields, ", ")
+	fmt.Println()
+	fmt.Printf("  %s⚠ These expected MR settings are GitLab Premium/Ultimate features and read as off: %s%s\n", colorYellow, fields, colorReset)
+	fmt.Printf("    %s•%s If this project isn't on GitLab Premium/Ultimate it can't enable them, so set those expectations to false (or remove them) in mergeRequestSettingsMustBeCompliant. If it is, turn the feature on to satisfy the check.\n", colorYellow, colorReset)
+}
+
 // renderDegradedCaveat prints an up-front warning that the run scored
 // against incomplete data because one or more collection/enrichment
 // steps failed (#220). Without it a partial GitHub run looks identical
@@ -946,6 +961,10 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 	case "mergeRequestApprovalSettingsMustBeCompliant":
 		return []statLine{
 			{Label: "Non-Compliant Approval Settings", Value: fmt.Sprintf("%d", findingsCount)},
+		}
+	case "mergeRequestSettingsMustBeCompliant":
+		return []statLine{
+			{Label: "Non-Compliant MR Settings", Value: fmt.Sprintf("%d", findingsCount)},
 		}
 	case "branchMustBeProtected":
 		total, toProtect, protected, unprotected := _branchProtectionCounts(result, pc)

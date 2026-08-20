@@ -49,6 +49,12 @@ var validControlSchema = map[string][]string{
 		"preventEditingApprovalRulesInMR", "requireReAuthToApprove",
 		"behaviorWhenCommitIsAdded",
 	},
+	"mergeRequestSettingsMustBeCompliant": {
+		"enabled", "mergeMethod", "squashOption", "mergePipelinesEnabled",
+		"mergeTrainsEnabled", "allowMergeOnSkippedPipeline",
+		"resolveOutdatedDiffDiscussions", "printingMergeRequestLinkEnabled",
+		"removeSourceBranchAfterMerge",
+	},
 	"cicdVariablesMustBeProtected": {
 		"enabled",
 	},
@@ -305,6 +311,12 @@ type ControlsConfig struct {
 	// (GitLab only). Checks the project's merge-request approval settings
 	// against per-setting optional expectations (ISSUE-503).
 	MergeRequestApprovalSettingsMustBeCompliant *MRApprovalSettingsControlConfig `yaml:"mergeRequestApprovalSettingsMustBeCompliant,omitempty"`
+
+	// MergeRequestSettingsMustBeCompliant control configuration (GitLab only).
+	// Checks the project's merge-request/merge settings (merge method, squash,
+	// merge trains, source-branch removal, etc.) against per-setting optional
+	// expectations for exact equality (ISSUE-506).
+	MergeRequestSettingsMustBeCompliant *MRSettingsControlConfig `yaml:"mergeRequestSettingsMustBeCompliant,omitempty"`
 
 	// PipelineMustNotIncludeHardcodedJobs control configuration
 	PipelineMustNotIncludeHardcodedJobs *HardcodedJobsControlConfig `yaml:"pipelineMustNotIncludeHardcodedJobs,omitempty"`
@@ -745,6 +757,83 @@ func (c *MRApprovalSettingsControlConfig) validateBehaviorWhenCommitIsAdded() er
 	}
 	return fmt.Errorf("mergeRequestApprovalSettingsMustBeCompliant.behaviorWhenCommitIsAdded: unknown value %q (expected one of %s)",
 		*c.BehaviorWhenCommitIsAdded, strings.Join(mrApprovalBehaviorValues, ", "))
+}
+
+// MRSettingsControlConfig configures the GitLab merge-request/merge-settings
+// check (ISSUE-506). GitLab-only. Every expectation is optional: an unset field
+// is not checked, and each set field is compared against the project's actual
+// value for EXACT equality (the legacy platform compared all fields, but always
+// with a fully populated policy — optional here keeps a hand-authored YAML from
+// flagging on a field the operator never set).
+type MRSettingsControlConfig struct {
+	// Enabled controls whether this check runs.
+	Enabled *bool `yaml:"enabled,omitempty"`
+
+	// MergeMethod is the expected merge method: "merge", "ff", or
+	// "rebase_merge". Any other value fails config validation.
+	MergeMethod *string `yaml:"mergeMethod,omitempty"`
+
+	// SquashOption is the expected squash policy: "never", "always",
+	// "default_on", or "default_off". Any other value fails config validation.
+	SquashOption *string `yaml:"squashOption,omitempty"`
+
+	// MergePipelinesEnabled is the expected merged-results-pipelines setting.
+	MergePipelinesEnabled *bool `yaml:"mergePipelinesEnabled,omitempty"`
+
+	// MergeTrainsEnabled is the expected merge-trains setting.
+	MergeTrainsEnabled *bool `yaml:"mergeTrainsEnabled,omitempty"`
+
+	// AllowMergeOnSkippedPipeline is the expected "allow merge when the
+	// pipeline is skipped" setting.
+	AllowMergeOnSkippedPipeline *bool `yaml:"allowMergeOnSkippedPipeline,omitempty"`
+
+	// ResolveOutdatedDiffDiscussions is the expected auto-resolve-outdated-
+	// discussions setting.
+	ResolveOutdatedDiffDiscussions *bool `yaml:"resolveOutdatedDiffDiscussions,omitempty"`
+
+	// PrintingMergeRequestLinkEnabled is the expected print-MR-link-on-push
+	// setting.
+	PrintingMergeRequestLinkEnabled *bool `yaml:"printingMergeRequestLinkEnabled,omitempty"`
+
+	// RemoveSourceBranchAfterMerge is the expected delete-source-branch-after-
+	// merge default.
+	RemoveSourceBranchAfterMerge *bool `yaml:"removeSourceBranchAfterMerge,omitempty"`
+}
+
+// IsEnabled reports whether the control is enabled. Returns false when the
+// wrapper or the field is nil — same convention as every other IsEnabled().
+func (c *MRSettingsControlConfig) IsEnabled() bool {
+	if c == nil || c.Enabled == nil {
+		return false
+	}
+	return *c.Enabled
+}
+
+// mrSettingsMergeMethodValues are the accepted mergeMethod expectations, and
+// mrSettingsSquashOptionValues the accepted squashOption expectations. Kept at
+// the validation site; an unknown value would make the Rego equality check
+// compare against a string GitLab never returns (always deviating), so it is
+// rejected at config load instead.
+var (
+	mrSettingsMergeMethodValues  = []string{"merge", "ff", "rebase_merge"}
+	mrSettingsSquashOptionValues = []string{"never", "always", "default_on", "default_off"}
+)
+
+// validateEnums rejects a mergeMethod or squashOption expectation outside the
+// known set AT CONFIG LOAD.
+func (c *MRSettingsControlConfig) validateEnums() error {
+	if c == nil {
+		return nil
+	}
+	if c.MergeMethod != nil && !slices.Contains(mrSettingsMergeMethodValues, *c.MergeMethod) {
+		return fmt.Errorf("mergeRequestSettingsMustBeCompliant.mergeMethod: unknown value %q (expected one of %s)",
+			*c.MergeMethod, strings.Join(mrSettingsMergeMethodValues, ", "))
+	}
+	if c.SquashOption != nil && !slices.Contains(mrSettingsSquashOptionValues, *c.SquashOption) {
+		return fmt.Errorf("mergeRequestSettingsMustBeCompliant.squashOption: unknown value %q (expected one of %s)",
+			*c.SquashOption, strings.Join(mrSettingsSquashOptionValues, ", "))
+	}
+	return nil
 }
 
 type BranchProtectionControlConfig struct {
@@ -1217,6 +1306,9 @@ func validateControlsConfig(c *ControlsConfig) error {
 	if err := c.MergeRequestApprovalSettingsMustBeCompliant.validateBehaviorWhenCommitIsAdded(); err != nil {
 		return err
 	}
+	if err := c.MergeRequestSettingsMustBeCompliant.validateEnums(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -1312,6 +1404,13 @@ func (c *PlumberConfig) GetMergeRequestApprovalSettingsMustBeCompliantConfig() *
 		return nil
 	}
 	return c.ControlsFor("gitlab").MergeRequestApprovalSettingsMustBeCompliant
+}
+
+func (c *PlumberConfig) GetMergeRequestSettingsMustBeCompliantConfig() *MRSettingsControlConfig {
+	if c == nil {
+		return nil
+	}
+	return c.ControlsFor("gitlab").MergeRequestSettingsMustBeCompliant
 }
 
 // IsEnabled returns whether the control is enabled

@@ -102,6 +102,16 @@ type AnalysisResult struct {
 	// Free. Any single protection being active proves a paid tier and clears it.
 	MRApprovalSettingsTierCaveat bool `json:"-"`
 
+	// MRSettingsPremiumCaveatFields lists the Premium/Ultimate MR-setting
+	// expectations (mergePipelinesEnabled, mergeTrainsEnabled) that read as OFF
+	// while the config expects them ON. These features require a paid tier, and
+	// the project payload gives no tier signal, so an OFF read is ambiguous: a
+	// Free project that cannot enable them, or a paid project that left them off
+	// (a real misconfiguration). Non-empty => renderers surface a CONDITIONAL
+	// caveat next to ISSUE-506 (disable the expectation if on Free; enable the
+	// feature if on a paid tier) rather than asserting the tier either way.
+	MRSettingsPremiumCaveatFields []string `json:"-"`
+
 	// DataCollectionDegraded is set when a collection or enrichment step
 	// failed mid-run, so the analysis ran on incomplete data: a GitLab
 	// merged-CI fetch that timed out (empty pipeline), or a GitHub run

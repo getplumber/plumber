@@ -110,6 +110,15 @@ type NormalizedPipeline struct {
 	// MRApprovalRules.
 	MRApprovalSettings *MRApprovalSettings `json:"mrApprovalSettings,omitempty"`
 
+	// MRSettings are the project's merge-request/merge settings (GitLab:
+	// Settings > Merge requests — merge method, squash, merge trains, etc.),
+	// carried in raw form so the mergeRequestSettingsMustBeCompliant control
+	// (ISSUE-506) can compare each against the configured expectation. nil when
+	// the project payload could not be read, so the control abstains and reports
+	// not-evaluable rather than a false pass. Projected from the same protection
+	// collection as MRApprovalSettings.
+	MRSettings *MRSettings `json:"mrSettings,omitempty"`
+
 	// Dockerfiles lists every Dockerfile the collector scanned at the
 	// repo root and under common build directories, with each FROM
 	// base-image extracted so policies can check pinning state.
@@ -524,4 +533,36 @@ type MRApprovalSettings struct {
 	// derived from GitLab's reset_approvals_on_push and
 	// selective_code_owner_removals flags.
 	BehaviorWhenCommitIsAdded string `json:"behaviorWhenCommitIsAdded"`
+}
+
+// MRSettings are the project-level merge-request/merge settings, carried in raw
+// form (not positive-security) so the mergeRequestSettingsMustBeCompliant
+// control (ISSUE-506) can compare each field against the operator's configured
+// expectation for exact equality. Field semantics mirror GitLab's project
+// payload (Settings > Merge requests).
+type MRSettings struct {
+	// MergeMethod is the project's merge method: "merge", "ff", or
+	// "rebase_merge" (GitLab: merge_method).
+	MergeMethod string `json:"mergeMethod"`
+	// SquashOption is the project's squash policy: "never", "always",
+	// "default_on", or "default_off" (GitLab: squash_option).
+	SquashOption string `json:"squashOption"`
+	// MergePipelinesEnabled is true when merged results pipelines are enabled
+	// (GitLab: merge_pipelines_enabled; Premium/Ultimate).
+	MergePipelinesEnabled bool `json:"mergePipelinesEnabled"`
+	// MergeTrainsEnabled is true when merge trains are enabled
+	// (GitLab: merge_trains_enabled; Premium/Ultimate).
+	MergeTrainsEnabled bool `json:"mergeTrainsEnabled"`
+	// AllowMergeOnSkippedPipeline is true when an MR can be merged while its
+	// pipeline is skipped (GitLab: allow_merge_on_skipped_pipeline).
+	AllowMergeOnSkippedPipeline bool `json:"allowMergeOnSkippedPipeline"`
+	// ResolveOutdatedDiffDiscussions is true when outdated diff discussions are
+	// auto-resolved on push (GitLab: resolve_outdated_diff_discussions).
+	ResolveOutdatedDiffDiscussions bool `json:"resolveOutdatedDiffDiscussions"`
+	// PrintingMergeRequestLinkEnabled is true when the MR-creation link is
+	// printed on push (GitLab: printing_merge_request_link_enabled).
+	PrintingMergeRequestLinkEnabled bool `json:"printingMergeRequestLinkEnabled"`
+	// RemoveSourceBranchAfterMerge is true when the source branch is deleted by
+	// default after merge (GitLab: remove_source_branch_after_merge).
+	RemoveSourceBranchAfterMerge bool `json:"removeSourceBranchAfterMerge"`
 }
