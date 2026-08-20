@@ -184,6 +184,8 @@ const (
 	CodeBranchUnprotected ErrorCode = "ISSUE-501"
 	// ISSUE-502: A merge-request approval rule covering all protected branches requires fewer approvals than the configured minimum
 	CodeMRApprovalRulesBelowMinimum ErrorCode = "ISSUE-502"
+	// ISSUE-503: The project's merge-request approval settings do not meet the configured expectations
+	CodeMRApprovalSettingsNonCompliant ErrorCode = "ISSUE-503"
 	// ISSUE-504: No merge-request approval rule applies to all protected branches
 	CodeMRApprovalRulesAllBranchesMissing ErrorCode = "ISSUE-504"
 	// ISSUE-505: Branch has non-compliant protection settings
@@ -584,6 +586,15 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Raise the rule's required approvals in Settings > Merge requests > Approval rules to at least your configured minimum, or narrow the rule's scope if it is not meant to cover all protected branches.",
 		DocURL:      docsBaseURL + string(CodeMRApprovalRulesBelowMinimum),
 		ControlName: "mergeRequestApprovalRulesMustRequireMinimumApprovals",
+	},
+	CodeMRApprovalSettingsNonCompliant: {
+		Code:        CodeMRApprovalSettingsNonCompliant,
+		Severity:    SeverityHigh,
+		Title:       "MR approval settings are not compliant",
+		Description: "The project's merge request approval settings fall short of the configured expectations (authors or committers can approve, rules can be overridden per MR, no re-authentication, or approvals survive new commits), so approvals can be weakened at the project level regardless of any approval rule.",
+		Remediation: "Tighten the project's approval settings in Settings > Merge requests: prevent approval by the author and by committers, prevent editing approval rules in merge requests, require re-authentication to approve, and remove approvals when new commits are added, as your policy requires.",
+		DocURL:      docsBaseURL + string(CodeMRApprovalSettingsNonCompliant),
+		ControlName: "mergeRequestApprovalSettingsMustBeCompliant",
 	},
 	CodeMRApprovalRulesAllBranchesMissing: {
 		Code:        CodeMRApprovalRulesAllBranchesMissing,

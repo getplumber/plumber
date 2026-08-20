@@ -13,6 +13,7 @@ import (
 	"github.com/AlecAivazis/survey/v2"
 	"github.com/getplumber/plumber/configuration"
 	defaultconfig "github.com/getplumber/plumber/defaultConfig"
+	"github.com/getplumber/plumber/internal/ir"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -202,6 +203,14 @@ type initWizardState struct {
 	MRApprovalMinEnabled      bool
 	MRApprovalMinCount        string
 	MRApprovalCoverAllEnabled bool
+
+	// mergeRequestApprovalSettingsMustBeCompliant (GitLab-only, catAccess).
+	MRApprovalSettingsEnabled           bool
+	MRApprovalSettingsPreventAuthor     bool
+	MRApprovalSettingsPreventCommitters bool
+	MRApprovalSettingsPreventEditing    bool
+	MRApprovalSettingsRequireReAuth     bool
+	MRApprovalSettingsBehavior          string
 
 	// pipelineMustNotEnableDebugTrace
 	DebugForbiddenVariablesMultiline string
@@ -519,6 +528,48 @@ func (st *initWizardState) askAccessQuestions() error {
 			Default: defaultMRApprovalCoverAllEnabled(),
 		}, &st.MRApprovalCoverAllEnabled); err != nil {
 			return err
+		}
+		if err := survey.AskOne(&survey.Confirm{
+			Message: "Check MR approval settings against expectations? (GitLab)",
+			Help:    "Compares the project's approval settings (author/committer approval, per-MR overrides, re-auth, approval reset) to the expectations you pick next. Ships off by default.",
+			Default: defaultMRApprovalSettingsEnabled(),
+		}, &st.MRApprovalSettingsEnabled); err != nil {
+			return err
+		}
+		if st.MRApprovalSettingsEnabled {
+			if err := survey.AskOne(&survey.Confirm{
+				Message: "Expect that MR authors cannot approve their own merge requests? (GitLab)",
+				Default: defaultMRApprovalSettingsBool(func(c *configuration.MRApprovalSettingsControlConfig) *bool { return c.PreventApprovalByAuthor }),
+			}, &st.MRApprovalSettingsPreventAuthor); err != nil {
+				return err
+			}
+			if err := survey.AskOne(&survey.Confirm{
+				Message: "Expect that users who committed to an MR cannot approve it? (GitLab)",
+				Default: defaultMRApprovalSettingsBool(func(c *configuration.MRApprovalSettingsControlConfig) *bool { return c.PreventApprovalsByCommitters }),
+			}, &st.MRApprovalSettingsPreventCommitters); err != nil {
+				return err
+			}
+			if err := survey.AskOne(&survey.Confirm{
+				Message: "Expect that approval rules cannot be edited per merge request? (GitLab)",
+				Default: defaultMRApprovalSettingsBool(func(c *configuration.MRApprovalSettingsControlConfig) *bool { return c.PreventEditingApprovalRulesInMR }),
+			}, &st.MRApprovalSettingsPreventEditing); err != nil {
+				return err
+			}
+			if err := survey.AskOne(&survey.Confirm{
+				Message: "Expect re-authentication to approve? (GitLab)",
+				Help:    "Strict: every approval re-prompts credentials. Answering no leaves this setting unchecked.",
+				Default: defaultMRApprovalSettingsBool(func(c *configuration.MRApprovalSettingsControlConfig) *bool { return c.RequireReAuthToApprove }),
+			}, &st.MRApprovalSettingsRequireReAuth); err != nil {
+				return err
+			}
+			if err := survey.AskOne(&survey.Select{
+				Message: "Minimum required behavior when a commit is added to an open MR (GitLab)",
+				Help:    "A project below the chosen rung is flagged: keep_approvals (weakest, effectively unchecked) < remove_approvals_by_code_owners < remove_all_approvals.",
+				Options: mrApprovalBehaviorOptions(),
+				Default: defaultMRApprovalSettingsBehavior(),
+			}, &st.MRApprovalSettingsBehavior); err != nil {
+				return err
+			}
 		}
 	}
 	if hasProvider(st, "github") {
@@ -850,6 +901,46 @@ func defaultCicdVariablesMaskedEnabled() bool {
 	return false
 }
 
+// defaultMRApprovalSettings* source the wizard's prompt defaults for the
+// merge-request approval-settings control from the shipped default, so the
+// prompts and the zero-config baseline cannot drift.
+func defaultMRApprovalSettingsEnabled() bool {
+	if c := defaultGitLabControls().MergeRequestApprovalSettingsMustBeCompliant; c != nil {
+		return c.IsEnabled()
+	}
+	return false
+}
+
+// defaultMRApprovalSettingsBool reads one optional boolean expectation from
+// the shipped default via the field selector; an unset field defaults the
+// prompt to false ("not checked").
+func defaultMRApprovalSettingsBool(field func(*configuration.MRApprovalSettingsControlConfig) *bool) bool {
+	if c := defaultGitLabControls().MergeRequestApprovalSettingsMustBeCompliant; c != nil {
+		if v := field(c); v != nil {
+			return *v
+		}
+	}
+	return false
+}
+
+func defaultMRApprovalSettingsBehavior() string {
+	if c := defaultGitLabControls().MergeRequestApprovalSettingsMustBeCompliant; c != nil && c.BehaviorWhenCommitIsAdded != nil {
+		return *c.BehaviorWhenCommitIsAdded
+	}
+	return ir.MRApprovalBehaviorKeepApprovals
+}
+
+// mrApprovalBehaviorOptions is the behavior ladder in strictness order, from
+// the IR constants the projection emits (the same values config validation
+// accepts).
+func mrApprovalBehaviorOptions() []string {
+	return []string{
+		ir.MRApprovalBehaviorKeepApprovals,
+		ir.MRApprovalBehaviorRemoveCodeOwnerApprovals,
+		ir.MRApprovalBehaviorRemoveAllApprovals,
+	}
+}
+
 // defaultForbiddenTags is the CSV prompt default for forbidden image tags,
 // sourced from the GitLab containerImageMustNotUseForbiddenTags default.
 func defaultForbiddenTags() string {
@@ -1094,6 +1185,23 @@ func (st *initWizardState) applyAccessControls(gl, gh *configuration.ProviderCon
 		}
 		if st.MRApprovalCoverAllEnabled {
 			gl.Controls.MergeRequestApprovalRulesMustCoverAllProtectedBranches = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
+		}
+		if st.MRApprovalSettingsEnabled {
+			// Every expectation is emitted, answered value included: a false
+			// boolean means "not checked" (same as unset) but keeps the full
+			// configuration surface visible in the generated file.
+			behavior := st.MRApprovalSettingsBehavior
+			if behavior == "" {
+				behavior = defaultMRApprovalSettingsBehavior()
+			}
+			gl.Controls.MergeRequestApprovalSettingsMustBeCompliant = &configuration.MRApprovalSettingsControlConfig{
+				Enabled:                         boolPtrInit(true),
+				PreventApprovalByAuthor:         boolPtrInit(st.MRApprovalSettingsPreventAuthor),
+				PreventApprovalsByCommitters:    boolPtrInit(st.MRApprovalSettingsPreventCommitters),
+				PreventEditingApprovalRulesInMR: boolPtrInit(st.MRApprovalSettingsPreventEditing),
+				RequireReAuthToApprove:          boolPtrInit(st.MRApprovalSettingsRequireReAuth),
+				BehaviorWhenCommitIsAdded:       &behavior,
+			}
 		}
 	}
 	if gh != nil {

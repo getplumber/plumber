@@ -1227,6 +1227,132 @@ func TestIssue502_MRApprovalRulesMinApprovals(t *testing.T) {
 	}
 }
 
+// TestIssue503_MRApprovalSettingsCompliant flags a project whose
+// merge-request approval settings fall short of the configured expectations
+// (a singleton finding listing the deviations). Every expectation is
+// optional: unset — and, platform-faithfully, explicit false — checks
+// nothing. behaviorWhenCommitIsAdded is a minimum on the strictness ladder.
+// The rule abstains when the settings could not be read (nil projection), so
+// a token without scope reports not-evaluable rather than a false pass.
+func TestIssue503_MRApprovalSettingsCompliant(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	allExpectations := map[string]any{
+		"mergeRequestApprovalSettingsMustBeCompliant": map[string]any{
+			"preventApprovalByAuthor":         true,
+			"preventApprovalsByCommitters":    true,
+			"preventEditingApprovalRulesInMR": true,
+			"requireReAuthToApprove":          true,
+			"behaviorWhenCommitIsAdded":       ir.MRApprovalBehaviorRemoveCodeOwnerApprovals,
+		},
+	}
+
+	// Positive: everything unlocked -> ONE finding (singleton) naming every
+	// deviating setting, the behavior ladder included.
+	weak := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitLab,
+		MRApprovalSettings: &ir.MRApprovalSettings{
+			BehaviorWhenCommitIsAdded: ir.MRApprovalBehaviorKeepApprovals,
+		},
+	}
+	findings, err := engine.Evaluate(context.Background(), weak, allExpectations)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if got := countCode(findings, "ISSUE-503"); got != 1 {
+		t.Fatalf("expected 1 ISSUE-503 finding (singleton), got %d", got)
+	}
+	for _, f := range findings {
+		if f.Code != "ISSUE-503" {
+			continue
+		}
+		devs, _ := f.Data["deviatingSettings"].([]any)
+		if len(devs) != 5 {
+			t.Fatalf("expected all 5 expectations deviating, got %v", f.Data["deviatingSettings"])
+		}
+		// The raw config-key names are the stable machine contract on
+		// deviatingSettings; the message renders them as human prose.
+		devKeys := map[string]bool{}
+		for _, d := range devs {
+			if s, ok := d.(string); ok {
+				devKeys[s] = true
+			}
+		}
+		for _, name := range []string{"behaviorWhenCommitIsAdded", "preventApprovalByAuthor", "requireReAuthToApprove", "preventApprovalsByCommitters", "preventEditingApprovalRulesInMR"} {
+			if !devKeys[name] {
+				t.Fatalf("deviatingSettings must include %q, got %v", name, devs)
+			}
+		}
+		// The message reads as current-vs-expected prose, not raw config keys.
+		for _, want := range []string{"authors can approve", "re-authentication", "keep_approvals", "should be at least"} {
+			if !strings.Contains(f.Message, want) {
+				t.Fatalf("message should read as current-vs-expected prose containing %q, got %q", want, f.Message)
+			}
+		}
+	}
+
+	// Negative: a locked-down project meets every expectation, and an actual
+	// behavior ABOVE the configured minimum (remove_all vs remove-code-owner
+	// expected) is compliant, not a deviation.
+	strict := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitLab,
+		MRApprovalSettings: &ir.MRApprovalSettings{
+			PreventApprovalByAuthor:         true,
+			PreventApprovalsByCommitters:    true,
+			PreventEditingApprovalRulesInMR: true,
+			RequireReAuthToApprove:          true,
+			BehaviorWhenCommitIsAdded:       ir.MRApprovalBehaviorRemoveAllApprovals,
+		},
+	}
+	if f, _ := engine.Evaluate(context.Background(), strict, allExpectations); countCode(f, "ISSUE-503") != 0 {
+		t.Fatal("expected 0 ISSUE-503 findings when every expectation is met")
+	}
+
+	// Negative: no expectations configured -> nothing is checked, even on a
+	// fully unlocked project. An explicit false is the same as unset
+	// (platform-faithful: there is no "expect the unsafe setting" mode).
+	noExpectations := map[string]any{
+		"mergeRequestApprovalSettingsMustBeCompliant": map[string]any{
+			"preventApprovalByAuthor": false,
+		},
+	}
+	if f, _ := engine.Evaluate(context.Background(), weak, noExpectations); countCode(f, "ISSUE-503") != 0 {
+		t.Fatal("expected 0 ISSUE-503 findings with no (or explicit-false) expectations")
+	}
+
+	// Positive: only the behavior expectation set, project keeps approvals ->
+	// exactly that one deviation.
+	behaviorOnly := map[string]any{
+		"mergeRequestApprovalSettingsMustBeCompliant": map[string]any{
+			"behaviorWhenCommitIsAdded": ir.MRApprovalBehaviorRemoveAllApprovals,
+		},
+	}
+	f, err := engine.Evaluate(context.Background(), weak, behaviorOnly)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if countCode(f, "ISSUE-503") != 1 {
+		t.Fatal("expected 1 ISSUE-503 finding for the behavior ladder alone")
+	}
+	for _, fd := range f {
+		if fd.Code != "ISSUE-503" {
+			continue
+		}
+		if devs, _ := fd.Data["deviatingSettings"].([]any); len(devs) != 1 || devs[0] != "behaviorWhenCommitIsAdded" {
+			t.Fatalf("expected the single behaviorWhenCommitIsAdded deviation, got %v", fd.Data["deviatingSettings"])
+		}
+	}
+
+	// Abstain: settings unreadable (nil projection, the 401/403 case) -> no
+	// findings even though every expectation is set: not-evaluable, not a pass.
+	unknown := &ir.NormalizedPipeline{Provider: ir.ProviderGitLab}
+	if f, _ := engine.Evaluate(context.Background(), unknown, allExpectations); countCode(f, "ISSUE-503") != 0 {
+		t.Fatal("expected 0 ISSUE-503 findings when the settings could not be read")
+	}
+}
+
 // TestIssue504_MRApprovalRulesCoverAllBranches flags a project where no
 // approval rule applies to all protected branches (a singleton finding). It
 // fires on zero rules too (no coverage at all), matching the legacy control,

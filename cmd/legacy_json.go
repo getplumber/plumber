@@ -108,6 +108,17 @@ func _withControlMeta(block any, e control.ControlEntry, result *control.Analysi
 				"message":      approvalRulesTierCaveatMessage,
 			}
 		}
+		if result != nil && result.MRApprovalSettingsTierCaveat && e.ControlName == "mergeRequestApprovalSettingsMustBeCompliant" {
+			// Same tier-ambiguity as the rules caveat, one step blinder: the
+			// settings API 200-defaults every protection off on GitLab Free, so a
+			// no-protection read can't be told apart from a genuinely unlocked paid
+			// project. Keyed so a consumer can suppress or annotate ISSUE-503.
+			m["tierCaveat"] = map[string]any{
+				"reason":       "no-approval-protections",
+				"requiresTier": "premium_or_ultimate",
+				"message":      mrApprovalSettingsTierCaveatMessage,
+			}
+		}
 	}
 	return block
 }
@@ -116,6 +127,12 @@ func _withControlMeta(block any, e control.ControlEntry, result *control.Analysi
 // the MR approval-rule controls when the approvals API returned no rules.
 // Shared by the terminal caveat (render_details.go) and the JSON tierCaveat.
 const approvalRulesTierCaveatMessage = "MR approval rules are a GitLab Premium/Ultimate feature. Disable these controls if you don't have GitLab Premium or Ultimate."
+
+// mrApprovalSettingsTierCaveatMessage explains the Premium/Ultimate requirement
+// for the MR approval-settings control (ISSUE-503) when the project has no
+// approval protection in effect. Shared by the terminal caveat
+// (render_details.go) and the JSON tierCaveat.
+const mrApprovalSettingsTierCaveatMessage = "MR approval settings are a GitLab Premium/Ultimate feature and this project has no approval protections in effect. If you're not on GitLab Premium or Ultimate you can't set them — disable this control."
 
 // isApprovalRuleControl reports whether a control name is one of the two
 // GitLab MR approval-rule controls the tier caveat applies to.
@@ -174,6 +191,8 @@ func buildLegacyResult(e control.ControlEntry, result *control.AnalysisResult, p
 		return "cicdVariablesProtectedResult", buildCicdVariablesProtectedBlock(common, result, findings)
 	case "cicdVariablesMustBeMasked":
 		return "cicdVariablesMaskedResult", buildCicdVariablesMaskedBlock(common, result, findings)
+	case "mergeRequestApprovalSettingsMustBeCompliant":
+		return "mrApprovalSettingsResult", buildMRApprovalSettingsBlock(common, findings)
 	}
 	return "", nil
 }
@@ -253,6 +272,24 @@ func variablesCheckedCount(result *control.AnalysisResult) int {
 		return len(result.VariablesData.Variables)
 	}
 	return 0
+}
+
+// buildMRApprovalSettingsBlock emits the legacy JSON block for the
+// merge-request approval-settings control (ISSUE-503). The finding is a
+// settings-level singleton (no file/job); its deviatingSettings list and the
+// project's behaviorWhenCommitIsAdded ride in the issue's data, preserved by
+// projectFindings.
+func buildMRApprovalSettingsBlock(c legacyCommon, findings []opaengine.Finding) map[string]any {
+	return map[string]any{
+		"issues": projectFindings(findings, "job"),
+		"metrics": map[string]any{
+			"hasNonCompliantSettings": len(findings),
+		},
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
+	}
 }
 
 // legacyCommon carries the bookkeeping fields shared by every

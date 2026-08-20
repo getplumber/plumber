@@ -211,6 +211,22 @@ gitlab:
     mergeRequestApprovalRulesMustCoverAllProtectedBranches:
       enabled: true
     # ===========================================
+    # MR approval settings must be compliant
+    # ===========================================
+    # Checks the project's MR approval settings against the expectations
+    # below (unset/false = not checked; behaviorWhenCommitIsAdded is a
+    # minimum on keep_approvals < remove_approvals_by_code_owners <
+    # remove_all_approvals). REQUIRES GITLAB PREMIUM OR ULTIMATE: on Free
+    # the settings do not exist and the API answers with defaults, so this
+    # fires. A genuine 401/403 reports not-evaluable.
+    mergeRequestApprovalSettingsMustBeCompliant:
+      enabled: true
+      preventApprovalByAuthor: true
+      preventApprovalsByCommitters: true
+      preventEditingApprovalRulesInMR: true
+      requireReAuthToApprove: false
+      behaviorWhenCommitIsAdded: remove_all_approvals
+    # ===========================================
     # Pipeline must not include hardcoded jobs
     # ===========================================
     # Detects CI/CD jobs that are defined directly in the .gitlab-ci.yml file

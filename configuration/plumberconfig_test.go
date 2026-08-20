@@ -5,6 +5,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/getplumber/plumber/internal/ir"
 )
 
 // A missing config file must wrap ErrConfigNotFound so callers can detect the
@@ -371,6 +373,7 @@ func TestValidControlNames(t *testing.T) {
 		"includesMustNotUseForbiddenVersions",
 		"mergeRequestApprovalRulesMustCoverAllProtectedBranches",
 		"mergeRequestApprovalRulesMustRequireMinimumApprovals",
+		"mergeRequestApprovalSettingsMustBeCompliant",
 		"pipelineMustIncludeComponent",
 		"pipelineMustIncludeTemplate",
 		"pipelineMustNotEnableDebugTrace",
@@ -399,6 +402,62 @@ func TestValidControlNames(t *testing.T) {
 	for i := range expected {
 		if names[i] != expected[i] {
 			t.Fatalf("ValidControlNames()[%d] = %q, want %q", i, names[i], expected[i])
+		}
+	}
+}
+
+// behaviorWhenCommitIsAdded is validated AT CONFIG LOAD because the Rego rule
+// looks the value up in a rank map: an unknown string would make the lookup
+// undefined and silently disable the check, so a typo must fail loudly here
+// instead.
+func TestMRApprovalSettingsBehaviorValidation(t *testing.T) {
+	valid := "remove_all_approvals"
+	invalid := "keep-approvals" // dash, not underscore: the plausible typo
+	enabled := true
+
+	mk := func(behavior *string) *PlumberConfig {
+		return &PlumberConfig{
+			Version: "2.0",
+			GitLab: &ProviderConfig{Controls: ControlsConfig{
+				MergeRequestApprovalSettingsMustBeCompliant: &MRApprovalSettingsControlConfig{
+					Enabled:                   &enabled,
+					BehaviorWhenCommitIsAdded: behavior,
+				},
+			}},
+		}
+	}
+
+	if err := mk(nil).Validate(); err != nil {
+		t.Fatalf("unset behavior expectation must validate, got %v", err)
+	}
+	if err := mk(&valid).Validate(); err != nil {
+		t.Fatalf("valid behavior expectation must validate, got %v", err)
+	}
+	err := mk(&invalid).Validate()
+	if err == nil {
+		t.Fatal("an unknown behaviorWhenCommitIsAdded value must fail config validation, not silently disable the check")
+	}
+	if !strings.Contains(err.Error(), invalid) || !strings.Contains(err.Error(), "remove_approvals_by_code_owners") {
+		t.Fatalf("the error must name the bad value and the accepted ladder, got %v", err)
+	}
+}
+
+// The configuration package validates behaviorWhenCommitIsAdded against its
+// own list while the projection emits the ir.MRApprovalBehavior* constants;
+// this pins the two so they cannot drift (a value the projection emits but
+// validation rejects would make a correct config impossible to write).
+func TestMRApprovalBehaviorValuesMatchIR(t *testing.T) {
+	want := []string{
+		ir.MRApprovalBehaviorKeepApprovals,
+		ir.MRApprovalBehaviorRemoveCodeOwnerApprovals,
+		ir.MRApprovalBehaviorRemoveAllApprovals,
+	}
+	if len(mrApprovalBehaviorValues) != len(want) {
+		t.Fatalf("mrApprovalBehaviorValues has %d entries, want %d", len(mrApprovalBehaviorValues), len(want))
+	}
+	for i, v := range want {
+		if mrApprovalBehaviorValues[i] != v {
+			t.Fatalf("mrApprovalBehaviorValues[%d] = %q, want the IR constant %q (strictness order matters)", i, mrApprovalBehaviorValues[i], v)
 		}
 	}
 }

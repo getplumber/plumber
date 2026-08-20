@@ -101,6 +101,53 @@ func TestProtectionDataNeeded(t *testing.T) {
 			t.Fatal("expected true when only an approval-rule control is enabled")
 		}
 	})
+	t.Run("approval-settings-only still needs protection -> true", func(t *testing.T) {
+		conf := &configuration.Configuration{PlumberConfig: &configuration.PlumberConfig{
+			GitLab: &configuration.ProviderConfig{Controls: configuration.ControlsConfig{
+				MergeRequestApprovalSettingsMustBeCompliant: &configuration.MRApprovalSettingsControlConfig{Enabled: boolPtrT(true)},
+			}},
+		}}
+		if !protectionDataNeeded(conf) {
+			t.Fatal("expected true when only the approval-settings control is enabled")
+		}
+	})
+}
+
+// mrApprovalSettingsControlEnabled gates the protection collection for a
+// settings-only run the same way mrApprovalRuleControlEnabled does for the
+// rule controls: wrongly false means protectionData stays nil and ISSUE-503
+// silently reports not-evaluable on every run.
+func TestMrApprovalSettingsControlEnabled(t *testing.T) {
+	cfgWith := func(c *configuration.MRApprovalSettingsControlConfig) *configuration.Configuration {
+		return &configuration.Configuration{PlumberConfig: &configuration.PlumberConfig{
+			GitLab: &configuration.ProviderConfig{Controls: configuration.ControlsConfig{
+				MergeRequestApprovalSettingsMustBeCompliant: c,
+			}},
+		}}
+	}
+
+	if mrApprovalSettingsControlEnabled(&configuration.Configuration{}) {
+		t.Fatal("expected false when PlumberConfig is nil")
+	}
+	if mrApprovalSettingsControlEnabled(cfgWith(nil)) {
+		t.Fatal("expected false when the control is not configured")
+	}
+	if mrApprovalSettingsControlEnabled(cfgWith(&configuration.MRApprovalSettingsControlConfig{Enabled: boolPtrT(false)})) {
+		t.Fatal("expected false when the control is disabled")
+	}
+	if !mrApprovalSettingsControlEnabled(cfgWith(&configuration.MRApprovalSettingsControlConfig{Enabled: boolPtrT(true)})) {
+		t.Fatal("expected true when the control is enabled")
+	}
+	skipped := cfgWith(&configuration.MRApprovalSettingsControlConfig{Enabled: boolPtrT(true)})
+	skipped.SkipControlsFilter = []string{controlMRApprovalSettings}
+	if mrApprovalSettingsControlEnabled(skipped) {
+		t.Fatal("expected false when the control is in --skip-controls")
+	}
+	filtered := cfgWith(&configuration.MRApprovalSettingsControlConfig{Enabled: boolPtrT(true)})
+	filtered.ControlsFilter = []string{"branchMustBeProtected"}
+	if mrApprovalSettingsControlEnabled(filtered) {
+		t.Fatal("expected false when --controls omits the control")
+	}
 }
 
 // approvalRulesTierCaveatApplies composes the enabled gate with the zero-rules
@@ -129,5 +176,44 @@ func TestApprovalRulesTierCaveatApplies(t *testing.T) {
 	}
 	if approvalRulesTierCaveatApplies(withApproval, withRules) {
 		t.Fatal("caveat must NOT fire when approval rules are present")
+	}
+}
+
+// mrApprovalSettingsTierCaveatApplies composes the enabled gate with the
+// all-settings-false signal. The enabled guard is load-bearing the same way it
+// is for the rules caveat, and any single locked setting proves the project is
+// on a paid tier and must suppress the caveat.
+func TestMRApprovalSettingsTierCaveatApplies(t *testing.T) {
+	withControl := func(enabled bool) *configuration.Configuration {
+		return &configuration.Configuration{PlumberConfig: &configuration.PlumberConfig{
+			GitLab: &configuration.ProviderConfig{Controls: configuration.ControlsConfig{
+				MergeRequestApprovalSettingsMustBeCompliant: &configuration.MRApprovalSettingsControlConfig{Enabled: boolPtrT(enabled)},
+			}},
+		}}
+	}
+	// Fully unlocked (the GitLab-Free signature): authors CAN approve (the author
+	// flag is inverted — true means no protection) and every other protection is
+	// off. Equivalent to the r2devops/jobs read.
+	unlocked := &gitlab.GitlabProtectionAnalysisData{MRApprovalSettings: &glab.ProjectApprovals{MergeRequestsAuthorApproval: true}}
+	// Author approval PREVENTED (author flag false) is a protection in place, so
+	// even a zero-value read is a configured paid tier, not the Free signature.
+	authorLocked := &gitlab.GitlabProtectionAnalysisData{MRApprovalSettings: &glab.ProjectApprovals{}}
+	// Any other single protection active likewise proves a paid tier.
+	overrideLocked := &gitlab.GitlabProtectionAnalysisData{MRApprovalSettings: &glab.ProjectApprovals{MergeRequestsAuthorApproval: true, DisableOverridingApproversPerMergeRequest: true}}
+
+	if mrApprovalSettingsTierCaveatApplies(withControl(false), unlocked) {
+		t.Fatal("caveat must NOT fire when the settings control is disabled")
+	}
+	if !mrApprovalSettingsTierCaveatApplies(withControl(true), unlocked) {
+		t.Fatal("caveat must fire when the control is enabled and the project has no protections")
+	}
+	if mrApprovalSettingsTierCaveatApplies(withControl(true), authorLocked) {
+		t.Fatal("caveat must NOT fire when author approval is prevented (a protection proves a paid tier)")
+	}
+	if mrApprovalSettingsTierCaveatApplies(withControl(true), overrideLocked) {
+		t.Fatal("caveat must NOT fire when a setting is locked (proves a paid tier)")
+	}
+	if mrApprovalSettingsTierCaveatApplies(withControl(true), &gitlab.GitlabProtectionAnalysisData{}) {
+		t.Fatal("caveat must NOT fire when the settings were not read (nil settings)")
 	}
 }

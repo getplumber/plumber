@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/getplumber/plumber/gitlab"
+	glab "gitlab.com/gitlab-org/api/client-go"
 )
 
 func TestStatusFor(t *testing.T) {
@@ -11,6 +12,7 @@ func TestStatusFor(t *testing.T) {
 	branch := ControlEntry{ControlName: "branchMustBeProtected"}
 	approval := ControlEntry{ControlName: "mergeRequestApprovalRulesMustRequireMinimumApprovals"}
 	variables := ControlEntry{ControlName: "cicdVariablesMustBeProtected"}
+	approvalSettings := ControlEntry{ControlName: "mergeRequestApprovalSettingsMustBeCompliant"}
 	healthy := &AnalysisResult{CiValid: true}
 
 	cases := []struct {
@@ -40,6 +42,11 @@ func TestStatusFor(t *testing.T) {
 		{"approval-rule control errors when the protection collection never ran", approval, &AnalysisResult{CiValid: true}, 0, StatusError},
 		{"approval-rule control errors on an unreadable approvals listing (401/403, Known=false): empty findings are not a pass", approval, &AnalysisResult{CiValid: true, ProtectionData: &gitlab.GitlabProtectionAnalysisData{MRApprovalRulesKnown: false}}, 0, StatusError},
 		{"approval-rule control with findings is failed regardless of CI/collection state", approval, &AnalysisResult{CiValid: true, ProtectionData: &gitlab.GitlabProtectionAnalysisData{MRApprovalRulesKnown: true}}, 3, StatusFailed},
+		{"approval-settings control passes when the settings were read and clean", approvalSettings, &AnalysisResult{CiValid: true, ProtectionData: &gitlab.GitlabProtectionAnalysisData{MRApprovalSettings: &glab.ProjectApprovals{}}}, 0, StatusPassed},
+		{"approval-settings control ignores missing CI config when the settings were read", approvalSettings, &AnalysisResult{CiMissing: true, ProtectionData: &gitlab.GitlabProtectionAnalysisData{MRApprovalSettings: &glab.ProjectApprovals{}}}, 0, StatusPassed},
+		{"approval-settings control errors when the protection collection never ran", approvalSettings, &AnalysisResult{CiValid: true}, 0, StatusError},
+		{"approval-settings control errors on unreadable settings (401/403, nil): empty findings are not a pass", approvalSettings, &AnalysisResult{CiValid: true, ProtectionData: &gitlab.GitlabProtectionAnalysisData{}}, 0, StatusError},
+		{"approval-settings control with findings is failed", approvalSettings, &AnalysisResult{CiValid: true, ProtectionData: &gitlab.GitlabProtectionAnalysisData{MRApprovalSettings: &glab.ProjectApprovals{}}}, 1, StatusFailed},
 		{"nil result defaults to passed (hand-built test fixtures)", content, nil, 0, StatusPassed},
 		{"variable control passes when the listing was read and clean", variables, &AnalysisResult{CiValid: true, VariablesData: &gitlab.GitlabVariablesAnalysisData{Known: true}}, 0, StatusPassed},
 		{"variable control ignores missing CI config (settings-independent) when the listing was read", variables, &AnalysisResult{CiMissing: true, VariablesData: &gitlab.GitlabVariablesAnalysisData{Known: true}}, 0, StatusPassed},

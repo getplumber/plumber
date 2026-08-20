@@ -93,6 +93,15 @@ type AnalysisResult struct {
 	// result as authoritative.
 	ApprovalRulesTierCaveat bool `json:"-"`
 
+	// MRApprovalSettingsTierCaveat is set when the MR approval-settings control
+	// ran and the project has no approval protection in effect — the GitLab-Free
+	// signature (the feature does not exist there and the API 200-defaults every
+	// protection off, which the operator cannot change). The settings API gives
+	// no other tier signal, so renderers surface a Premium/Ultimate caveat next
+	// to ISSUE-503 advising the operator to disable the control if they are on
+	// Free. Any single protection being active proves a paid tier and clears it.
+	MRApprovalSettingsTierCaveat bool `json:"-"`
+
 	// DataCollectionDegraded is set when a collection or enrichment step
 	// failed mid-run, so the analysis ran on incomplete data: a GitLab
 	// merged-CI fetch that timed out (empty pipeline), or a GitHub run

@@ -73,3 +73,75 @@ func TestMRApprovalMinApprovalsConfigContract(t *testing.T) {
 		t.Fatalf("min unset (treated as 0): expected 0 ISSUE-502, got %d", n)
 	}
 }
+
+// TestMRApprovalSettingsConfigContract pins the same struct -> map -> rego
+// chain for ISSUE-503. The stakes are higher here than for 502: every
+// expectation is optional and the rego treats an absent key as "not checked",
+// so a key rename on either side would not fail anything — it would read as
+// "operator chose not to check this" and the control would silently assert
+// nothing, forever, with every rego-only test (which hand-builds
+// input.config) still green.
+func TestMRApprovalSettingsConfigContract(t *testing.T) {
+	boolPtr := func(b bool) *bool { return &b }
+	strPtr := func(s string) *string { return &s }
+
+	engine := opaengine.New()
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
+		t.Fatalf("load policies: %v", err)
+	}
+	// A fully unlocked project: every expectation that reaches the rego
+	// deviates, so the deviation list mirrors exactly which config keys
+	// survived the projection.
+	pipeline := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitLab,
+		MRApprovalSettings: &ir.MRApprovalSettings{
+			BehaviorWhenCommitIsAdded: ir.MRApprovalBehaviorKeepApprovals,
+		},
+	}
+	deviations503 := func(engineCfg map[string]any) []any {
+		findings, err := engine.Evaluate(context.Background(), pipeline, engineCfg)
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		for _, f := range findings {
+			if f.Code == "ISSUE-503" {
+				devs, _ := f.Data["deviatingSettings"].([]any)
+				return devs
+			}
+		}
+		return nil
+	}
+
+	// All five expectations set, via the REAL buildEngineConfig projection:
+	// all five must come back as deviations. Any dropped or renamed key
+	// shrinks this list.
+	cfgAll := buildEngineConfig(&configuration.ControlsConfig{
+		MergeRequestApprovalSettingsMustBeCompliant: &configuration.MRApprovalSettingsControlConfig{
+			Enabled:                         boolPtr(true),
+			PreventApprovalByAuthor:         boolPtr(true),
+			PreventApprovalsByCommitters:    boolPtr(true),
+			PreventEditingApprovalRulesInMR: boolPtr(true),
+			RequireReAuthToApprove:          boolPtr(true),
+			BehaviorWhenCommitIsAdded:       strPtr(ir.MRApprovalBehaviorRemoveAllApprovals),
+		},
+	})
+	if _, ok := cfgAll["mergeRequestApprovalSettingsMustBeCompliant"]; !ok {
+		t.Fatal("buildEngineConfig did not project a mergeRequestApprovalSettingsMustBeCompliant block")
+	}
+	if devs := deviations503(cfgAll); len(devs) != 5 {
+		t.Fatalf("all 5 expectations through the real config projection: expected 5 deviations, got %v — the struct->map->rego key contract is broken", devs)
+	}
+
+	// Only one expectation set -> exactly that one deviation: unset fields
+	// must NOT be projected (the rego reads an absent key as "not checked").
+	cfgOne := buildEngineConfig(&configuration.ControlsConfig{
+		MergeRequestApprovalSettingsMustBeCompliant: &configuration.MRApprovalSettingsControlConfig{
+			Enabled:                 boolPtr(true),
+			PreventApprovalByAuthor: boolPtr(true),
+		},
+	})
+	devs := deviations503(cfgOne)
+	if len(devs) != 1 || devs[0] != "preventApprovalByAuthor" {
+		t.Fatalf("one expectation set: expected exactly [preventApprovalByAuthor], got %v", devs)
+	}
+}

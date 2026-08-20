@@ -307,6 +307,39 @@ gitlab:
       # Set to true to enable this control
       enabled: false
     # ===========================================
+    # MR approval settings must be compliant
+    # ===========================================
+    # Checks the project's merge-request approval settings against the
+    # expectations below. Each expectation is optional: a setting left unset
+    # (or false) is not checked, matching the platform this control migrates
+    # from — there is no "expect the unsafe setting" mode.
+    #
+    # REQUIRES GITLAB PREMIUM OR ULTIMATE. Merge request approval settings do
+    # not exist on GitLab Free, and the API gives no tier signal: on Free it
+    # answers 200 with defaults rather than an error, so a Free project reads
+    # as not locked down and this control FIRES on every run. That is why it
+    # ships disabled — enable it only on Premium/Ultimate projects. A genuine
+    # 401/403 (a token that cannot read the settings) is distinguishable and
+    # reports not-evaluable, not a false pass.
+    mergeRequestApprovalSettingsMustBeCompliant:
+      # Set to true to enable this control
+      enabled: false
+      # Expect that MR authors cannot approve their own merge requests.
+      preventApprovalByAuthor: true
+      # Expect that users who committed to an MR cannot approve it.
+      preventApprovalsByCommitters: true
+      # Expect that approval rules cannot be edited per merge request.
+      preventEditingApprovalRulesInMR: true
+      # Expect re-authentication (password/SAML) to approve. Strict — every
+      # approval re-prompts credentials; false leaves it unchecked.
+      requireReAuthToApprove: false
+      # Minimum strictness for what happens to existing approvals when a
+      # commit is added to an open MR, on the ladder
+      # keep_approvals < remove_approvals_by_code_owners < remove_all_approvals.
+      # remove_all_approvals is GitLab's own default for new projects, so this
+      # flags only projects that loosened it.
+      behaviorWhenCommitIsAdded: remove_all_approvals
+    # ===========================================
     # Pipeline must not include hardcoded jobs
     # ===========================================
     # Detects CI/CD jobs defined directly in .gitlab-ci.yml instead of being

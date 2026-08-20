@@ -125,6 +125,18 @@ func StatusFor(e ControlEntry, result *AnalysisResult, findingCount int) string 
 		}
 		return StatusPassed
 	}
+	if e.ControlName == "mergeRequestApprovalSettingsMustBeCompliant" {
+		// Same settings-level reasoning as the approval-rule controls above,
+		// with the settings' own Known signal: the fetch leaves
+		// MRApprovalSettings nil on a 401/403 (a token without scope), and a
+		// nil ProtectionData means the collection never ran — either way the
+		// control never truly evaluated, so an empty findings list must not
+		// read as a pass.
+		if result.ProtectionData == nil || result.ProtectionData.MRApprovalSettings == nil {
+			return StatusError
+		}
+		return StatusPassed
+	}
 	if result.CiMissing || !result.CiValid {
 		return StatusError
 	}

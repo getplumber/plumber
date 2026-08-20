@@ -51,6 +51,7 @@ func ToNormalizedPipeline(
 	pipeline.Branches = buildBranches(protection)
 	pipeline.MRApprovalRules, pipeline.MRApprovalRulesKnown = buildApprovalRules(protection)
 	pipeline.SettingsVariables, pipeline.SettingsVariablesKnown = buildSettingsVariables(variables)
+	pipeline.MRApprovalSettings = buildApprovalSettings(protection)
 	if origin != nil && origin.MergedConf != nil {
 		if globals := extractGitLabVariables(origin.MergedConf.GlobalVariables); len(globals) > 0 {
 			pipeline.GlobalVariables = globals
@@ -115,6 +116,39 @@ func buildSettingsVariables(variables *GitlabVariablesAnalysisData) ([]ir.Settin
 		})
 	}
 	return out, variables.Known
+}
+
+// buildApprovalSettings projects the collected merge-request approval
+// settings onto the IR in positive-security form: every boolean reads true
+// when the safer choice is in effect, so the polarity GitLab's API uses
+// (merge_requests_author_approval is "author CAN approve") is normalized
+// here, once, and the Rego rule compares like-for-like. The two reset flags
+// collapse into the behaviorWhenCommitIsAdded ladder exactly the way the
+// legacy platform derived it (controlGitlabProtectionMRApprovalSettings.go):
+// keep when neither flag is set, remove-all when only reset_approvals_on_push
+// is, remove-code-owner-approvals whenever selective_code_owner_removals is.
+// Returns nil when the settings were not read (nil protection, or the
+// 401/403 the collector recorded as a nil MRApprovalSettings), so ISSUE-503
+// abstains and reports not-evaluable rather than a false pass.
+func buildApprovalSettings(protection *GitlabProtectionAnalysisData) *ir.MRApprovalSettings {
+	if protection == nil || protection.MRApprovalSettings == nil {
+		return nil
+	}
+	s := protection.MRApprovalSettings
+	behavior := ir.MRApprovalBehaviorKeepApprovals
+	switch {
+	case s.ResetApprovalsOnPush && !s.SelectiveCodeOwnerRemovals:
+		behavior = ir.MRApprovalBehaviorRemoveAllApprovals
+	case s.SelectiveCodeOwnerRemovals:
+		behavior = ir.MRApprovalBehaviorRemoveCodeOwnerApprovals
+	}
+	return &ir.MRApprovalSettings{
+		PreventApprovalByAuthor:         !s.MergeRequestsAuthorApproval,
+		PreventApprovalsByCommitters:    s.MergeRequestsDisableCommittersApproval,
+		PreventEditingApprovalRulesInMR: s.DisableOverridingApproversPerMergeRequest,
+		RequireReAuthToApprove:          s.RequirePasswordToApprove,
+		BehaviorWhenCommitIsAdded:       behavior,
+	}
 }
 
 // buildBranches flattens the GitLab protection API response into

@@ -161,6 +161,8 @@ var declarations = map[string][]string{
 	"ISSUE-501": {"file", "job", "branchName"},
 	// MR approval rule below the configured minimum: keyed on the rule's stable GitLab ID. The renameable rule name is data only; keying on the ID keeps a rename from re-keying the finding, per the #370 volatile-field discipline (the platform IdOnly used the renameable name — corrected here).
 	"ISSUE-502": {"approvalRuleId"},
+	// MR approval settings not compliant: singleton finding (one per project); the platform IdOnly was empty, so the identity is the code alone. Deliberate consequence: changing WHICH settings deviate does not re-key the finding.
+	"ISSUE-503": {},
 	// No approval rule covers all protected branches: singleton finding (one per project); the platform IdOnly was empty, so the identity is the code alone.
 	"ISSUE-504": {},
 	// Branch protection not compliant: keyed on the branch name.
