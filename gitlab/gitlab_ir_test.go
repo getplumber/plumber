@@ -142,6 +142,57 @@ func TestBuildApprovalSettings(t *testing.T) {
 	}
 }
 
+// TestBuildSecurityPolicyProject pins the collector-data -> IR projection that
+// decides abstain vs fire for ISSUE-601. The subtle case is a successful read
+// with nothing linked (Known=true, no project): the projection must return a
+// non-nil state with LinkedProjectID 0 so the rule's require-any mode fires,
+// rather than nil (which would abstain and silently miss an unlinked project).
+func TestBuildSecurityPolicyProject(t *testing.T) {
+	cases := []struct {
+		name string
+		in   *GitlabProtectionAnalysisData
+		want *ir.SecurityPolicyProjectState
+	}{
+		{
+			name: "nil protection -> nil (not collected)",
+			in:   nil,
+			want: nil,
+		},
+		{
+			name: "not collected (Known=false, no project) -> nil (abstain)",
+			in:   &GitlabProtectionAnalysisData{SecurityPolicyKnown: false, SecurityPolicyProject: nil},
+			want: nil,
+		},
+		{
+			name: "read OK, none linked -> non-nil Known with id 0 (must fire)",
+			in:   &GitlabProtectionAnalysisData{SecurityPolicyKnown: true, SecurityPolicyProject: nil},
+			want: &ir.SecurityPolicyProjectState{Known: true, LinkedProjectID: 0, LinkedProjectPath: ""},
+		},
+		{
+			name: "read OK, one linked -> non-nil Known with id/path",
+			in:   &GitlabProtectionAnalysisData{SecurityPolicyKnown: true, SecurityPolicyProject: &SecurityPolicyProjectLink{ID: 42, FullPath: "grp/pol"}},
+			want: &ir.SecurityPolicyProjectState{Known: true, LinkedProjectID: 42, LinkedProjectPath: "grp/pol"},
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := buildSecurityPolicyProject(tc.in)
+			if tc.want == nil {
+				if got != nil {
+					t.Fatalf("expected nil projection, got %+v", got)
+				}
+				return
+			}
+			if got == nil {
+				t.Fatalf("expected non-nil projection %+v, got nil", tc.want)
+			}
+			if got.Known != tc.want.Known || got.LinkedProjectID != tc.want.LinkedProjectID || got.LinkedProjectPath != tc.want.LinkedProjectPath {
+				t.Fatalf("projection mismatch: got %+v, want %+v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestToNormalizedPipeline_Empty(t *testing.T) {
 	pipeline := ToNormalizedPipeline("group/project", "main", "", nil, nil, nil, nil)
 	if pipeline.Provider != ir.ProviderGitLab {
