@@ -1,3 +1,15 @@
+## [0.4.40](https://github.com/getplumber/plumber/compare/v0.4.39...v0.4.40) (2026-08-21)
+
+
+### 🐛 Bug Fixes
+
+* **docker:** stamp version metadata into the published image ([f88e404](https://github.com/getplumber/plumber/commit/f88e404a1e60aaa17b4d4b302278cf18713cc93c)), closes [#425](https://github.com/getplumber/plumber/issues/425)
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.39 refs [skip ci] ([e93967c](https://github.com/getplumber/plumber/commit/e93967c99ed5d579ecc514d805b6367405d1ffc1))
+
 ## [0.4.39](https://github.com/getplumber/plumber/compare/v0.4.38...v0.4.39) (2026-08-17)
 
 

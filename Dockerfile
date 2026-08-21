@@ -23,8 +23,18 @@ RUN go mod download
 # Copy source code
 COPY . .
 
+# Version metadata stamped into the binary (cmd/version.go). The release
+# workflow passes these as build args so `plumber version` in the published
+# image reports the release, matching the ldflags used for the release
+# binaries in release.yml. Plain `docker build` (ci.yml, local) keeps the
+# dev defaults. Declared here, after the cacheable dependency layers, so a
+# changing BUILD_DATE never invalidates `go mod download`.
+ARG VERSION=dev
+ARG COMMIT=none
+ARG BUILD_DATE=unknown
+
 # Build static binary
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w" -o plumber .
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X github.com/getplumber/plumber/cmd.Version=${VERSION} -X github.com/getplumber/plumber/cmd.Commit=${COMMIT} -X github.com/getplumber/plumber/cmd.BuildDate=${BUILD_DATE}" -o plumber .
 
 # Final stage - Alpine (small, has shell for CI compatibility)
 # Named `runtime` so CI can target it with build-push-action's `no-cache-filter:
