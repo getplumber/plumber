@@ -1,10 +1,14 @@
-# security-policy-project — flag a GitLab project that does not link the
-# expected security policy project (Settings > Security & Compliance >
+# security-policy-project — flag a GitLab project that does not directly link
+# the expected security policy project (Settings > Security & Compliance >
 # Policies). A linked security policy project carries the organization's
-# scan-execution and merge-request approval policies; without it (or with the
-# wrong one linked) those policies are not enforced on the project. GitLab-only
-# singleton finding (one per project); the legacy platform's identity was empty,
-# so the identity here is the code alone.
+# scan-execution and merge-request approval policies. This checks the project's
+# own link only, matching the legacy platform: a policy source inherited from a
+# parent group is not detected (GitLab's project-scoped securityPolicyProject
+# field is null for an inherited source), and the linked project's policy
+# contents are not inspected, so "linked" means a source is attached, not that a
+# policy is necessarily enforced. GitLab-only singleton finding (one per
+# project); the legacy platform's identity was empty, so the identity here is
+# the code alone.
 #
 # Config projectMustHaveSecurityPolicySource, matched with this precedence:
 #   - expectedProjectId set   => the linked project's numeric id must equal it
