@@ -61,6 +61,9 @@ var validControlSchema = map[string][]string{
 	"cicdVariablesMustBeMasked": {
 		"enabled",
 	},
+	"projectMustHaveSecurityPolicySource": {
+		"enabled", "expectedProjectId", "expectedProjectPath",
+	},
 	"pipelineMustNotIncludeHardcodedJobs": {
 		"enabled",
 	},
@@ -318,6 +321,11 @@ type ControlsConfig struct {
 	// expectations for exact equality (ISSUE-506).
 	MergeRequestSettingsMustBeCompliant *MRSettingsControlConfig `yaml:"mergeRequestSettingsMustBeCompliant,omitempty"`
 
+	// ProjectMustHaveSecurityPolicySource control configuration (GitLab only).
+	// Requires the project to link the expected GitLab security policy project
+	// (ISSUE-601). Requires GitLab Ultimate.
+	ProjectMustHaveSecurityPolicySource *SecurityPolicyControlConfig `yaml:"projectMustHaveSecurityPolicySource,omitempty"`
+
 	// PipelineMustNotIncludeHardcodedJobs control configuration
 	PipelineMustNotIncludeHardcodedJobs *HardcodedJobsControlConfig `yaml:"pipelineMustNotIncludeHardcodedJobs,omitempty"`
 
@@ -463,6 +471,37 @@ type ControlsConfig struct {
 // drops their findings via FilterFindingsByEnabledControls.
 type EnabledOnlyControlConfig struct {
 	Enabled *bool `yaml:"enabled,omitempty"`
+}
+
+// SecurityPolicyControlConfig configures the GitLab security-policy-project
+// linkage check (ISSUE-601). GitLab-only, requires Ultimate. When
+// ExpectedProjectId is set, the linked policy project must be exactly that
+// project. When it is unset, any linked policy project passes and the control
+// fails only when none is linked.
+type SecurityPolicyControlConfig struct {
+	// Enabled controls whether this check runs.
+	Enabled *bool `yaml:"enabled,omitempty"`
+
+	// ExpectedProjectId is the numeric GitLab project ID the security policy
+	// project must match. Unset => require only that some policy project is
+	// linked.
+	ExpectedProjectId *int `yaml:"expectedProjectId,omitempty"`
+
+	// ExpectedProjectPath is the full path (namespace/project) the linked
+	// security policy project must match — a human-friendly alternative to the
+	// numeric ID, compared case-insensitively. Ignored when ExpectedProjectId is
+	// also set (the ID is authoritative). Unset (and no ID) => require only that
+	// some policy project is linked.
+	ExpectedProjectPath *string `yaml:"expectedProjectPath,omitempty"`
+}
+
+// IsEnabled reports whether the control is enabled. Returns false when the
+// wrapper or the field is nil — same convention as every other IsEnabled().
+func (c *SecurityPolicyControlConfig) IsEnabled() bool {
+	if c == nil || c.Enabled == nil {
+		return false
+	}
+	return *c.Enabled
 }
 
 // IsEnabled reports whether the control is enabled. Returns false when
@@ -1411,6 +1450,15 @@ func (c *PlumberConfig) GetMergeRequestSettingsMustBeCompliantConfig() *MRSettin
 		return nil
 	}
 	return c.ControlsFor("gitlab").MergeRequestSettingsMustBeCompliant
+}
+
+// GetProjectMustHaveSecurityPolicySourceConfig returns the GitLab
+// security-policy-project linkage control configuration (ISSUE-601), or nil.
+func (c *PlumberConfig) GetProjectMustHaveSecurityPolicySourceConfig() *SecurityPolicyControlConfig {
+	if c == nil {
+		return nil
+	}
+	return c.ControlsFor("gitlab").ProjectMustHaveSecurityPolicySource
 }
 
 // IsEnabled returns whether the control is enabled

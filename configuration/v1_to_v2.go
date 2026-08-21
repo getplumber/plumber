@@ -77,6 +77,7 @@ func controlsConfigIsZero(c ControlsConfig) bool {
 		c.MergeRequestSettingsMustBeCompliant == nil &&
 		c.CicdVariablesMustBeProtected == nil &&
 		c.CicdVariablesMustBeMasked == nil &&
+		c.ProjectMustHaveSecurityPolicySource == nil &&
 		c.PipelineMustNotIncludeHardcodedJobs == nil &&
 		c.IncludesMustBeUpToDate == nil &&
 		c.IncludesMustNotUseForbiddenVersions == nil &&
@@ -108,6 +109,7 @@ func controlsConfigEqual(a, b ControlsConfig) bool {
 		a.MergeRequestSettingsMustBeCompliant == b.MergeRequestSettingsMustBeCompliant &&
 		a.CicdVariablesMustBeProtected == b.CicdVariablesMustBeProtected &&
 		a.CicdVariablesMustBeMasked == b.CicdVariablesMustBeMasked &&
+		a.ProjectMustHaveSecurityPolicySource == b.ProjectMustHaveSecurityPolicySource &&
 		a.PipelineMustNotIncludeHardcodedJobs == b.PipelineMustNotIncludeHardcodedJobs &&
 		a.IncludesMustBeUpToDate == b.IncludesMustBeUpToDate &&
 		a.IncludesMustNotUseForbiddenVersions == b.IncludesMustNotUseForbiddenVersions &&

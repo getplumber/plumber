@@ -150,6 +150,16 @@ func StatusFor(e ControlEntry, result *AnalysisResult, findingCount int) string 
 		}
 		return StatusPassed
 	}
+	if e.ControlName == "projectMustHaveSecurityPolicySource" {
+		// Reached only with zero findings (a finding returned Failed above). The
+		// linkage is read over its own API surface; when it could not be read
+		// authoritatively (401/403 or the field is unavailable) the control never
+		// truly evaluated and must not read as a pass.
+		if result.SecurityPolicyEvaluable {
+			return StatusPassed
+		}
+		return StatusError
+	}
 	if result.CiMissing || !result.CiValid {
 		return StatusError
 	}

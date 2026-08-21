@@ -77,6 +77,15 @@ type GitlabProtectionAnalysisData struct {
 	MRApprovalSettings   *glab.ProjectApprovals `json:"mrApprovalSettings"`
 	MRSettings           *glab.Project          `json:"mrSettings"`
 	ProjectMembers       []GitlabMemberInfo     `json:"projectMembers"`
+
+	// SecurityPolicyKnown is true when the security policy project linkage was
+	// read authoritatively (a successful GraphQL read; nil linkage then means
+	// "none linked"). False when the linkage could not be read (auth error, or
+	// the field is unavailable) so ISSUE-601 reports not-evaluable, not a pass.
+	SecurityPolicyKnown bool `json:"securityPolicyKnown"`
+	// SecurityPolicyProject is the linked GitLab security policy project, or nil
+	// when none is linked. Only meaningful when SecurityPolicyKnown is true.
+	SecurityPolicyProject *SecurityPolicyProjectLink `json:"securityPolicyProject"`
 }
 
 // Run fetches all GitLab protection data needed by the controls
@@ -150,6 +159,19 @@ func (dc *GitlabProtectionDataCollection) Run(
 		// Continue without members
 	} else {
 		returnedData.ProjectMembers = members
+	}
+
+	// Get the linked security policy project (GraphQL; GitLab Ultimate). Fetched
+	// only when the control is enabled — it is a separate API surface, so a
+	// disabled control pays no cost. A read failure is never fatal: it leaves
+	// SecurityPolicyKnown false, so ISSUE-601 reports not-evaluable.
+	if spc := conf.PlumberConfig.GetProjectMustHaveSecurityPolicySourceConfig(); spc != nil && spc.IsEnabled() {
+		link, known, spErr := GetSecurityPolicyProject(project.Path, token, conf.GitlabURL, conf)
+		if spErr != nil {
+			l.WithError(spErr).Warn("Failed to fetch security policy project; ISSUE-601 will report not-evaluable")
+		}
+		returnedData.SecurityPolicyKnown = known
+		returnedData.SecurityPolicyProject = link
 	}
 
 	l.WithFields(logrus.Fields{

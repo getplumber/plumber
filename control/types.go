@@ -61,6 +61,20 @@ type AnalysisResult struct {
 	// report not-evaluable rather than a false pass (see StatusFor).
 	VariablesData *gitlab.GitlabVariablesAnalysisData `json:"-"`
 
+	// SecurityPolicyEvaluable is true when the security policy project linkage
+	// was read authoritatively (a successful GraphQL read). False when it could
+	// not be read (auth error, or the field is unavailable on the instance), so
+	// StatusFor reports projectMustHaveSecurityPolicySource (ISSUE-601) as
+	// not-evaluable rather than a false pass.
+	SecurityPolicyEvaluable bool `json:"-"`
+
+	// SecurityPolicyTierCaveat is set when the security-policy control ran, the
+	// linkage was read, and NO policy project is linked — the tier-ambiguous
+	// case (Ultimate-only feature; a non-Ultimate project cannot link one, an
+	// Ultimate project may have left it unset). Renderers surface a conditional
+	// caveat next to ISSUE-601.
+	SecurityPolicyTierCaveat bool `json:"-"`
+
 	// GitHubStats holds per-control denominators computed from the
 	// GitHub IR after a GitHub analysis. Used by the GitHub renderer
 	// to produce per-control stats blocks ("Total Images: 19,

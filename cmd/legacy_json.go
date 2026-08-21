@@ -131,6 +131,17 @@ func _withControlMeta(block any, e control.ControlEntry, result *control.Analysi
 				"message":      mrSettingsTierCaveatMessage,
 			}
 		}
+		if result != nil && result.SecurityPolicyTierCaveat && e.ControlName == "projectMustHaveSecurityPolicySource" {
+			// No policy project is linked, and security policies are an Ultimate
+			// feature, so we cannot tell a non-Ultimate project (unable to link)
+			// from an Ultimate project that left it unset. Keyed so a consumer can
+			// annotate ISSUE-601.
+			m["tierCaveat"] = map[string]any{
+				"reason":       "no-security-policy-project-linked",
+				"requiresTier": "ultimate",
+				"message":      securityPolicyTierCaveatMessage,
+			}
+		}
 	}
 	return block
 }
@@ -159,6 +170,28 @@ func isApprovalRuleControl(name string) bool {
 		name == "mergeRequestApprovalRulesMustCoverAllProtectedBranches"
 }
 
+// securityPolicyTierCaveatMessage explains the Ultimate requirement for
+// ISSUE-601 when no security policy project is linked. Shared by the terminal
+// caveat (render_details.go) and the JSON tierCaveat.
+const securityPolicyTierCaveatMessage = "Security policies require GitLab Ultimate, and no policy project is linked. If this project is not on GitLab Ultimate it cannot link one — disable this control. If it is, link the expected security policy project to satisfy the check."
+
+// buildSecurityPolicyProjectBlock emits the legacy JSON block for the
+// security-policy-project linkage control (ISSUE-601). The finding is a
+// project-level singleton (no file/job); its linkedProjectId / linkedProjectPath
+// / expectedProjectId ride in the issue's data, preserved by projectFindings.
+func buildSecurityPolicyProjectBlock(c legacyCommon, findings []opaengine.Finding) map[string]any {
+	return map[string]any{
+		"issues": projectFindings(findings, "job"),
+		"metrics": map[string]any{
+			"projectWithoutExpectedSecurityPolicy": len(findings),
+		},
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
+	}
+}
+
 // buildLegacyResult routes a control entry to its legacy JSON
 // builder and returns the (jsonKey, block) pair.
 func buildLegacyResult(e control.ControlEntry, result *control.AnalysisResult, pc *configuration.PlumberConfig, findings []opaengine.Finding) (string, any) {
@@ -175,6 +208,8 @@ func buildLegacyResult(e control.ControlEntry, result *control.AnalysisResult, p
 		return "imageAuthorizedSourcesResult", buildImageAuthorizedSourcesBlock(common, result, findings)
 	case "branchMustBeProtected":
 		return "branchProtectionResult", buildBranchProtectionBlock(common, result, pc, findings)
+	case "projectMustHaveSecurityPolicySource":
+		return "securityPolicyProjectResult", buildSecurityPolicyProjectBlock(common, findings)
 	case "pipelineMustNotIncludeHardcodedJobs":
 		return "hardcodedJobsResult", buildHardcodedJobsBlock(common, result, findings)
 	case "externalRefsMustNotCollide":

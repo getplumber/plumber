@@ -368,6 +368,24 @@ gitlab:
       # printingMergeRequestLinkEnabled: true
       # removeSourceBranchAfterMerge: true   # clean up the branch after merge
     # ===========================================
+    # Project must have a security policy source
+    # ===========================================
+    # Requires the project to link a GitLab security policy project (Settings >
+    # Security & Compliance > Policies), which carries the org's scan-execution
+    # and merge-request approval policies. To require a specific policy project,
+    # set expectedProjectId (numeric ID) OR expectedProjectPath (full path,
+    # matched case-insensitively); the ID wins if both are set. Leave both unset
+    # to require only that SOME policy project is linked.
+    #
+    # REQUIRES GITLAB ULTIMATE: on lower tiers no policy project can be linked,
+    # so this fires; a conditional caveat next to the finding says so. Ships
+    # disabled.
+    projectMustHaveSecurityPolicySource:
+      # Set to true to enable this control
+      enabled: false
+      # expectedProjectId: 123
+      # expectedProjectPath: my-group/security-policy-project
+    # ===========================================
     # Pipeline must not include hardcoded jobs
     # ===========================================
     # Detects CI/CD jobs defined directly in .gitlab-ci.yml instead of being
