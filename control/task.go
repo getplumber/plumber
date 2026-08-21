@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/getplumber/plumber/configuration"
@@ -107,7 +108,9 @@ func clearProgressLine(conf *configuration.Configuration) {
 const analysisStepCount = 18
 
 // runRegoEngine invokes the experimental Rego/OPA rule engine on the
-// GitLab collector outputs and returns the aggregated findings. The
+// GitLab collector outputs and returns the aggregated findings plus the
+// normalized pipeline they were evaluated against (retained by the
+// caller on AnalysisResult.GitLabPipeline for stats rendering). The
 // legacy Go controls always run and remain authoritative until parity
 // is reached (see phases 2+). On any failure the returned slice is nil
 // and the error is logged at Warn level so the overall analysis still
@@ -119,7 +122,7 @@ func runRegoEngine(
 	originData *gitlab.GitlabPipelineOriginData,
 	imageData *gitlab.GitlabPipelineImageData,
 	protectionData *gitlab.GitlabProtectionAnalysisData,
-) []opaengine.Finding {
+) ([]opaengine.Finding, *ir.NormalizedPipeline) {
 	pipeline := gitlab.ToNormalizedPipeline(
 		conf.ProjectPath,
 		project.DefaultBranch,
@@ -128,7 +131,7 @@ func runRegoEngine(
 		imageData,
 		protectionData,
 	)
-	return evaluatePolicies(l, conf, "gitlab", pipeline)
+	return evaluatePolicies(l, conf, "gitlab", pipeline), pipeline
 }
 
 // evaluatePolicies loads the embedded Rego policies and evaluates them
@@ -155,7 +158,7 @@ func evaluatePolicies(l *logrus.Entry, conf *configuration.Configuration, provid
 	controls := conf.PlumberConfig.ControlsFor(provider)
 	ctx, cancel := context.WithTimeout(context.Background(), opaEvaluateTimeout)
 	defer cancel()
-	findings, err := engine.Evaluate(ctx, pipeline, buildEngineConfig(controls))
+	findings, err := engine.Evaluate(ctx, pipeline, buildEngineConfig(controls, conf.GitlabURL))
 	if err != nil {
 		l.WithError(err).Warn("Rego/OPA engine evaluation failed")
 		return empty
@@ -171,8 +174,10 @@ func evaluatePolicies(l *logrus.Entry, conf *configuration.Configuration, provid
 // buildEngineConfig projects the relevant bits of the user's .plumber.yaml
 // onto a Rego-friendly map. Policies read it as `input.config.<rule>.<key>`.
 // Only the sections consumed by already-ported policies are included;
-// additional entries land with each new policy.
-func buildEngineConfig(controls *configuration.ControlsConfig) map[string]any {
+// additional entries land with each new policy. gitlabURL is
+// conf.GitlabURL — only used to derive the scanned GitLab instance's host
+// for componentAuthorizedSources; callers scoped to GitHub may pass "".
+func buildEngineConfig(controls *configuration.ControlsConfig, gitlabURL string) map[string]any {
 	if controls == nil {
 		return nil
 	}
@@ -324,6 +329,57 @@ func buildEngineConfig(controls *configuration.ControlsConfig) map[string]any {
 		}
 	}
 
+	// componentAuthorizedSources: no environment-variable resolution.
+	// Trust is either an explicit trustedComponents allowlist pattern, or
+	// derived dynamically from the scanned project's own namespace/instance
+	// via trustSameGroupComponents / trustSameInstanceComponents — modeled
+	// on githubActionMustComeFromAuthorizedSources's trustSameOrgActions,
+	// which reads input.pipeline.projectPath instead of trusting Plumber's
+	// own process environment.
+	if c := controls.ComponentMustComeFromAuthorizedSources; c != nil && c.IsEnabled() {
+		trustSameGroup := true
+		if c.TrustSameGroupComponents != nil {
+			trustSameGroup = *c.TrustSameGroupComponents
+		}
+
+		trustSameInstance := true
+		if c.TrustSameInstanceComponents != nil {
+			trustSameInstance = *c.TrustSameInstanceComponents
+		}
+
+		if isGitlabSaaS(gitlabURL) {
+			trustSameInstance = false
+		}
+
+		entry := map[string]any{
+			"trustSameGroupComponents":    trustSameGroup,
+			"trustSameInstanceComponents": trustSameInstance,
+			"instanceHost":                gitlabInstanceHost(gitlabURL),
+		}
+		if len(c.TrustedComponents) > 0 {
+			entry["trustedComponents"] = c.TrustedComponents
+		}
+		cfg["componentAuthorizedSources"] = entry
+	}
+
+	// functionAuthorizedSources: same dynamic same-namespace model as
+	// componentAuthorizedSources — same-group trust is host-bound via
+	// instanceHost for a literal same-instance ref.
+	if c := controls.FunctionMustComeFromAuthorizedSources; c != nil && c.IsEnabled() {
+		trustSameGroup := true
+		if c.TrustSameGroupFunctions != nil {
+			trustSameGroup = *c.TrustSameGroupFunctions
+		}
+		entry := map[string]any{
+			"trustSameGroupFunctions": trustSameGroup,
+			"instanceHost":            gitlabInstanceHost(gitlabURL),
+		}
+		if len(c.TrustedFunctions) > 0 {
+			entry["trustedFunctions"] = c.TrustedFunctions
+		}
+		cfg["functionAuthorizedSources"] = entry
+	}
+
 	if c := controls.ActionsMustBePinnedByCommitSha; c != nil && c.IsEnabled() {
 		entry := map[string]any{}
 		if len(c.TrustedOwners) > 0 {
@@ -386,6 +442,23 @@ func toAnyGroups(groups [][]string) []any {
 	return out
 }
 
+// gitlabInstanceHost strips the scheme (and any trailing slash) from a
+// GitLab base URL, e.g. "https://gitlab.com" -> "gitlab.com".
+func gitlabInstanceHost(gitlabURL string) string {
+	host := gitlabURL
+	if i := strings.Index(host, "://"); i >= 0 {
+		host = host[i+3:]
+	}
+	return strings.TrimSuffix(host, "/")
+}
+
+// isGitlabSaaS reports whether gitlabURL points at gitlab.com, the
+// multi-tenant SaaS instance — as opposed to a self-hosted instance,
+// which is already inside the scanning org's trust boundary.
+func isGitlabSaaS(gitlabURL string) bool {
+	return gitlabInstanceHost(gitlabURL) == "gitlab.com"
+}
+
 // RunAnalysis executes the complete pipeline analysis for a GitLab project
 func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	l := l.WithFields(logrus.Fields{
@@ -399,9 +472,9 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 		ProjectPath: conf.ProjectPath,
 	}
 
-	///////////////////////
+	// /////////////////////
 	// Fetch Project Info from GitLab
-	///////////////////////
+	// /////////////////////
 	reportProgress(conf, 1, analysisStepCount, "Fetching project information")
 	l.Info("Fetching project information from GitLab")
 	project, err := gitlab.FetchProjectDetails(conf.ProjectPath, conf.GitlabToken, conf.GitlabURL, conf)
@@ -472,9 +545,9 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 		result.HeadCommitSha = projectInfo.LatestHeadCommitSha
 	}
 
-	///////////////////////
+	// /////////////////////
 	// Resolve CI config source (local file vs remote)
-	///////////////////////
+	// /////////////////////
 
 	// Priority:
 	// 1. If --branch is defined: use remote file on that branch
@@ -517,9 +590,9 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 		result.CIConfigSource = "local"
 	}
 
-	///////////////////////
+	// /////////////////////
 	// Run Data Collections
-	///////////////////////
+	// /////////////////////
 
 	// 1. Run Pipeline Origin data collection
 	reportProgress(conf, 2, analysisStepCount, "Collecting pipeline origins")
@@ -649,7 +722,7 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	// Rego/OPA rule engine evaluation — the single authoritative
 	// compliance path (the legacy Go controls were retired in
 	// docs/REFACTOR_MULTI_PROVIDER.md §8 Phase A).
-	result.Findings = runRegoEngine(l, conf, project, pipelineOriginData, pipelineImageData, protectionData)
+	result.Findings, result.GitLabPipeline = runRegoEngine(l, conf, project, pipelineOriginData, pipelineImageData, protectionData)
 	result.ProtectionData = protectionData
 
 	reportProgress(conf, analysisStepCount, analysisStepCount, "Analysis complete")

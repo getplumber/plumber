@@ -1727,6 +1727,407 @@ func TestImageRepoIdentityValue(t *testing.T) {
 	}
 }
 
+// TestIssue414_ComponentAuthorizedSources exercises
+// component_authorized_sources.rego directly against hand-built
+// ir.Include entries — the lightweight parseGitLabCI test parser used
+// by runGitLabPolicyCases does not parse `include:` (same situation
+// ISSUE-101 hit for job.image.Registry).
+func TestIssue414_ComponentAuthorizedSources(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+
+	cases := []struct {
+		name        string
+		inc         ir.Include
+		projectPath string
+		cfg         map[string]any
+		expected    bool
+	}{
+		{
+			name: "trusted_allowlist",
+			inc:  ir.Include{Kind: "component", Source: "gitlab.example.com/my-group/my-project/ci-component"},
+			cfg: map[string]any{
+				"componentAuthorizedSources": map[string]any{
+					"trustedComponents": []string{"gitlab.example.com/my-group/my-project/*"},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "untrusted_external",
+			inc:  ir.Include{Kind: "component", Source: "gitlab.example.com/attacker/evil-component"},
+			cfg: map[string]any{
+				"componentAuthorizedSources": map[string]any{
+					"trustedComponents": []string{"gitlab.example.com/my-group/my-project/*"},
+				},
+			},
+			expected: true,
+		},
+		{
+			name:        "trust_same_group_root_namespace",
+			inc:         ir.Include{Kind: "component", Source: "gitlab.example.com/my-group/other-project/ci-component"},
+			projectPath: "my-group/my-project",
+			cfg: map[string]any{
+				"componentAuthorizedSources": map[string]any{
+					"trustSameGroupComponents": true,
+					"instanceHost":             "gitlab.example.com",
+				},
+			},
+			expected: false,
+		},
+		{
+			// A different root namespace (top-level group) must NOT be
+			// trusted, even on the same instance.
+			name:        "trust_same_group_different_root_namespace",
+			inc:         ir.Include{Kind: "component", Source: "gitlab.example.com/other-group/x/ci-component"},
+			projectPath: "my-group/my-project",
+			cfg: map[string]any{
+				"componentAuthorizedSources": map[string]any{
+					"trustSameGroupComponents": true,
+					"instanceHost":             "gitlab.example.com",
+				},
+			},
+			expected: true,
+		},
+		{
+			name:        "trust_same_group_disabled",
+			inc:         ir.Include{Kind: "component", Source: "gitlab.example.com/my-group/other-project/ci-component"},
+			projectPath: "my-group/my-project",
+			cfg: map[string]any{
+				"componentAuthorizedSources": map[string]any{
+					"trustSameGroupComponents": false,
+					"instanceHost":             "gitlab.example.com",
+				},
+			},
+			expected: true,
+		},
+		{
+			name:        "trust_same_instance_any_namespace",
+			inc:         ir.Include{Kind: "component", Source: "gitlab.example.com/other-group/x/ci-component"},
+			projectPath: "my-group/my-project",
+			cfg: map[string]any{
+				"componentAuthorizedSources": map[string]any{
+					"trustSameGroupComponents":    false,
+					"trustSameInstanceComponents": true,
+					"instanceHost":                "gitlab.example.com",
+				},
+			},
+			expected: false,
+		},
+		{
+			// A matching namespace path on a DIFFERENT instance host must
+			// not be trusted — host is checked, not just the path text.
+			name:        "different_instance_host_not_trusted",
+			inc:         ir.Include{Kind: "component", Source: "gitlab.com/my-group/my-project/ci-component"},
+			projectPath: "my-group/my-project",
+			cfg: map[string]any{
+				"componentAuthorizedSources": map[string]any{
+					"trustSameGroupComponents":    true,
+					"trustSameInstanceComponents": true,
+					"instanceHost":                "gitlab.example.com",
+				},
+			},
+			expected: true,
+		},
+		{
+			name: "notation_normalization",
+			inc:  ir.Include{Kind: "component", Source: "$CI_SERVER_FQDN/my-group/my-project/ci-component"},
+			cfg: map[string]any{
+				"componentAuthorizedSources": map[string]any{
+					"trustedComponents": []string{"${CI_SERVER_FQDN}/my-group/my-project/*"},
+				},
+			},
+			expected: false,
+		},
+		{
+			name: "non_component_kind_ignored",
+			inc:  ir.Include{Kind: "local", Source: "anything/untrusted"},
+			cfg: map[string]any{
+				"componentAuthorizedSources": map[string]any{
+					"trustedComponents": []string{"gitlab.example.com/my-group/my-project/*"},
+				},
+			},
+			expected: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pipeline := &ir.NormalizedPipeline{
+				Provider:    ir.ProviderGitLab,
+				ProjectPath: tc.projectPath,
+				Includes:    []ir.Include{tc.inc},
+			}
+			findings, err := engine.Evaluate(context.Background(), pipeline, tc.cfg)
+			if err != nil {
+				t.Fatalf("evaluate: %v", err)
+			}
+			found := false
+			for _, f := range findings {
+				if f.Code == "ISSUE-414" {
+					found = true
+				}
+			}
+			if found != tc.expected {
+				t.Fatalf("%s: expected violation=%v, got %v (findings=%+v)", tc.name, tc.expected, found, findings)
+			}
+		})
+	}
+
+	// Identity pins (finding/identity): an untrusted component identifies on
+	// componentPath, like the other component controls (ISSUE-408/409), and
+	// never puts its source in the job field.
+	t.Run("identity_pins", func(t *testing.T) {
+		pipeline := &ir.NormalizedPipeline{
+			Provider:    ir.ProviderGitLab,
+			ProjectPath: "my-group/my-project",
+			Includes:    []ir.Include{{Kind: "component", Source: "gitlab.example.com/attacker/evil-component"}},
+		}
+		cfg := map[string]any{
+			"componentAuthorizedSources": map[string]any{
+				"trustedComponents": []string{"gitlab.example.com/my-group/my-project/*"},
+			},
+		}
+		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		assertSubjectKey(t, findings, "ISSUE-414", "componentPath",
+			[]string{"gitlab.example.com/attacker/evil-component"})
+		assertNoJob(t, findings, "ISSUE-414")
+	})
+}
+
+// TestIssue415_FunctionAuthorizedSources exercises
+// function_authorized_sources.rego directly against hand-built
+// ir.Function entries, mirroring TestIssue414_ComponentAuthorizedSources
+// (the lightweight test parser doesn't parse `run:` either).
+func TestIssue415_FunctionAuthorizedSources(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+
+	cases := []struct {
+		name          string
+		fn            ir.Function
+		projectPath   string
+		globalVars    map[string]string
+		cfg           map[string]any
+		expectFinding bool
+	}{
+		{
+			name: "authorized_allowlist",
+			fn:   ir.Function{Name: "say_hi", Ref: "registry.gitlab.com/my-group/my-project/echo:1", Kind: "oci"},
+			cfg: map[string]any{
+				"functionAuthorizedSources": map[string]any{
+					"trustedFunctions": []string{"registry.gitlab.com/my-group/my-project/*"},
+				},
+			},
+			expectFinding: false,
+		},
+		{
+			name:          "unauthorized_oci",
+			fn:            ir.Function{Name: "say_hi", Ref: "registry.gitlab.com/attacker/evil:1", Kind: "oci"},
+			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{}},
+			expectFinding: true,
+		},
+		{
+			// Regression for PR #387 blocking issue #1: the legacy
+			// git-repository loading form (deprecated) must NOT bypass
+			// the trust check when the reference is also untrusted.
+			name:          "deprecated_and_untrusted_still_flagged",
+			fn:            ir.Function{Name: "say_hi", Ref: "gitlab.com/attacker/evil@v1.0.0", Kind: "git", Deprecated: true},
+			projectPath:   "my-group/my-project",
+			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true}},
+			expectFinding: true,
+		},
+		{
+			// Deprecated but otherwise trusted (same-group, same host):
+			// deprecation carries no weight in this control.
+			name:          "deprecated_but_trusted_not_flagged",
+			fn:            ir.Function{Name: "say_hi", Ref: "gitlab.com/my-group/my-project@v1.0.0", Kind: "git", Deprecated: true},
+			projectPath:   "my-group/my-project",
+			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true, "instanceHost": "gitlab.com"}},
+			expectFinding: false,
+		},
+		{
+			name:          "local_ref_excluded",
+			fn:            ir.Function{Name: "say_hi", Ref: "./funcs/release/dry-run.yml", Kind: "local"},
+			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{}},
+			expectFinding: false,
+		},
+		{
+			// Same-group trust requires both the host AND the path to
+			// match — not the path alone.
+			name:          "same_group_host_and_path_match_trusted",
+			fn:            ir.Function{Name: "say_hi", Ref: "registry.gitlab.com/my-group/my-project/echo:1", Kind: "oci"},
+			projectPath:   "my-group/my-project",
+			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true, "instanceHost": "registry.gitlab.com"}},
+			expectFinding: false,
+		},
+		{
+			name:          "different_root_namespace_untrusted",
+			fn:            ir.Function{Name: "say_hi", Ref: "registry.gitlab.com/other-group/x/echo:1", Kind: "oci"},
+			projectPath:   "my-group/my-project",
+			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true, "instanceHost": "registry.gitlab.com"}},
+			expectFinding: true,
+		},
+		{
+			// ISSUE-415 hardening regression: an attacker-controlled
+			// registry that names a top-level path segment after the
+			// victim's own root namespace must NOT be trusted just
+			// because the path (ignoring host) matches.
+			name:          "same_group_different_host_untrusted",
+			fn:            ir.Function{Name: "say_hi", Ref: "registry.evil.example/my-group/whatever:1", Kind: "oci"},
+			projectPath:   "my-group/my-project",
+			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true, "instanceHost": "gitlab.example.com"}},
+			expectFinding: true,
+		},
+		{
+			// ISSUE-415 hardening regression: the default trustedFunctions
+			// pattern must glob-match the FULL ref against
+			// $CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/, not just the
+			// path after an attacker-controlled host.
+			name:        "ci_project_path_idiom_wrong_host_untrusted",
+			fn:          ir.Function{Name: "say_hi", Ref: "registry.evil.example/$CI_PROJECT_PATH/backdoor:1", Kind: "oci"},
+			projectPath: "my-group/my-project",
+			cfg: map[string]any{"functionAuthorizedSources": map[string]any{
+				"trustSameGroupFunctions": true,
+				"trustedFunctions":        []string{"$CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/*"},
+			}},
+			expectFinding: true,
+		},
+		{
+			name: "default_trusted_functions_pattern_matches",
+			fn:   ir.Function{Name: "say_hi", Ref: "$CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/echo:1", Kind: "oci"},
+			cfg: map[string]any{"functionAuthorizedSources": map[string]any{
+				"trustSameGroupFunctions": true,
+				"trustedFunctions":        []string{"$CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/*"},
+			}},
+			expectFinding: false,
+		},
+		{
+			// Regression for PR #387 blocking issue #3's shadowing
+			// example: the pipeline redefines CI_TEMPLATE_REGISTRY_HOST
+			// itself, so the $CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/*
+			// trustedFunctions pattern must NOT authorize the ref — at
+			// runtime the literal text would resolve from the attacker's
+			// redefined value, GitLab predefined variables having the
+			// lowest precedence.
+			name:       "trusted_functions_pattern_untrusted_when_ci_var_redefined",
+			fn:         ir.Function{Name: "x", Ref: "$CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/echo:1", Kind: "oci"},
+			globalVars: map[string]string{"CI_TEMPLATE_REGISTRY_HOST": "registry.evil.example"},
+			cfg: map[string]any{"functionAuthorizedSources": map[string]any{
+				"trustSameGroupFunctions": true,
+				"trustedFunctions":        []string{"$CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/*"},
+			}},
+			expectFinding: true,
+		},
+		{
+			// The redefinition guard is generic — it isn't hardcoded to
+			// CI_TEMPLATE_REGISTRY_HOST/CI_PROJECT_PATH. A custom pattern
+			// referencing any other $CI_* variable must also be rejected
+			// when that variable is redefined by the pipeline.
+			name:       "custom_pattern_untrusted_when_ci_var_redefined",
+			fn:         ir.Function{Name: "x", Ref: "$CI_SERVER_HOST/mygroup/echo:1", Kind: "oci"},
+			globalVars: map[string]string{"CI_SERVER_HOST": "registry.evil.example"},
+			cfg: map[string]any{"functionAuthorizedSources": map[string]any{
+				"trustedFunctions": []string{"$CI_SERVER_HOST/mygroup/*"},
+			}},
+			expectFinding: true,
+		},
+		{
+			// No variable resolution happens for this control — the
+			// ref carries the SAME literal variable text (a common
+			// idiom for the project's own namespace); only notation
+			// ($VAR vs ${VAR}) is normalized, never resolved to a real
+			// value.
+			name: "notation_normalization_same_literal_vars",
+			fn:   ir.Function{Name: "say_hi", Ref: "${CI_TEMPLATE_REGISTRY_HOST}/${CI_PROJECT_PATH}/echo:1", Kind: "oci"},
+			cfg: map[string]any{"functionAuthorizedSources": map[string]any{
+				"trustSameGroupFunctions": true,
+				"trustedFunctions":        []string{"$CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/*"},
+			}},
+			expectFinding: false,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			pipeline := &ir.NormalizedPipeline{
+				Provider:        ir.ProviderGitLab,
+				ProjectPath:     tc.projectPath,
+				GlobalVariables: tc.globalVars,
+				Jobs:            []ir.Job{{Name: "build", Functions: []ir.Function{tc.fn}}},
+			}
+			findings, err := engine.Evaluate(context.Background(), pipeline, tc.cfg)
+			if err != nil {
+				t.Fatalf("evaluate: %v", err)
+			}
+			found := false
+			for _, f := range findings {
+				if f.Code == "ISSUE-415" {
+					found = true
+				}
+			}
+			if found != tc.expectFinding {
+				t.Fatalf("%s: expected finding=%v, got %v (findings=%+v)", tc.name, tc.expectFinding, found, findings)
+			}
+		})
+	}
+
+	// Identity pins (finding/identity): an untrusted function identifies on
+	// link (the ref), scoped by the real CI job in the job field, with the
+	// step name as the discriminator between two steps of one job that
+	// reference the same function.
+	t.Run("identity_pins", func(t *testing.T) {
+		pipeline := &ir.NormalizedPipeline{
+			Provider:    ir.ProviderGitLab,
+			ProjectPath: "my-group/my-project",
+			Jobs: []ir.Job{{
+				Name:       "build",
+				OriginFile: ".gitlab-ci.yml",
+				OriginLine: 12,
+				Functions: []ir.Function{
+					{Name: "step_a", Ref: "registry.evil.example/x/backdoor:1", Kind: "oci"},
+					{Name: "step_b", Ref: "registry.evil.example/x/backdoor:1", Kind: "oci"},
+				},
+			}},
+		}
+		cfg := map[string]any{"functionAuthorizedSources": map[string]any{}}
+		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		opaengine.StampFingerprints(findings, "")
+		assertSubjectKey(t, findings, "ISSUE-415", "link",
+			[]string{"registry.evil.example/x/backdoor:1", "registry.evil.example/x/backdoor:1"})
+		fingerprints := map[string]string{}
+		for _, f := range findings {
+			if f.Code != "ISSUE-415" {
+				continue
+			}
+			if f.Job != "build" {
+				t.Fatalf("ISSUE-415: job = %q, want the real CI job name \"build\"", f.Job)
+			}
+			if f.File != ".gitlab-ci.yml" {
+				t.Fatalf("ISSUE-415: file = %q, want the job's origin file", f.File)
+			}
+			step, _ := f.Data["step"].(string)
+			if prev, dup := fingerprints[f.Fingerprint]; dup {
+				t.Fatalf("ISSUE-415: steps %q and %q collide on fingerprint %s", prev, step, f.Fingerprint)
+			}
+			fingerprints[f.Fingerprint] = step
+		}
+		if len(fingerprints) != 2 {
+			t.Fatalf("ISSUE-415: want 2 distinctly-fingerprinted findings, got %d", len(fingerprints))
+		}
+	})
+}
+
 // TestIssue410_SecurityJobsWeakened flags SAST-like jobs with
 // allow_failure: true or when: manual.
 func TestIssue410_SecurityJobsWeakened(t *testing.T) {

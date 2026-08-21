@@ -143,6 +143,10 @@ var declarations = map[string][]string{
 	"ISSUE-412": {"file", "job", "serviceImage"},
 	// Docker-in-Docker with an insecure daemon: one finding per job, keyed on the job (detail was prose; the finding is one-per-job so it needs no discriminator).
 	"ISSUE-413": {"file", "job"},
+	// Untrusted CI/CD component source: keyed on the component path, like ISSUE-408/409; an include is not a job, so job stays a deterministic empty pair (assertNoJob pins that).
+	"ISSUE-414": {"file", "job", "componentPath"},
+	// Untrusted `run:` step function source: keyed on the function ref (link); step discriminates two steps in one job referencing the same function.
+	"ISSUE-415": {"file", "job", "link", "step"},
 	// Required action/workflow missing: keyed on the required action.
 	"ISSUE-417": {"file", "job", "requiredAction"},
 	// Workflow has no `concurrency:` block: one finding per workflow file, keyed on the file (benched, not yet live: declaration provisional, revisit on unbench).

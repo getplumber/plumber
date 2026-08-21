@@ -54,6 +54,12 @@ var validControlSchema = map[string][]string{
 	"pipelineMustIncludeTemplate": {
 		"enabled", "required", "requiredGroups",
 	},
+	"componentMustComeFromAuthorizedSources": {
+		"enabled", "trustedComponents", "trustSameGroupComponents", "trustSameInstanceComponents",
+	},
+	"functionMustComeFromAuthorizedSources": {
+		"enabled", "trustedFunctions", "trustSameGroupFunctions",
+	},
 	"pipelineMustNotEnableDebugTrace": {
 		"enabled", "forbiddenVariables",
 	},
@@ -280,6 +286,12 @@ type ControlsConfig struct {
 
 	// PipelineMustIncludeTemplate control configuration
 	PipelineMustIncludeTemplate *RequiredTemplatesControlConfig `yaml:"pipelineMustIncludeTemplate,omitempty"`
+
+	// ComponentMustComeFromAuthorizedSources control configuration
+	ComponentMustComeFromAuthorizedSources *ComponentAuthorizedSourcesControlConfig `yaml:"componentMustComeFromAuthorizedSources,omitempty"`
+
+	// FunctionMustComeFromAuthorizedSources control configuration
+	FunctionMustComeFromAuthorizedSources *FunctionAuthorizedSourcesControlConfig `yaml:"functionMustComeFromAuthorizedSources,omitempty"`
 
 	// PipelineMustNotEnableDebugTrace control configuration
 	PipelineMustNotEnableDebugTrace *DebugTraceControlConfig `yaml:"pipelineMustNotEnableDebugTrace,omitempty"`
@@ -599,6 +611,52 @@ type ImageAuthorizedSourcesControlConfig struct {
 	// Defaults to true. Set false to trust only the entries listed here.
 	// Ignored in legacy (no-extends) mode.
 	IncludePlumberDefaults *bool `yaml:"includePlumberDefaults,omitempty"`
+}
+
+// ComponentAuthorizedSourcesControlConfig configuration for the
+// authorized GitLab CI/CD component sources control (ISSUE-414).
+type ComponentAuthorizedSourcesControlConfig struct {
+	// Enabled controls whether this check runs
+	Enabled *bool `yaml:"enabled,omitempty"`
+
+	// TrustedComponents is a manual allowlist of trusted component
+	// source URLs/patterns (supports wildcards), matched against the
+	// server-side-resolved include: component: source, on top of the
+	// dynamic trust options below.
+	TrustedComponents []string `yaml:"trustedComponents,omitempty"`
+
+	// TrustSameGroupComponents trusts components hosted under the
+	// scanned project's root namespace (top-level group) on the same
+	// GitLab instance. Derived dynamically from the pipeline's own
+	// projectPath at scan time — no environment variables involved.
+	// Defaults to true when unset.
+	TrustSameGroupComponents *bool `yaml:"trustSameGroupComponents,omitempty"`
+
+	// TrustSameInstanceComponents trusts any component hosted on the
+	// same GitLab instance as the scanned project, regardless of
+	// namespace. Defaults to false on gitlab.com (a multi-tenant SaaS
+	// host — same-instance is not a trust boundary there) and true on a
+	// self-hosted instance (already inside the org's trust boundary).
+	TrustSameInstanceComponents *bool `yaml:"trustSameInstanceComponents,omitempty"`
+}
+
+// FunctionAuthorizedSourcesControlConfig configuration for the
+// authorized GitLab CI/CD function sources control (ISSUE-415).
+type FunctionAuthorizedSourcesControlConfig struct {
+	// Enabled controls whether this check runs
+	Enabled *bool `yaml:"enabled,omitempty"`
+
+	// TrustedFunctions is a manual allowlist of trusted function source
+	// URLs/patterns (supports wildcards), matched as literal text
+	// against the pipeline's func: reference (only $VAR / ${VAR}
+	// notation is normalized — no variable resolution is performed).
+	TrustedFunctions []string `yaml:"trustedFunctions,omitempty"`
+
+	// TrustSameGroupFunctions trusts function references whose host
+	// matches the scanned GitLab instance and whose path after that
+	// host starts with the scanned project's root namespace. Defaults
+	// to true when unset.
+	TrustSameGroupFunctions *bool `yaml:"trustSameGroupFunctions,omitempty"`
 }
 
 // BranchProtectionControlConfig configuration for the branch protection control
@@ -1120,6 +1178,42 @@ func (c *ImageAuthorizedSourcesControlConfig) IsIncludePlumberDefaults() bool {
 		return true
 	}
 	return *c.IncludePlumberDefaults
+}
+
+// IsEnabled returns whether the control is enabled
+// Returns false if not properly configured
+func (c *ComponentAuthorizedSourcesControlConfig) IsEnabled() bool {
+	if c == nil || c.Enabled == nil {
+		return false
+	}
+	return *c.Enabled
+}
+
+// IsEnabled returns whether the control is enabled
+// Returns false if not properly configured
+func (c *FunctionAuthorizedSourcesControlConfig) IsEnabled() bool {
+	if c == nil || c.Enabled == nil {
+		return false
+	}
+	return *c.Enabled
+}
+
+// GetComponentMustComeFromAuthorizedSourcesConfig returns the control configuration
+// Returns nil if not configured
+func (c *PlumberConfig) GetComponentMustComeFromAuthorizedSourcesConfig() *ComponentAuthorizedSourcesControlConfig {
+	if c == nil {
+		return nil
+	}
+	return c.ControlsFor("gitlab").ComponentMustComeFromAuthorizedSources
+}
+
+// GetFunctionMustComeFromAuthorizedSourcesConfig returns the control configuration
+// Returns nil if not configured
+func (c *PlumberConfig) GetFunctionMustComeFromAuthorizedSourcesConfig() *FunctionAuthorizedSourcesControlConfig {
+	if c == nil {
+		return nil
+	}
+	return c.ControlsFor("gitlab").FunctionMustComeFromAuthorizedSources
 }
 
 // GetBranchMustBeProtectedConfig returns the control configuration

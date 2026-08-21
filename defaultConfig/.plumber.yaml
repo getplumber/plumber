@@ -369,6 +369,63 @@ gitlab:
       # required: templates/go/go AND templates/trivy/trivy AND templates/iso27001/iso27001
       requiredGroups: []
     # ===========================================
+    # CI/CD components must come from authorized sources
+    # ===========================================
+    # Detects `include: component:` references that are not trusted.
+    # Components run arbitrary code with the job's full context
+    # (variables, secrets, CI_JOB_TOKEN) — the GitLab analogue of a
+    # GitHub Actions "pwn request".
+    #
+    # A source is trusted when it matches trustedComponents, OR lives
+    # under this project's own root namespace on the same GitLab
+    # instance (trustSameGroupComponents), OR is hosted on the same
+    # GitLab instance at all (trustSameInstanceComponents — on by
+    # default). Both are derived dynamically from the pipeline at scan
+    # time, in CI or locally — no environment variables involved.
+    #
+    # Best practice: keep components scoped to your own project/group
+    componentMustComeFromAuthorizedSources:
+      # Set to false to disable this control
+      enabled: true
+      # Trust components under this project's own root namespace
+      trustSameGroupComponents: true
+      # Trust any component on the same GitLab instance, regardless of
+      # namespace. (defaults to true when self-hosted, false on gitlab.com)
+      trustSameInstanceComponents: true
+      # Additional trusted component source URLs and patterns (supports wildcards)
+      trustedComponents: []
+    # ===========================================
+    # GitLab Functions must come from authorized sources
+    # ===========================================
+    # Detects `run:` step function references (the `func:` keyword, or
+    # the deprecated `step:` alias) that are not trusted. Functions run
+    # arbitrary code with the job's full context, the same supply-chain
+    # exposure as CI/CD components. Trust is evaluated the same way
+    # regardless of reference form — deprecated forms are not a free
+    # pass; deprecation is tracked separately (see the Deprecated stat
+    # in `plumber analyze` output) and doesn't affect this control.
+    #
+    # A reference is trusted when it matches trustedFunctions (patterns
+    # may reference $CI_* variables — a pattern is rejected if the
+    # pipeline redefines one of those variables itself; both $VAR and
+    # ${VAR} notation are accepted and normalized identically), OR its
+    # host matches the scanned GitLab instance and its path after that
+    # host starts with this project's own root namespace
+    # (trustSameGroupFunctions).
+    #
+    # Best practice: keep functions scoped to your own project/group
+    functionMustComeFromAuthorizedSources:
+      # Set to false to disable this control
+      enabled: true
+      # Trust functions under this project's own root namespace
+      trustSameGroupFunctions: true
+      # Additional trusted function source URLs and patterns (supports
+      # wildcards). Both $VAR and ${VAR} notation are listed below since
+      # pipeline authors write either form.
+      trustedFunctions:
+        - $CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/*
+        - ${CI_TEMPLATE_REGISTRY_HOST}/${CI_PROJECT_PATH}/*
+    # ===========================================
     # Pipeline must not enable debug trace
     # ===========================================
     # Detects CI/CD pipelines that set CI_DEBUG_TRACE or CI_DEBUG_SERVICES
