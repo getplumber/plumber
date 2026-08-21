@@ -3825,9 +3825,79 @@ func TestIssue705_CachePoisoning_Configurable(t *testing.T) {
 	})
 }
 
-// TestIssue601_AnonymousDefinition flags workflow files without a
-// top-level `name:`. One finding per file (not per job).
-func TestIssue601_AnonymousDefinition(t *testing.T) {
+// TestIssue601_SecurityPolicyProject flags a GitLab project that does not link
+// the expected security policy project. Singleton. Abstains when the linkage
+// could not be read (known=false) or was not collected.
+func TestIssue601_SecurityPolicyProject(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	count601 := func(p *ir.NormalizedPipeline, cfg map[string]any) int {
+		findings, err := engine.Evaluate(context.Background(), p, cfg)
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		n := 0
+		for _, f := range findings {
+			if f.Code == "ISSUE-601" {
+				n++
+			}
+		}
+		return n
+	}
+	gl := func(sp *ir.SecurityPolicyProjectState) *ir.NormalizedPipeline {
+		return &ir.NormalizedPipeline{Provider: ir.ProviderGitLab, SecurityPolicyProject: sp}
+	}
+	anyLinkage := map[string]any{"projectMustHaveSecurityPolicySource": map[string]any{}}
+	expect9 := map[string]any{"projectMustHaveSecurityPolicySource": map[string]any{"expectedProjectId": 9}}
+
+	// Require-any: nothing linked -> fires; something linked -> passes.
+	if got := count601(gl(&ir.SecurityPolicyProjectState{Known: true, LinkedProjectID: 0}), anyLinkage); got != 1 {
+		t.Fatalf("require-any, nothing linked: expected 1 ISSUE-601, got %d", got)
+	}
+	if got := count601(gl(&ir.SecurityPolicyProjectState{Known: true, LinkedProjectID: 5, LinkedProjectPath: "grp/pol"}), anyLinkage); got != 0 {
+		t.Fatalf("require-any, a project linked: expected 0 ISSUE-601, got %d", got)
+	}
+
+	// Expected id: wrong linked -> fires; matching -> passes.
+	if got := count601(gl(&ir.SecurityPolicyProjectState{Known: true, LinkedProjectID: 5}), expect9); got != 1 {
+		t.Fatalf("expected id 9, linked 5: expected 1 ISSUE-601, got %d", got)
+	}
+	if got := count601(gl(&ir.SecurityPolicyProjectState{Known: true, LinkedProjectID: 9}), expect9); got != 0 {
+		t.Fatalf("expected id 9, linked 9: expected 0 ISSUE-601, got %d", got)
+	}
+
+	// Path mode: expectedProjectPath, compared case-insensitively.
+	expectPath := map[string]any{"projectMustHaveSecurityPolicySource": map[string]any{"expectedProjectPath": "Grp/Policies"}}
+	if got := count601(gl(&ir.SecurityPolicyProjectState{Known: true, LinkedProjectID: 5, LinkedProjectPath: "grp/policies"}), expectPath); got != 0 {
+		t.Fatalf("path mode, case-insensitive match: expected 0 ISSUE-601, got %d", got)
+	}
+	if got := count601(gl(&ir.SecurityPolicyProjectState{Known: true, LinkedProjectID: 5, LinkedProjectPath: "grp/other"}), expectPath); got != 1 {
+		t.Fatalf("path mode, mismatch: expected 1 ISSUE-601, got %d", got)
+	}
+
+	// Precedence: when both id and path are set, the id is authoritative — a
+	// matching id passes even if the path would mismatch.
+	both := map[string]any{"projectMustHaveSecurityPolicySource": map[string]any{"expectedProjectId": 9, "expectedProjectPath": "grp/other"}}
+	if got := count601(gl(&ir.SecurityPolicyProjectState{Known: true, LinkedProjectID: 9, LinkedProjectPath: "grp/policies"}), both); got != 0 {
+		t.Fatalf("id precedence: matching id must pass despite path mismatch, got %d ISSUE-601", got)
+	}
+
+	// Abstain: linkage not read authoritatively (known=false) -> no finding even
+	// with an expectation, and no projection at all -> no finding.
+	if got := count601(gl(&ir.SecurityPolicyProjectState{Known: false}), expect9); got != 0 {
+		t.Fatalf("known=false must abstain (not-evaluable), got %d ISSUE-601", got)
+	}
+	if got := count601(gl(nil), expect9); got != 0 {
+		t.Fatalf("no security-policy projection must abstain, got %d ISSUE-601", got)
+	}
+}
+
+// TestIssue422_AnonymousDefinition flags workflow files without a
+// top-level `name:`. One finding per file (not per job). Renumbered from
+// ISSUE-601 when the security-policy control took 601 (#417).
+func TestIssue422_AnonymousDefinition(t *testing.T) {
 	cases := []struct {
 		fixture   string
 		wantCount int
@@ -3847,7 +3917,7 @@ func TestIssue601_AnonymousDefinition(t *testing.T) {
 			if err := os.MkdirAll(wfDir, 0o755); err != nil {
 				t.Fatal(err)
 			}
-			src := filepath.Join("testdata", "ISSUE-601", "github", tc.fixture)
+			src := filepath.Join("testdata", "ISSUE-422", "github", tc.fixture)
 			data, err := os.ReadFile(src)
 			if err != nil {
 				t.Fatalf("read fixture: %v", err)
@@ -3865,7 +3935,7 @@ func TestIssue601_AnonymousDefinition(t *testing.T) {
 			}
 			hits := 0
 			for _, f := range findings {
-				if f.Code == "ISSUE-601" {
+				if f.Code == "ISSUE-422" {
 					hits++
 				}
 			}
@@ -3876,9 +3946,9 @@ func TestIssue601_AnonymousDefinition(t *testing.T) {
 	}
 }
 
-// TestIssue602_MissingConcurrency flags workflow files with no
+// TestIssue422_MissingConcurrency flags workflow files with no
 // concurrency block at either workflow or job level.
-func TestIssue602_MissingConcurrency(t *testing.T) {
+func TestIssue422_MissingConcurrency(t *testing.T) {
 	cases := []struct {
 		fixture   string
 		wantCount int

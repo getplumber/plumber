@@ -119,6 +119,15 @@ type NormalizedPipeline struct {
 	// collection as MRApprovalSettings.
 	MRSettings *MRSettings `json:"mrSettings,omitempty"`
 
+	// SecurityPolicyProject is the GitLab security policy project linked to this
+	// project (Settings > Security & Compliance > Policies), projected from the
+	// protection collection. nil when the linkage was not collected (the control
+	// is disabled) or could not be read authoritatively, so the
+	// projectMustHaveSecurityPolicySource control (ISSUE-601) abstains and
+	// reports not-evaluable. Distinct from SecurityPolicyPath above, which is the
+	// repository's SECURITY.md file (a GitHub-oriented, unrelated control).
+	SecurityPolicyProject *SecurityPolicyProjectState `json:"securityPolicyProject,omitempty"`
+
 	// Dockerfiles lists every Dockerfile the collector scanned at the
 	// repo root and under common build directories, with each FROM
 	// base-image extracted so policies can check pinning state.
@@ -134,6 +143,21 @@ type NormalizedPipeline struct {
 	AdvisoryWarnings []string `json:"advisoryWarnings,omitempty"`
 
 	Raw map[string]any `json:"raw,omitempty"`
+}
+
+// SecurityPolicyProjectState is the GitLab security policy project linkage
+// projected onto the IR. Known is true when the linkage was read
+// authoritatively; a Known projection with LinkedProjectID == 0 means no policy
+// project is linked. When Known is false the rule abstains (not-evaluable).
+type SecurityPolicyProjectState struct {
+	// Known is true when the linkage was read authoritatively.
+	Known bool `json:"known"`
+	// LinkedProjectID is the numeric ID of the linked security policy project,
+	// or 0 when none is linked.
+	LinkedProjectID int `json:"linkedProjectId"`
+	// LinkedProjectPath is the full path of the linked security policy project,
+	// or "" when none is linked.
+	LinkedProjectPath string `json:"linkedProjectPath"`
 }
 
 // Dockerfile captures the result of parsing a single Dockerfile's

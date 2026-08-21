@@ -156,8 +156,8 @@ const (
 
 // Issue codes for workflow-hygiene controls (6xx)
 const (
-	// ISSUE-601: Workflow has no explicit `name:` field
-	CodeAnonymousDefinition ErrorCode = "ISSUE-601"
+	// ISSUE-422: Workflow has no explicit `name:` field
+	CodeAnonymousDefinition ErrorCode = "ISSUE-422"
 	// ISSUE-418: Workflow has no `concurrency:` block at either level
 	CodeMissingConcurrency ErrorCode = "ISSUE-418"
 	// ISSUE-419: Workflow uses a misfeature pattern (shell: cmd, inline pip install curl|sh, …)
@@ -192,6 +192,8 @@ const (
 	CodeBranchNonCompliant ErrorCode = "ISSUE-505"
 	// ISSUE-506: The project's merge-request/merge settings do not meet the configured expectations
 	CodeMRSettingsNonCompliant ErrorCode = "ISSUE-506"
+	// ISSUE-601: No (or the wrong) GitLab security policy project is linked
+	CodeSecurityPolicyProjectNotSet ErrorCode = "ISSUE-601"
 	// ISSUE-803: Job runs with overly broad permissions (write-all)
 	CodeExcessivePermissions ErrorCode = "ISSUE-803"
 )
@@ -624,6 +626,15 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Align the project's merge-request settings in Settings > Merge requests with your policy: set the required merge method and squash option, and toggle the merge-train, skipped-pipeline, discussion-resolution, and source-branch-removal options to the expected values.",
 		DocURL:      docsBaseURL + string(CodeMRSettingsNonCompliant),
 		ControlName: "mergeRequestSettingsMustBeCompliant",
+	},
+	CodeSecurityPolicyProjectNotSet: {
+		Code:        CodeSecurityPolicyProjectNotSet,
+		Severity:    SeverityCritical,
+		Title:       "Missing security policy source on project",
+		Description: "The project does not have the expected GitLab security policy project linked (none is linked, or a different one than the configured expectation), so the organization's scan-execution and merge-request approval policies are not enforced on this project.",
+		Remediation: "Link the expected security policy project in Settings > Security & Compliance > Policies (or set it via the API), so the org's security policies apply. Security policies require GitLab Ultimate.",
+		DocURL:      docsBaseURL + string(CodeSecurityPolicyProjectNotSet),
+		ControlName: "projectMustHaveSecurityPolicySource",
 	},
 	CodeTemplateInjection: {
 		Code:        CodeTemplateInjection,

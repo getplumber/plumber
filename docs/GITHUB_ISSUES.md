@@ -76,7 +76,7 @@ reading the upstream docs.
 
 | Code | Name | Severity |
 | :--- | :--- | :--- |
-| [ISSUE-601](#issue-601--anonymous-definition) | `anonymous-definition` | low |
+| [ISSUE-422](#issue-422--anonymous-definition) | `anonymous-definition` | low |
 | [ISSUE-418](#issue-418--missing-concurrency) | `missing-concurrency` | medium |
 | [ISSUE-419](#issue-419--workflow-misfeature) | `workflow-misfeature` | medium |
 | [ISSUE-420](#issue-420--workflow-obfuscation) | `workflow-obfuscation` | high |
@@ -1613,7 +1613,7 @@ jobs:
 
 ---
 
-## ISSUE-601 — `anonymous-definition`
+## ISSUE-422 — `anonymous-definition`
 
 **Severity:** `low` • **Control:** `workflowsMustHaveExplicitName`
 

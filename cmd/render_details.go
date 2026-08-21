@@ -1013,8 +1013,26 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 			{Label: "Unprotected", Value: fmt.Sprintf("%d", unprotected)},
 			{Label: "Non-Compliant", Value: fmt.Sprintf("%d", nonCompliant)},
 		}
+	case "projectMustHaveSecurityPolicySource":
+		return []statLine{
+			{Label: "Security Policy Not Linked", Value: fmt.Sprintf("%d", findingsCount)},
+		}
 	}
 	return nil
+}
+
+// renderSecurityPolicyTierCaveat prints a caveat when the security-policy
+// control flagged a project with no policy project linked: the feature requires
+// GitLab Ultimate, and a non-Ultimate project cannot link one, so the failure
+// may be a tier limitation rather than a real misconfiguration (see
+// AnalysisResult.SecurityPolicyTierCaveat). No-op otherwise.
+func renderSecurityPolicyTierCaveat(result *control.AnalysisResult) {
+	if result == nil || !result.SecurityPolicyTierCaveat {
+		return
+	}
+	fmt.Println()
+	fmt.Printf("  %s⚠ Security policies are a GitLab Ultimate feature, and no policy project is linked.%s\n", colorYellow, colorReset)
+	fmt.Printf("    %s•%s If this project isn't on GitLab Ultimate it can't link one, so disable this control. If it is, link the expected security policy project to satisfy the check.\n", colorYellow, colorReset)
 }
 
 // _countScriptLines walks the merged GitLab CI conf and totals every

@@ -83,6 +83,11 @@ func GitLabControls(pc *configuration.PlumberConfig) []ControlEntry {
 		Skipped:     c.CicdVariablesMustBeMasked == nil || !c.CicdVariablesMustBeMasked.IsEnabled(),
 	})
 	entries = append(entries, ControlEntry{
+		DisplayName: "Project must have a security policy source",
+		ControlName: "projectMustHaveSecurityPolicySource",
+		Skipped:     c.ProjectMustHaveSecurityPolicySource == nil || !c.ProjectMustHaveSecurityPolicySource.IsEnabled(),
+	})
+	entries = append(entries, ControlEntry{
 		DisplayName: "Pipeline must not include hardcoded jobs",
 		ControlName: "pipelineMustNotIncludeHardcodedJobs",
 		Skipped:     c.PipelineMustNotIncludeHardcodedJobs == nil || !c.PipelineMustNotIncludeHardcodedJobs.IsEnabled(),
@@ -362,6 +367,9 @@ func DisabledControlNames(c *configuration.ControlsConfig) map[string]bool {
 	}
 	if cfg := c.CicdVariablesMustBeMasked; cfg == nil || !cfg.IsEnabled() {
 		out["cicdVariablesMustBeMasked"] = true
+	}
+	if cfg := c.ProjectMustHaveSecurityPolicySource; cfg == nil || !cfg.IsEnabled() {
+		out["projectMustHaveSecurityPolicySource"] = true
 	}
 	if cfg := c.PipelineMustNotIncludeHardcodedJobs; cfg == nil || !cfg.IsEnabled() {
 		out["pipelineMustNotIncludeHardcodedJobs"] = true

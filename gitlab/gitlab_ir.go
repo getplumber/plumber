@@ -53,6 +53,7 @@ func ToNormalizedPipeline(
 	pipeline.SettingsVariables, pipeline.SettingsVariablesKnown = buildSettingsVariables(variables)
 	pipeline.MRApprovalSettings = buildApprovalSettings(protection)
 	pipeline.MRSettings = buildMRSettings(protection)
+	pipeline.SecurityPolicyProject = buildSecurityPolicyProject(protection)
 	if origin != nil && origin.MergedConf != nil {
 		if globals := extractGitLabVariables(origin.MergedConf.GlobalVariables); len(globals) > 0 {
 			pipeline.GlobalVariables = globals
@@ -174,6 +175,27 @@ func buildMRSettings(protection *GitlabProtectionAnalysisData) *ir.MRSettings {
 		PrintingMergeRequestLinkEnabled: p.PrintingMergeRequestLinkEnabled,
 		RemoveSourceBranchAfterMerge:    p.RemoveSourceBranchAfterMerge,
 	}
+}
+
+// buildSecurityPolicyProject projects the collected security policy project
+// linkage onto the IR. Returns nil when the linkage was not collected (the
+// control disabled) so the rule sees no field and abstains. When collected, the
+// Known flag carries whether the read was authoritative; a Known projection with
+// LinkedProjectID == 0 means "no policy project linked".
+func buildSecurityPolicyProject(protection *GitlabProtectionAnalysisData) *ir.SecurityPolicyProjectState {
+	if protection == nil {
+		return nil
+	}
+	// Not collected at all (control disabled): no Known flag, no linkage.
+	if !protection.SecurityPolicyKnown && protection.SecurityPolicyProject == nil {
+		return nil
+	}
+	state := &ir.SecurityPolicyProjectState{Known: protection.SecurityPolicyKnown}
+	if protection.SecurityPolicyProject != nil {
+		state.LinkedProjectID = protection.SecurityPolicyProject.ID
+		state.LinkedProjectPath = protection.SecurityPolicyProject.FullPath
+	}
+	return state
 }
 
 // buildBranches flattens the GitLab protection API response into

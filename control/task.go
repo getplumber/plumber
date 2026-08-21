@@ -151,17 +151,32 @@ func mrSettingsPremiumFieldsNeedingUpgrade(conf *configuration.Configuration, pr
 	return fields
 }
 
+const controlSecurityPolicy = "projectMustHaveSecurityPolicySource"
+
+// securityPolicyControlEnabled reports whether the security-policy-project
+// linkage control (ISSUE-601) is active for this run. It reads the linkage the
+// GitLab protection collection fetches, so that collection must run when it is
+// enabled even if branchMustBeProtected is not.
+func securityPolicyControlEnabled(conf *configuration.Configuration) bool {
+	if conf == nil || conf.PlumberConfig == nil {
+		return false
+	}
+	c := conf.PlumberConfig.GetProjectMustHaveSecurityPolicySourceConfig()
+	return c != nil && c.IsEnabled() && shouldRunControl(controlSecurityPolicy, conf)
+}
+
 // protectionDataNeeded reports whether any control needs the GitLab protection
 // collection this run: branchMustBeProtected, either approval-rule control, the
-// approval-settings control, or the MR-settings control (they all read the one
-// GitlabProtectionAnalysisData).
+// approval-settings control, the MR-settings control, or the security-policy
+// control (they all read the one GitlabProtectionAnalysisData).
 func protectionDataNeeded(conf *configuration.Configuration) bool {
 	if shouldRunControl(controlBranchMustBeProtected, conf) {
 		if cfg := conf.PlumberConfig.GetBranchMustBeProtectedConfig(); cfg != nil && cfg.IsEnabled() {
 			return true
 		}
 	}
-	return mrApprovalRuleControlEnabled(conf) || mrApprovalSettingsControlEnabled(conf) || mrSettingsControlEnabled(conf)
+	return mrApprovalRuleControlEnabled(conf) || mrApprovalSettingsControlEnabled(conf) ||
+		mrSettingsControlEnabled(conf) || securityPolicyControlEnabled(conf)
 }
 
 // controlCicdVariablesMustBeProtected / ...Masked are the two .plumber.yaml
@@ -182,6 +197,20 @@ func cicdVariableControlEnabled(conf *configuration.Configuration) bool {
 		return true
 	}
 	return false
+}
+
+// securityPolicyTierCaveatApplies reports whether to surface the conditional
+// Ultimate caveat for ISSUE-601: the control ran, the linkage was read
+// authoritatively, and NO policy project is linked — the tier-ambiguous case
+// (a non-Ultimate project cannot link one, but an Ultimate project may simply
+// have left it unset). A wrong-project-linked read is a real misconfiguration
+// on a paid tier, not a tier caveat, and a non-authoritative read is
+// not-evaluable, so neither triggers it.
+func securityPolicyTierCaveatApplies(conf *configuration.Configuration, protectionData *gitlab.GitlabProtectionAnalysisData) bool {
+	if !securityPolicyControlEnabled(conf) || protectionData == nil || !protectionData.SecurityPolicyKnown {
+		return false
+	}
+	return protectionData.SecurityPolicyProject == nil
 }
 
 // shouldScanMutableExec reports whether the collector should fetch and
@@ -329,6 +358,20 @@ func buildEngineConfig(controls *configuration.ControlsConfig) map[string]any {
 		return nil
 	}
 	cfg := map[string]any{}
+
+	if c := controls.ProjectMustHaveSecurityPolicySource; c != nil {
+		// expectedProjectId / expectedProjectPath reach the engine only when set:
+		// the Rego rule treats their absence as "require any linkage", the id as
+		// the authoritative match, and the path as a case-insensitive fallback.
+		entry := map[string]any{}
+		if c.ExpectedProjectId != nil {
+			entry["expectedProjectId"] = *c.ExpectedProjectId
+		}
+		if c.ExpectedProjectPath != nil {
+			entry["expectedProjectPath"] = *c.ExpectedProjectPath
+		}
+		cfg["projectMustHaveSecurityPolicySource"] = entry
+	}
 
 	if c := controls.ContainerImageMustNotUseForbiddenTags; c != nil {
 		if len(c.Tags) > 0 {
@@ -899,6 +942,12 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	// those so the renderers advise disabling the specific expectation rather
 	// than presenting an unfixable failure.
 	result.MRSettingsPremiumCaveatFields = mrSettingsPremiumFieldsNeedingUpgrade(conf, protectionData)
+	// ISSUE-601 is not-evaluable when the linkage could not be read (auth error /
+	// field unavailable): the collector leaves SecurityPolicyKnown false, so
+	// StatusFor reports error rather than a false pass. When it WAS read but
+	// nothing is linked, surface the conditional Ultimate tier caveat.
+	result.SecurityPolicyEvaluable = protectionData != nil && protectionData.SecurityPolicyKnown
+	result.SecurityPolicyTierCaveat = securityPolicyTierCaveatApplies(conf, protectionData)
 
 	reportProgress(conf, analysisStepCount, analysisStepCount, "Analysis complete")
 

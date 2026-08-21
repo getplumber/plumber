@@ -16,7 +16,7 @@ deny contains finding if {
 	input.pipeline.provider == "github"
 	some file in _anonymous_workflow_files
 	finding := {
-		"code":     "ISSUE-601",
+		"code":     "ISSUE-422",
 		"severity": "low",
 		"message":  sprintf("workflow file %q has no top-level `name:` — GitHub falls back to the file path", [file]),
 		"file":     file,
