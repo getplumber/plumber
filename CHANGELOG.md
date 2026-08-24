@@ -1,3 +1,15 @@
+## [0.4.41](https://github.com/getplumber/plumber/compare/v0.4.40...v0.4.41) (2026-08-24)
+
+
+### ✨ Features
+
+* **controls:** Import variables protected and masked controls ([8e9cdf0](https://github.com/getplumber/plumber/commit/8e9cdf0d1becfe06b556551acdc11ed731e60d03))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.40 refs [skip ci] ([91cd7c2](https://github.com/getplumber/plumber/commit/91cd7c2f4bbf9cca2ee90ebb3d25c2e58cc7e53a))
+
 ## [0.4.40](https://github.com/getplumber/plumber/compare/v0.4.39...v0.4.40) (2026-08-21)
 
 
