@@ -88,6 +88,20 @@ func StatusFor(e ControlEntry, result *AnalysisResult, findingCount int) string 
 		}
 		return StatusPassed
 	}
+	if e.ControlName == "mergeRequestApprovalRulesMustRequireMinimumApprovals" || e.ControlName == "mergeRequestApprovalRulesMustCoverAllProtectedBranches" {
+		// Approval-rule controls evaluate the project's merge-request approval
+		// rules, not the CI file, so the CiMissing / CiValid check below does
+		// not apply. The rules are authoritative only when the protection
+		// collection ran and the approvals listing was read (ProtectionData
+		// set, MRApprovalRulesKnown=true). A nil ProtectionData (the collection
+		// never ran, or a genuine 401 aborted it) or MRApprovalRulesKnown=false
+		// (a 403/404 the collector tolerated) means the control never truly
+		// evaluated: an empty findings list here must not read as a pass.
+		if result.ProtectionData == nil || !result.ProtectionData.MRApprovalRulesKnown {
+			return StatusError
+		}
+		return StatusPassed
+	}
 	if result.CiMissing || !result.CiValid {
 		return StatusError
 	}

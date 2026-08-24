@@ -36,6 +36,12 @@ var validControlSchema = map[string][]string{
 		"allowForcePush", "codeOwnerApprovalRequired",
 		"minMergeAccessLevel", "minPushAccessLevel",
 	},
+	"mergeRequestApprovalRulesMustRequireMinimumApprovals": {
+		"enabled", "minimumRequiredApprovals",
+	},
+	"mergeRequestApprovalRulesMustCoverAllProtectedBranches": {
+		"enabled",
+	},
 	"pipelineMustNotIncludeHardcodedJobs": {
 		"enabled",
 	},
@@ -257,6 +263,18 @@ type ControlsConfig struct {
 
 	// BranchMustBeProtected control configuration
 	BranchMustBeProtected *BranchProtectionControlConfig `yaml:"branchMustBeProtected,omitempty"`
+
+	// MergeRequestApprovalRulesMustRequireMinimumApprovals control
+	// configuration (GitLab only). Flags approval rules covering all
+	// protected branches that require fewer approvals than the configured
+	// minimum (ISSUE-502).
+	MergeRequestApprovalRulesMustRequireMinimumApprovals *MRApprovalRulesMinApprovalsControlConfig `yaml:"mergeRequestApprovalRulesMustRequireMinimumApprovals,omitempty"`
+
+	// MergeRequestApprovalRulesMustCoverAllProtectedBranches control
+	// configuration (GitLab only). Flags a project where no approval rule
+	// applies to all protected branches (ISSUE-504). Config-free beyond
+	// `enabled`.
+	MergeRequestApprovalRulesMustCoverAllProtectedBranches *EnabledOnlyControlConfig `yaml:"mergeRequestApprovalRulesMustCoverAllProtectedBranches,omitempty"`
 
 	// PipelineMustNotIncludeHardcodedJobs control configuration
 	PipelineMustNotIncludeHardcodedJobs *HardcodedJobsControlConfig `yaml:"pipelineMustNotIncludeHardcodedJobs,omitempty"`
@@ -602,6 +620,34 @@ type ImageAuthorizedSourcesControlConfig struct {
 }
 
 // BranchProtectionControlConfig configuration for the branch protection control
+// MRApprovalRulesMinApprovalsControlConfig configures the GitLab
+// merge-request approval-rules minimum-approvals check (ISSUE-502).
+// GitLab-only.
+type MRApprovalRulesMinApprovalsControlConfig struct {
+	// Enabled controls whether this check runs.
+	Enabled *bool `yaml:"enabled,omitempty"`
+
+	// MinimumRequiredApprovals is the fewest approvals a rule covering all
+	// protected branches must require; a covering rule below it is flagged.
+	// When unset (nil) the control asserts nothing (treated as 0).
+	//
+	// Platform migration: this key was named minimumRequiredApprovalAllProtectedBranches
+	// on the backend2 platform. It is deliberately shortened to
+	// minimumRequiredApprovals in the CLI (the "all protected branches" scope is
+	// already implied by the control). A platform-config importer must map the
+	// old key to this one.
+	MinimumRequiredApprovals *int `yaml:"minimumRequiredApprovals,omitempty"`
+}
+
+// IsEnabled reports whether the control is enabled. Returns false when the
+// wrapper or the field is nil — same convention as every other IsEnabled().
+func (c *MRApprovalRulesMinApprovalsControlConfig) IsEnabled() bool {
+	if c == nil || c.Enabled == nil {
+		return false
+	}
+	return *c.Enabled
+}
+
 type BranchProtectionControlConfig struct {
 	// Enabled controls whether this check runs
 	Enabled *bool `yaml:"enabled,omitempty"`
@@ -1129,6 +1175,20 @@ func (c *PlumberConfig) GetBranchMustBeProtectedConfig() *BranchProtectionContro
 		return nil
 	}
 	return c.ControlsFor("gitlab").BranchMustBeProtected
+}
+
+func (c *PlumberConfig) GetMergeRequestApprovalRulesMustRequireMinimumApprovalsConfig() *MRApprovalRulesMinApprovalsControlConfig {
+	if c == nil {
+		return nil
+	}
+	return c.ControlsFor("gitlab").MergeRequestApprovalRulesMustRequireMinimumApprovals
+}
+
+func (c *PlumberConfig) GetMergeRequestApprovalRulesMustCoverAllProtectedBranchesConfig() *EnabledOnlyControlConfig {
+	if c == nil {
+		return nil
+	}
+	return c.ControlsFor("gitlab").MergeRequestApprovalRulesMustCoverAllProtectedBranches
 }
 
 // IsEnabled returns whether the control is enabled

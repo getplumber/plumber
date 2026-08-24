@@ -1148,6 +1148,156 @@ func TestIssue501_BranchUnprotected(t *testing.T) {
 	}
 }
 
+// countCode counts findings carrying the given code.
+func countCode(findings []opaengine.Finding, code string) int {
+	n := 0
+	for _, f := range findings {
+		if f.Code == code {
+			n++
+		}
+	}
+	return n
+}
+
+// TestIssue502_MRApprovalRulesMinApprovals flags merge-request approval rules
+// that cover all protected branches yet require fewer approvals than the
+// configured minimum. Rules scoped to specific branches are out of scope, and
+// the rule abstains when the approvals listing was unreadable
+// (MRApprovalRulesKnown=false), so a token that cannot read approvals reports
+// not-evaluable rather than a false pass. Identity keys on the stable rule ID.
+func TestIssue502_MRApprovalRulesMinApprovals(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	cfg := map[string]any{
+		"mergeRequestApprovalRulesMustRequireMinimumApprovals": map[string]any{
+			"minimumRequiredApprovals": 2,
+		},
+	}
+
+	// Positive: two named all-branches rules below the minimum (the explicit
+	// flag, and the zero-scope form), an UNNAMED all-branches rule below the
+	// minimum (GitLab API/auto-created rules can carry an empty name — it must
+	// still be flagged, not silently skipped), one compliant all-branches rule,
+	// and one scoped rule below the minimum that is out of scope.
+	pipeline := &ir.NormalizedPipeline{
+		Provider:             ir.ProviderGitLab,
+		MRApprovalRulesKnown: true,
+		MRApprovalRules: []ir.MRApprovalRule{
+			{ID: "10", Name: "All-1", ApprovalsRequired: 1, AppliesToAllProtectedBranches: true},
+			{ID: "20", Name: "All-zero-scope", ApprovalsRequired: 0, ProtectedBranchCount: 0},
+			{ID: "30", Name: "Compliant", ApprovalsRequired: 3, AppliesToAllProtectedBranches: true},
+			{ID: "40", Name: "Scoped", ApprovalsRequired: 0, ProtectedBranchCount: 2},
+			{ID: "50", Name: "", ApprovalsRequired: 0, AppliesToAllProtectedBranches: true},
+		},
+	}
+	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if got := countCode(findings, "ISSUE-502"); got != 3 {
+		t.Fatalf("expected 3 ISSUE-502 findings (incl. the unnamed rule), got %d", got)
+	}
+	assertSubjectKey(t, findings, "ISSUE-502", "approvalRuleId", []string{"10", "20", "50"})
+
+	// Negative: every all-branches rule meets the minimum -> no findings.
+	clean := &ir.NormalizedPipeline{
+		Provider:             ir.ProviderGitLab,
+		MRApprovalRulesKnown: true,
+		MRApprovalRules: []ir.MRApprovalRule{
+			{ID: "10", Name: "All", ApprovalsRequired: 2, AppliesToAllProtectedBranches: true},
+		},
+	}
+	if f, _ := engine.Evaluate(context.Background(), clean, cfg); countCode(f, "ISSUE-502") != 0 {
+		t.Fatalf("expected 0 ISSUE-502 findings when every covering rule meets the minimum")
+	}
+
+	// Abstain: listing unreadable (Known=false) -> not-evaluable, so no
+	// findings even though a covering rule is below the minimum.
+	unknown := &ir.NormalizedPipeline{
+		Provider:             ir.ProviderGitLab,
+		MRApprovalRulesKnown: false,
+		MRApprovalRules: []ir.MRApprovalRule{
+			{ID: "10", Name: "All", ApprovalsRequired: 0, AppliesToAllProtectedBranches: true},
+		},
+	}
+	if f, _ := engine.Evaluate(context.Background(), unknown, cfg); countCode(f, "ISSUE-502") != 0 {
+		t.Fatalf("expected 0 ISSUE-502 findings when the approvals listing is unreadable")
+	}
+}
+
+// TestIssue504_MRApprovalRulesCoverAllBranches flags a project where no
+// approval rule applies to all protected branches (a singleton finding). It
+// fires on zero rules too (no coverage at all), matching the legacy control,
+// and abstains when the listing was unreadable.
+func TestIssue504_MRApprovalRulesCoverAllBranches(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+
+	// Positive: rules exist but none covers all protected branches.
+	pipeline := &ir.NormalizedPipeline{
+		Provider:             ir.ProviderGitLab,
+		MRApprovalRulesKnown: true,
+		MRApprovalRules: []ir.MRApprovalRule{
+			{ID: "10", Name: "Scoped-a", ApprovalsRequired: 2, ProtectedBranchCount: 1},
+			{ID: "20", Name: "Scoped-b", ApprovalsRequired: 2, ProtectedBranchCount: 3},
+		},
+	}
+	findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if got := countCode(findings, "ISSUE-504"); got != 1 {
+		t.Fatalf("expected 1 ISSUE-504 finding, got %d", got)
+	}
+
+	// Positive: zero rules is also a finding — no rule covers all protected
+	// branches, so the gate is absent.
+	empty := &ir.NormalizedPipeline{Provider: ir.ProviderGitLab, MRApprovalRulesKnown: true}
+	if f, _ := engine.Evaluate(context.Background(), empty, nil); countCode(f, "ISSUE-504") != 1 {
+		t.Fatalf("expected 1 ISSUE-504 finding when no approval rule is defined")
+	}
+
+	// Negative: at least one rule covers all protected branches -> no finding.
+	covered := &ir.NormalizedPipeline{
+		Provider:             ir.ProviderGitLab,
+		MRApprovalRulesKnown: true,
+		MRApprovalRules: []ir.MRApprovalRule{
+			{ID: "10", Name: "All", ApprovalsRequired: 2, AppliesToAllProtectedBranches: true},
+			{ID: "20", Name: "Scoped", ApprovalsRequired: 2, ProtectedBranchCount: 1},
+		},
+	}
+	if f, _ := engine.Evaluate(context.Background(), covered, nil); countCode(f, "ISSUE-504") != 0 {
+		t.Fatalf("expected 0 ISSUE-504 findings when a rule covers all protected branches")
+	}
+
+	// Positive: an "All branches" rule (no branch scope — flag off, zero
+	// protected-branch count) is deliberately NOT counted as covering all
+	// protected branches. 504 targets the explicit "all protected branches"
+	// flag only, matching the legacy platform; blanket all-branches coverage is
+	// a separate concern. A project whose only rule is "All branches" still
+	// fires 504. (Contrast ISSUE-502, which does accept a zero-scope rule.)
+	allBranchesOnly := &ir.NormalizedPipeline{
+		Provider:             ir.ProviderGitLab,
+		MRApprovalRulesKnown: true,
+		MRApprovalRules: []ir.MRApprovalRule{
+			{ID: "30", Name: "All branches", ApprovalsRequired: 2, AppliesToAllProtectedBranches: false, ProtectedBranchCount: 0},
+		},
+	}
+	if f, _ := engine.Evaluate(context.Background(), allBranchesOnly, nil); countCode(f, "ISSUE-504") != 1 {
+		t.Fatalf("expected 1 ISSUE-504 finding: an \"All branches\" rule is not the explicit all-protected-branches flag (legacy-faithful)")
+	}
+
+	// Abstain: listing unreadable -> not-evaluable.
+	unknown := &ir.NormalizedPipeline{Provider: ir.ProviderGitLab, MRApprovalRulesKnown: false}
+	if f, _ := engine.Evaluate(context.Background(), unknown, nil); countCode(f, "ISSUE-504") != 0 {
+		t.Fatalf("expected 0 ISSUE-504 findings when the approvals listing is unreadable")
+	}
+}
+
 // TestIssue505_BranchNonCompliant flags protected branches whose
 // settings fail to meet the declared minimum bar.
 func TestIssue505_BranchNonCompliant(t *testing.T) {

@@ -367,6 +367,8 @@ func TestValidControlNames(t *testing.T) {
 		"githubActionMustComeFromAuthorizedSources",
 		"includesMustBeUpToDate",
 		"includesMustNotUseForbiddenVersions",
+		"mergeRequestApprovalRulesMustCoverAllProtectedBranches",
+		"mergeRequestApprovalRulesMustRequireMinimumApprovals",
 		"pipelineMustIncludeComponent",
 		"pipelineMustIncludeTemplate",
 		"pipelineMustNotEnableDebugTrace",

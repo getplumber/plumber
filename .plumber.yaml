@@ -178,6 +178,25 @@ gitlab:
       # Minimum access level required to push (0=No one, 30=Developer, 40=Maintainer)
       minPushAccessLevel: 40
     # ===========================================
+    # MR approval rules must require a minimum number of approvals
+    # ===========================================
+    # Flags approval rules covering all protected branches that require fewer
+    # approvals than the minimum below. GitLab Premium/Ultimate feature; on
+    # Free the approvals API returns no rules, so it passes vacuously. A
+    # genuine 401/403 reports not-evaluable.
+    mergeRequestApprovalRulesMustRequireMinimumApprovals:
+      enabled: true
+      minimumRequiredApprovals: 1
+    # ===========================================
+    # MR approval rules must cover all protected branches
+    # ===========================================
+    # Flags a project where no approval rule applies to all protected branches
+    # (explicit "all protected branches" target only). GitLab Premium/Ultimate
+    # feature; on Free the approvals API returns empty, so this fires. A genuine
+    # 401/403 reports not-evaluable.
+    mergeRequestApprovalRulesMustCoverAllProtectedBranches:
+      enabled: true
+    # ===========================================
     # Pipeline must not include hardcoded jobs
     # ===========================================
     # Detects CI/CD jobs that are defined directly in the .gitlab-ci.yml file

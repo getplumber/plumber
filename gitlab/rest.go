@@ -192,8 +192,12 @@ func RefResolvesAsTagAndBranch(projectPath string, ref string, token string, API
 	return tagExists, branchExists, nil
 }
 
-// FetchProjectMRApprovalRules retrieves MR approval rules for a project
-func FetchProjectMRApprovalRules(projectID int, token string, APIURL string, conf *configuration.Configuration) ([]*gitlab.ProjectApprovalRule, error) {
+// FetchProjectMRApprovalRules retrieves MR approval rules for a project. The
+// second return is the HTTP status of a failed request (0 when there was no
+// response), so the caller can classify a 403/404 (feature unavailable / token
+// scope → not-evaluable) apart from a hard failure on the typed status rather
+// than substring-matching the error string.
+func FetchProjectMRApprovalRules(projectID int, token string, APIURL string, conf *configuration.Configuration) ([]*gitlab.ProjectApprovalRule, int, error) {
 	l := logger.WithFields(logrus.Fields{
 		"action":    "FetchProjectMRApprovalRules",
 		"projectID": projectID,
@@ -203,21 +207,44 @@ func FetchProjectMRApprovalRules(projectID int, token string, APIURL string, con
 	glab, err := GetNewGitlabClient(token, APIURL, conf)
 	if err != nil {
 		l.WithError(err).Error("Unable to get a Gitlab client")
-		return nil, err
+		return nil, 0, err
 	}
 
-	rules, _, err := glab.Projects.GetProjectApprovalRules(projectID, nil)
-	if err != nil {
-		l.WithError(err).Warn("Failed to fetch MR approval rules")
-		return nil, err
+	// Paginate: GET /projects/:id/approval_rules defaults to per_page 20, so a
+	// project with more rules than one page would otherwise be silently
+	// truncated — and the caller marks the listing authoritative
+	// (MRApprovalRulesKnown=true), which would turn a missed weak rule into a
+	// false pass for ISSUE-502. Mirrors FetchProjectMembers / FetchProjectBranchData.
+	var allRules []*gitlab.ProjectApprovalRule
+	options := &gitlab.GetProjectApprovalRulesListsOptions{
+		ListOptions: gitlab.ListOptions{PerPage: 100},
+	}
+	for page := int64(1); ; page++ {
+		options.Page = page
+		rules, resp, err := glab.Projects.GetProjectApprovalRules(projectID, options)
+		if err != nil {
+			status := 0
+			if resp != nil {
+				status = resp.StatusCode
+			}
+			l.WithError(err).Warn("Failed to fetch MR approval rules")
+			return nil, status, err
+		}
+		allRules = append(allRules, rules...)
+		if resp == nil || resp.NextPage == 0 {
+			break
+		}
 	}
 
-	l.WithField("ruleCount", len(rules)).Debug("Fetched MR approval rules")
-	return rules, nil
+	l.WithField("ruleCount", len(allRules)).Debug("Fetched MR approval rules")
+	return allRules, http.StatusOK, nil
 }
 
-// FetchProjectMRApprovalSettings retrieves MR approval settings for a project
-func FetchProjectMRApprovalSettings(projectID int, token string, APIURL string, conf *configuration.Configuration) (*gitlab.ProjectApprovals, error) {
+// FetchProjectMRApprovalSettings retrieves MR approval settings for a project.
+// The second return is the HTTP status of a failed request (0 when there was no
+// response), so the caller classifies a 403/404 apart from a hard failure on
+// the typed status.
+func FetchProjectMRApprovalSettings(projectID int, token string, APIURL string, conf *configuration.Configuration) (*gitlab.ProjectApprovals, int, error) {
 	l := logger.WithFields(logrus.Fields{
 		"action":    "FetchProjectMRApprovalSettings",
 		"projectID": projectID,
@@ -227,17 +254,21 @@ func FetchProjectMRApprovalSettings(projectID int, token string, APIURL string, 
 	glab, err := GetNewGitlabClient(token, APIURL, conf)
 	if err != nil {
 		l.WithError(err).Error("Unable to get a Gitlab client")
-		return nil, err
+		return nil, 0, err
 	}
 
-	settings, _, err := glab.Projects.GetApprovalConfiguration(projectID)
+	settings, resp, err := glab.Projects.GetApprovalConfiguration(projectID)
 	if err != nil {
+		status := 0
+		if resp != nil {
+			status = resp.StatusCode
+		}
 		l.WithError(err).Warn("Failed to fetch MR approval settings")
-		return nil, err
+		return nil, status, err
 	}
 
 	l.Debug("Fetched MR approval settings")
-	return settings, nil
+	return settings, http.StatusOK, nil
 }
 
 // FetchProjectMembers retrieves all members of a project

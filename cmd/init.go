@@ -27,7 +27,7 @@ const (
 
 	catImages      = "Container image security (tags, trusted registries)"
 	catComposition = "Pipeline composition (includes, scripts, security jobs, DinD)"
-	catAccess      = "Access control (branch protection)"
+	catAccess      = "Access control (branch protection, MR approvals)"
 	catVariables   = "Variable security (debug trace, unsafe expansion)"
 
 	// GitLab-applicable composition checks (existing).
@@ -194,6 +194,12 @@ type initWizardState struct {
 	BranchCodeOwnerApprovalRequiredGitHub bool
 	BranchMinMergeAccessLevel             string
 	BranchMinPushAccessLevel              string
+
+	// mergeRequestApprovalRulesMustRequireMinimumApprovals /
+	// ...MustCoverAllProtectedBranches (GitLab-only, catAccess).
+	MRApprovalMinEnabled      bool
+	MRApprovalMinCount        string
+	MRApprovalCoverAllEnabled bool
 
 	// pipelineMustNotEnableDebugTrace
 	DebugForbiddenVariablesMultiline string
@@ -490,6 +496,28 @@ func (st *initWizardState) askAccessQuestions() error {
 		}, &st.BranchMinPushAccessLevel); err != nil {
 			return err
 		}
+		if err := survey.AskOne(&survey.Confirm{
+			Message: "Flag MR approval rules that require fewer than a minimum number of approvals? (GitLab)",
+			Help:    "Checks approval rules covering all protected branches against a minimum. Requires a token that can read approval rules (a premium feature). Ships off by default.",
+			Default: defaultMRApprovalMinEnabled(),
+		}, &st.MRApprovalMinEnabled); err != nil {
+			return err
+		}
+		if st.MRApprovalMinEnabled {
+			if err := survey.AskOne(&survey.Input{
+				Message: "Minimum approvals a rule covering all protected branches must require (GitLab)",
+				Default: fmt.Sprintf("%d", defaultMRApprovalMinCount()),
+			}, &st.MRApprovalMinCount); err != nil {
+				return err
+			}
+		}
+		if err := survey.AskOne(&survey.Confirm{
+			Message: "Flag projects where no MR approval rule covers all protected branches? (GitLab)",
+			Help:    "A protected branch with no covering approval rule can be merged with no required approval. Ships off by default.",
+			Default: defaultMRApprovalCoverAllEnabled(),
+		}, &st.MRApprovalCoverAllEnabled); err != nil {
+			return err
+		}
 	}
 	if hasProvider(st, "github") {
 		if err := survey.AskOne(&survey.Confirm{
@@ -773,6 +801,30 @@ var embeddedDefault = sync.OnceValue(func() *configuration.PlumberConfig {
 func defaultGitLabControls() configuration.ControlsConfig { return embeddedDefault().GitLab.Controls }
 func defaultGitHubControls() configuration.ControlsConfig { return embeddedDefault().GitHub.Controls }
 
+// defaultMRApproval* source the wizard's Confirm/Input defaults for the
+// merge-request approval-rule controls from the shipped default, so the
+// prompts and the zero-config baseline cannot drift.
+func defaultMRApprovalMinEnabled() bool {
+	if c := defaultGitLabControls().MergeRequestApprovalRulesMustRequireMinimumApprovals; c != nil {
+		return c.IsEnabled()
+	}
+	return false
+}
+
+func defaultMRApprovalMinCount() int {
+	if c := defaultGitLabControls().MergeRequestApprovalRulesMustRequireMinimumApprovals; c != nil && c.MinimumRequiredApprovals != nil {
+		return *c.MinimumRequiredApprovals
+	}
+	return 1
+}
+
+func defaultMRApprovalCoverAllEnabled() bool {
+	if c := defaultGitLabControls().MergeRequestApprovalRulesMustCoverAllProtectedBranches; c != nil {
+		return c.IsEnabled()
+	}
+	return false
+}
+
 // defaultForbiddenTags is the CSV prompt default for forbidden image tags,
 // sourced from the GitLab containerImageMustNotUseForbiddenTags default.
 func defaultForbiddenTags() string {
@@ -1008,6 +1060,15 @@ func (st *initWizardState) applyAccessControls(gl, gh *configuration.ProviderCon
 			CodeOwnerApprovalRequired: boolPtrInit(st.BranchCodeOwnerApprovalRequired),
 			MinMergeAccessLevel:       intPtrInit(parseIntInit(st.BranchMinMergeAccessLevel, 30)),
 			MinPushAccessLevel:        intPtrInit(parseIntInit(st.BranchMinPushAccessLevel, 40)),
+		}
+		if st.MRApprovalMinEnabled {
+			gl.Controls.MergeRequestApprovalRulesMustRequireMinimumApprovals = &configuration.MRApprovalRulesMinApprovalsControlConfig{
+				Enabled:                  boolPtrInit(true),
+				MinimumRequiredApprovals: intPtrInit(parseIntInit(st.MRApprovalMinCount, defaultMRApprovalMinCount())),
+			}
+		}
+		if st.MRApprovalCoverAllEnabled {
+			gl.Controls.MergeRequestApprovalRulesMustCoverAllProtectedBranches = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
 		}
 	}
 	if gh != nil {

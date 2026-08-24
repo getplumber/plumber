@@ -104,6 +104,7 @@ func outputTextWithProvider(p provider.Provider, result *control.AnalysisResult,
 	// real) and drop the green stat blocks (#220).
 	renderFindingGroups(filterGroupsForDegraded(groups, result.DataCollectionDegraded))
 	renderWarnings(result.Warnings)
+	renderApprovalRulesTierCaveat(result)
 
 	printSectionHeader("Summary")
 	fmt.Println()

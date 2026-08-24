@@ -71,6 +71,8 @@ func controlsConfigIsZero(c ControlsConfig) bool {
 	return c.ContainerImageMustNotUseForbiddenTags == nil &&
 		c.ContainerImageMustComeFromAuthorizedSources == nil &&
 		c.BranchMustBeProtected == nil &&
+		c.MergeRequestApprovalRulesMustRequireMinimumApprovals == nil &&
+		c.MergeRequestApprovalRulesMustCoverAllProtectedBranches == nil &&
 		c.PipelineMustNotIncludeHardcodedJobs == nil &&
 		c.IncludesMustBeUpToDate == nil &&
 		c.IncludesMustNotUseForbiddenVersions == nil &&
@@ -96,6 +98,8 @@ func controlsConfigEqual(a, b ControlsConfig) bool {
 	return a.ContainerImageMustNotUseForbiddenTags == b.ContainerImageMustNotUseForbiddenTags &&
 		a.ContainerImageMustComeFromAuthorizedSources == b.ContainerImageMustComeFromAuthorizedSources &&
 		a.BranchMustBeProtected == b.BranchMustBeProtected &&
+		a.MergeRequestApprovalRulesMustRequireMinimumApprovals == b.MergeRequestApprovalRulesMustRequireMinimumApprovals &&
+		a.MergeRequestApprovalRulesMustCoverAllProtectedBranches == b.MergeRequestApprovalRulesMustCoverAllProtectedBranches &&
 		a.PipelineMustNotIncludeHardcodedJobs == b.PipelineMustNotIncludeHardcodedJobs &&
 		a.IncludesMustBeUpToDate == b.IncludesMustBeUpToDate &&
 		a.IncludesMustNotUseForbiddenVersions == b.IncludesMustNotUseForbiddenVersions &&

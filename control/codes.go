@@ -178,6 +178,10 @@ const (
 const (
 	// ISSUE-501: Branch is not protected
 	CodeBranchUnprotected ErrorCode = "ISSUE-501"
+	// ISSUE-502: A merge-request approval rule covering all protected branches requires fewer approvals than the configured minimum
+	CodeMRApprovalRulesBelowMinimum ErrorCode = "ISSUE-502"
+	// ISSUE-504: No merge-request approval rule applies to all protected branches
+	CodeMRApprovalRulesAllBranchesMissing ErrorCode = "ISSUE-504"
 	// ISSUE-505: Branch has non-compliant protection settings
 	CodeBranchNonCompliant ErrorCode = "ISSUE-505"
 	// ISSUE-803: Job runs with overly broad permissions (write-all)
@@ -549,6 +553,24 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Enable branch protection in GitLab: Settings > Repository > Protected Branches. Add the branch with appropriate access levels for push and merge.",
 		DocURL:      docsBaseURL + string(CodeBranchUnprotected),
 		ControlName: "branchMustBeProtected",
+	},
+	CodeMRApprovalRulesBelowMinimum: {
+		Code:        CodeMRApprovalRulesBelowMinimum,
+		Severity:    SeverityHigh,
+		Title:       "Merge request approval rule requires too few approvals",
+		Description: "A merge request approval rule that covers all protected branches requires fewer approvals than the configured minimum, so a protected branch can be merged with too little review.",
+		Remediation: "Raise the rule's required approvals in Settings > Merge requests > Approval rules to at least your configured minimum, or narrow the rule's scope if it is not meant to cover all protected branches.",
+		DocURL:      docsBaseURL + string(CodeMRApprovalRulesBelowMinimum),
+		ControlName: "mergeRequestApprovalRulesMustRequireMinimumApprovals",
+	},
+	CodeMRApprovalRulesAllBranchesMissing: {
+		Code:        CodeMRApprovalRulesAllBranchesMissing,
+		Severity:    SeverityHigh,
+		Title:       "No approval rule covers all protected branches",
+		Description: "No merge request approval rule applies to all protected branches, so a protected branch can exist with no required approval and be merged without review.",
+		Remediation: "Add a merge request approval rule that applies to all protected branches in Settings > Merge requests > Approval rules.",
+		DocURL:      docsBaseURL + string(CodeMRApprovalRulesAllBranchesMissing),
+		ControlName: "mergeRequestApprovalRulesMustCoverAllProtectedBranches",
 	},
 	CodeBranchNonCompliant: {
 		Code:        CodeBranchNonCompliant,
