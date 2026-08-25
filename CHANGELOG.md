@@ -1,3 +1,15 @@
+## [0.4.42](https://github.com/getplumber/plumber/compare/v0.4.41...v0.4.42) (2026-08-25)
+
+
+### ✨ Features
+
+* **controls:** Add MR approval rules controls ([a2dfb69](https://github.com/getplumber/plumber/commit/a2dfb6961365ed99684a54780ed0cc1bca4842b7)), closes [#412](https://github.com/getplumber/plumber/issues/412)
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.41 refs [skip ci] ([0baded9](https://github.com/getplumber/plumber/commit/0baded912f54e9f112455a5b33892bfcbf909054))
+
 ## [0.4.41](https://github.com/getplumber/plumber/compare/v0.4.40...v0.4.41) (2026-08-24)
 
 
