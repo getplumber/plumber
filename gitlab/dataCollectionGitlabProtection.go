@@ -1,12 +1,22 @@
 package gitlab
 
 import (
-	"strings"
+	"net/http"
 
 	"github.com/getplumber/plumber/configuration"
 	"github.com/sirupsen/logrus"
 	glab "gitlab.com/gitlab-org/api/client-go"
 )
+
+// isPremiumFeatureUnavailable reports whether an approval-rules/settings fetch
+// failed with a 403/404 — the "feature unavailable / token lacks scope" signal
+// that leaves the listing not-evaluable (never a false pass). It reads the
+// typed HTTP status the fetch surfaces, not a substring of the error string,
+// which embeds the request URL and could carry "403"/"404" spuriously (e.g. a
+// project id), so a hard 500 on such a project is not misread as premium-missing.
+func isPremiumFeatureUnavailable(status int) bool {
+	return status == http.StatusForbidden || status == http.StatusNotFound
+}
 
 const (
 	DataCollectionTypeGitlabProtectionVersion = "0.2.0"
@@ -55,12 +65,18 @@ type GitlabProtectionDataBranch struct {
 
 // GitlabProtectionAnalysisData holds all the data needed by protection controls
 type GitlabProtectionAnalysisData struct {
-	Branches           []string                    `json:"branches"`
-	BranchProtections  []BranchProtection          `json:"branchProtections"`
-	MRApprovalRules    []*glab.ProjectApprovalRule `json:"mrApprovalRules"`
-	MRApprovalSettings *glab.ProjectApprovals      `json:"mrApprovalSettings"`
-	MRSettings         *glab.Project               `json:"mrSettings"`
-	ProjectMembers     []GitlabMemberInfo          `json:"projectMembers"`
+	Branches          []string                    `json:"branches"`
+	BranchProtections []BranchProtection          `json:"branchProtections"`
+	MRApprovalRules   []*glab.ProjectApprovalRule `json:"mrApprovalRules"`
+	// MRApprovalRulesKnown records whether the approval-rules listing was
+	// read authoritatively. It stays false on a 403/404 (non-premium
+	// GitLab, or a token without scope), so the approval-rule controls
+	// (ISSUE-502/504) report not-evaluable rather than a false pass: an
+	// unreadable listing must not make a project look compliant.
+	MRApprovalRulesKnown bool                   `json:"mrApprovalRulesKnown"`
+	MRApprovalSettings   *glab.ProjectApprovals `json:"mrApprovalSettings"`
+	MRSettings           *glab.Project          `json:"mrSettings"`
+	ProjectMembers       []GitlabMemberInfo     `json:"projectMembers"`
 }
 
 // Run fetches all GitLab protection data needed by the controls
@@ -90,25 +106,25 @@ func (dc *GitlabProtectionDataCollection) Run(
 	returnedData.BranchProtections = branchProtections
 	metrics.Branches = len(branches)
 
-	// Get project MR approval rules (may fail with 403/404 on non-premium GitLab)
-	approvalRules, err := FetchProjectMRApprovalRules(project.ID, token, conf.GitlabURL, conf)
+	// Get project MR approval rules (may 403/404 when the token cannot read them; GitLab Free returns 200 with an empty list)
+	approvalRules, rulesStatus, err := FetchProjectMRApprovalRules(project.ID, token, conf.GitlabURL, conf)
 	if err != nil {
-		errStr := err.Error()
-		if !strings.Contains(errStr, "403") && !strings.Contains(errStr, "404") {
+		if !isPremiumFeatureUnavailable(rulesStatus) {
 			l.WithError(err).Error("Failed to fetch MR approval rules")
 			return nil, metrics, err
 		}
 		l.WithError(err).Warn("MR approval rules not available (may require premium)")
-		// If 403/404 error, MRApprovalRules will be nil which controls can handle
+		// If 403/404 error, MRApprovalRules stays nil and MRApprovalRulesKnown
+		// stays false, so ISSUE-502/504 report not-evaluable, not a false pass.
 	} else {
 		returnedData.MRApprovalRules = approvalRules
+		returnedData.MRApprovalRulesKnown = true
 	}
 
-	// Get project MR approval settings (may fail with 403/404 on non-premium GitLab)
-	approvalSettings, err := FetchProjectMRApprovalSettings(project.ID, token, conf.GitlabURL, conf)
+	// Get project MR approval settings (may 403/404 when the token cannot read them; GitLab Free returns 200 with an empty list)
+	approvalSettings, settingsStatus, err := FetchProjectMRApprovalSettings(project.ID, token, conf.GitlabURL, conf)
 	if err != nil {
-		errStr := err.Error()
-		if !strings.Contains(errStr, "403") && !strings.Contains(errStr, "404") {
+		if !isPremiumFeatureUnavailable(settingsStatus) {
 			l.WithError(err).Error("Failed to fetch MR approval settings")
 			return nil, metrics, err
 		}

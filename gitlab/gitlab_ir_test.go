@@ -4,7 +4,47 @@ import (
 	"testing"
 
 	"github.com/getplumber/plumber/internal/ir"
+	glab "gitlab.com/gitlab-org/api/client-go"
 )
+
+// TestBuildApprovalRules covers the approval-rules projection: an unreadable
+// listing stays known=false (so ISSUE-502/504 report not-evaluable), and a
+// known listing projects the stable ID (stringified), the renameable name,
+// the approvals count, and protected-branch coverage.
+func TestBuildApprovalRules(t *testing.T) {
+	// nil protection -> not known, no rules.
+	if got, known := buildApprovalRules(nil); got != nil || known {
+		t.Fatalf("nil protection: got %v known %v, want nil/false", got, known)
+	}
+
+	// An unreadable listing (a 403 the collector recorded) stays known=false
+	// even if rules are somehow present.
+	if _, known := buildApprovalRules(&GitlabProtectionAnalysisData{MRApprovalRulesKnown: false}); known {
+		t.Fatal("unreadable approval-rules listing must report known=false")
+	}
+
+	data := &GitlabProtectionAnalysisData{
+		MRApprovalRulesKnown: true,
+		MRApprovalRules: []*glab.ProjectApprovalRule{
+			{ID: 42, Name: "Security", ApprovalsRequired: 1, AppliesToAllProtectedBranches: true},
+			{ID: 7, Name: "Scoped", ApprovalsRequired: 2, ProtectedBranches: []*glab.ProtectedBranch{{Name: "main"}}},
+			nil,
+		},
+	}
+	got, known := buildApprovalRules(data)
+	if !known {
+		t.Fatal("known listing must report known=true")
+	}
+	if len(got) != 2 {
+		t.Fatalf("want 2 projected rules (nil entry skipped), got %d", len(got))
+	}
+	if r := got[0]; r.ID != "42" || r.Name != "Security" || r.ApprovalsRequired != 1 || !r.AppliesToAllProtectedBranches || r.ProtectedBranchCount != 0 {
+		t.Fatalf("rule 0 projection mismatch: %+v", r)
+	}
+	if r := got[1]; r.ID != "7" || r.ApprovalsRequired != 2 || r.AppliesToAllProtectedBranches || r.ProtectedBranchCount != 1 {
+		t.Fatalf("rule 1 projection mismatch: %+v", r)
+	}
+}
 
 func TestBuildSettingsVariables(t *testing.T) {
 	// nil collector data -> not known, no variables, so a control keyed on

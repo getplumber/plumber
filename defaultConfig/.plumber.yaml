@@ -269,6 +269,44 @@ gitlab:
       # Minimum access level required to push (0=No one, 30=Developer, 40=Maintainer)
       minPushAccessLevel: 40
     # ===========================================
+    # MR approval rules must require a minimum number of approvals
+    # ===========================================
+    # Flags GitLab merge-request approval rules that cover all protected
+    # branches yet require fewer approvals than the minimum below, so a
+    # protected branch can be merged with too little review. Rules scoped to
+    # specific branches are out of scope; a rule targeting "All branches"
+    # counts as covering all protected branches.
+    #
+    # Merge request approval rules are a GitLab Premium/Ultimate feature. On
+    # GitLab Free the approvals API returns no rules (there are none), so this
+    # control has nothing to flag and passes vacuously — enable it only where
+    # approval rules are available. A genuine 403/404 (a token that cannot read
+    # approval rules) reports not-evaluable, not a false pass. Ships disabled:
+    # enable it and set your minimum.
+    mergeRequestApprovalRulesMustRequireMinimumApprovals:
+      # Set to true to enable this control
+      enabled: false
+      # The fewest approvals a rule covering all protected branches must
+      # require. A covering rule below this is flagged.
+      minimumRequiredApprovals: 1
+    # ===========================================
+    # MR approval rules must cover all protected branches
+    # ===========================================
+    # Flags a project where no merge-request approval rule applies to all
+    # protected branches, so a protected branch can be merged with no required
+    # approval at all. Counts a rule only when it carries GitLab's explicit
+    # "all protected branches" target, matching the platform; a broader
+    # "All branches" rule is a separate concern and is not counted here.
+    #
+    # Merge request approval rules are a GitLab Premium/Ultimate feature. On
+    # GitLab Free the approvals API returns an empty list (not an error), so a
+    # project there reads as zero rules and this control FIRES — enable it only
+    # where approval rules are available. A genuine 403/404 (a token without
+    # scope) reports not-evaluable. Ships disabled.
+    mergeRequestApprovalRulesMustCoverAllProtectedBranches:
+      # Set to true to enable this control
+      enabled: false
+    # ===========================================
     # Pipeline must not include hardcoded jobs
     # ===========================================
     # Detects CI/CD jobs defined directly in .gitlab-ci.yml instead of being

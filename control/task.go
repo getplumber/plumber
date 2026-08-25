@@ -33,6 +33,53 @@ const opaEvaluateTimeout = 2 * time.Minute
 // the catalog in catalog.go.
 const controlBranchMustBeProtected = "branchMustBeProtected"
 const controlMutableRemoteExec = "actionsMustNotExecuteMutableRemoteCode"
+const controlMRApprovalRulesMinApprovals = "mergeRequestApprovalRulesMustRequireMinimumApprovals"
+const controlMRApprovalRulesCoverAllBranches = "mergeRequestApprovalRulesMustCoverAllProtectedBranches"
+
+// mrApprovalRuleControlEnabled reports whether either merge-request
+// approval-rule control (ISSUE-502/504) is active for this run. Both read the
+// approval rules the GitLab protection collection fetches, so that collection
+// must run when either is enabled even if branchMustBeProtected is not.
+func mrApprovalRuleControlEnabled(conf *configuration.Configuration) bool {
+	if c := conf.PlumberConfig.GetMergeRequestApprovalRulesMustRequireMinimumApprovalsConfig(); c != nil && c.IsEnabled() && shouldRunControl(controlMRApprovalRulesMinApprovals, conf) {
+		return true
+	}
+	if c := conf.PlumberConfig.GetMergeRequestApprovalRulesMustCoverAllProtectedBranchesConfig(); c != nil && c.IsEnabled() && shouldRunControl(controlMRApprovalRulesCoverAllBranches, conf) {
+		return true
+	}
+	return false
+}
+
+// approvalRulesReturnedNone reports whether the protection collection ran and
+// the GitLab approvals API returned zero rules — the ambiguous case where the
+// project is either on GitLab Free (feature unavailable, the API 200-empties)
+// or on Premium/Ultimate with no rules configured. The renderers surface a
+// Premium/Ultimate caveat for it via AnalysisResult.ApprovalRulesTierCaveat.
+func approvalRulesReturnedNone(protectionData *gitlab.GitlabProtectionAnalysisData) bool {
+	return protectionData != nil && protectionData.MRApprovalRulesKnown &&
+		len(protectionData.MRApprovalRules) == 0
+}
+
+// approvalRulesTierCaveatApplies reports whether to surface the Premium/Ultimate
+// caveat: an approval-rule control ran (mrApprovalRuleControlEnabled) AND the
+// approvals API returned zero rules (approvalRulesReturnedNone). The enabled
+// guard is load-bearing — a branch-protection-only run on a zero-rules project
+// satisfies approvalRulesReturnedNone but must NOT show the caveat.
+func approvalRulesTierCaveatApplies(conf *configuration.Configuration, protectionData *gitlab.GitlabProtectionAnalysisData) bool {
+	return mrApprovalRuleControlEnabled(conf) && approvalRulesReturnedNone(protectionData)
+}
+
+// protectionDataNeeded reports whether any control needs the GitLab protection
+// collection this run: branchMustBeProtected, or either approval-rule control
+// (they all read the one GitlabProtectionAnalysisData).
+func protectionDataNeeded(conf *configuration.Configuration) bool {
+	if shouldRunControl(controlBranchMustBeProtected, conf) {
+		if cfg := conf.PlumberConfig.GetBranchMustBeProtectedConfig(); cfg != nil && cfg.IsEnabled() {
+			return true
+		}
+	}
+	return mrApprovalRuleControlEnabled(conf)
+}
 
 // controlCicdVariablesMustBeProtected / ...Masked are the two .plumber.yaml
 // control keys the task flow references directly, to decide whether to fetch
@@ -300,6 +347,14 @@ func buildEngineConfig(controls *configuration.ControlsConfig) map[string]any {
 			entry["minMergeAccessLevel"] = *c.MinMergeAccessLevel
 		}
 		cfg["branchMustBeProtected"] = entry
+	}
+
+	if c := controls.MergeRequestApprovalRulesMustRequireMinimumApprovals; c != nil {
+		entry := map[string]any{}
+		if c.MinimumRequiredApprovals != nil {
+			entry["minimumRequiredApprovals"] = *c.MinimumRequiredApprovals
+		}
+		cfg["mergeRequestApprovalRulesMustRequireMinimumApprovals"] = entry
 	}
 
 	if c := controls.IncludesMustNotUseForbiddenVersions; c != nil {
@@ -648,23 +703,23 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	// corresponding control — the Rego policy needs the protection
 	// settings to check every branch against the declared bar.
 	var protectionData *gitlab.GitlabProtectionAnalysisData
-	if shouldRunControl(controlBranchMustBeProtected, conf) {
-		if cfg := conf.PlumberConfig.GetBranchMustBeProtectedConfig(); cfg != nil && cfg.IsEnabled() {
-			reportProgress(conf, 9, analysisStepCount, "Checking branch protection")
-			protectionDC := &gitlab.GitlabProtectionDataCollection{}
-			pData, _, pErr := protectionDC.Run(projectInfo, conf.GitlabToken, conf)
-			if pErr != nil {
-				// A network failure here leaves branchMustBeProtected with zero
-				// branches → a vacuous 100% green. Flag degraded so that control's
-				// pass is not trusted (mirrors the GitHub branch path, #220). A
-				// non-network failure stays a soft warn as before.
-				if isNetworkError(pErr) {
-					markDegraded(result, degradedReasonBranchProtectionPrefix+" (network or timeout)")
-				}
-				l.WithError(pErr).Warn("Protection data collection failed; branch policies will see no branches")
-			} else {
-				protectionData = pData
+	if protectionDataNeeded(conf) {
+		reportProgress(conf, 9, analysisStepCount, "Checking branch protection")
+		protectionDC := &gitlab.GitlabProtectionDataCollection{}
+		pData, _, pErr := protectionDC.Run(projectInfo, conf.GitlabToken, conf)
+		if pErr != nil {
+			// A network failure here leaves branchMustBeProtected with zero
+			// branches → a vacuous 100% green. Flag degraded so that control's
+			// pass is not trusted (mirrors the GitHub branch path, #220). A
+			// non-network failure stays a soft warn as before. The approval-rule
+			// controls need no degraded flag here: a nil protectionData makes
+			// them report not-evaluable via StatusFor.
+			if isNetworkError(pErr) {
+				markDegraded(result, degradedReasonBranchProtectionPrefix+" (network or timeout)")
 			}
+			l.WithError(pErr).Warn("Protection data collection failed; branch and approval-rule policies will see no data")
+		} else {
+			protectionData = pData
 		}
 	}
 
@@ -692,6 +747,10 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	// docs/REFACTOR_MULTI_PROVIDER.md §8 Phase A).
 	result.Findings = runRegoEngine(l, conf, project, pipelineOriginData, pipelineImageData, protectionData, variablesData)
 	result.ProtectionData = protectionData
+	// An approval-rule control that ran but saw zero rules is the ambiguous
+	// GitLab-Free-vs-premium-with-no-rules case (the approvals API 200-empties
+	// on Free). Flag it so the renderers can surface a Premium/Ultimate caveat.
+	result.ApprovalRulesTierCaveat = approvalRulesTierCaveatApplies(conf, protectionData)
 	result.VariablesData = variablesData
 
 	reportProgress(conf, analysisStepCount, analysisStepCount, "Analysis complete")

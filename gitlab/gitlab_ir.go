@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v2"
@@ -48,6 +49,7 @@ func ToNormalizedPipeline(
 	pipeline.Includes = buildIncludes(origin, ciConfigPath)
 	pipeline.Jobs = buildJobs(origin, imagesByJob, ciConfigPath, pipeline.Includes)
 	pipeline.Branches = buildBranches(protection)
+	pipeline.MRApprovalRules, pipeline.MRApprovalRulesKnown = buildApprovalRules(protection)
 	pipeline.SettingsVariables, pipeline.SettingsVariablesKnown = buildSettingsVariables(variables)
 	if origin != nil && origin.MergedConf != nil {
 		if globals := extractGitLabVariables(origin.MergedConf.GlobalVariables); len(globals) > 0 {
@@ -61,6 +63,35 @@ func ToNormalizedPipeline(
 	}
 
 	return pipeline
+}
+
+// buildApprovalRules projects the collected merge-request approval rules
+// onto the IR. It reads the same protection collection as buildBranches and
+// carries only what the approval-rule controls check: the rule's stable ID
+// (stringified — the ISSUE-502 identity subject), its name (messages only),
+// how many approvals it requires, and its protected-branch coverage. The
+// second return is MRApprovalRulesKnown: false when the listing was
+// unreadable (nil protection, or a 403/404 the collector recorded as
+// MRApprovalRulesKnown=false), so a control keyed on these rules reports
+// not-evaluable rather than a false pass.
+func buildApprovalRules(protection *GitlabProtectionAnalysisData) ([]ir.MRApprovalRule, bool) {
+	if protection == nil || !protection.MRApprovalRulesKnown {
+		return nil, false
+	}
+	out := make([]ir.MRApprovalRule, 0, len(protection.MRApprovalRules))
+	for _, r := range protection.MRApprovalRules {
+		if r == nil {
+			continue
+		}
+		out = append(out, ir.MRApprovalRule{
+			ID:                            strconv.FormatInt(r.ID, 10),
+			Name:                          r.Name,
+			ApprovalsRequired:             int(r.ApprovalsRequired),
+			AppliesToAllProtectedBranches: r.AppliesToAllProtectedBranches,
+			ProtectedBranchCount:          len(r.ProtectedBranches),
+		})
+	}
+	return out, true
 }
 
 // buildSettingsVariables projects the collected settings CI/CD variables onto

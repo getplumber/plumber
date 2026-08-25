@@ -66,6 +66,23 @@ type NormalizedPipeline struct {
 	// (root, .github/, or docs/). Empty when the file is absent.
 	SecurityPolicyPath string `json:"securityPolicyPath,omitempty"`
 
+	// MRApprovalRules are the project's merge-request approval rules
+	// (GitLab: Settings > Merge requests > Approval rules), each with the
+	// number of approvals it requires and its protected-branch coverage.
+	// Projected from the same protection collection as Branches; empty on
+	// providers without approval rules. Read by the
+	// mergeRequestApprovalRulesMust* controls (ISSUE-502/504).
+	MRApprovalRules []MRApprovalRule `json:"mrApprovalRules,omitempty"`
+
+	// MRApprovalRulesKnown is true when the approval-rules listing was
+	// fetched authoritatively (an empty MRApprovalRules then means "no
+	// rules", a real state the rules reason about). It is false when the
+	// listing could not be read — a 401/403 on the approvals API (commonly
+	// a non-premium GitLab, or a token without scope) — so a control keyed
+	// on these rules reports not-evaluable rather than a false pass.
+	// Mirrors Branch.ProtectionDetailsKnown.
+	MRApprovalRulesKnown bool `json:"mrApprovalRulesKnown,omitempty"`
+
 	// SettingsVariables are the project's CI/CD settings variables
 	// (GitLab: Settings > CI/CD > Variables), each with its security
 	// flags — NOT the CI file's `variables:` block (that lives in
@@ -417,6 +434,31 @@ type Branch struct {
 	MinPushAccessLevel        int    `json:"minPushAccessLevel,omitempty"`
 	MinMergeAccessLevel       int    `json:"minMergeAccessLevel,omitempty"`
 	ProtectionDetailsKnown    bool   `json:"protectionDetailsKnown,omitempty"`
+}
+
+// MRApprovalRule is one merge-request approval rule (GitLab: Settings >
+// Merge requests > Approval rules). It carries the rule's stable identity
+// and the fields the approval-rule controls check: how many approvals it
+// requires and whether it covers all protected branches.
+type MRApprovalRule struct {
+	// ID is GitLab's approval-rule ID, stringified. It is stable for the
+	// rule's lifetime (it churns only on delete-and-recreate, which is a
+	// new rule), so ISSUE-502 keys its finding identity on ID rather than
+	// on the renameable Name, per the #370 volatile-field discipline.
+	ID string `json:"id"`
+	// Name is the human label. It renders in findings but is deliberately
+	// NOT an identity field: renaming a rule must not re-key its finding.
+	Name string `json:"name,omitempty"`
+	// ApprovalsRequired is how many approvals the rule mandates.
+	ApprovalsRequired int `json:"approvalsRequired"`
+	// AppliesToAllProtectedBranches is GitLab's explicit "all protected
+	// branches" flag. ISSUE-504 requires at least one rule to carry it.
+	AppliesToAllProtectedBranches bool `json:"appliesToAllProtectedBranches,omitempty"`
+	// ProtectedBranchCount is how many specific protected branches the rule
+	// is scoped to. Zero means it is scoped to none in particular, which
+	// GitLab treats as covering all branches; ISSUE-502 checks a rule that
+	// covers all protected branches (the explicit flag OR a zero count).
+	ProtectedBranchCount int `json:"protectedBranchCount"`
 }
 
 // SettingsVariable is one project CI/CD settings variable (GitLab: Settings >

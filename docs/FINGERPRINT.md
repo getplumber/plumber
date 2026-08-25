@@ -377,6 +377,16 @@ an edited file as new findings.
   by no code, so rewording a rule cannot re-key a registered finding; prose
   identity survives only in the backstop for an undeclared code, which the
   parity test makes unreachable (see The message fallback above).
+- **A rule keys on a stable coordinate, not a renameable or mutable label.**
+  ISSUE-502 (a merge-request approval rule requiring too few approvals) keys on
+  the approval rule's GitLab **ID** (`approvalRuleId`), not its user-facing
+  name: renaming the rule leaves the fingerprint unchanged, and only deleting
+  and recreating it (a new ID) re-keys it. This corrects the legacy platform,
+  which keyed the same control on the renameable rule name. The container-image
+  controls follow the same discipline — ISSUE-101/103 key on the tagless image
+  repository (`imageRepo`), not the mutable tag — so a routine tag or name
+  change never re-keys a finding. ISSUE-504, a per-project singleton, keys on
+  `code` alone (the platform's identity was likewise empty).
 - **A declared field holding a non-string is skipped, not coerced**, and
   renders as an empty pair, the same as an absent key. A JSON round trip turns
   a numeric `tag: 7` into a float64, so this is reachable from real payload.

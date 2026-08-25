@@ -76,6 +76,20 @@ func renderWarnings(warnings []string) {
 	fmt.Printf("    %s↳ set PLUMBER_METADATA_TOKEN (a token with public-repo read) to resolve blocked action versions — see the README.%s\n", colorYellow, colorReset)
 }
 
+// renderApprovalRulesTierCaveat prints a caveat when an MR approval-rule
+// control ran against a project that returned zero approval rules: the feature
+// requires GitLab Premium/Ultimate, and on Free the API returns an empty list,
+// so the result may not reflect a real misconfiguration (see
+// AnalysisResult.ApprovalRulesTierCaveat). No-op otherwise.
+func renderApprovalRulesTierCaveat(result *control.AnalysisResult) {
+	if result == nil || !result.ApprovalRulesTierCaveat {
+		return
+	}
+	fmt.Println()
+	fmt.Printf("  %s⚠ MR approval rules are a GitLab Premium/Ultimate feature.%s\n", colorYellow, colorReset)
+	fmt.Printf("    %s•%s Disable these controls if you don't have GitLab Premium or Ultimate.\n", colorYellow, colorReset)
+}
+
 // renderDegradedCaveat prints an up-front warning that the run scored
 // against incomplete data because one or more collection/enrichment
 // steps failed (#220). Without it a partial GitHub run looks identical
@@ -190,6 +204,23 @@ func caveatStatLines(g findingGroup) []statLine {
 		}
 	}
 	return out
+}
+
+// approvalRulesUnreadableCaveat returns a single ⚠ caveat stat line when the
+// approval-rules listing could not be read authoritatively (nil ProtectionData,
+// or MRApprovalRulesKnown false from a 401/403). Both approval-rule stat
+// builders use it so an unreadable listing shows the caveat instead of a bare
+// green "passed" — the JSON status is already error via StatusFor, this closes
+// the terminal gap. Returns nil when the listing was read (the zero-rules-on-
+// Free case is handled separately by renderApprovalRulesTierCaveat).
+func approvalRulesUnreadableCaveat(result *control.AnalysisResult) []statLine {
+	if result != nil && result.ProtectionData != nil && result.ProtectionData.MRApprovalRulesKnown {
+		return nil
+	}
+	return []statLine{{
+		Label: statCaveatPrefix + " Approval rules not evaluated",
+		Value: "the approvals API could not be read — token lacks permission, or it requires GitLab Premium/Ultimate",
+	}}
 }
 
 // variablesUnreadableCaveat returns a single ⚠ caveat stat line when the
@@ -867,6 +898,20 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 		return []statLine{
 			{Label: statActionRefsChecked, Value: fmt.Sprintf("%d", actionRefs)},
 			{Label: "Mutable Remote Exec Found", Value: fmt.Sprintf("%d", findingsCount)},
+		}
+	case "mergeRequestApprovalRulesMustRequireMinimumApprovals":
+		if lines := approvalRulesUnreadableCaveat(result); lines != nil {
+			return lines
+		}
+		return []statLine{
+			{Label: "Rules Below Minimum", Value: fmt.Sprintf("%d", findingsCount)},
+		}
+	case "mergeRequestApprovalRulesMustCoverAllProtectedBranches":
+		if lines := approvalRulesUnreadableCaveat(result); lines != nil {
+			return lines
+		}
+		return []statLine{
+			{Label: "All-Branches Rule Missing", Value: fmt.Sprintf("%d", findingsCount)},
 		}
 	case "cicdVariablesMustBeProtected":
 		if lines := variablesUnreadableCaveat(result); lines != nil {

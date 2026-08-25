@@ -84,6 +84,15 @@ type AnalysisResult struct {
 	// 3) so a degraded check is visible instead of silently passing.
 	Warnings []string `json:"warnings,omitempty"`
 
+	// ApprovalRulesTierCaveat is set when an MR approval-rule control ran but
+	// the GitLab approvals API returned zero rules — the ambiguous case where
+	// the project is either on GitLab Free (feature unavailable, API returns an
+	// empty list) or on Premium/Ultimate with no rules configured. The API
+	// gives no tier signal to tell them apart, so renderers surface a
+	// Premium/Ultimate caveat next to ISSUE-502/504 rather than presenting the
+	// result as authoritative.
+	ApprovalRulesTierCaveat bool `json:"-"`
+
 	// DataCollectionDegraded is set when a collection or enrichment step
 	// failed mid-run, so the analysis ran on incomplete data: a GitLab
 	// merged-CI fetch that timed out (empty pipeline), or a GitHub run
