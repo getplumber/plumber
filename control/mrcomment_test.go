@@ -119,3 +119,34 @@ func TestGenerateMRComment_BadgeOnlyWithScore(t *testing.T) {
 		t.Fatalf("no score must render no badge, got:\n%s", withoutScore)
 	}
 }
+
+// TestMRCommentOrderCoversEveryGitLabControl is the drift guard for
+// mrCommentControlOrder. The MR comment builds its controls TABLE from
+// GitLabControls, but its per-control DETAIL sections from the hand-written
+// mrCommentControlOrder. A control present in the first and missing from the
+// second renders as "failed" in the table with no detail lines under it — its
+// findings are silently dropped from the body.
+//
+// That regression shipped three times (the variables controls in #422, the
+// approval-rule controls in #423, the approval/MR-settings controls in #426),
+// each time unnoticed until a human read a real MR comment. Tying the two
+// lists together here makes the next omission a build failure instead.
+func TestMRCommentOrderCoversEveryGitLabControl(t *testing.T) {
+	listed := make(map[string]bool, len(mrCommentControlOrder))
+	for _, g := range mrCommentControlOrder {
+		if listed[g.controlName] {
+			t.Errorf("mrCommentControlOrder lists %q twice", g.controlName)
+		}
+		listed[g.controlName] = true
+	}
+
+	// An empty config still yields every GitLab control entry (they come back
+	// marked Skipped), so this enumerates the full catalogue.
+	for _, e := range GitLabControls(&configuration.PlumberConfig{}) {
+		if !listed[e.ControlName] {
+			t.Errorf("control %q (%q) is in the MR comment's controls table but missing from "+
+				"mrCommentControlOrder, so its findings are silently dropped from the comment body; "+
+				"add it to the list in mrcomment.go", e.ControlName, e.DisplayName)
+		}
+	}
+}

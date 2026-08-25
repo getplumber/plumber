@@ -321,24 +321,29 @@ gitlab:
     # ships disabled — enable it only on Premium/Ultimate projects. A genuine
     # 401/403 (a token that cannot read the settings) is distinguishable and
     # reports not-evaluable, not a false pass.
+    # The expectations below ship COMMENTED OUT on purpose. A config that
+    # inherits this file (extends: plumber:default) can override a value but
+    # cannot remove a key, so shipping them set would force every one of these
+    # opinions on anyone who merely enables the control. Uncomment only the
+    # ones you want enforced.
     mergeRequestApprovalSettingsMustBeCompliant:
       # Set to true to enable this control
       enabled: false
       # Expect that MR authors cannot approve their own merge requests.
-      preventApprovalByAuthor: true
+      # preventApprovalByAuthor: true
       # Expect that users who committed to an MR cannot approve it.
-      preventApprovalsByCommitters: true
+      # preventApprovalsByCommitters: true
       # Expect that approval rules cannot be edited per merge request.
-      preventEditingApprovalRulesInMR: true
+      # preventEditingApprovalRulesInMR: true
       # Expect re-authentication (password/SAML) to approve. Strict — every
-      # approval re-prompts credentials; false leaves it unchecked.
-      requireReAuthToApprove: false
+      # approval re-prompts credentials; unset leaves it unchecked.
+      # requireReAuthToApprove: true
       # Minimum strictness for what happens to existing approvals when a
       # commit is added to an open MR, on the ladder
       # keep_approvals < remove_approvals_by_code_owners < remove_all_approvals.
       # remove_all_approvals is GitLab's own default for new projects, so this
       # flags only projects that loosened it.
-      behaviorWhenCommitIsAdded: remove_all_approvals
+      # behaviorWhenCommitIsAdded: remove_all_approvals
     # ===========================================
     # MR settings must be compliant
     # ===========================================
@@ -348,16 +353,20 @@ gitlab:
     # rebase_merge; squashOption is one of never, always, default_on,
     # default_off. mergePipelinesEnabled and mergeTrainsEnabled are GitLab
     # Premium/Ultimate (always false on Free, so drop them there).
+    # As above, the expectations ship COMMENTED OUT: an inheriting config can
+    # override a value but cannot remove a key, so uncommenting is the only way
+    # to opt in to each one. Enabling the control with nothing uncommented
+    # checks nothing.
     mergeRequestSettingsMustBeCompliant:
       enabled: false
-      mergeMethod: ff                      # linear history, no merge commits
-      squashOption: default_on             # squash to one commit by default
-      mergePipelinesEnabled: true          # run the pipeline on the merged result
-      mergeTrainsEnabled: false
-      allowMergeOnSkippedPipeline: false   # never merge when CI was skipped
-      resolveOutdatedDiffDiscussions: true # auto-resolve stale review threads
-      printingMergeRequestLinkEnabled: true
-      removeSourceBranchAfterMerge: true   # clean up the branch after merge
+      # mergeMethod: ff                      # linear history, no merge commits
+      # squashOption: default_on             # squash to one commit by default
+      # mergePipelinesEnabled: true          # run the pipeline on the merged result
+      # mergeTrainsEnabled: false
+      # allowMergeOnSkippedPipeline: false   # never merge when CI was skipped
+      # resolveOutdatedDiffDiscussions: true # auto-resolve stale review threads
+      # printingMergeRequestLinkEnabled: true
+      # removeSourceBranchAfterMerge: true   # clean up the branch after merge
     # ===========================================
     # Pipeline must not include hardcoded jobs
     # ===========================================

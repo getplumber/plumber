@@ -268,6 +268,32 @@ func variablesUnreadableCaveat(result *control.AnalysisResult) []statLine {
 	}}
 }
 
+// approvalSettingsUnreadableCaveat and mrSettingsUnreadableCaveat are the same
+// closing-the-terminal-gap helpers for the two settings-level controls: when
+// the payload the control reads was never fetched, StatusFor already reports
+// error in JSON, but the terminal would otherwise print a bare green check and
+// count it toward the score. The nil checks mirror StatusFor's guards exactly,
+// so the two surfaces cannot disagree.
+func approvalSettingsUnreadableCaveat(result *control.AnalysisResult) []statLine {
+	if result != nil && result.ProtectionData != nil && result.ProtectionData.MRApprovalSettings != nil {
+		return nil
+	}
+	return []statLine{{
+		Label: statCaveatPrefix + " Approval settings not evaluated",
+		Value: "the approval-settings API could not be read — token lacks permission, or the protection collection did not run",
+	}}
+}
+
+func mrSettingsUnreadableCaveat(result *control.AnalysisResult) []statLine {
+	if result != nil && result.ProtectionData != nil && result.ProtectionData.MRSettings != nil {
+		return nil
+	}
+	return []statLine{{
+		Label: statCaveatPrefix + " MR settings not evaluated",
+		Value: "the project settings could not be read — token lacks permission, or the protection collection did not run",
+	}}
+}
+
 // renderSkippedControlsSummary prints the "Skipped Controls" section: a
 // top-level section header followed by each skipped control with its
 // skip reason.
@@ -959,10 +985,16 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 			{Label: "Unmasked Variables", Value: fmt.Sprintf("%d", findingsCount)},
 		}
 	case "mergeRequestApprovalSettingsMustBeCompliant":
+		if lines := approvalSettingsUnreadableCaveat(result); lines != nil {
+			return lines
+		}
 		return []statLine{
 			{Label: "Non-Compliant Approval Settings", Value: fmt.Sprintf("%d", findingsCount)},
 		}
 	case "mergeRequestSettingsMustBeCompliant":
+		if lines := mrSettingsUnreadableCaveat(result); lines != nil {
+			return lines
+		}
 		return []statLine{
 			{Label: "Non-Compliant MR Settings", Value: fmt.Sprintf("%d", findingsCount)},
 		}

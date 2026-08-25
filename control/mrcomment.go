@@ -243,37 +243,7 @@ func sanitizeMarkdownInline(s string) string {
 // runs produce stable output.
 func writeIssueDetails(b *strings.Builder, result *AnalysisResult) {
 	findingsByControl := FindingsByControl(result.Findings)
-	// Emit groups in the registry order (the same order used by the
-	// controls table above) so the two sections align visually.
-	order := []struct {
-		controlName string
-		heading     string
-	}{
-		{"containerImageMustNotUseForbiddenTags", "Container images must not use forbidden tags"},
-		{"containerImageMustComeFromAuthorizedSources", "Container images must come from authorized sources"},
-		{"branchMustBeProtected", "Branch must be protected"},
-		{"cicdVariablesMustBeProtected", "CI/CD variables must be protected"},
-		{"cicdVariablesMustBeMasked", "CI/CD variables must be masked"},
-		{"pipelineMustNotIncludeHardcodedJobs", "Pipeline must not include hardcoded jobs"},
-		{"includesMustBeUpToDate", "Includes must be up to date"},
-		{"includesMustNotUseForbiddenVersions", "Includes must not use forbidden versions"},
-		{"pipelineMustIncludeComponent", "Pipeline must include required components"},
-		{"pipelineMustIncludeTemplate", "Pipeline must include required templates"},
-		{"pipelineMustNotEnableDebugTrace", "Pipeline must not enable debug trace"},
-		{"pipelineMustNotUseUnsafeVariableExpansion", "Pipeline must not use unsafe variable expansion"},
-		{"pipelineMustNotOverrideJobVariables", "Pipeline must not override job variables"},
-		{"securityJobsMustNotBeWeakened", "Security jobs must not be weakened"},
-		{"pipelineMustNotExecuteUnverifiedScripts", "Pipeline must not execute unverified scripts"},
-		{"pipelineMustNotUseDockerInDocker", "Pipeline must not use Docker-in-Docker"},
-		{"workflowMustNotInjectUserInputInScripts", "Workflow must not inject user input in scripts"},
-		{"workflowMustNotReEnableInsecureCommands", "Workflow must not re-enable insecure commands"},
-		{"checkoutMustNotPersistCredentials", "actions/checkout must not persist credentials"},
-		{"workflowMustNotUseDangerousTriggers", "Workflow must not use dangerous triggers"},
-		{"pullRequestTargetMustNotCheckoutHead", "pull_request_target must not check out the PR head"},
-		{"workflowMustNotGrantPermissionsWriteAll", "Workflow must not grant write-all permissions"},
-		{"githubActionMustComeFromAuthorizedSources", "Actions must come from authorized sources"},
-	}
-	for _, g := range order {
+	for _, g := range mrCommentControlOrder {
 		findings := findingsByControl[g.controlName]
 		if len(findings) == 0 {
 			continue
@@ -285,4 +255,47 @@ func writeIssueDetails(b *strings.Builder, result *AnalysisResult) {
 		}
 		b.WriteString("\n")
 	}
+}
+
+// mrCommentControlOrder drives the per-control detail sections of the MR
+// comment, in the same order as the controls table above so the two sections
+// align visually.
+//
+// This list is hand-maintained and a control missing from it has its findings
+// SILENTLY dropped from the comment body — the control still shows as failed in
+// the table, but with no detail lines under it. That has now happened three
+// times (#422, #423, #426), so TestMRCommentOrderCoversEveryGitLabControl
+// fails the build when a GitLab control is added without an entry here.
+var mrCommentControlOrder = []struct {
+	controlName string
+	heading     string
+}{
+	{"containerImageMustNotUseForbiddenTags", "Container images must not use forbidden tags"},
+	{"containerImageMustComeFromAuthorizedSources", "Container images must come from authorized sources"},
+	{"branchMustBeProtected", "Branch must be protected"},
+	{"mergeRequestApprovalRulesMustRequireMinimumApprovals", "MR approval rules must require a minimum number of approvals"},
+	{"mergeRequestApprovalRulesMustCoverAllProtectedBranches", "MR approval rules must cover all protected branches"},
+	{"mergeRequestApprovalSettingsMustBeCompliant", "MR approval settings must be compliant"},
+	{"mergeRequestSettingsMustBeCompliant", "MR settings must be compliant"},
+	{"cicdVariablesMustBeProtected", "CI/CD variables must be protected"},
+	{"cicdVariablesMustBeMasked", "CI/CD variables must be masked"},
+	{"pipelineMustNotIncludeHardcodedJobs", "Pipeline must not include hardcoded jobs"},
+	{"externalRefsMustNotCollide", "Includes must not use ambiguous tag/branch refs"},
+	{"includesMustBeUpToDate", "Includes must be up to date"},
+	{"includesMustNotUseForbiddenVersions", "Includes must not use forbidden versions"},
+	{"pipelineMustIncludeComponent", "Pipeline must include required components"},
+	{"pipelineMustIncludeTemplate", "Pipeline must include required templates"},
+	{"pipelineMustNotEnableDebugTrace", "Pipeline must not enable debug trace"},
+	{"pipelineMustNotUseUnsafeVariableExpansion", "Pipeline must not use unsafe variable expansion"},
+	{"pipelineMustNotOverrideJobVariables", "Pipeline must not override job variables"},
+	{"securityJobsMustNotBeWeakened", "Security jobs must not be weakened"},
+	{"pipelineMustNotExecuteUnverifiedScripts", "Pipeline must not execute unverified scripts"},
+	{"pipelineMustNotUseDockerInDocker", "Pipeline must not use Docker-in-Docker"},
+	{"workflowMustNotInjectUserInputInScripts", "Workflow must not inject user input in scripts"},
+	{"workflowMustNotReEnableInsecureCommands", "Workflow must not re-enable insecure commands"},
+	{"checkoutMustNotPersistCredentials", "actions/checkout must not persist credentials"},
+	{"workflowMustNotUseDangerousTriggers", "Workflow must not use dangerous triggers"},
+	{"pullRequestTargetMustNotCheckoutHead", "pull_request_target must not check out the PR head"},
+	{"workflowMustNotGrantPermissionsWriteAll", "Workflow must not grant write-all permissions"},
+	{"githubActionMustComeFromAuthorizedSources", "Actions must come from authorized sources"},
 }

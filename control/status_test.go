@@ -13,6 +13,7 @@ func TestStatusFor(t *testing.T) {
 	approval := ControlEntry{ControlName: "mergeRequestApprovalRulesMustRequireMinimumApprovals"}
 	variables := ControlEntry{ControlName: "cicdVariablesMustBeProtected"}
 	approvalSettings := ControlEntry{ControlName: "mergeRequestApprovalSettingsMustBeCompliant"}
+	mrSettings := ControlEntry{ControlName: "mergeRequestSettingsMustBeCompliant"}
 	healthy := &AnalysisResult{CiValid: true}
 
 	cases := []struct {
@@ -47,6 +48,15 @@ func TestStatusFor(t *testing.T) {
 		{"approval-settings control errors when the protection collection never ran", approvalSettings, &AnalysisResult{CiValid: true}, 0, StatusError},
 		{"approval-settings control errors on unreadable settings (401/403, nil): empty findings are not a pass", approvalSettings, &AnalysisResult{CiValid: true, ProtectionData: &gitlab.GitlabProtectionAnalysisData{}}, 0, StatusError},
 		{"approval-settings control with findings is failed", approvalSettings, &AnalysisResult{CiValid: true, ProtectionData: &gitlab.GitlabProtectionAnalysisData{MRApprovalSettings: &glab.ProjectApprovals{}}}, 1, StatusFailed},
+		{"mr-settings control passes when the project settings were read and clean", mrSettings, &AnalysisResult{CiValid: true, ProtectionData: &gitlab.GitlabProtectionAnalysisData{MRSettings: &glab.Project{}}}, 0, StatusPassed},
+		{"mr-settings control ignores missing CI config when the settings were read", mrSettings, &AnalysisResult{CiMissing: true, ProtectionData: &gitlab.GitlabProtectionAnalysisData{MRSettings: &glab.Project{}}}, 0, StatusPassed},
+		// The regression this branch shipped: a non-403/404 error on any
+		// protection endpoint aborts the collection, ProtectionData stays nil,
+		// and with no branch of its own this control reported a green pass on
+		// data it never saw.
+		{"mr-settings control errors when the protection collection never ran", mrSettings, &AnalysisResult{CiValid: true}, 0, StatusError},
+		{"mr-settings control errors on an unread project payload: empty findings are not a pass", mrSettings, &AnalysisResult{CiValid: true, ProtectionData: &gitlab.GitlabProtectionAnalysisData{}}, 0, StatusError},
+		{"mr-settings control with findings is failed", mrSettings, &AnalysisResult{CiValid: true, ProtectionData: &gitlab.GitlabProtectionAnalysisData{MRSettings: &glab.Project{}}}, 1, StatusFailed},
 		{"nil result defaults to passed (hand-built test fixtures)", content, nil, 0, StatusPassed},
 		{"variable control passes when the listing was read and clean", variables, &AnalysisResult{CiValid: true, VariablesData: &gitlab.GitlabVariablesAnalysisData{Known: true}}, 0, StatusPassed},
 		{"variable control ignores missing CI config (settings-independent) when the listing was read", variables, &AnalysisResult{CiMissing: true, VariablesData: &gitlab.GitlabVariablesAnalysisData{Known: true}}, 0, StatusPassed},
