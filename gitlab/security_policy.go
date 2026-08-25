@@ -81,8 +81,17 @@ func GetSecurityPolicyProject(fullPath, token, instanceUrl string, conf *configu
 		return nil, false, err
 	}
 
-	if respData.Project == nil || respData.Project.SecurityPolicyProject == nil {
-		return nil, true, nil // read succeeded; nothing linked
+	if respData.Project == nil {
+		// A null `project` on HTTP 200 is GitLab's signature for "this token
+		// cannot see the project through GraphQL" — the GraphQL API answers
+		// with a null node rather than the 403 the REST API would return. It
+		// is NOT an authoritative "nothing linked": reporting it as one fires
+		// a Critical ISSUE-601 on a project whose linkage was never read.
+		l.Warning("GraphQL returned a null project (token cannot read it); reporting not-evaluable")
+		return nil, false, nil
+	}
+	if respData.Project.SecurityPolicyProject == nil {
+		return nil, true, nil // the project WAS read; nothing is linked
 	}
 	p := respData.Project.SecurityPolicyProject
 	return &SecurityPolicyProjectLink{ID: parseGitlabGID(p.ID), FullPath: p.FullPath}, true, nil
@@ -102,4 +111,33 @@ func parseGitlabGID(gid string) int {
 		return 0
 	}
 	return n
+}
+
+// SecurityPolicyData is the collected security-policy-project linkage for a
+// run. It is deliberately its own collection rather than a field on
+// GitlabProtectionAnalysisData: the linkage is read over GraphQL, a separate
+// API surface from the REST protection endpoints, and folding it in made
+// ISSUE-601 hostage to them. A token that cannot list branches aborts the
+// protection collection before the GraphQL read is ever reached, which left
+// the control reporting not-evaluable forever on a linkage it could have read
+// perfectly well.
+type SecurityPolicyData struct {
+	// Known is true when the linkage was read authoritatively. A nil Project
+	// then means "none linked", a real state the rule fires on. False means
+	// the read failed (auth error, null project, or the field is unavailable
+	// on this instance), so ISSUE-601 reports not-evaluable, not a false pass.
+	Known bool
+	// Project is the linked security policy project, or nil when none is
+	// linked. Only meaningful when Known is true.
+	Project *SecurityPolicyProjectLink
+}
+
+// CollectSecurityPolicy reads the project's security-policy-project linkage.
+// The returned error is the transport/API failure, if any: the caller decides
+// whether it degrades the run (a network blip should not read as a clean pass)
+// while the returned data already carries Known=false so the control reports
+// not-evaluable either way.
+func CollectSecurityPolicy(fullPath, token, instanceUrl string, conf *configuration.Configuration) (*SecurityPolicyData, error) {
+	link, known, err := GetSecurityPolicyProject(fullPath, token, instanceUrl, conf)
+	return &SecurityPolicyData{Known: known, Project: link}, err
 }

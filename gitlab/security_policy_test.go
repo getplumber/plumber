@@ -53,6 +53,30 @@ func TestGetSecurityPolicyProject(t *testing.T) {
 		}
 	})
 
+	// The regression this branch shipped: GitLab answers HTTP 200 with a null
+	// `project` when the token cannot see the project through GraphQL (there is
+	// no 403 on this path). Reading that as an authoritative "nothing linked"
+	// fired a Critical ISSUE-601 on a project whose linkage was never read.
+	t.Run("null project (token cannot see it) -> not-evaluable, NOT none-linked", func(t *testing.T) {
+		mux := http.NewServeMux()
+		mux.HandleFunc("/api/graphql", func(w http.ResponseWriter, _ *http.Request) {
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"project": nil}})
+		})
+		srv := httptest.NewServer(mux)
+		defer srv.Close()
+
+		link, known, err := GetSecurityPolicyProject("grp/app", "tok", srv.URL, conf)
+		if err != nil {
+			t.Fatalf("a null project is not a transport error, got %v", err)
+		}
+		if link != nil {
+			t.Fatalf("expected no link, got %+v", link)
+		}
+		if known {
+			t.Fatal("null project must report known=false (not-evaluable); known=true makes ISSUE-601 fire a false Critical on an unread linkage")
+		}
+	})
+
 	t.Run("field unavailable -> not-evaluable, no error", func(t *testing.T) {
 		mux := http.NewServeMux()
 		mux.HandleFunc("/api/graphql", func(w http.ResponseWriter, _ *http.Request) {

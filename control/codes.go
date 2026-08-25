@@ -154,7 +154,7 @@ const (
 	CodeRequiredActionMissing ErrorCode = "ISSUE-417"
 )
 
-// Issue codes for workflow-hygiene controls (6xx)
+// Issue codes for workflow-hygiene controls (4xx, plus the 9xx repo-hygiene codes)
 const (
 	// ISSUE-422: Workflow has no explicit `name:` field
 	CodeAnonymousDefinition ErrorCode = "ISSUE-422"
@@ -192,10 +192,14 @@ const (
 	CodeBranchNonCompliant ErrorCode = "ISSUE-505"
 	// ISSUE-506: The project's merge-request/merge settings do not meet the configured expectations
 	CodeMRSettingsNonCompliant ErrorCode = "ISSUE-506"
-	// ISSUE-601: No (or the wrong) GitLab security policy project is linked
-	CodeSecurityPolicyProjectNotSet ErrorCode = "ISSUE-601"
 	// ISSUE-803: Job runs with overly broad permissions (write-all)
 	CodeExcessivePermissions ErrorCode = "ISSUE-803"
+)
+
+// Issue codes for security-policy-source controls (6xx)
+const (
+	// ISSUE-601: No (or the wrong) GitLab security policy project is linked
+	CodeSecurityPolicyProjectNotSet ErrorCode = "ISSUE-601"
 )
 
 // ErrorCodeInfo provides metadata about an issue code.

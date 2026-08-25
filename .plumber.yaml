@@ -254,6 +254,10 @@ gitlab:
     # policy project — the ID wins if both are set; leave both unset to require
     # only that SOME policy project is linked. REQUIRES GITLAB ULTIMATE.
     projectMustHaveSecurityPolicySource:
+      # Set to true to enable this control
+      enabled: false
+      # expectedProjectId: 123
+      # expectedProjectPath: my-group/security-policy-project
     # ===========================================
     # Pipeline must not include hardcoded jobs
     # ===========================================

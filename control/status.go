@@ -34,6 +34,13 @@ func degradedReasonIsVariables(reason string) bool {
 	return strings.HasPrefix(reason, degradedReasonVariablesPrefix)
 }
 
+// degradedReasonIsSecurityPolicy classifies a DegradedReasons entry as the
+// security-policy-linkage fetch failure, so it taints only ISSUE-601 rather
+// than every CI-file control (task.go builds the string from the prefix).
+func degradedReasonIsSecurityPolicy(reason string) bool {
+	return strings.HasPrefix(reason, degradedReasonSecurityPolicyPrefix)
+}
+
 // StatusFor derives a control's evaluation status for a run.
 //
 // Order matters: findings trump degradation — when a control found real
@@ -164,7 +171,7 @@ func StatusFor(e ControlEntry, result *AnalysisResult, findingCount int) string 
 		return StatusError
 	}
 	for _, r := range result.DegradedReasons {
-		if !degradedReasonIsBranchProtection(r) && !degradedReasonIsVariables(r) {
+		if !degradedReasonIsBranchProtection(r) && !degradedReasonIsVariables(r) && !degradedReasonIsSecurityPolicy(r) {
 			return StatusError
 		}
 	}
