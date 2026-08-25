@@ -154,9 +154,9 @@ func mrSettingsPremiumFieldsNeedingUpgrade(conf *configuration.Configuration, pr
 const controlSecurityPolicy = "projectMustHaveSecurityPolicySource"
 
 // securityPolicyControlEnabled reports whether the security-policy-project
-// linkage control (ISSUE-601) is active for this run. It reads the linkage the
-// GitLab protection collection fetches, so that collection must run when it is
-// enabled even if branchMustBeProtected is not.
+// linkage control (ISSUE-601) is active for this run. Its linkage is read by
+// its own GraphQL collection, independent of the REST protection endpoints, so
+// this does NOT imply the protection collection has to run.
 func securityPolicyControlEnabled(conf *configuration.Configuration) bool {
 	if conf == nil || conf.PlumberConfig == nil {
 		return false
@@ -167,8 +167,10 @@ func securityPolicyControlEnabled(conf *configuration.Configuration) bool {
 
 // protectionDataNeeded reports whether any control needs the GitLab protection
 // collection this run: branchMustBeProtected, either approval-rule control, the
-// approval-settings control, the MR-settings control, or the security-policy
-// control (they all read the one GitlabProtectionAnalysisData).
+// approval-settings control, or the MR-settings control (they all read the one
+// GitlabProtectionAnalysisData). The security-policy control is deliberately
+// absent: it has its own GraphQL collection, so it must not be able to force
+// these REST fetches, nor be blocked when they fail.
 func protectionDataNeeded(conf *configuration.Configuration) bool {
 	if shouldRunControl(controlBranchMustBeProtected, conf) {
 		if cfg := conf.PlumberConfig.GetBranchMustBeProtectedConfig(); cfg != nil && cfg.IsEnabled() {
@@ -176,7 +178,7 @@ func protectionDataNeeded(conf *configuration.Configuration) bool {
 		}
 	}
 	return mrApprovalRuleControlEnabled(conf) || mrApprovalSettingsControlEnabled(conf) ||
-		mrSettingsControlEnabled(conf) || securityPolicyControlEnabled(conf)
+		mrSettingsControlEnabled(conf)
 }
 
 // controlCicdVariablesMustBeProtected / ...Masked are the two .plumber.yaml
@@ -206,11 +208,11 @@ func cicdVariableControlEnabled(conf *configuration.Configuration) bool {
 // have left it unset). A wrong-project-linked read is a real misconfiguration
 // on a paid tier, not a tier caveat, and a non-authoritative read is
 // not-evaluable, so neither triggers it.
-func securityPolicyTierCaveatApplies(conf *configuration.Configuration, protectionData *gitlab.GitlabProtectionAnalysisData) bool {
-	if !securityPolicyControlEnabled(conf) || protectionData == nil || !protectionData.SecurityPolicyKnown {
+func securityPolicyTierCaveatApplies(conf *configuration.Configuration, data *gitlab.SecurityPolicyData) bool {
+	if !securityPolicyControlEnabled(conf) || data == nil || !data.Known {
 		return false
 	}
-	return protectionData.SecurityPolicyProject == nil
+	return data.Project == nil
 }
 
 // shouldScanMutableExec reports whether the collector should fetch and
@@ -299,6 +301,7 @@ func runRegoEngine(
 	imageData *gitlab.GitlabPipelineImageData,
 	protectionData *gitlab.GitlabProtectionAnalysisData,
 	variablesData *gitlab.GitlabVariablesAnalysisData,
+	securityPolicyData *gitlab.SecurityPolicyData,
 ) []opaengine.Finding {
 	pipeline := gitlab.ToNormalizedPipeline(
 		conf.ProjectPath,
@@ -308,6 +311,7 @@ func runRegoEngine(
 		imageData,
 		protectionData,
 		variablesData,
+		securityPolicyData,
 	)
 	return evaluatePolicies(l, conf, "gitlab", pipeline)
 }
@@ -923,10 +927,28 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 		}
 	}
 
+	// The security-policy linkage is read on its own, NOT inside the protection
+	// collection. It is a GraphQL surface, unrelated to the REST protection
+	// endpoints, and nesting it there made ISSUE-601 hostage to them: a token
+	// that cannot list branches aborts that collection before the read is ever
+	// reached, leaving the control not-evaluable on a linkage it could have read.
+	var securityPolicyData *gitlab.SecurityPolicyData
+	if securityPolicyControlEnabled(conf) {
+		var spErr error
+		securityPolicyData, spErr = gitlab.CollectSecurityPolicy(conf.ProjectPath, conf.GitlabToken, conf.GitlabURL, conf)
+		if spErr != nil && isNetworkError(spErr) {
+			// A transient network failure must not read as a clean pass: degrade
+			// the run (exit 3) the way the variables and branch collectors do. A
+			// permission failure is NOT network, so it stays a plain
+			// not-evaluable via Known=false without failing a complete run.
+			markDegraded(result, degradedReasonSecurityPolicyPrefix+" (network or timeout)")
+		}
+	}
+
 	// Rego/OPA rule engine evaluation — the single authoritative
 	// compliance path (the legacy Go controls were retired in
 	// docs/REFACTOR_MULTI_PROVIDER.md §8 Phase A).
-	result.Findings = runRegoEngine(l, conf, project, pipelineOriginData, pipelineImageData, protectionData, variablesData)
+	result.Findings = runRegoEngine(l, conf, project, pipelineOriginData, pipelineImageData, protectionData, variablesData, securityPolicyData)
 	result.ProtectionData = protectionData
 	// An approval-rule control that ran but saw zero rules is the ambiguous
 	// GitLab-Free-vs-premium-with-no-rules case (the approvals API 200-empties
@@ -946,8 +968,8 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	// field unavailable): the collector leaves SecurityPolicyKnown false, so
 	// StatusFor reports error rather than a false pass. When it WAS read but
 	// nothing is linked, surface the conditional Ultimate tier caveat.
-	result.SecurityPolicyEvaluable = protectionData != nil && protectionData.SecurityPolicyKnown
-	result.SecurityPolicyTierCaveat = securityPolicyTierCaveatApplies(conf, protectionData)
+	result.SecurityPolicyEvaluable = securityPolicyData != nil && securityPolicyData.Known
+	result.SecurityPolicyTierCaveat = securityPolicyTierCaveatApplies(conf, securityPolicyData)
 
 	reportProgress(conf, analysisStepCount, analysisStepCount, "Analysis complete")
 

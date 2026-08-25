@@ -35,6 +35,7 @@ func ToNormalizedPipeline(
 	images *GitlabPipelineImageData,
 	protection *GitlabProtectionAnalysisData,
 	variables *GitlabVariablesAnalysisData,
+	securityPolicy *SecurityPolicyData,
 ) *ir.NormalizedPipeline {
 	pipeline := &ir.NormalizedPipeline{
 		Provider:      ir.ProviderGitLab,
@@ -53,7 +54,7 @@ func ToNormalizedPipeline(
 	pipeline.SettingsVariables, pipeline.SettingsVariablesKnown = buildSettingsVariables(variables)
 	pipeline.MRApprovalSettings = buildApprovalSettings(protection)
 	pipeline.MRSettings = buildMRSettings(protection)
-	pipeline.SecurityPolicyProject = buildSecurityPolicyProject(protection)
+	pipeline.SecurityPolicyProject = buildSecurityPolicyProject(securityPolicy)
 	if origin != nil && origin.MergedConf != nil {
 		if globals := extractGitLabVariables(origin.MergedConf.GlobalVariables); len(globals) > 0 {
 			pipeline.GlobalVariables = globals
@@ -182,18 +183,19 @@ func buildMRSettings(protection *GitlabProtectionAnalysisData) *ir.MRSettings {
 // control disabled) so the rule sees no field and abstains. When collected, the
 // Known flag carries whether the read was authoritative; a Known projection with
 // LinkedProjectID == 0 means "no policy project linked".
-func buildSecurityPolicyProject(protection *GitlabProtectionAnalysisData) *ir.SecurityPolicyProjectState {
-	if protection == nil {
+func buildSecurityPolicyProject(data *SecurityPolicyData) *ir.SecurityPolicyProjectState {
+	if data == nil {
 		return nil
 	}
-	// Not collected at all (control disabled): no Known flag, no linkage.
-	if !protection.SecurityPolicyKnown && protection.SecurityPolicyProject == nil {
+	// Read failed (auth error, null project, field unavailable): abstain rather
+	// than let an unreadable linkage read as "none linked".
+	if !data.Known && data.Project == nil {
 		return nil
 	}
-	state := &ir.SecurityPolicyProjectState{Known: protection.SecurityPolicyKnown}
-	if protection.SecurityPolicyProject != nil {
-		state.LinkedProjectID = protection.SecurityPolicyProject.ID
-		state.LinkedProjectPath = protection.SecurityPolicyProject.FullPath
+	state := &ir.SecurityPolicyProjectState{Known: data.Known}
+	if data.Project != nil {
+		state.LinkedProjectID = data.Project.ID
+		state.LinkedProjectPath = data.Project.FullPath
 	}
 	return state
 }

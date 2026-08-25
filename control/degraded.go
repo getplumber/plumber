@@ -71,6 +71,13 @@ const degradedReasonBranchProtectionPrefix = "branch protection could not be fet
 // flipping every unrelated CI-file control to error.
 const degradedReasonVariablesPrefix = "CI/CD variables could not be fetched"
 
+// degradedReasonSecurityPolicyPrefix is the shared prefix of the
+// security-policy-linkage fetch degraded reason. Same contract as the two
+// above: a transient network failure on the GraphQL read degrades the run so a
+// blip cannot read as a clean exit-0 pass, while the carve-out in StatusFor
+// keeps every unrelated control from flipping to error over it.
+const degradedReasonSecurityPolicyPrefix = "security policy project could not be fetched"
+
 // degradedReasonsFromGitHubCollection builds the human-readable list of
 // collection failures behind a degraded GitHub run (#220). partialCount
 // is the number of workflow files that could not be fetched/parsed and

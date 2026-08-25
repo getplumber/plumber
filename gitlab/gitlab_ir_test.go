@@ -150,27 +150,27 @@ func TestBuildApprovalSettings(t *testing.T) {
 func TestBuildSecurityPolicyProject(t *testing.T) {
 	cases := []struct {
 		name string
-		in   *GitlabProtectionAnalysisData
+		in   *SecurityPolicyData
 		want *ir.SecurityPolicyProjectState
 	}{
 		{
-			name: "nil protection -> nil (not collected)",
+			name: "nil data -> nil (control disabled, never collected)",
 			in:   nil,
 			want: nil,
 		},
 		{
-			name: "not collected (Known=false, no project) -> nil (abstain)",
-			in:   &GitlabProtectionAnalysisData{SecurityPolicyKnown: false, SecurityPolicyProject: nil},
+			name: "unreadable (Known=false, no project) -> nil (abstain)",
+			in:   &SecurityPolicyData{Known: false, Project: nil},
 			want: nil,
 		},
 		{
 			name: "read OK, none linked -> non-nil Known with id 0 (must fire)",
-			in:   &GitlabProtectionAnalysisData{SecurityPolicyKnown: true, SecurityPolicyProject: nil},
+			in:   &SecurityPolicyData{Known: true, Project: nil},
 			want: &ir.SecurityPolicyProjectState{Known: true, LinkedProjectID: 0, LinkedProjectPath: ""},
 		},
 		{
 			name: "read OK, one linked -> non-nil Known with id/path",
-			in:   &GitlabProtectionAnalysisData{SecurityPolicyKnown: true, SecurityPolicyProject: &SecurityPolicyProjectLink{ID: 42, FullPath: "grp/pol"}},
+			in:   &SecurityPolicyData{Known: true, Project: &SecurityPolicyProjectLink{ID: 42, FullPath: "grp/pol"}},
 			want: &ir.SecurityPolicyProjectState{Known: true, LinkedProjectID: 42, LinkedProjectPath: "grp/pol"},
 		},
 	}
@@ -194,7 +194,7 @@ func TestBuildSecurityPolicyProject(t *testing.T) {
 }
 
 func TestToNormalizedPipeline_Empty(t *testing.T) {
-	pipeline := ToNormalizedPipeline("group/project", "main", "", nil, nil, nil, nil)
+	pipeline := ToNormalizedPipeline("group/project", "main", "", nil, nil, nil, nil, nil)
 	if pipeline.Provider != ir.ProviderGitLab {
 		t.Fatalf("expected provider gitlab, got %q", pipeline.Provider)
 	}
@@ -224,7 +224,7 @@ func TestToNormalizedPipeline_JobsAndImages(t *testing.T) {
 		},
 	}
 
-	pipeline := ToNormalizedPipeline("grp/proj", "main", "", origin, images, nil, nil)
+	pipeline := ToNormalizedPipeline("grp/proj", "main", "", origin, images, nil, nil, nil)
 
 	if got := len(pipeline.Jobs); got != 3 {
 		t.Fatalf("expected 3 jobs, got %d", got)
@@ -258,7 +258,7 @@ func TestToNormalizedPipeline_NilJobInMap(t *testing.T) {
 		},
 	}
 
-	pipeline := ToNormalizedPipeline("grp/proj", "main", "", origin, nil, nil, nil)
+	pipeline := ToNormalizedPipeline("grp/proj", "main", "", origin, nil, nil, nil, nil)
 	if got := len(pipeline.Jobs); got != 1 {
 		t.Fatalf("expected 1 job (nil entry skipped), got %d", got)
 	}

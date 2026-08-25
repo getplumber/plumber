@@ -45,10 +45,15 @@ func TestSecurityPolicyControlEnabled(t *testing.T) {
 		t.Fatal("expected false when in --skip-controls")
 	}
 
-	// protectionDataNeeded must be true for a security-policy-only run so the
-	// protection collection (which carries the linkage) actually runs.
-	if !protectionDataNeeded(spConf(&configuration.SecurityPolicyControlConfig{Enabled: spBoolPtr(true)})) {
-		t.Fatal("expected protectionDataNeeded true when only the security-policy control is enabled")
+	// The linkage is read by its own GraphQL collection, so a
+	// security-policy-only run must NOT drag in the REST protection collection.
+	// The two were coupled originally, which is precisely what broke the
+	// control: FetchProjectBranchData aborts the whole collection on a 403, so a
+	// token that could not list branches left ISSUE-601 permanently
+	// not-evaluable on a linkage it could have read perfectly well. Keeping them
+	// independent is the fix; this assertion is what stops them being re-coupled.
+	if protectionDataNeeded(spConf(&configuration.SecurityPolicyControlConfig{Enabled: spBoolPtr(true)})) {
+		t.Fatal("protectionDataNeeded must be false for a security-policy-only run: the linkage has its own collection, and coupling it to the branch/approval fetches makes a 403 on branches silence ISSUE-601")
 	}
 }
 
@@ -60,9 +65,9 @@ func TestSecurityPolicyTierCaveatApplies(t *testing.T) {
 	enabled := spConf(&configuration.SecurityPolicyControlConfig{Enabled: spBoolPtr(true)})
 	disabled := spConf(&configuration.SecurityPolicyControlConfig{Enabled: spBoolPtr(false)})
 
-	noneLinked := &gitlab.GitlabProtectionAnalysisData{SecurityPolicyKnown: true, SecurityPolicyProject: nil}
-	linked := &gitlab.GitlabProtectionAnalysisData{SecurityPolicyKnown: true, SecurityPolicyProject: &gitlab.SecurityPolicyProjectLink{ID: 5}}
-	notRead := &gitlab.GitlabProtectionAnalysisData{SecurityPolicyKnown: false}
+	noneLinked := &gitlab.SecurityPolicyData{Known: true, Project: nil}
+	linked := &gitlab.SecurityPolicyData{Known: true, Project: &gitlab.SecurityPolicyProjectLink{ID: 5}}
+	notRead := &gitlab.SecurityPolicyData{Known: false}
 
 	if securityPolicyTierCaveatApplies(disabled, noneLinked) {
 		t.Fatal("caveat must NOT fire when the control is disabled")
@@ -77,7 +82,7 @@ func TestSecurityPolicyTierCaveatApplies(t *testing.T) {
 		t.Fatal("caveat must NOT fire when the linkage was not read (not-evaluable)")
 	}
 	if securityPolicyTierCaveatApplies(enabled, nil) {
-		t.Fatal("caveat must NOT fire when there is no protection data")
+		t.Fatal("caveat must NOT fire when the linkage was never collected")
 	}
 }
 
