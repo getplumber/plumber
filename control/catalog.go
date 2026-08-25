@@ -53,6 +53,16 @@ func GitLabControls(pc *configuration.PlumberConfig) []ControlEntry {
 		Skipped:     c.BranchMustBeProtected == nil || !c.BranchMustBeProtected.IsEnabled(),
 	})
 	entries = append(entries, ControlEntry{
+		DisplayName: "MR approval rules must require a minimum number of approvals",
+		ControlName: "mergeRequestApprovalRulesMustRequireMinimumApprovals",
+		Skipped:     c.MergeRequestApprovalRulesMustRequireMinimumApprovals == nil || !c.MergeRequestApprovalRulesMustRequireMinimumApprovals.IsEnabled(),
+	})
+	entries = append(entries, ControlEntry{
+		DisplayName: "MR approval rules must cover all protected branches",
+		ControlName: "mergeRequestApprovalRulesMustCoverAllProtectedBranches",
+		Skipped:     c.MergeRequestApprovalRulesMustCoverAllProtectedBranches == nil || !c.MergeRequestApprovalRulesMustCoverAllProtectedBranches.IsEnabled(),
+	})
+	entries = append(entries, ControlEntry{
 		DisplayName: "CI/CD variables must be protected",
 		ControlName: "cicdVariablesMustBeProtected",
 		Skipped:     c.CicdVariablesMustBeProtected == nil || !c.CicdVariablesMustBeProtected.IsEnabled(),
@@ -324,6 +334,12 @@ func DisabledControlNames(c *configuration.ControlsConfig) map[string]bool {
 	}
 	if cfg := c.BranchMustBeProtected; cfg == nil || !cfg.IsEnabled() {
 		out["branchMustBeProtected"] = true
+	}
+	if cfg := c.MergeRequestApprovalRulesMustRequireMinimumApprovals; cfg == nil || !cfg.IsEnabled() {
+		out["mergeRequestApprovalRulesMustRequireMinimumApprovals"] = true
+	}
+	if cfg := c.MergeRequestApprovalRulesMustCoverAllProtectedBranches; cfg == nil || !cfg.IsEnabled() {
+		out["mergeRequestApprovalRulesMustCoverAllProtectedBranches"] = true
 	}
 	if cfg := c.CicdVariablesMustBeProtected; cfg == nil || !cfg.IsEnabled() {
 		out["cicdVariablesMustBeProtected"] = true

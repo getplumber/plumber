@@ -9,6 +9,7 @@ import (
 func TestStatusFor(t *testing.T) {
 	content := ControlEntry{ControlName: "actionsMustBePinnedByCommitSha"}
 	branch := ControlEntry{ControlName: "branchMustBeProtected"}
+	approval := ControlEntry{ControlName: "mergeRequestApprovalRulesMustRequireMinimumApprovals"}
 	variables := ControlEntry{ControlName: "cicdVariablesMustBeProtected"}
 	healthy := &AnalysisResult{CiValid: true}
 
@@ -34,6 +35,11 @@ func TestStatusFor(t *testing.T) {
 		{"branch control errors on partial protection details", branch, &AnalysisResult{CiValid: true, GitHubStats: &GitHubAnalysisStats{BranchesProtectionDetailsUnknown: 2}}, 0, StatusError},
 		{"branch control on github ignores content-only degradation", branch, &AnalysisResult{CiValid: true, GitHubStats: &GitHubAnalysisStats{}, DegradedReasons: []string{"2 workflow file(s) could not be fetched and were skipped"}}, 0, StatusPassed},
 		{"branch control on gitlab ignores content-only degradation when its own collection ran", branch, &AnalysisResult{CiValid: true, ProtectionData: &gitlab.GitlabProtectionAnalysisData{}, DegradedReasons: []string{"2 include(s) could not be resolved; their jobs were not analysed"}}, 0, StatusPassed},
+		{"approval-rule control passes when the approvals listing was read and clean", approval, &AnalysisResult{CiValid: true, ProtectionData: &gitlab.GitlabProtectionAnalysisData{MRApprovalRulesKnown: true}}, 0, StatusPassed},
+		{"approval-rule control ignores missing CI config (settings-independent) when the listing was read", approval, &AnalysisResult{CiMissing: true, ProtectionData: &gitlab.GitlabProtectionAnalysisData{MRApprovalRulesKnown: true}}, 0, StatusPassed},
+		{"approval-rule control errors when the protection collection never ran", approval, &AnalysisResult{CiValid: true}, 0, StatusError},
+		{"approval-rule control errors on an unreadable approvals listing (401/403, Known=false): empty findings are not a pass", approval, &AnalysisResult{CiValid: true, ProtectionData: &gitlab.GitlabProtectionAnalysisData{MRApprovalRulesKnown: false}}, 0, StatusError},
+		{"approval-rule control with findings is failed regardless of CI/collection state", approval, &AnalysisResult{CiValid: true, ProtectionData: &gitlab.GitlabProtectionAnalysisData{MRApprovalRulesKnown: true}}, 3, StatusFailed},
 		{"nil result defaults to passed (hand-built test fixtures)", content, nil, 0, StatusPassed},
 		{"variable control passes when the listing was read and clean", variables, &AnalysisResult{CiValid: true, VariablesData: &gitlab.GitlabVariablesAnalysisData{Known: true}}, 0, StatusPassed},
 		{"variable control ignores missing CI config (settings-independent) when the listing was read", variables, &AnalysisResult{CiMissing: true, VariablesData: &gitlab.GitlabVariablesAnalysisData{Known: true}}, 0, StatusPassed},

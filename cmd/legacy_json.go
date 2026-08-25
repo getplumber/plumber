@@ -98,8 +98,30 @@ func _withControlMeta(block any, e control.ControlEntry, result *control.Analysi
 	if m, ok := block.(map[string]any); ok {
 		m["controlName"] = e.ControlName
 		m["status"] = control.StatusFor(e, result, findingCount)
+		if result != nil && result.ApprovalRulesTierCaveat && isApprovalRuleControl(e.ControlName) {
+			// Structured so a consumer can key on it: the approvals API returned
+			// no rules, which on GitLab Free means the feature is unavailable
+			// (the API 200-empties) rather than a real misconfiguration.
+			m["tierCaveat"] = map[string]any{
+				"reason":       "no-approval-rules-returned",
+				"requiresTier": "premium_or_ultimate",
+				"message":      approvalRulesTierCaveatMessage,
+			}
+		}
 	}
 	return block
+}
+
+// approvalRulesTierCaveatMessage explains the Premium/Ultimate requirement for
+// the MR approval-rule controls when the approvals API returned no rules.
+// Shared by the terminal caveat (render_details.go) and the JSON tierCaveat.
+const approvalRulesTierCaveatMessage = "MR approval rules are a GitLab Premium/Ultimate feature. Disable these controls if you don't have GitLab Premium or Ultimate."
+
+// isApprovalRuleControl reports whether a control name is one of the two
+// GitLab MR approval-rule controls the tier caveat applies to.
+func isApprovalRuleControl(name string) bool {
+	return name == "mergeRequestApprovalRulesMustRequireMinimumApprovals" ||
+		name == "mergeRequestApprovalRulesMustCoverAllProtectedBranches"
 }
 
 // buildLegacyResult routes a control entry to its legacy JSON
@@ -144,12 +166,48 @@ func buildLegacyResult(e control.ControlEntry, result *control.AnalysisResult, p
 		return "jobVariablesOverrideResult", buildJobVariablesOverrideBlock(common, result, findings)
 	case "pipelineMustNotUseDockerInDocker":
 		return "dockerInDockerResult", buildDockerInDockerBlock(common, result, findings)
+	case "mergeRequestApprovalRulesMustRequireMinimumApprovals":
+		return "mrApprovalRulesMinApprovalsResult", buildMRApprovalRulesMinApprovalsBlock(common, findings)
+	case "mergeRequestApprovalRulesMustCoverAllProtectedBranches":
+		return "mrApprovalRulesCoverAllBranchesResult", buildMRApprovalRulesCoverAllBranchesBlock(common, findings)
 	case "cicdVariablesMustBeProtected":
 		return "cicdVariablesProtectedResult", buildCicdVariablesProtectedBlock(common, result, findings)
 	case "cicdVariablesMustBeMasked":
 		return "cicdVariablesMaskedResult", buildCicdVariablesMaskedBlock(common, result, findings)
 	}
 	return "", nil
+}
+
+// buildMRApprovalRulesMinApprovalsBlock and
+// buildMRApprovalRulesCoverAllBranchesBlock emit the legacy JSON blocks for the
+// merge-request approval-rule controls. The findings are settings-level (no
+// file/job), so each issue carries the approval-rule identity (approvalRuleId)
+// plus the ruleName / approvalsRequired / minApprovalsRequired data that
+// projectFindings preserves from f.Data.
+func buildMRApprovalRulesMinApprovalsBlock(c legacyCommon, findings []opaengine.Finding) map[string]any {
+	return map[string]any{
+		"issues": projectFindings(findings, "job"),
+		"metrics": map[string]any{
+			"rulesBelowMinimum": len(findings),
+		},
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
+	}
+}
+
+func buildMRApprovalRulesCoverAllBranchesBlock(c legacyCommon, findings []opaengine.Finding) map[string]any {
+	return map[string]any{
+		"issues": projectFindings(findings, "job"),
+		"metrics": map[string]any{
+			"allProtectedBranchesRuleMissing": len(findings),
+		},
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
+	}
 }
 
 // buildCicdVariablesProtectedBlock and buildCicdVariablesMaskedBlock emit the

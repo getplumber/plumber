@@ -71,6 +71,8 @@ func controlsConfigIsZero(c ControlsConfig) bool {
 	return c.ContainerImageMustNotUseForbiddenTags == nil &&
 		c.ContainerImageMustComeFromAuthorizedSources == nil &&
 		c.BranchMustBeProtected == nil &&
+		c.MergeRequestApprovalRulesMustRequireMinimumApprovals == nil &&
+		c.MergeRequestApprovalRulesMustCoverAllProtectedBranches == nil &&
 		c.CicdVariablesMustBeProtected == nil &&
 		c.CicdVariablesMustBeMasked == nil &&
 		c.PipelineMustNotIncludeHardcodedJobs == nil &&
@@ -98,6 +100,8 @@ func controlsConfigEqual(a, b ControlsConfig) bool {
 	return a.ContainerImageMustNotUseForbiddenTags == b.ContainerImageMustNotUseForbiddenTags &&
 		a.ContainerImageMustComeFromAuthorizedSources == b.ContainerImageMustComeFromAuthorizedSources &&
 		a.BranchMustBeProtected == b.BranchMustBeProtected &&
+		a.MergeRequestApprovalRulesMustRequireMinimumApprovals == b.MergeRequestApprovalRulesMustRequireMinimumApprovals &&
+		a.MergeRequestApprovalRulesMustCoverAllProtectedBranches == b.MergeRequestApprovalRulesMustCoverAllProtectedBranches &&
 		a.CicdVariablesMustBeProtected == b.CicdVariablesMustBeProtected &&
 		a.CicdVariablesMustBeMasked == b.CicdVariablesMustBeMasked &&
 		a.PipelineMustNotIncludeHardcodedJobs == b.PipelineMustNotIncludeHardcodedJobs &&
