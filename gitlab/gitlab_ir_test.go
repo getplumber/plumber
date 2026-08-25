@@ -215,3 +215,62 @@ func TestToNormalizedPipeline_NilJobInMap(t *testing.T) {
 		t.Fatalf("expected valid job kept, got %q", pipeline.Jobs[0].Name)
 	}
 }
+
+// TestBuildMRSettings covers the MR-settings projection. buildMRSettings copies
+// eight fields straight across from GitLab's project payload, and nothing else
+// exercises it: every ISSUE-506 test hand-builds an ir.MRSettings and bypasses
+// the projection, so a swapped or mis-pointed field mapping would produce wrong
+// compliance results with the whole suite green. Each field is given a value
+// distinct from its neighbours so a transposition cannot pass by coincidence.
+func TestBuildMRSettings(t *testing.T) {
+	// Unread settings project to nil, so ISSUE-506 abstains and reports
+	// not-evaluable rather than a false pass.
+	if got := buildMRSettings(nil); got != nil {
+		t.Fatalf("nil protection: got %+v, want nil", got)
+	}
+	if got := buildMRSettings(&GitlabProtectionAnalysisData{}); got != nil {
+		t.Fatalf("unread project payload: got %+v, want nil", got)
+	}
+
+	// The four booleans are deliberately NOT all true: an alternating pattern
+	// catches a mapping that points at the wrong source field.
+	got := buildMRSettings(&GitlabProtectionAnalysisData{
+		MRSettings: &glab.Project{
+			MergeMethod:                     glab.FastForwardMerge,
+			SquashOption:                    glab.SquashOptionDefaultOn,
+			MergePipelinesEnabled:           true,
+			MergeTrainsEnabled:              false,
+			AllowMergeOnSkippedPipeline:     true,
+			ResolveOutdatedDiffDiscussions:  false,
+			PrintingMergeRequestLinkEnabled: true,
+			RemoveSourceBranchAfterMerge:    false,
+		},
+	})
+	if got == nil {
+		t.Fatal("populated project payload projected to nil")
+	}
+	if got.MergeMethod != string(glab.FastForwardMerge) {
+		t.Errorf("MergeMethod = %q, want %q", got.MergeMethod, glab.FastForwardMerge)
+	}
+	if got.SquashOption != string(glab.SquashOptionDefaultOn) {
+		t.Errorf("SquashOption = %q, want %q", got.SquashOption, glab.SquashOptionDefaultOn)
+	}
+	if !got.MergePipelinesEnabled {
+		t.Error("MergePipelinesEnabled = false, want true")
+	}
+	if got.MergeTrainsEnabled {
+		t.Error("MergeTrainsEnabled = true, want false (mapped from the wrong field?)")
+	}
+	if !got.AllowMergeOnSkippedPipeline {
+		t.Error("AllowMergeOnSkippedPipeline = false, want true")
+	}
+	if got.ResolveOutdatedDiffDiscussions {
+		t.Error("ResolveOutdatedDiffDiscussions = true, want false (mapped from the wrong field?)")
+	}
+	if !got.PrintingMergeRequestLinkEnabled {
+		t.Error("PrintingMergeRequestLinkEnabled = false, want true")
+	}
+	if got.RemoveSourceBranchAfterMerge {
+		t.Error("RemoveSourceBranchAfterMerge = true, want false (mapped from the wrong field?)")
+	}
+}

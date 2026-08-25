@@ -137,6 +137,19 @@ func StatusFor(e ControlEntry, result *AnalysisResult, findingCount int) string 
 		}
 		return StatusPassed
 	}
+	if e.ControlName == "mergeRequestSettingsMustBeCompliant" {
+		// Same reasoning again, on the project-settings payload this control
+		// reads. It evaluates Settings > Merge requests, not the CI file, so
+		// the CiMissing / CiValid check below does not apply. A nil
+		// ProtectionData (the collection never ran, or an error on any of its
+		// endpoints aborted it) or a nil MRSettings (the project fetch itself
+		// failed) means the control never saw data: an empty findings list
+		// here must not read as a pass.
+		if result.ProtectionData == nil || result.ProtectionData.MRSettings == nil {
+			return StatusError
+		}
+		return StatusPassed
+	}
 	if result.CiMissing || !result.CiValid {
 		return StatusError
 	}

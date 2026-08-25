@@ -238,3 +238,57 @@ func TestMRSettingsPremiumCaveatJSON(t *testing.T) {
 		t.Errorf("tierCaveat present when no premium field was flagged")
 	}
 }
+
+// TestMRSettingsJSONBlock is the ISSUE-506 twin of TestMRApprovalSettingsJSONBlock.
+// buildLegacyResult routes each control name to its JSON block; an unrouted
+// control falls through to `return "", nil` and its block is dropped from
+// results.json entirely, silently, with every other test still green. This pins
+// the route, the block name external consumers parse, and the deviation payload.
+func TestMRSettingsJSONBlock(t *testing.T) {
+	result := &control.AnalysisResult{CiValid: true}
+	entry := control.ControlEntry{
+		DisplayName: "MR settings must be compliant",
+		ControlName: "mergeRequestSettingsMustBeCompliant",
+	}
+	findings := []opaengine.Finding{{
+		Code: "ISSUE-506",
+		Data: map[string]any{
+			"deviatingSettings": []any{"mergeMethod", "mergePipelinesEnabled"},
+		},
+	}}
+
+	name, block := buildLegacyResult(entry, result, nil, findings)
+	if name != "mrSettingsResult" {
+		t.Fatalf("506 block name = %q, want mrSettingsResult (dispatch dropped the block)", name)
+	}
+	m, ok := block.(map[string]any)
+	if !ok {
+		t.Fatalf("506 block is %T, want map[string]any", block)
+	}
+	issues, ok := m["issues"].([]map[string]any)
+	if !ok || len(issues) != 1 {
+		t.Fatalf("506 issues = %v, want exactly 1 entry (singleton)", m["issues"])
+	}
+	if issues[0]["code"] != "ISSUE-506" {
+		t.Errorf("506 issue code = %v, want ISSUE-506", issues[0]["code"])
+	}
+	// The deviation list is the actionable payload: a consumer must see WHICH
+	// settings fell short, not merely that the control failed.
+	if _, ok := issues[0]["deviatingSettings"]; !ok {
+		t.Errorf("506 issue lost deviatingSettings; got keys %v", issues[0])
+	}
+	metrics, ok := m["metrics"].(map[string]any)
+	if !ok {
+		t.Fatalf("506 metrics is %T, want map[string]any", m["metrics"])
+	}
+	if metrics["hasNonCompliantSettings"] != 1 {
+		t.Errorf("506 hasNonCompliantSettings = %v, want 1", metrics["hasNonCompliantSettings"])
+	}
+
+	// A clean run must still emit the block: consumers key off its presence,
+	// and a missing block is indistinguishable from a control that never ran.
+	cleanName, cleanBlock := buildLegacyResult(entry, result, nil, nil)
+	if cleanName != "mrSettingsResult" || cleanBlock == nil {
+		t.Fatalf("clean run: name=%q block=%v, want mrSettingsResult with a non-nil block", cleanName, cleanBlock)
+	}
+}
