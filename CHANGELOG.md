@@ -1,3 +1,25 @@
+## [0.4.44](https://github.com/getplumber/plumber/compare/v0.4.43...v0.4.44) (2026-08-26)
+
+
+### ✨ Features
+
+* **controls:** add projectMustHaveSecurityPolicySource (ISSUE-601, GitLab Ultimate) and renumber workflowsMustHaveExplicitName to ISSUE-422 for site parity ([9d62204](https://github.com/getplumber/plumber/commit/9d6220491a232849a331b6963a23248792345905))
+
+
+### 🐛 Bug Fixes
+
+* **controls:** address review on the security policy source control ([0217d76](https://github.com/getplumber/plumber/commit/0217d76eae448a0fef640b3cbe0c9b518b3c1d9a))
+
+
+### 📚 Documentation
+
+* **controls:** update controls doc to make it more precise ([1eaca39](https://github.com/getplumber/plumber/commit/1eaca399400a00c598f3482991ecee6385c6fc80))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.43 refs [skip ci] ([cfb0484](https://github.com/getplumber/plumber/commit/cfb0484442e90b18d15a741dc9ad660057906e52))
+
 ## [0.4.43](https://github.com/getplumber/plumber/compare/v0.4.42...v0.4.43) (2026-08-26)
 
 
