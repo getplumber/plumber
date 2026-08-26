@@ -1,3 +1,21 @@
+## [0.4.43](https://github.com/getplumber/plumber/compare/v0.4.42...v0.4.43) (2026-08-26)
+
+
+### ✨ Features
+
+* **controls:** add mergeRequestSettingsMustBeCompliant (ISSUE-506) with a conditional Premium/Ultimate caveat for merge-train and merged-pipeline expectations ([6345dc4](https://github.com/getplumber/plumber/commit/6345dc4fafa5f820c88adb0c819f2d6d70436608))
+* **controls:** make ISSUE-503 approval-settings findings read as current-vs-expected and add a Premium/Ultimate tier caveat when no protections are in effect ([deacbfb](https://github.com/getplumber/plumber/commit/deacbfb61edd900d1921c97b61739926ae7b9cfe))
+
+
+### 🐛 Bug Fixes
+
+* **controls:** address review on the MR approval/settings controls ([a70ef57](https://github.com/getplumber/plumber/commit/a70ef57aacd44906a8bfbf5e0f93a666427e2986))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.42 refs [skip ci] ([4d247c2](https://github.com/getplumber/plumber/commit/4d247c293183c21f81c6c5539da52980b4a8fcb3))
+
 ## [0.4.42](https://github.com/getplumber/plumber/compare/v0.4.41...v0.4.42) (2026-08-25)
 
 
