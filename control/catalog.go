@@ -557,6 +557,18 @@ func MarkSkippedByFilter(entries []ControlEntry, includeOnly, skip []string) {
 	}
 }
 
+// MarkAllSkipped marks every entry skipped with the given reason. It backs
+// --no-controls: the catalog still describes what Plumber COULD have checked,
+// but nothing was evaluated, so no entry may report a verdict. Without this,
+// a zero-findings run stamps `status: "passed"` on every control that never
+// ran, which is the false green the flag exists to avoid.
+func MarkAllSkipped(entries []ControlEntry, reason string) {
+	for i := range entries {
+		entries[i].Skipped = true
+		entries[i].SkipReason = reason
+	}
+}
+
 // GitHubControlCompliance returns the binary compliance percentage for a
 // single GitHub control: 100 when no findings, 0 otherwise. The stats
 // parameter is reserved for future per-control percentage overrides.

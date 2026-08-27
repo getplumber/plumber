@@ -66,7 +66,17 @@ var (
 	platformURL       string
 	controlsFilter    string
 	skipControls      string
-	ciConfigPath      string
+	// noControls (--no-controls) turns off control evaluation for the run.
+	// It overrides .plumber.yaml, for the case where the user wants an
+	// artifact (typically the PBOM) and not a verdict. Nothing is
+	// evaluated, so there is no score and no gate.
+	//
+	// It carries a PLUMBER_ANALYZE_NO_CONTROLS fallback like every other
+	// analyze flag. Anyone able to set that variable can already neutralise
+	// the gate through PLUMBER_ANALYZE_MIN_POINTS / _THRESHOLD, so the env
+	// surface is a property of the whole flag set, not of this flag.
+	noControls   bool
+	ciConfigPath string
 )
 
 const (
@@ -114,11 +124,17 @@ Optional flags:
   --score-endpoint   Score service base URL (default https://score.getplumber.io); override only for a self-hosted score service (optional)
   --controls         Run only listed controls (comma-separated)
   --skip-controls    Skip listed controls (comma-separated)
+  --no-controls      Run no control at all: collect the pipeline, write the requested inventory
+                     artifacts (PBOM, JSON, CSV, OCSF), skip evaluation, withhold the score, exit 0.
+                     Every control reports as skipped, never passed. --sarif / --glsast are NOT
+                     written (an empty security report clears existing alerts). Overrides the
+                     controls enabled in .plumber.yaml; cannot be combined with --controls /
+                     --skip-controls
   --fail-warnings    Treat configuration warnings as errors (exit 2)
   --ci-config-path   Override the CI configuration file path (default: auto-detected from GitLab project settings, usually .gitlab-ci.yml)
 
 Exit codes:
-  0  Analysis passed (score gate met)
+  0  Analysis passed (score gate met, or --no-controls with data collection intact)
   1  Gate failure (Plumber Score below --min-points / --min-score, or deprecated --threshold not met)
   2  Runtime error (configuration error, network failure, missing token, etc.)
 
@@ -140,6 +156,9 @@ Examples:
 
   # Analyze a project that uses a custom CI configuration file path
   plumber analyze --ci-config-path my-custom-ci.yml
+
+  # PBOM only: no control evaluated, no score, no gate (exit 0 unless collection fails)
+  plumber analyze --pbom-cyclonedx pbom.cdx --no-controls --print=false
 `,
 	RunE: runAnalyze,
 }
@@ -187,6 +206,7 @@ func init() {
 	analyzeCmd.Flags().StringVar(&platformURL, "platform", "", "Plumber platform base URL; setting it pushes this run's full results there over CI OIDC (implies the push, and takes precedence over --score-push)")
 	analyzeCmd.Flags().StringVar(&controlsFilter, "controls", "", "Run only listed controls (comma-separated)")
 	analyzeCmd.Flags().StringVar(&skipControls, "skip-controls", "", "Skip listed controls (comma-separated)")
+	analyzeCmd.Flags().BoolVar(&noControls, "no-controls", false, "Run no controls at all: collect the pipeline and write the requested inventory artifacts (PBOM, JSON, CSV, OCSF), skip evaluation, withhold the score, and never fail the gate")
 	analyzeCmd.Flags().BoolVar(&failWarnings, "fail-warnings", false, "Treat configuration warnings as errors (exit 2)")
 	analyzeCmd.Flags().StringVar(&ciConfigPath, "ci-config-path", "", "Override the CI configuration file path (default: auto-detected from GitLab project settings, usually .gitlab-ci.yml)")
 
@@ -255,6 +275,11 @@ func buildRunHeaderRows(providerName string, result *control.AnalysisResult, con
 		rows = append(rows, headerRow{"CI config", "local file"})
 	case "remote":
 		rows = append(rows, headerRow{"CI config", "fetched from " + providerDisplayName(providerName)})
+	}
+	// Say it once, in the header, so the report never looks like a scan that
+	// found nothing wrong.
+	if conf.NoControls {
+		rows = append(rows, headerRow{"Controls", "none (--no-controls)"})
 	}
 
 	return rows
@@ -361,6 +386,11 @@ func validateProviderFlags(flags analyzeFlags) error {
 func parseControlsFilters() (includeOnly, skip []string, err error) {
 	if controlsFilter != "" && skipControls != "" {
 		return nil, nil, fmt.Errorf("--controls and --skip-controls cannot be used together")
+	}
+	// "evaluate nothing" and "evaluate this subset" are contradictory
+	// requests. Letting one silently win would hide a broken CI invocation.
+	if noControls && (controlsFilter != "" || skipControls != "") {
+		return nil, nil, fmt.Errorf("--no-controls cannot be combined with --controls / --skip-controls: it runs no control at all")
 	}
 	includeOnly, err = parseControlsFilter(controlsFilter)
 	if err != nil {
@@ -474,8 +504,7 @@ func buildGitLabConf(
 	conf.Branch = defaultBranch
 	conf.PlumberConfig = plumberConfig
 	conf.GitRepoRoot = remote.repoRoot
-	conf.ControlsFilter = controlsFilterList
-	conf.SkipControlsFilter = skipControlsList
+	applyControlScope(conf, controlsFilterList, skipControlsList)
 	conf.CIConfigPathOverride = ciConfigPath
 
 	// Local CI file support only applies when the local repo IS the analyzed
@@ -520,6 +549,7 @@ var envKeys = map[string]string{
 	"platform":       "PLUMBER_ANALYZE_PLATFORM",
 	"controls":       "PLUMBER_ANALYZE_CONTROLS",
 	"skip-controls":  "PLUMBER_ANALYZE_SKIP_CONTROLS",
+	"no-controls":    "PLUMBER_ANALYZE_NO_CONTROLS",
 	"fail-warnings":  "PLUMBER_ANALYZE_FAIL_WARNINGS",
 	"ci-config-path": "PLUMBER_ANALYZE_CI_CONFIG_PATH",
 	"verbose":        "PLUMBER_ANALYZE_VERBOSE",
@@ -651,6 +681,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		func() error { return envBoolFallback(cmd, "score-point", envKeys["score-point"], &showScorePoint) },
 		func() error { return envBoolFallback(cmd, "score-push", envKeys["score-push"], &pushScore) },
 		func() error { return envBoolFallback(cmd, "fail-warnings", envKeys["fail-warnings"], &failWarnings) },
+		func() error { return envBoolFallback(cmd, "no-controls", envKeys["no-controls"], &noControls) },
 	} {
 		if err := apply(); err != nil {
 			return err
@@ -820,6 +851,12 @@ func buildAnalysisJSONReport(result *control.AnalysisResult, pc *configuration.P
 		}
 	}
 	output["passed"] = s.passed()
+	// `passed` means "the gate was met", and under --no-controls there was no
+	// gate to fail. Say so explicitly so a consumer can tell that apart from
+	// "everything was checked and is clean" without reading every block.
+	if p.noControls {
+		output["noControls"] = true
+	}
 	if scoreMode && score != nil {
 		output["plumberScore"] = score
 	}
@@ -838,7 +875,7 @@ func buildAnalysisJSONReport(result *control.AnalysisResult, pc *configuration.P
 	// CLI does NOT classify standard-vs-custom (it's the untrusted client); the
 	// score service classifies server-side from this object and its hash.
 	output["plumberConfig"] = buildPlumberConfigBlock(pc)
-	for k, v := range legacyResultsByName(result, pc, provider, includeOnly, skip) {
+	for k, v := range legacyResultsByName(result, pc, provider, includeOnly, skip, p.noControls) {
 		output[k] = v
 	}
 
@@ -1231,7 +1268,14 @@ type jsonOutputParams struct {
 	provider    string
 	includeOnly []string
 	skip        []string
+	// noControls mirrors conf.NoControls so the report can say plainly that
+	// nothing was evaluated instead of leaving a consumer to infer it.
+	noControls bool
 }
+
+// noControlsSkipReason is the SkipReason stamped on every control of a
+// --no-controls run, in the JSON blocks and anywhere else a skip is explained.
+const noControlsSkipReason = "no controls requested (--no-controls)"
 
 // complianceSummary bundles the computed gate values passed to outputText.
 type complianceSummary struct {
@@ -1247,6 +1291,10 @@ type complianceSummary struct {
 	score        *control.PlumberScoreResult
 	scoreMode    bool
 	scorePoint   bool
+	// noControls records that the run asked for no controls (--no-controls),
+	// which is what tells the gate and the renderer apart a deliberate
+	// zero-control run from a misconfiguration that evaluated nothing.
+	noControls bool
 }
 
 // pointsGateActive reports whether the points gate applies: either it was set
@@ -1260,6 +1308,17 @@ func (s complianceSummary) pointsGateActive() bool {
 // describing the failure. The deprecated --threshold gate wins when supplied;
 // otherwise the Plumber Score gates the run.
 func (s complianceSummary) gateErr() error {
+	// --no-controls asked for exactly this: nothing evaluated. Every gate
+	// below reads something the run deliberately did not produce (the
+	// passing-controls percentage, the score), so all of them are inert,
+	// the deprecated --threshold included. This check must stay first: a CI
+	// template that sets --threshold or --min-points globally must not turn
+	// a deliberate artifact-only run into a failure. The zero-control
+	// fail-closed further down exists to catch a run that MEANT to check
+	// something and checked nothing, which is not this.
+	if s.noControls {
+		return nil
+	}
 	if s.thresholdSet {
 		if s.compliance < s.threshold {
 			return &ComplianceError{Compliance: s.compliance, Threshold: s.threshold}
@@ -1298,6 +1357,13 @@ func (s complianceSummary) passed() bool {
 // gateLine renders the active gate and its outcome as one human-readable
 // sentence fragment, e.g. "score A — 100.0/100 pts, required ≥ 100 pts".
 func (s complianceSummary) gateLine() string {
+	// Same precedence as gateErr: --no-controls makes every gate inert, the
+	// deprecated --threshold included, so the line must not describe a
+	// threshold that did not run. Reversed, `--no-controls --threshold 100`
+	// renders "PASSED (0.0% of controls passing, deprecated threshold 100%)".
+	if s.noControls {
+		return "no controls requested, nothing to score"
+	}
 	if s.thresholdSet {
 		return fmt.Sprintf("%.1f%% of controls passing, deprecated threshold %.0f%%", s.compliance, s.threshold)
 	}
@@ -1406,6 +1472,19 @@ func printBanner() {
 		styleMuted.Render("Join our community:"),
 		styleAccent.Render("https://getplumber.io/discord"),
 	)
+}
+
+// printCIErrors prints just the CI-configuration errors, without the
+// "no controls could be evaluated" headline. Used on a --no-controls run,
+// where zero controls is the request but an unparseable CI config still
+// has to be explained: it is why the inventory came out empty.
+func printCIErrors(result *control.AnalysisResult) {
+	fmt.Printf(fmtIndentLine, styleError.Render("CI configuration errors:"))
+	bullet := styleError.Render("•")
+	for _, e := range result.CiErrors {
+		fmt.Printf("    %s %s\n", bullet, sanitizeTerminal(e))
+	}
+	fmt.Println()
 }
 
 // printNoControlsWarning prints the warning block shown when zero controls
@@ -1640,6 +1719,27 @@ func printStatusSectionHeader(name, glyph, color string) {
 // modernised two-column layout: a large grade badge on the left, and
 // a side panel on the right with points, progress bar, meaning text,
 // severity chips, and any Critical malus warning.
+// printNoControlsSummary replaces the score banner on a --no-controls run.
+//
+// Simply omitting the banner is not enough: an output with no score in it
+// reads as a rendering glitch, and leaves the reader to guess whether
+// nothing was found or nothing was checked. Those are opposite conclusions,
+// so the run says which one it is, in the place the grade would have been.
+func printNoControlsSummary() {
+	sep := styleRule.Render(strings.Repeat("─", hrWidth))
+	fmt.Println()
+	fmt.Println(" " + sep)
+	fmt.Println(" " + styleMuted.Render("Plumber Score"))
+	fmt.Println()
+	fmt.Printf(" %s\n", styleFail.Render("No control was run (--no-controls)"))
+	fmt.Printf(" %s\n", styleFail.Render("No Plumber Score: nothing was evaluated, so this run makes no claim"))
+	fmt.Printf(" %s\n", styleFail.Render("about the pipeline."))
+	fmt.Printf(" %s\n", styleMuted.Render("The artifacts it wrote contain the collected inventory only."))
+	fmt.Println()
+	fmt.Println(" " + sep)
+	fmt.Println()
+}
+
 func printSummaryScoreBanner(score *control.PlumberScoreResult, scoreMode, degraded bool) {
 	if score == nil || !scoreMode {
 		return

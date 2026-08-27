@@ -91,6 +91,42 @@ func TestParseControlsFilters_BothSet(t *testing.T) {
 	}
 }
 
+// --no-controls means "evaluate nothing"; --controls / --skip-controls mean
+// "evaluate this subset". Asking for both is a contradiction, and silently
+// letting one win would hide a broken CI invocation, so it is a usage error.
+func TestParseControlsFilters_NoControlsConflicts(t *testing.T) {
+	origInclude, origSkip, origNone := controlsFilter, skipControls, noControls
+	defer func() { controlsFilter, skipControls, noControls = origInclude, origSkip, origNone }()
+
+	for _, tc := range []struct{ name, include, skip string }{
+		{"with --controls", "pipelineMustNotEnableDebugTrace", ""},
+		{"with --skip-controls", "", "pipelineMustNotEnableDebugTrace"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			controlsFilter, skipControls, noControls = tc.include, tc.skip, true
+			_, _, err := parseControlsFilters()
+			if err == nil || !strings.Contains(err.Error(), "--no-controls") {
+				t.Fatalf("expected a --no-controls conflict error, got %v", err)
+			}
+		})
+	}
+}
+
+// --no-controls on its own is not a conflict.
+func TestParseControlsFilters_NoControlsAlone(t *testing.T) {
+	origInclude, origSkip, origNone := controlsFilter, skipControls, noControls
+	defer func() { controlsFilter, skipControls, noControls = origInclude, origSkip, origNone }()
+
+	controlsFilter, skipControls, noControls = "", "", true
+	include, skip, err := parseControlsFilters()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(include) != 0 || len(skip) != 0 {
+		t.Fatalf("expected no filters, got include=%v skip=%v", include, skip)
+	}
+}
+
 func TestParseControlsFilters_IncludeOnly(t *testing.T) {
 	origInclude, origSkip := controlsFilter, skipControls
 	controlsFilter = "pipelineMustNotEnableDebugTrace,containerImageMustNotUseForbiddenTags"

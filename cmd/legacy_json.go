@@ -42,9 +42,20 @@ func _minAccessLevelGitlab(levels []gitlab.BranchProtectionAccessLevel) int {
 // applied via control.MarkSkippedByFilter so the per-block `skipped:`
 // field tracks both the YAML enabled flag AND the CLI filter. Pass
 // nil/empty when no filter is active.
-func legacyResultsByName(result *control.AnalysisResult, pc *configuration.PlumberConfig, provider string, includeOnly, skip []string) map[string]any {
+func legacyResultsByName(result *control.AnalysisResult, pc *configuration.PlumberConfig, provider string, includeOnly, skip []string, noControls bool) map[string]any {
 	if result == nil || pc == nil {
 		return nil
+	}
+	// --no-controls: the blocks still describe the catalog, but every one of
+	// them must read as "not evaluated". `status` exists so consumers stop
+	// inferring a pass from an empty issues list, so it is exactly the field
+	// that has to tell the truth for a run that evaluated nothing.
+	markSkipped := func(entries []control.ControlEntry) {
+		if noControls {
+			control.MarkAllSkipped(entries, noControlsSkipReason)
+			return
+		}
+		control.MarkSkippedByFilter(entries, includeOnly, skip)
 	}
 	out := map[string]any{}
 	findingsByControl := control.FindingsByControl(result.Findings)
@@ -52,7 +63,7 @@ func legacyResultsByName(result *control.AnalysisResult, pc *configuration.Plumb
 	switch provider {
 	case "github":
 		entries := control.GitHubControls(pc)
-		control.MarkSkippedByFilter(entries, includeOnly, skip)
+		markSkipped(entries)
 		for _, e := range entries {
 			fs := findingsByControl[e.ControlName]
 			key, block := buildLegacyResultGitHub(e, result, pc, fs)
@@ -63,7 +74,7 @@ func legacyResultsByName(result *control.AnalysisResult, pc *configuration.Plumb
 		}
 	default:
 		entries := control.GitLabControls(pc)
-		control.MarkSkippedByFilter(entries, includeOnly, skip)
+		markSkipped(entries)
 		for _, e := range entries {
 			fs := findingsByControl[e.ControlName]
 			key, block := buildLegacyResult(e, result, pc, fs)

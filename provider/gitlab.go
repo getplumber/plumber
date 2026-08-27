@@ -26,6 +26,12 @@ func (p *GitLabProvider) Controls(pc *configuration.PlumberConfig) []control.Con
 }
 
 func (p *GitLabProvider) ComputeCompliance(result *control.AnalysisResult, conf *configuration.Configuration) (float64, int) {
+	// --no-controls wins over the config: the controls enabled in
+	// .plumber.yaml are ignored, so nothing is evaluated and nothing is
+	// counted. The zero is what makes the gate a no-op.
+	if conf.NoControls {
+		return 0.0, 0
+	}
 	if result.CiMissing || !result.CiValid {
 		return 0.0, 0
 	}
@@ -66,12 +72,30 @@ func (p *GitLabProvider) RunRemote(_ *configuration.Configuration) (*control.Ana
 	return nil, ErrNoRemote
 }
 
+// noControlsAwareImageCompliance returns the per-image compliance flags, or
+// nil when the run evaluated nothing. The flags are derived from findings,
+// not from the score, so an empty findings slice would otherwise mark every
+// image forbiddenTag:false / authorized:true and assert the very image
+// checks --no-controls skipped, inside the artifact the flag exists to
+// produce. With nil the PBOM records the inventory and claims nothing.
+// conf is required, as everywhere else on this path (the writers read
+// conf.GitlabURL unconditionally).
+func noControlsAwareImageCompliance(result *control.AnalysisResult, conf *configuration.Configuration) *pbom.ImageComplianceData {
+	if conf.NoControls {
+		return nil
+	}
+	return pbom.BuildImageComplianceData(result)
+}
+
 func (p *GitLabProvider) WritePBOM(result *control.AnalysisResult, conf *configuration.Configuration, filePath string, score *control.PlumberScoreResult, scoreMode bool) error {
-	complianceData := pbom.BuildImageComplianceData(result)
+	complianceData := noControlsAwareImageCompliance(result, conf)
 	overrideData := pbom.BuildIncludeOverrideData(result)
 	gen := pbom.NewGenerator(result.ProjectPath, result.ProjectID, conf.GitlabURL, conf.Branch).
 		WithComplianceData(complianceData).
 		WithIncludeOverrideData(overrideData)
+	if conf.NoControls {
+		gen = gen.WithoutComplianceVerdicts()
+	}
 	bom := gen.Generate(result.PipelineImageData, result.PipelineOriginData)
 	bom.PlumberScore = pbom.BuildPlumberScoreSummary(score, scoreMode)
 
@@ -86,11 +110,14 @@ func (p *GitLabProvider) WritePBOM(result *control.AnalysisResult, conf *configu
 }
 
 func (p *GitLabProvider) WritePBOMCycloneDX(result *control.AnalysisResult, conf *configuration.Configuration, filePath string, score *control.PlumberScoreResult, scoreMode bool) error {
-	complianceData := pbom.BuildImageComplianceData(result)
+	complianceData := noControlsAwareImageCompliance(result, conf)
 	overrideData := pbom.BuildIncludeOverrideData(result)
 	gen := pbom.NewGenerator(result.ProjectPath, result.ProjectID, conf.GitlabURL, conf.Branch).
 		WithComplianceData(complianceData).
 		WithIncludeOverrideData(overrideData)
+	if conf.NoControls {
+		gen = gen.WithoutComplianceVerdicts()
+	}
 	bom := gen.Generate(result.PipelineImageData, result.PipelineOriginData)
 	bom.PlumberScore = pbom.BuildPlumberScoreSummary(score, scoreMode)
 	cdx := bom.ToCycloneDX("")

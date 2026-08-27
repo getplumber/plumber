@@ -70,6 +70,20 @@ func TestGitLabProvider_ComputeCompliance(t *testing.T) {
 		}
 	})
 
+	// --no-controls wins over the config: the controls enabled in
+	// .plumber.yaml are ignored, so the count is zero even though this
+	// config enables two. Zero is what makes the gate a no-op, and it is
+	// also what keeps a 100%% "all controls pass" reading from being
+	// reported for controls that never ran.
+	t.Run("no-controls ignores the enabled controls", func(t *testing.T) {
+		result := &control.AnalysisResult{CiValid: true}
+		conf := &configuration.Configuration{PlumberConfig: gitLabPC(t), NoControls: true}
+		pct, n := p.ComputeCompliance(result, conf)
+		if pct != 0.0 || n != 0 {
+			t.Fatalf("NoControls: got (%v, %d), want (0, 0)", pct, n)
+		}
+	})
+
 	t.Run("one of two controls fails", func(t *testing.T) {
 		result := &control.AnalysisResult{
 			CiValid: true,
@@ -122,6 +136,16 @@ func TestGitHubProvider_ComputeCompliance(t *testing.T) {
 		pct, n := p.ComputeCompliance(result, conf)
 		if pct != 100.0 || n != 2 {
 			t.Fatalf("no findings: got (%v, %d), want (100, 2)", pct, n)
+		}
+	})
+
+	// Same override as the GitLab path: --no-controls beats the config.
+	t.Run("no-controls ignores the enabled controls", func(t *testing.T) {
+		result := &control.AnalysisResult{}
+		conf := &configuration.Configuration{PlumberConfig: gitHubPC(t), NoControls: true}
+		pct, n := p.ComputeCompliance(result, conf)
+		if pct != 0.0 || n != 0 {
+			t.Fatalf("NoControls: got (%v, %d), want (0, 0)", pct, n)
 		}
 	})
 

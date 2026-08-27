@@ -355,6 +355,36 @@ plumber analyze \
   --pbom-cyclonedx cdx.json
 ```
 
+### Artifacts without a verdict
+
+To produce an artifact (typically the PBOM) and nothing else, pass
+`--no-controls`. No control is evaluated, no score is computed, and the run
+exits `0` as long as data collection succeeded:
+
+```bash
+plumber analyze --pbom-cyclonedx cdx.json --no-controls --print=false
+```
+
+It overrides whatever `.plumber.yaml` enables, so the same config keeps working
+for a normal `plumber analyze` in another job. Nothing the run produces claims a
+verdict: the JSON, CSV and OCSF reports mark every control `skipped` rather than
+`passed`, and the PBOM records the collected inventory (images, includes,
+upstream versions) with no compliance flags on it, per-image or per-include.
+
+The run still fails (exit 3) when data collection did not produce a usable
+pipeline: a degraded collection, a `.gitlab-ci.yml` that was fetched but does
+not parse, or (on GitLab) no CI configuration at all. In each case the
+inventory would be empty, and an empty PBOM must not ship as a complete one.
+
+Flags that read or publish a verdict are ignored, with a notice naming them:
+`--min-points`, `--min-score`, `--threshold`, `--badge`, `--score-push`,
+`--mr-comment`, `--platform`, and also `--sarif` / `--glsast`. Those last two
+are security reports with no honest empty form: an empty SARIF is what makes
+GitHub Code Scanning clear previously-reported alerts, and an empty GitLab SAST
+report shows a clean Security Dashboard. Writing them from a run that evaluated
+nothing would dismiss real alerts, so they are skipped rather than emitted
+empty.
+
 More details:
 
 - PBOM docs: [`docs/PBOM.md`](./docs/PBOM.md)
@@ -366,7 +396,7 @@ More details:
 
 | Code | Meaning |
 |---|---|
-| `0` | The Plumber Score meets the gate (`--min-points` / `--min-score`) |
+| `0` | The Plumber Score meets the gate (`--min-points` / `--min-score`), or `--no-controls` was used and data collection succeeded |
 | `1` | The Plumber Score is below the gate (or the deprecated `--threshold` is not met) |
 | `2` | Invalid usage, configuration, or a runtime / provider / auth / network failure |
 | `3` | A check could not be verified and `--fail-warnings` is set (e.g. an action version that could not be resolved) |

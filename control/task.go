@@ -324,11 +324,20 @@ func runRegoEngine(
 // restrict which controls' findings reach the caller. Callers pass
 // "gitlab" or "github". Anything else returns no findings.
 func evaluatePolicies(l *logrus.Entry, conf *configuration.Configuration, provider string, pipeline *ir.NormalizedPipeline) []opaengine.Finding {
-	l.WithField("provider", provider).Info("Running Rego/OPA rule engine")
 	// Empty (non-nil) so the eventual JSON output marshals an empty
 	// findings array as `[]`, not `null` — `null` makes downstream
 	// jq pipelines like `.findings[]` blow up on a clean run.
 	empty := []opaengine.Finding{}
+	// --no-controls: the user asked for no controls, so nothing is loaded
+	// and nothing is evaluated. Filtering the findings afterwards would not
+	// be equivalent: Engine.Evaluate returns on the first module error, so a
+	// single crashing policy takes every finding with it. A run that
+	// evaluates nothing is a run no policy can break.
+	if conf.NoControls {
+		l.WithField("provider", provider).Info("Control evaluation disabled (--no-controls)")
+		return empty
+	}
+	l.WithField("provider", provider).Info("Running Rego/OPA rule engine")
 	engine := opaengine.New()
 	skip := func(filename string, content []byte) bool {
 		return IsRegoFileBenchedForProvider(content, provider)

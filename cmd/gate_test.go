@@ -129,6 +129,54 @@ func TestGate_NoControlsFailsDespitePerfectScore(t *testing.T) {
 	}
 }
 
+// TestGate_NoControlsFlagPasses is the counterpart of the test above: the
+// zero-control fail-closed exists to catch a run that MEANT to check
+// something and checked nothing. --no-controls means the user asked for
+// nothing to be checked, so the same zero must pass. There is no score to
+// gate on either, which is why the gate has nothing left to fail.
+//
+// This is what lets a PBOM-only pipeline exit 0 without pretending it was
+// scored.
+func TestGate_NoControlsFlagPasses(t *testing.T) {
+	s := complianceSummary{minPoints: 100, controlCount: 0, noControls: true}
+	if err := s.gateErr(); err != nil {
+		t.Fatalf("--no-controls must not fail the gate, got %v", err)
+	}
+	if !s.passed() {
+		t.Fatal("--no-controls must report passed")
+	}
+	if !strings.Contains(s.gateLine(), "no controls requested") {
+		t.Fatalf("gateLine %q must say the run asked for no controls, not that scoring failed", s.gateLine())
+	}
+}
+
+// TestGate_NoControlsFlagIgnoresScoreGates pins that the score gates are
+// inert rather than fatal under --no-controls. A CI template that sets
+// --min-points or --min-score globally must not turn a deliberate
+// PBOM-only run into a failure: with nothing evaluated there is no score
+// for those gates to read.
+func TestGate_NoControlsFlagIgnoresScoreGates(t *testing.T) {
+	s := complianceSummary{
+		minPoints: 100, minPointsSet: true, minScore: "A",
+		controlCount: 0, noControls: true,
+	}
+	if err := s.gateErr(); err != nil {
+		t.Fatalf("score gates must be inert under --no-controls, got %v", err)
+	}
+
+	// The deprecated --threshold gate normally wins over everything, and it
+	// reads the passing-controls percentage, which is 0 when nothing ran. It
+	// must be inert too, or --no-controls would still fail for anyone whose
+	// CI template still passes --threshold.
+	withThreshold := complianceSummary{
+		thresholdSet: true, threshold: 100, compliance: 0,
+		controlCount: 0, noControls: true,
+	}
+	if err := withThreshold.gateErr(); err != nil {
+		t.Fatalf("the deprecated --threshold gate must be inert under --no-controls, got %v", err)
+	}
+}
+
 // ---------------------------------------------------------------------------
 // gateErr — deprecated --threshold gate
 // ---------------------------------------------------------------------------

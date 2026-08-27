@@ -65,6 +65,13 @@ type Configuration struct {
 	ControlsFilter []string
 	// SkipControlsFilter skips the listed controls when set;
 	SkipControlsFilter []string
+	// NoControls turns off control evaluation entirely for this run
+	// (--no-controls). It is a command-line override that wins over the
+	// config: the controls enabled in .plumber.yaml are ignored, no policy
+	// is evaluated, and with nothing evaluated there is no score and no
+	// gate to fail. Collectors still run, because the PBOM and the JSON
+	// report are built from the same collected data.
+	NoControls bool
 
 	// ProgressFunc is an optional callback invoked during analysis to report progress.
 	// step: current step number (1-based), total: total number of steps, message: description.

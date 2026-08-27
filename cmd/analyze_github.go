@@ -44,16 +44,17 @@ func loadGitHubConfig() (*configuration.PlumberConfig, string, error) {
 	return plumberConfig, configPath, nil
 }
 
-func runGitHubAnalyze(info *utils.GitRemoteInfo, controlsFilterList, skipControlsList []string) error {
-	plumberConfig, configPath, err := loadGitHubConfig()
-	if err != nil {
-		return err
-	}
-
-	if printOutput {
-		printBanner()
-	}
-
+// buildGitHubLocalConf constructs the analysis Configuration for the
+// local-clone GitHub flow. Extracted from runGitHubAnalyze so the wiring
+// (in particular the control scope, which carries --no-controls) is
+// reachable from a test without running an analysis, mirroring
+// buildGitLabConf.
+func buildGitHubLocalConf(
+	info *utils.GitRemoteInfo,
+	plumberConfig *configuration.PlumberConfig,
+	configPath string,
+	controlsFilterList, skipControlsList []string,
+) *configuration.Configuration {
 	conf := configuration.NewDefaultConfiguration()
 	conf.ConfigFilePath = configPath
 	conf.ProjectPath = info.ProjectPath
@@ -65,11 +66,10 @@ func runGitHubAnalyze(info *utils.GitRemoteInfo, controlsFilterList, skipControl
 	conf.IsLocalProject = true
 	conf.Branch = defaultBranch
 	conf.PlumberConfig = plumberConfig
-	conf.ControlsFilter = controlsFilterList
-	conf.SkipControlsFilter = skipControlsList
+	applyControlScope(conf, controlsFilterList, skipControlsList)
 	// API host for the settings/metadata controls. Precedence:
 	//   1. --github-url, if the user passed it explicitly;
-	//   2. otherwise the git remote host, when it is not github.com — this
+	//   2. otherwise the git remote host, when it is not github.com - this
 	//      is a GitHub Enterprise Server clone, so target its API directly
 	//      (mirrors how the GitLab path auto-uses the remote URL). go-gh
 	//      resolves the matching token (GH_ENTERPRISE_TOKEN / gh auth login
@@ -80,8 +80,40 @@ func runGitHubAnalyze(info *utils.GitRemoteInfo, controlsFilterList, skipControl
 		apiHost = info.Host
 	}
 	conf.GithubAPIHost = apiHost
+	return conf
+}
 
-	printGitHubAuthBanner(apiHost, false)
+// buildGitHubRemoteConf is the upstream-fetch counterpart of
+// buildGitHubLocalConf, extracted for the same reason.
+func buildGitHubRemoteConf(
+	owner, repo, ref, apiHost string,
+	plumberConfig *configuration.PlumberConfig,
+	configPath string,
+	controlsFilterList, skipControlsList []string,
+) *configuration.Configuration {
+	conf := configuration.NewDefaultConfiguration()
+	conf.ConfigFilePath = configPath
+	conf.ProjectPath = owner + "/" + repo
+	conf.Branch = ref
+	conf.PlumberConfig = plumberConfig
+	conf.GithubAPIHost = apiHost
+	applyControlScope(conf, controlsFilterList, skipControlsList)
+	return conf
+}
+
+func runGitHubAnalyze(info *utils.GitRemoteInfo, controlsFilterList, skipControlsList []string) error {
+	plumberConfig, configPath, err := loadGitHubConfig()
+	if err != nil {
+		return err
+	}
+
+	if printOutput {
+		printBanner()
+	}
+
+	conf := buildGitHubLocalConf(info, plumberConfig, configPath, controlsFilterList, skipControlsList)
+
+	printGitHubAuthBanner(conf.GithubAPIHost, false)
 
 	p, ok := plumberprovider.Get("github")
 	if !ok {
@@ -120,14 +152,7 @@ func runGitHubAnalyzeRemote(host, project, ref string, controlsFilterList, skipC
 	apiHost := strings.TrimPrefix(strings.TrimPrefix(host, "https://"), "http://")
 	printGitHubAuthBanner(apiHost, true)
 
-	conf := configuration.NewDefaultConfiguration()
-	conf.ConfigFilePath = configPath
-	conf.ProjectPath = owner + "/" + repo
-	conf.Branch = ref
-	conf.PlumberConfig = plumberConfig
-	conf.GithubAPIHost = apiHost
-	conf.ControlsFilter = controlsFilterList
-	conf.SkipControlsFilter = skipControlsList
+	conf := buildGitHubRemoteConf(owner, repo, ref, apiHost, plumberConfig, configPath, controlsFilterList, skipControlsList)
 
 	p, ok := plumberprovider.Get("github")
 	if !ok {
