@@ -386,6 +386,12 @@ func platformSnapshotWithObservations(t *testing.T, sha string) *platform.RunCon
 				map[string]any{"name": "1.0.0", "components": []any{map[string]any{"name": "build"}}},
 			},
 		},
+
+		// The attribution the host already resolved. jobs_known is what
+		// permits the CLI to skip its own per-include config merge; an empty
+		// list with jobs_known true would be just as authoritative.
+		"jobs":       []any{"component_job"},
+		"jobs_known": true,
 	})
 	if err != nil {
 		t.Fatalf("marshaling the observed include: %v", err)
@@ -1002,11 +1008,14 @@ func TestSuppliedObservationsRemoveTheUpstreamProbes(t *testing.T) {
 	t.Logf("platform, probing upstream (%d):\n  %s", totalRequests(probed), strings.Join(probed, "\n  "))
 	t.Logf("platform, observations served (%d):\n  %s", totalRequests(observed), strings.Join(observed, "\n  "))
 
+	// What remains is the scanned project's own identity and its unmerged CI
+	// file. Everything aimed at an include's SOURCE project is gone, and so
+	// is the per-include merge: the host resolved the attribution, so the
+	// runner does not resolve it again.
 	wantObserved := []string{
 		"1x GET /api/v4/projects/:id",
 		"1x GET /api/v4/projects/:id/repository/commits",
 		"1x GET /api/v4/projects/:id/repository/files/:file/raw",
-		"1x POST /api/graphql getCiConfig (per-include merge)",
 	}
 	if diff := ledgerDiff(wantObserved, observed); diff != "" {
 		t.Errorf("call inventory with observations served changed:\n%s", diff)
@@ -1018,6 +1027,7 @@ func TestSuppliedObservationsRemoveTheUpstreamProbes(t *testing.T) {
 		"1x GET /api/v4/projects/:id/repository/tags/:ref",
 		"1x GET /api/v4/projects/:id/repository/branches/:ref",
 		"1x POST /api/graphql getCIComponentResource",
+		"1x POST /api/graphql getCiConfig (per-include merge)",
 	} {
 		if slices.Contains(observed, gone) {
 			t.Errorf("%q should not be requested when the host supplied the observation", gone)

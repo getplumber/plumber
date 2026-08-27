@@ -990,7 +990,20 @@ func (dc *GitlabPipelineOriginDataCollection) Run(project *ProjectInfo, token st
 			// Fetch the include with inputs and stages from the merged configuration
 			// Stages are needed because components may reference custom stages defined at the root level
 			var jobsFromInclude []string
-			jobsFromInclude, err = FetchGitlabInclude(include, project.Path, token, conf.GitlabURL, project.LatestHeadCommitSha, conf, includeInputs, data.MergedConf.Stages)
+			if include.JobsKnown {
+				// A host that already resolved this include serves the
+				// attribution, and the request is skipped. JobsKnown is what
+				// permits that, not a non-empty Jobs: an include
+				// contributing only variables legitimately has none.
+				jobsFromInclude = include.Jobs
+				if jobsFromInclude == nil {
+					jobsFromInclude = []string{}
+				}
+				lInclude.WithField("jobs", len(jobsFromInclude)).Debug("Include attribution supplied by the host; not resolving it again")
+				err = nil
+			} else {
+				jobsFromInclude, err = FetchGitlabInclude(include, project.Path, token, conf.GitlabURL, project.LatestHeadCommitSha, conf, includeInputs, data.MergedConf.Stages)
+			}
 			if err != nil {
 				lInclude.WithError(err).Error("Unable to fetch include from GitLab")
 				// Record the dropped include so the caller can flag the run

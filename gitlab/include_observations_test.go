@@ -231,3 +231,53 @@ func TestSuppliedCatalogueKeepsTheVersionRuleHere(t *testing.T) {
 		t.Fatalf("a component in no version has no latest, got %q", got)
 	}
 }
+
+// TestSourceCatalogThreeStates pins the wire contract for a catalogue lookup,
+// including the case a project that is not a catalogue resource at all
+// produces.
+//
+// GetGitlabCIComponentResource returns (nil, nil) there: a DETERMINED absence,
+// not a failure. It has to reach us as present-but-empty, because our decoder
+// reads absence as "not supplied" and falls through to its own lookup - which
+// in the run this exists for has no credential and degrades the control. A
+// determined "publishes nothing" must evaluate, not abstain.
+func TestSourceCatalogThreeStates(t *testing.T) {
+	decode := func(t *testing.T, raw string) MergedCIConfResponseInclude {
+		t.Helper()
+		var inc MergedCIConfResponseInclude
+		if err := json.Unmarshal([]byte(raw), &inc); err != nil {
+			t.Fatalf("decode: %v", err)
+		}
+		return inc
+	}
+
+	t.Run("determined: publishes this component", func(t *testing.T) {
+		inc := decode(t, `{"source_catalog":{"versions":[{"name":"1.0.0","components":[{"name":"build"}]}]}}`)
+		if inc.SourceCatalog == nil {
+			t.Fatal("a served catalogue must decode as present")
+		}
+		if got := latestCatalogVersion(inc.SourceCatalog, "build"); got != "1.0.0" {
+			t.Fatalf("want 1.0.0, got %q", got)
+		}
+	})
+
+	t.Run("determined: not a catalogue resource", func(t *testing.T) {
+		// The shape the platform must serve for GetGitlabCIComponentResource
+		// returning (nil, nil). Present, so the CLI does not re-look-up;
+		// empty, so there is no latest version to be behind.
+		inc := decode(t, `{"source_catalog":{"versions":[]}}`)
+		if inc.SourceCatalog == nil {
+			t.Fatal("a determined absence must be PRESENT-but-empty, not omitted")
+		}
+		if got := latestCatalogVersion(inc.SourceCatalog, "build"); got != "" {
+			t.Fatalf("nothing published means no latest version, got %q", got)
+		}
+	})
+
+	t.Run("not determined: omitted", func(t *testing.T) {
+		inc := decode(t, `{"location":"gitlab.com/g/p/c@1.0.0"}`)
+		if inc.SourceCatalog != nil {
+			t.Fatal("an omitted key must decode as nil so the CLI knows it was never answered")
+		}
+	})
+}

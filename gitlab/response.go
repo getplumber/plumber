@@ -146,6 +146,23 @@ type MergedCIConfResponseInclude struct {
 	RefExistsAsTag    *bool `json:"ref_exists_as_tag,omitempty"`
 	RefExistsAsBranch *bool `json:"ref_exists_as_branch,omitempty"`
 
+	// Jobs is the list of job names this include contributed, and JobsKnown
+	// whether that was established.
+	//
+	// The CLI derives this itself with one config-merge request per include
+	// (DeriveIncludeJobs). A host that has already done so serves it here and
+	// the request is skipped.
+	//
+	// JobsKnown is the discriminator, not the emptiness of Jobs: an empty
+	// list is a REAL answer (a nested include, or one contributing only
+	// variables), so it cannot double as "we did not find out". Jobs is read
+	// only when JobsKnown is true; anything else falls through to the CLI's
+	// own resolution, and if that cannot run the include controls degrade
+	// rather than treating an unresolved include as one that contributed
+	// nothing.
+	Jobs      []string `json:"jobs,omitempty"`
+	JobsKnown bool     `json:"jobs_known,omitempty"`
+
 	// SourceCatalog is the CI catalogue listing for the include's source
 	// project, exactly as GetGitlabCIComponentResource returns it: every
 	// published version and the components each one carries.
