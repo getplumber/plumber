@@ -2515,6 +2515,86 @@ func TestIssue204_VariableWordBoundary(t *testing.T) {
 	}
 }
 
+// TestIssue204_MultipleDangerousVariablesOnOneLine pins the crash
+// reported against v0.4.41: `_dangerous_variable_in_line` was a complete
+// function, so a script line naming TWO configured dangerous variables
+// made it yield two values and OPA aborted the module with
+// eval_conflict_error. Because Engine.Evaluate returns on the first
+// module error, that one line discarded the findings of EVERY policy and
+// the run silently scored 100/100. The default config ships ten
+// dangerous variables, several of which routinely co-occur on one line
+// (CI_COMMIT_REF_NAME with CI_COMMIT_REF_SLUG or CI_COMMIT_BRANCH), so
+// this was reachable on ordinary pipelines.
+//
+// Each dangerous variable on the line is its own injection vector and
+// gets its own finding. Reporting only one would have to guess which is
+// the real sink: on `echo "$CI_COMMIT_MESSAGE" && source
+// "./ci/$CI_COMMIT_REF_NAME.sh"` the safe echo comes first in config
+// order, and naming it invites a reviewer to dismiss a true positive.
+func TestIssue204_MultipleDangerousVariablesOnOneLine(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	cfg := map[string]any{
+		"unsafeVariableExpansion": map[string]any{
+			// Config order matters: the safe one is listed first, so a
+			// first-match-wins rule would report CI_COMMIT_MESSAGE and
+			// stay silent about the variable actually in the sink.
+			"dangerousVariables": []string{"CI_COMMIT_MESSAGE", "CI_COMMIT_REF_NAME"},
+			"allowedPatterns":    []string{},
+		},
+	}
+	pipeline := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitLab,
+		Jobs: []ir.Job{
+			{Name: "deploy", Scripts: []string{`echo "$CI_COMMIT_MESSAGE" && source "./ci/$CI_COMMIT_REF_NAME.sh"`}},
+		},
+	}
+	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	got := []string{}
+	for _, f := range findings {
+		if f.Code == "ISSUE-204" {
+			name, _ := f.Data["variableName"].(string)
+			got = append(got, name)
+		}
+	}
+	sort.Strings(got)
+	want := []string{"CI_COMMIT_MESSAGE", "CI_COMMIT_REF_NAME"}
+	if !stringSlicesEqual(got, want) {
+		t.Fatalf("expected one finding per dangerous variable %v, got %v", want, got)
+	}
+}
+
+// TestIssue204_NoConfigNoFindings pins that the control stays silent when
+// no dangerousVariables are configured, so the set-based rule above does
+// not start flagging every shell re-parse on a config that never enabled
+// the control.
+func TestIssue204_NoConfigNoFindings(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	pipeline := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitLab,
+		Jobs: []ir.Job{
+			{Name: "deploy", Scripts: []string{`eval "$CI_COMMIT_MESSAGE"`}},
+		},
+	}
+	findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	for _, f := range findings {
+		if f.Code == "ISSUE-204" {
+			t.Fatalf("no dangerousVariables configured, expected no ISSUE-204, got %+v", f)
+		}
+	}
+}
+
 // TestIssue412_DindLatestAndRegistryPrefix locks in two legacy
 // behaviours of isDindImage: `docker:latest` is dind, and a
 // registry-prefixed `<host>/docker:dind` is dind. A non-`docker`
