@@ -25,6 +25,12 @@ func (p *GitHubProvider) Controls(pc *configuration.PlumberConfig) []control.Con
 }
 
 func (p *GitHubProvider) ComputeCompliance(result *control.AnalysisResult, conf *configuration.Configuration) (float64, int) {
+	// --no-controls wins over the config: the controls enabled in
+	// .plumber.yaml are ignored, so nothing is evaluated and nothing is
+	// counted. The zero is what makes the gate a no-op.
+	if conf.NoControls {
+		return 0.0, 0
+	}
 	findingsByControl := control.FindingsByControl(result.Findings)
 	entries := control.GitHubControls(conf.PlumberConfig)
 	control.MarkSkippedByFilter(entries, conf.ControlsFilter, conf.SkipControlsFilter)
@@ -72,13 +78,27 @@ func (p *GitHubProvider) RunRemote(conf *configuration.Configuration) (*control.
 	return result, nil
 }
 
+// noControlsAwareGitHubCompliance is the GitHub twin of
+// noControlsAwareImageCompliance: the per-image and per-action flags are
+// derived from findings, so on a --no-controls run they would assert
+// compliance for checks that never ran, inside the artifact the flag exists
+// to produce. Nil means the PBOM records the inventory and claims nothing.
+// conf is required, as everywhere else on this path (the writers read
+// conf.GithubAPIHost unconditionally).
+func noControlsAwareGitHubCompliance(result *control.AnalysisResult, conf *configuration.Configuration) *pbom.GitHubComplianceData {
+	if conf.NoControls {
+		return nil
+	}
+	return pbom.BuildGitHubPBOMCompliance(result)
+}
+
 func (p *GitHubProvider) WritePBOM(result *control.AnalysisResult, conf *configuration.Configuration, filePath string, score *control.PlumberScoreResult, scoreMode bool) error {
 	host := conf.GithubAPIHost
 	if host == "" {
 		host = "github.com"
 	}
 	gen := pbom.NewGitHubGenerator(result.ProjectPath, host, conf.Branch).
-		WithGitHubComplianceData(pbom.BuildGitHubPBOMCompliance(result))
+		WithGitHubComplianceData(noControlsAwareGitHubCompliance(result, conf))
 	bom := gen.GenerateFromGitHubIR(result.GitHubPipeline)
 	bom.PlumberScore = pbom.BuildPlumberScoreSummary(score, scoreMode)
 
@@ -98,7 +118,7 @@ func (p *GitHubProvider) WritePBOMCycloneDX(result *control.AnalysisResult, conf
 		host = "github.com"
 	}
 	gen := pbom.NewGitHubGenerator(result.ProjectPath, host, conf.Branch).
-		WithGitHubComplianceData(pbom.BuildGitHubPBOMCompliance(result))
+		WithGitHubComplianceData(noControlsAwareGitHubCompliance(result, conf))
 	bom := gen.GenerateFromGitHubIR(result.GitHubPipeline)
 	bom.PlumberScore = pbom.BuildPlumberScoreSummary(score, scoreMode)
 	cdx := bom.ToCycloneDX("")

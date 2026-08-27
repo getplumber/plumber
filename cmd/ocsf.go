@@ -346,8 +346,7 @@ func ocsfScanUID(result *control.AnalysisResult, now int64) string {
 // to filePath. Provider-agnostic: every control is listed with an explicit
 // status, so the file is never empty and absence never reads as a pass.
 func writeOCSFToFile(p provider.Provider, result *control.AnalysisResult, conf *configuration.Configuration, filePath string) error {
-	entries := p.Controls(conf.PlumberConfig)
-	control.MarkSkippedByFilter(entries, conf.ControlsFilter, conf.SkipControlsFilter)
+	entries := providerControlEntries(p, conf)
 	now := time.Now().UTC().UnixMilli()
 	events := buildOCSF(entries, result, p.Name(), now, ocsfScanUID(result, now))
 	return writeOCSFEvents(events, filePath)

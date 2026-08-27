@@ -25,11 +25,14 @@ type IncludeOverrideData struct {
 
 // Generator creates PBOMs from pipeline analysis data
 type Generator struct {
-	projectPath      string
-	projectID        int
-	gitlabURL        string
-	branch           string
-	complianceData   *ImageComplianceData
+	projectPath    string
+	projectID      int
+	gitlabURL      string
+	branch         string
+	complianceData *ImageComplianceData
+	// suppressVerdicts drops the collected-but-verdict-bearing include
+	// fields; see WithoutComplianceVerdicts.
+	suppressVerdicts bool
 	includeOverrides *IncludeOverrideData
 	githubData       *GitHubComplianceData
 }
@@ -45,6 +48,20 @@ func NewGenerator(projectPath string, projectID int, gitlabURL, branch string) *
 }
 
 // WithComplianceData attaches compliance results so the PBOM includes authorized/forbiddenTag fields
+// WithoutComplianceVerdicts suppresses the include fields that state a
+// CONTROL'S CONCLUSION rather than what was collected. It backs
+// --no-controls.
+//
+// `UpToDate` is the one that matters: unlike the image flags it is computed
+// during data collection (the origin collector probes the upstream ref), so
+// it survives even when no policy is evaluated, and it is exactly what
+// includesMustBeUpToDate reports. `LatestVersion` is kept: the upstream
+// version is a collected fact and asserts nothing on its own.
+func (g *Generator) WithoutComplianceVerdicts() *Generator {
+	g.suppressVerdicts = true
+	return g
+}
+
 func (g *Generator) WithComplianceData(data *ImageComplianceData) *Generator {
 	g.complianceData = data
 	return g
@@ -166,8 +183,10 @@ func (g *Generator) processIncludes(originData *gitlab.GitlabPipelineOriginData)
 		// Add version info if available
 		if origin.FromPlumber {
 			inc.LatestVersion = origin.PlumberOrigin.LatestVersion
-			upToDate := origin.UpToDate
-			inc.UpToDate = &upToDate
+			if !g.suppressVerdicts {
+				upToDate := origin.UpToDate
+				inc.UpToDate = &upToDate
+			}
 		}
 
 		// Add component-specific info
@@ -177,8 +196,10 @@ func (g *Generator) processIncludes(originData *gitlab.GitlabPipelineOriginData)
 
 			if origin.FromGitlabCatalog {
 				inc.LatestVersion = origin.GitlabComponent.ComponentLatestVersion
-				upToDate := origin.UpToDate
-				inc.UpToDate = &upToDate
+				if !g.suppressVerdicts {
+					upToDate := origin.UpToDate
+					inc.UpToDate = &upToDate
+				}
 			}
 		}
 

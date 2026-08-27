@@ -177,8 +177,7 @@ func csvStatusReason(status string, e control.ControlEntry, result *control.Anal
 // writeCSVToFile walks the provider's control catalog and writes the per-control
 // CSV posture to filePath.
 func writeCSVToFile(p provider.Provider, result *control.AnalysisResult, conf *configuration.Configuration, filePath string) error {
-	entries := p.Controls(conf.PlumberConfig)
-	control.MarkSkippedByFilter(entries, conf.ControlsFilter, conf.SkipControlsFilter)
+	entries := providerControlEntries(p, conf)
 	records := buildCSV(entries, result)
 
 	var buf bytes.Buffer
