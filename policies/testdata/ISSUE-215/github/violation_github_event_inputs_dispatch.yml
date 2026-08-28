@@ -1,0 +1,20 @@
+# `github.event.inputs.*` expanded into a shell body under a
+# workflow_dispatch-only workflow. This FIRES, and the trigger is the
+# point: `${{ inputs.version }}` on this same line would be flagged by
+# the `inputs.*` pattern, so exempting the legacy spelling would give
+# one value two verdicts. Dispatch is not an exemption here; the
+# control is a low-severity hygiene check, not an exploit claim.
+# Expected: 1 finding on run.
+name: Manual release
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        type: string
+        required: true
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - run: ./release.sh ${{ github.event.inputs.version }}
