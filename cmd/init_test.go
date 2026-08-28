@@ -209,7 +209,7 @@ func starterWizardConfig() *configuration.PlumberConfig {
 		AuthorizedActionsUsePlumberList: true,
 		CompositionChoices: []string{
 			compHardcoded, compUpToDate, compForbidden, compRefCollision, compSecurity, compScripts, compJobVars, compDinD,
-			compActionPin, compAuthorizedActions, compDangerousTriggers, compPRTargetHead, compDeclarePermissions, compReusableSecrets, compOverprovSecrets, compTemplateInjection,
+			compActionPin, compAuthorizedActions, compDangerousTriggers, compPRTargetHead, compCheckoutPersist, compDeclarePermissions, compReusableSecrets, compOverprovSecrets, compTemplateInjection,
 			compEnvInjection, compWriteAllPerms, compRefConfusion, compArchivedActions, compKnownCVEs, compImpostorCommit, compMutableRemoteExec, compCachePoisoning, compDebugTraceGitHub,
 		},
 		ActionPinTrustedOwnersMultiline:        strings.Join(defaultGitHubTrustedActionOwners(), "\n"),

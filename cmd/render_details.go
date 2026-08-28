@@ -634,6 +634,10 @@ func buildGitHubControlStats(controlName string, stats *control.GitHubAnalysisSt
 			{Label: "Workflows Scanned", Value: fmt.Sprintf("%d", stats.WorkflowsTotal)},
 			{Label: "Using Dangerous Triggers", Value: fmt.Sprintf("%d", stats.WorkflowsWithDangerousTrigger)},
 		}
+	case "checkoutMustNotPersistCredentials":
+		return []statLine{
+			{Label: "Workflows Scanned", Value: fmt.Sprintf("%d", stats.WorkflowsTotal)},
+		}
 	case "workflowsMustDeclarePermissions":
 		withPerms := stats.WorkflowsTotal - stats.WorkflowsMissingPermissions
 		if withPerms < 0 {
