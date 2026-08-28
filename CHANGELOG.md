@@ -1,3 +1,20 @@
+## [0.4.46](https://github.com/getplumber/plumber/compare/v0.4.45...v0.4.46) (2026-08-28)
+
+
+### ✨ Features
+
+* **controls:** extend ISSUE-215 to github.event.inputs (gated) ([3bce177](https://github.com/getplumber/plumber/commit/3bce177e389df5efd9049bc57c41b0a01725dfd3))
+
+
+### 🐛 Bug Fixes
+
+* **policies:** drop the trigger gate on github.event.inputs ([98fe157](https://github.com/getplumber/plumber/commit/98fe1573ac70fb21dd1001d0f13d20ac41609fc9))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.45 refs [skip ci] ([7c463a9](https://github.com/getplumber/plumber/commit/7c463a9871d0d413640b2f64d2eadbdd6bec5031))
+
 ## [0.4.45](https://github.com/getplumber/plumber/compare/v0.4.44...v0.4.45) (2026-08-28)
 
 
