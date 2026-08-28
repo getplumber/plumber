@@ -1,3 +1,15 @@
+## [0.4.45](https://github.com/getplumber/plumber/compare/v0.4.44...v0.4.45) (2026-08-28)
+
+
+### 🐛 Bug Fixes
+
+* **policies:** one finding per dangerous variable in unsafe-variable-expansion ([1f78450](https://github.com/getplumber/plumber/commit/1f78450f26cd7593d231e878d2ca288f525db1d8))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.44 refs [skip ci] ([c0cf184](https://github.com/getplumber/plumber/commit/c0cf184c0534104cd3fbd7f828056c2910f83cad))
+
 ## [0.4.44](https://github.com/getplumber/plumber/compare/v0.4.43...v0.4.44) (2026-08-26)
 
 
