@@ -1,3 +1,21 @@
+## [0.4.47](https://github.com/getplumber/plumber/compare/v0.4.46...v0.4.47) (2026-08-28)
+
+
+### ✨ Features
+
+* **controls:** grade artipacked by exploitability (ISSUE-307 low + ISSUE-310 high) ([d76162c](https://github.com/getplumber/plumber/commit/d76162c14918caba91b67f5e13294e5976835504))
+* **controls:** ship checkoutMustNotPersistCredentials (ISSUE-307) ([4ff3a9d](https://github.com/getplumber/plumber/commit/4ff3a9d7f5fb1986c0dd313eae1f908e9827784a))
+
+
+### 🐛 Bug Fixes
+
+* **controls:** finish the ISSUE-310 wiring ([210aad6](https://github.com/getplumber/plumber/commit/210aad6af7ab6641a59bacce29666b3013214878))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.46 refs [skip ci] ([fa2385f](https://github.com/getplumber/plumber/commit/fa2385fc109164e9d59088dbaecdf0ae1e3c2d91))
+
 ## [0.4.46](https://github.com/getplumber/plumber/compare/v0.4.45...v0.4.46) (2026-08-28)
 
 
