@@ -1,3 +1,15 @@
+## [0.4.48](https://github.com/getplumber/plumber/compare/v0.4.47...v0.4.48) (2026-08-28)
+
+
+### ✨ Features
+
+* **cli:** add --no-controls to produce artifacts without a verdict ([0768e95](https://github.com/getplumber/plumber/commit/0768e95a38a64bdbdfac0e6d57ff7e90a6b0f767))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.47 refs [skip ci] ([515390b](https://github.com/getplumber/plumber/commit/515390bd199eab3dab6c4fb948c15e2dd8ec7c54))
+
 ## [0.4.47](https://github.com/getplumber/plumber/compare/v0.4.46...v0.4.47) (2026-08-28)
 
 
