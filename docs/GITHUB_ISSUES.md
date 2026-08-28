@@ -1051,7 +1051,7 @@ combine with Dependabot to keep runs reproducible AND fresh.
 **Severity:** `low` • **Control:** `workflowMustNotInjectVarsInScripts`
 
 Same shape as ISSUE-207 template-injection but sourced from
-maintainer-adjacent values rather than PR-author input. Two kinds
+maintainer-adjacent values rather than PR-author input. Three kinds
 are flagged:
 
 - `${{ vars.* }}` — repo / org / environment variables set by
@@ -1060,6 +1060,17 @@ are flagged:
 - `${{ inputs.* }}` — inputs to a reusable workflow. When the
   caller proxies `github.event.*` into an input, the surface flips
   to PR-author-controlled.
+- `${{ github.event.inputs.* }}` — the legacy spelling of the same
+  input context. Matched separately because the `github.event.`
+  prefix sits between `${{` and `inputs.`, so the pattern above
+  never reaches it.
+
+The trigger does not change the verdict. A `workflow_dispatch`-only
+workflow is flagged like any other: `${{ inputs.x }}` and
+`${{ github.event.inputs.x }}` are the same value written two ways,
+and exempting one spelling would give a single input two verdicts.
+The control is a low-severity hygiene check, not a claim that the
+value is attacker-controlled — that is ISSUE-207's job.
 
 ```yaml
 # ❌ before
