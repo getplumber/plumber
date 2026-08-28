@@ -117,12 +117,17 @@ var declarations = map[string][]string{
 	"ISSUE-305": {"file", "job"},
 	// App token issued without revocation: keyed on the token action ref (uses) (benched, not yet live: declaration provisional, revisit on unbench).
 	"ISSUE-306": {"file", "job", "uses"},
-	// Checkout persists credentials: keyed on the action ref (uses); step separates a reused action (benched, not yet live: declaration provisional, revisit on unbench).
+	// Checkout persists credentials, latent: keyed on the action ref (uses); step separates a reused action.
 	"ISSUE-307": {"file", "job", "uses", "step"},
 	// Secret accessed via a dynamic index: one per job, keyed on the job (benched, not yet live: declaration provisional, revisit on unbench).
 	"ISSUE-308": {"file", "job"},
 	// Whole secrets context exported: one per job, keyed on the job.
 	"ISSUE-309": {"file", "job"},
+	// Persisted checkout credentials packed into an uploaded artifact: same
+	// key as ISSUE-307, which it escalates from. A job can check out twice
+	// and pack both, so the action ref has to separate them; keying on the
+	// job alone would report one of the two and silently drop the other.
+	"ISSUE-310": {"file", "job", "uses", "step"},
 	// Hardcoded job: keyed on the hardcoded job name.
 	"ISSUE-401": {"file", "job", "hardcodedJob"},
 	// Ref collides with a tag and a branch: union of the GitHub `uses` and GitLab `includePath` surfaces (see note above).

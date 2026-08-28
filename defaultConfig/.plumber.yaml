@@ -965,6 +965,19 @@ github:
       enabled: true
 
     # ===========================================
+    # Checkout must not persist credentials
+    # ===========================================
+    # By default `actions/checkout` writes the GITHUB_TOKEN into the
+    # cloned repository's `.git/config`, where it survives for the rest
+    # of the job. On its own that is latent (ISSUE-307, low): the token
+    # dies with the job. It becomes a demonstrable leak (ISSUE-310,
+    # high) when a later step uploads a `.git`-inclusive path as an
+    # artifact, which is downloadable. The fix is a one-liner for both:
+    # `with: persist-credentials: false`.
+    checkoutMustNotPersistCredentials:
+      enabled: true
+
+    # ===========================================
     # Workflow must not export the entire secrets context
     # ===========================================
     # Flags a job that serialises the whole `secrets` context with

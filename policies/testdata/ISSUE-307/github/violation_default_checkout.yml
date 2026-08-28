@@ -9,7 +9,11 @@ jobs:
   clone:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      # Named on purpose: `step` is part of this code's identity key, and
+      # the harness requires at least one emission to carry it. Two
+      # checkouts of the same ref in one job are told apart by it.
+      - name: Checkout sources
+        uses: actions/checkout@v4
       - run: echo "built"
       - uses: actions/upload-artifact@v4
         with:

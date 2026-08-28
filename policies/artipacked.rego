@@ -39,6 +39,11 @@ deny contains finding if {
 		"severity": "high",
 		"message":  sprintf("job %q runs %q with credential persistence, then %q uploads a `.git`-inclusive path (%q) — GITHUB_TOKEN is packed into a downloadable artifact and exfiltrable", [job.name, action.uses, upload.uses, _upload_path(upload)]),
 		"job":      job.name,
+		# The checkout ref, not the upload's: it is what identifies WHICH
+		# step persisted the credential. A job can check out twice (its own
+		# repo plus another) and both can pack; without this they collapse
+		# into one finding and the second checkout is never reported.
+		"uses": action.uses,
 		"line":     object.get(action, "line", 0),
 	}
 }

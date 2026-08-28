@@ -47,6 +47,8 @@ func buildLegacyResultGitHub(e control.ControlEntry, result *control.AnalysisRes
 		return "overprovisionedSecretsResult", buildOverprovisionedSecretsBlock(common, result, findings)
 	case "workflowMustNotUseDangerousTriggers":
 		return "dangerousTriggersResult", buildDangerousTriggersBlock(common, result, findings)
+	case "checkoutMustNotPersistCredentials":
+		return "checkoutCredentialsResult", buildCheckoutCredentialsBlock(common, result, findings)
 	case "pullRequestTargetMustNotCheckoutHead":
 		return "pullRequestTargetHeadCheckoutResult", buildPullRequestTargetHeadCheckoutBlock(common, result, findings)
 	case "workflowsMustDeclarePermissions":
@@ -404,6 +406,40 @@ func buildCachePoisoningBlock(c legacyCommon, result *control.AnalysisResult, fi
 // buildDangerousTriggersBlock — ISSUE-802. Denominator is workflows
 // total; numerator is workflows whose trigger set intersects the
 // dangerous-triggers list.
+// buildCheckoutCredentialsBlock — ISSUE-307 / ISSUE-310. One control, two
+// codes graded by exploitability: the credential merely persisting (latent)
+// versus the credential also being packed into a downloadable artifact (a
+// demonstrable leak). The two are counted separately because a consumer
+// triaging this needs to know which of the two it has; a single total would
+// make a hygiene backlog and an exfiltrable token look alike.
+//
+// The counts come from the findings rather than from a stats field: nothing
+// in the collector counts checkout steps, and adding a stat to serve one
+// block would be plumbing for its own sake.
+func buildCheckoutCredentialsBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	latent, packed := 0, 0
+	for _, f := range findings {
+		switch f.Code {
+		case string(control.CodeArtipacked):
+			latent++
+		case string(control.CodeArtipackedExfiltrated):
+			packed++
+		}
+	}
+	return map[string]any{
+		"issues": projectFindings(findings, "job"),
+		"metrics": map[string]any{
+			"workflowsScanned":            statsOf(result).WorkflowsTotal,
+			"checkoutsPersistingLatent":   latent,
+			"checkoutsPackedIntoArtifact": packed,
+		},
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
+	}
+}
+
 func buildDangerousTriggersBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
 	s := statsOf(result)
 	return map[string]any{
