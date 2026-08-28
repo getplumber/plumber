@@ -201,3 +201,59 @@ func TestDeriveIncludeJobsPreservesOrder(t *testing.T) {
 		t.Error("the request must not be mutated")
 	}
 }
+
+// TestDeriveIncludeJobsNestedIsCaseInsensitive covers the footgun the export
+// creates and the origin loop does not have.
+//
+// ProjectPath comes from the caller here, ContextProject from GitLab, and
+// GitLab matches project paths without regard to case. A caller whose stored
+// path differs only in case would classify every include as nested: every one
+// Known with zero jobs. The jobs they really contributed stay in the merged
+// pipeline unattributed, read as project-authored, and the rules keyed on
+// that distinction fire on them.
+func TestDeriveIncludeJobsNestedIsCaseInsensitive(t *testing.T) {
+	srv := refusingServer(t)
+	conf := &configuration.Configuration{
+		HTTPClientTimeout: 5 * time.Second,
+		GitlabURL:         srv.URL,
+	}
+
+	// GitLab says "MyGroup/MyRepo"; the caller stored "mygroup/myrepo".
+	got, err := DeriveIncludeJobs(IncludeJobsRequest{
+		Includes: []MergedCIConfResponseInclude{
+			{Location: "a.yml", Type: glOriginLocal, ContextProject: "MyGroup/MyRepo"},
+		},
+		ProjectPath: "mygroup/myrepo",
+		Conf:        conf,
+	})
+	if err != nil {
+		t.Fatalf("derive: %v", err)
+	}
+	if got[0].Nested {
+		t.Fatal("same project in a different case is NOT a nested include")
+	}
+}
+
+// TestDeriveIncludeJobsStillDetectsGenuineNesting is the other half: the
+// case-insensitive compare must not swallow a real difference.
+func TestDeriveIncludeJobsStillDetectsGenuineNesting(t *testing.T) {
+	srv := refusingServer(t)
+	conf := &configuration.Configuration{
+		HTTPClientTimeout: 5 * time.Second,
+		GitlabURL:         srv.URL,
+	}
+
+	got, err := DeriveIncludeJobs(IncludeJobsRequest{
+		Includes: []MergedCIConfResponseInclude{
+			{Location: "a.yml", Type: glOriginLocal, ContextProject: "vendor/templates"},
+		},
+		ProjectPath: "mygroup/myrepo",
+		Conf:        conf,
+	})
+	if err != nil {
+		t.Fatalf("derive: %v", err)
+	}
+	if !got[0].Nested {
+		t.Fatal("a genuinely different project is still nested")
+	}
+}

@@ -1,6 +1,8 @@
 package gitlab
 
 import (
+	"strings"
+
 	"github.com/getplumber/plumber/configuration"
 	"github.com/sirupsen/logrus"
 )
@@ -111,8 +113,36 @@ func DeriveIncludeJobs(req IncludeJobsRequest) ([]IncludeJobs, error) {
 
 		// An include pulled in by another include is attributed to its
 		// parent, not to this project.
-		if inc.ContextProject != req.ProjectPath {
+		//
+		// Compared case-insensitively because this is a PUBLIC entry point:
+		// ProjectPath comes from the caller, while ContextProject comes from
+		// GitLab, and GitLab matches project paths without regard to case. A
+		// caller whose stored path differs only in case from GitLab's would
+		// classify EVERY include as nested - every one reporting zero jobs,
+		// Known true. That is not a silent pass but a fabricating one: the
+		// jobs those includes really contributed stay in the merged pipeline
+		// with nothing attributing them upstream, so they read as
+		// project-authored and the rules keyed on that distinction fire on
+		// them.
+		//
+		// The origin loop compares exactly and is safe doing so: both of its
+		// sides come from GitLab (PathWithNamespace or $CI_PROJECT_PATH, and
+		// the ciConfig response), so they always agree on form. Only an
+		// exported entry point can be handed a path from somewhere else.
+		if !strings.EqualFold(inc.ContextProject, req.ProjectPath) {
 			out[i] = IncludeJobs{Jobs: []string{}, Known: true, Nested: true}
+			continue
+		}
+
+		// Already resolved by a host that served the attribution. JobsKnown
+		// is what permits skipping the request, not a non-empty Jobs: an
+		// include contributing only variables legitimately has none.
+		if inc.JobsKnown {
+			jobs := inc.Jobs
+			if jobs == nil {
+				jobs = []string{}
+			}
+			out[i] = IncludeJobs{Jobs: jobs, Known: true}
 			continue
 		}
 

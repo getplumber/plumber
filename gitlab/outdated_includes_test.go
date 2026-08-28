@@ -14,9 +14,9 @@ func TestSplitComponentPath(t *testing.T) {
 		{"foo", "", "foo"},
 	}
 	for _, c := range cases {
-		p, comp := splitComponentPath(c.in)
+		p, comp := SplitComponentPath(c.in)
 		if p != c.project || comp != c.component {
-			t.Errorf("splitComponentPath(%q) = (%q,%q), want (%q,%q)", c.in, p, comp, c.project, c.component)
+			t.Errorf("SplitComponentPath(%q) = (%q,%q), want (%q,%q)", c.in, p, comp, c.project, c.component)
 		}
 	}
 }

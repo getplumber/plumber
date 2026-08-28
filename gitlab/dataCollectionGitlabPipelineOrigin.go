@@ -261,12 +261,19 @@ func resolvePredefinedProjectVars(path, projectPath string) string {
 	return path
 }
 
-// splitComponentPath splits a GitLab component cleanPath
-// ("group/.../project/component") into the project full path and the component
-// name (the last segment). GitLab component includes are always
-// <project-full-path>/<component-name>, so the project is everything before the
-// final "/". Used to resolve the project's catalog resource / git tags (#156).
-func splitComponentPath(cleanPath string) (project string, component string) {
+// SplitComponentPath splits a component's clean path (no instance, no version)
+// into the project full path and the component name. GitLab component includes
+// are always <project-full-path>/<component-name>, so the project is
+// everything before the final "/": "vendor/components/build" gives
+// "vendor/components" and "build". Used to resolve the project's catalog
+// resource / git tags (#156).
+//
+// Pair it with ParseGitlabComponentPath, which strips the instance and the
+// version first. Exported because an embedding host otherwise hand-rolls the
+// same split, and a component name taken from the wrong segment silently
+// mismatches the catalogue lookup - the component is then reported as having
+// no published version rather than as up to date.
+func SplitComponentPath(cleanPath string) (project string, component string) {
 	i := strings.LastIndex(cleanPath, "/")
 	if i < 0 {
 		return "", cleanPath
@@ -634,8 +641,33 @@ func (dc *GitlabPipelineOriginDataCollection) Run(project *ProjectInfo, token st
 	// This map will help us pass the correct inputs when fetching includes
 	// Key: include hash (same hash used for origin tracking)
 	// Value: map of input name to input value
-	includeInputsMap := buildIncludeInputsMap(data.Conf, conf.GitlabURL, project.Path)
-	l.WithField("includeInputsMap", includeInputsMap).Debug("Built include inputs map from original configuration")
+	// Job attribution for every include, derived once through the same
+	// exported entry point an embedding host calls.
+	//
+	// This loop used to resolve each include inline, which made
+	// DeriveIncludeJobs a SECOND implementation of the same rules - the
+	// nested test, the inputs-hash lookup, the resolve-or-degrade decision.
+	// Two copies of a judgement agree only by coincidence, which is the
+	// whole argument this package makes to the platform; it would be a poor
+	// one to break here.
+	//
+	// The error is not fatal: a request that could not be started at all
+	// leaves every entry Known false, and the loop degrades each include
+	// exactly as it would have on an individual failure.
+	includeJobs, deriveErr := DeriveIncludeJobs(IncludeJobsRequest{
+		RawConfig:   data.Conf,
+		Includes:    data.MergedResponse.CiConfig.Includes,
+		Stages:      data.MergedConf.Stages,
+		ProjectPath: project.Path,
+		Token:       token,
+		APIURL:      conf.GitlabURL,
+		SHA:         project.LatestHeadCommitSha,
+		Conf:        conf,
+	})
+	if deriveErr != nil {
+		l.WithError(deriveErr).Warn("Include attribution could not be derived; every include will report unresolved")
+		includeJobs = make([]IncludeJobs, len(data.MergedResponse.CiConfig.Includes))
+	}
 
 	//////////////////
 	// Extract data //
@@ -714,7 +746,7 @@ func (dc *GitlabPipelineOriginDataCollection) Run(project *ProjectInfo, token st
 	/////////////////////////////////////////////////////////////////////////
 
 	if data.MergedResponse != nil {
-		for _, include := range data.MergedResponse.CiConfig.Includes {
+		for i, include := range data.MergedResponse.CiConfig.Includes {
 
 			// Add logging info
 			lInclude := l.WithField("include", include)
@@ -729,7 +761,7 @@ func (dc *GitlabPipelineOriginDataCollection) Run(project *ProjectInfo, token st
 			// To detect if the origin is not first level (so, nested), we just check if
 			// contextProject is different that the current project
 			isNested := false
-			if include.ContextProject != project.Path {
+			if includeJobs[i].Nested {
 				lInclude.Debug("Nested include found")
 				isNested = true
 				// NOTE: there is a case of nested include we don't detect yet:
@@ -797,7 +829,7 @@ func (dc *GitlabPipelineOriginDataCollection) Run(project *ProjectInfo, token st
 
 				// Resolve the component's latest published version via a targeted
 				// catalog lookup (cached), falling back to the project's git tags (#156).
-				project, componentName := splitComponentPath(cleanPath)
+				project, componentName := SplitComponentPath(cleanPath)
 				if componentName == "" {
 					lInclude.Warning("Component name is empty. It should not happen.")
 					continue
@@ -979,33 +1011,15 @@ func (dc *GitlabPipelineOriginDataCollection) Run(project *ProjectInfo, token st
 			// project files from other repos, remote URLs).
 			isLocalInclude := include.Type == glOriginLocal
 
-			// Get inputs for this include from the map using the origin hash
-			// The hash was already calculated
-			includeInputs := includeInputsMap[originData.OriginHash]
-			lInclude.WithFields(logrus.Fields{
-				"originHash": originData.OriginHash,
-				"inputs":     includeInputs,
-			}).Debug("Fetching include with inputs")
-
-			// Fetch the include with inputs and stages from the merged configuration
-			// Stages are needed because components may reference custom stages defined at the root level
-			var jobsFromInclude []string
-			if include.JobsKnown {
-				// A host that already resolved this include serves the
-				// attribution, and the request is skipped. JobsKnown is what
-				// permits that, not a non-empty Jobs: an include
-				// contributing only variables legitimately has none.
-				jobsFromInclude = include.Jobs
-				if jobsFromInclude == nil {
-					jobsFromInclude = []string{}
-				}
-				lInclude.WithField("jobs", len(jobsFromInclude)).Debug("Include attribution supplied by the host; not resolving it again")
-				err = nil
-			} else {
-				jobsFromInclude, err = FetchGitlabInclude(include, project.Path, token, conf.GitlabURL, project.LatestHeadCommitSha, conf, includeInputs, data.MergedConf.Stages)
-			}
-			if err != nil {
-				lInclude.WithError(err).Error("Unable to fetch include from GitLab")
+			// The attribution derived above. Known false means the include
+			// could not be resolved, which is NOT an include that
+			// contributed nothing: its jobs are still in the merged
+			// pipeline with nothing attributing them upstream, so they read
+			// as project-authored and the rules keyed on that distinction
+			// fire on them.
+			jobsFromInclude := includeJobs[i].Jobs
+			if !includeJobs[i].Known {
+				lInclude.Error("Unable to resolve include; its attribution is unknown")
 				// Record the dropped include so the caller can flag the run
 				// degraded: its jobs are missing from the analysis (#220).
 				loc := include.Location
