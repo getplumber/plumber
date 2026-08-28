@@ -41,7 +41,7 @@ deny contains finding if {
 	trimmed != ""
 	not startswith(trimmed, "#")
 	_has_shell_reparse(trimmed)
-	var_name := _dangerous_variable_in_line(line)
+	some var_name in _dangerous_variables_in_line(line)
 	not _is_allowed(line)
 	block := _script_block(job, j)
 	finding := {
@@ -68,10 +68,29 @@ _has_shell_reparse(line) if {
 	regex.match(shell_reparse_patterns[_], line)
 }
 
-_dangerous_variable_in_line(line) := name if {
-	some candidate in input.config.unsafeVariableExpansion.dangerousVariables
-	_variable_used(line, candidate)
-	name := candidate
+# _dangerous_variables_in_line returns every configured dangerous
+# variable used on the line, as a set.
+#
+# A single line can name several of them, and they are not
+# interchangeable: on
+#
+#   echo "$CI_COMMIT_MESSAGE" && source "./ci/$CI_COMMIT_REF_NAME.sh"
+#
+# the injection is the branch-controlled path, not the echo. Reporting
+# one variable per line would have to guess which is the real sink, and
+# naming the safe one invites a reviewer to dismiss a true positive and
+# silence the line with an allowedPatterns entry. So each dangerous
+# variable on the line is its own finding, keyed by `variableName`.
+#
+# Returning a set (rather than the earlier complete function that yielded
+# one value per match) is also what fixes the eval_conflict_error this
+# rule used to raise: a function must produce exactly one output for the
+# same input, and the set is that one output.
+_dangerous_variables_in_line(line) := names if {
+	names := {candidate |
+		some candidate in input.config.unsafeVariableExpansion.dangerousVariables
+		_variable_used(line, candidate)
+	}
 }
 
 # Match ${VAR} (braced — exact name).
