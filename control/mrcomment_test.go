@@ -150,3 +150,26 @@ func TestMRCommentOrderCoversEveryGitLabControl(t *testing.T) {
 		}
 	}
 }
+
+// TestGenerateMRComment_NotEvaluableRow pins the MR-comment table's third
+// state (re-raised #431 review thread): a control whose data lane supplied
+// nothing renders as "not evaluated" with a grey question mark, never as a
+// green check a reviewer would take for a pass.
+func TestGenerateMRComment_NotEvaluableRow(t *testing.T) {
+	enabled := true
+	pc := &configuration.PlumberConfig{GitLab: &configuration.ProviderConfig{
+		Controls: configuration.ControlsConfig{
+			BranchMustBeProtected: &configuration.BranchProtectionControlConfig{Enabled: &enabled},
+		},
+	}}
+	result := &AnalysisResult{CiValid: true}
+	result.MarkNotEvaluable("branchMustBeProtected", ReasonCollectionFailed)
+
+	body := generateMRComment(result, pc, true, "", nil, false, false, nil, nil)
+	if !strings.Contains(body, ":grey_question:") || !strings.Contains(body, "_not evaluated_") {
+		t.Fatalf("a not_evaluable control must render its own row, got:\n%s", body)
+	}
+	if strings.Contains(body, ":white_check_mark: Branch must be protected") {
+		t.Fatalf("a not_evaluable control must never render as a green check:\n%s", body)
+	}
+}

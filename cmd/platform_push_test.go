@@ -1040,3 +1040,52 @@ func keysOf(m map[string]json.RawMessage) []string {
 	}
 	return out
 }
+
+// notEvaluableReasonData carries the machine-readable reason onto the
+// pushed finding; dropping it would leave the platform unable to tell "the
+// resolution was unavailable" from "this lane is not switched over" without
+// parsing prose (re-raised #431 review thread).
+func TestNotEvaluableReasonData(t *testing.T) {
+	r := &control.AnalysisResult{}
+	r.MarkNotEvaluable("includesMustBeUpToDate", "resolution_unavailable")
+
+	raw := notEvaluableReasonData(r, "includesMustBeUpToDate")
+	var got map[string]string
+	if err := json.Unmarshal(raw, &got); err != nil || got["reason"] != "resolution_unavailable" {
+		t.Fatalf("want {reason: resolution_unavailable}, got %s (err %v)", raw, err)
+	}
+	if data := notEvaluableReasonData(r, "someOtherControl"); data != nil {
+		t.Fatalf("an unmarked control must carry no reason data, got %s", data)
+	}
+	if data := notEvaluableReasonData(nil, "includesMustBeUpToDate"); data != nil {
+		t.Fatalf("a nil result must yield nil, got %s", data)
+	}
+}
+
+// Platform mode runs tokenless by design: the OIDC id-token replaces the
+// personal token, so resolveGitLabToken must permit an empty GITLAB_TOKEN
+// when --platform is configured and still refuse it otherwise (re-raised
+// #431 review thread; the core of #368's tokenless CI).
+func TestResolveGitLabToken_PlatformModeBypass(t *testing.T) {
+	orig := platformURL
+	defer func() { platformURL = orig }()
+	t.Setenv("GITLAB_TOKEN", "")
+
+	platformURL = "https://app.example.com"
+	token, err := resolveGitLabToken(analyzeFlags{})
+	if err != nil || token != "" {
+		t.Fatalf("platform mode must continue tokenless: got (%q, %v)", token, err)
+	}
+
+	platformURL = ""
+	if _, err := resolveGitLabToken(analyzeFlags{}); err == nil {
+		t.Fatal("without --platform a missing GITLAB_TOKEN must stay an informative error")
+	}
+
+	platformURL = "https://app.example.com"
+	t.Setenv("GITLAB_TOKEN", "glpat-real")
+	token, err = resolveGitLabToken(analyzeFlags{})
+	if err != nil || token != "glpat-real" {
+		t.Fatalf("a supplied token must always win: got (%q, %v)", token, err)
+	}
+}
