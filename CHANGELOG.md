@@ -1,3 +1,26 @@
+## [0.4.50](https://github.com/getplumber/plumber/compare/v0.4.49...v0.4.50) (2026-08-31)
+
+
+### ✨ Features
+
+* **platform:** export include job attribution and consume includes[].jobs ([619949c](https://github.com/getplumber/plumber/commit/619949c6763f1eb4f7eae43f838f63133016b1a6))
+* **platform:** fetch policies and collected data from the platform ([9e3fb7e](https://github.com/getplumber/plumber/commit/9e3fb7ed66d47d937a2adc14ee3d0bcf9dbacf27))
+* **platform:** fire the resolve request at setup and collect it at first use ([97656cb](https://github.com/getplumber/plumber/commit/97656cb5a5ad2805c469b7ed88acda666071de46))
+
+
+### 🐛 Bug Fixes
+
+* **cmd:** compare the checkout remote to --gitlab-url ignoring the scheme ([bdc398e](https://github.com/getplumber/plumber/commit/bdc398ebe985d0d3824fc9387b961fd34958e45d))
+* **gitlab:** a platform cache miss is not an authoritative empty variables listing ([4c6f96e](https://github.com/getplumber/plumber/commit/4c6f96e12ec485db6a32868d700a9cd38fadf4af))
+* **gitlab:** normalise the nested-include comparison and export SplitComponentPath ([81322b0](https://github.com/getplumber/plumber/commit/81322b0122c5fd534fce0b344aa5e5d560416bee))
+* **platform:** drop the sync ResolveRunConfig wrapper the deadcode gate rejects ([9f2bb87](https://github.com/getplumber/plumber/commit/9f2bb87210ceac50c83cd0b99b21ca2a4679dba6))
+* **platform:** push effective_config as the flat per-provider controls map ([fd04954](https://github.com/getplumber/plumber/commit/fd049544f313c51da7b8b0ca5ddba4e93f54c004))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.49 refs [skip ci] ([0c96d72](https://github.com/getplumber/plumber/commit/0c96d722cda12c0049f05979c7e19dfa4f1df1ad))
+
 ## [0.4.49](https://github.com/getplumber/plumber/compare/v0.4.48...v0.4.49) (2026-08-31)
 
 
