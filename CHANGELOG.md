@@ -1,3 +1,20 @@
+## [0.4.49](https://github.com/getplumber/plumber/compare/v0.4.48...v0.4.49) (2026-08-31)
+
+
+### 🐛 Bug Fixes
+
+* **ci:** treat a review that completes without structured output as zero findings ([fb00f18](https://github.com/getplumber/plumber/commit/fb00f18348f7e149a1daa03a159f710e2358a637))
+
+
+### ✅ Tests
+
+* **cli:** pin that --no-controls keeps collected include versions ([a6ab96d](https://github.com/getplumber/plumber/commit/a6ab96df5fa33698438a3d208d60b298e97cf3e2)), closes [#435](https://github.com/getplumber/plumber/issues/435)
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.48 refs [skip ci] ([c5bb99e](https://github.com/getplumber/plumber/commit/c5bb99e31f9581bd75925686c9bfc9bb599915c3))
+
 ## [0.4.48](https://github.com/getplumber/plumber/compare/v0.4.47...v0.4.48) (2026-08-28)
 
 
