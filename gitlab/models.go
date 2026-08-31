@@ -95,6 +95,25 @@ type Project struct {
 	IsOfficialCatalogResource bool              `json:"isOfficialCatalogResource"`
 	Languages                 []ProjectLanguage `json:"languages"`
 	CreatedAt                 time.Time         `json:"createdAt" validate:"required"`
+
+	// The merge-request settings mergeRequestSettingsMustBeCompliant
+	// (ISSUE-506) compares against. They come from the same
+	// Projects.GetProject response as everything above, so carrying them
+	// costs no extra request - they were simply not projected before.
+	//
+	// The Plumber platform imports this package to build its own collector
+	// and cannot serve a project_details lane for ISSUE-506 without them
+	// (#368 ask 4). MergeMethod and SquashOption are GitLab typed strings
+	// upstream; they are plain strings here because nothing in this repo
+	// compares them as anything else.
+	MergeMethod                     string `json:"mergeMethod"`
+	SquashOption                    string `json:"squashOption"`
+	MergePipelinesEnabled           bool   `json:"mergePipelinesEnabled"`
+	MergeTrainsEnabled              bool   `json:"mergeTrainsEnabled"`
+	AllowMergeOnSkippedPipeline     bool   `json:"allowMergeOnSkippedPipeline"`
+	ResolveOutdatedDiffDiscussions  bool   `json:"resolveOutdatedDiffDiscussions"`
+	PrintingMergeRequestLinkEnabled bool   `json:"printingMergeRequestLinkEnabled"`
+	RemoveSourceBranchAfterMerge    bool   `json:"removeSourceBranchAfterMerge"`
 }
 
 // ProjectLanguage represents a programming language used in a project
@@ -282,16 +301,6 @@ type Environment struct {
 	// See https://docs.gitlab.com/ee/ci/yaml/#rules
 	Name map[string]string `yaml:",inline"`
 	URL  string            `yaml:"url,omitempty"`
-}
-
-// Common struct for GitLab members (both project and group members)
-type GitlabMemberInfo struct {
-	ID            int    `json:"id"`
-	Name          string `json:"name"`          // GitLab username (@username)
-	DisplayedName string `json:"displayedName"` // GitLab display name (e.g., "John Doe")
-	Email         string `json:"email"`
-	AvatarURL     string `json:"avatarUrl"`
-	AccessLevel   int    `json:"accessLevel"`
 }
 
 type Resources struct {

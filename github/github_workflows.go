@@ -265,6 +265,18 @@ func enrichActionsWithAPIMetadata(pipeline *ir.NormalizedPipeline, apiHost strin
 // that consumes it while every other test stays green.
 func enrichActionsWithClient(pipeline *ir.NormalizedPipeline, client *GitHubMetadataClient, scanMutableExec bool, progressFn ProgressFunc) {
 	if !client.Available() {
+		// Returning silently here was the widest silent pass on this
+		// provider: no action gets .Metadata, so every rule that reads it
+		// simply never fires, and nine controls report passed over an
+		// enrichment that did not run. The cause was already recorded on
+		// the client and never read.
+		//
+		// The warning goes on the same channel the per-action ones use, so
+		// the renderer and the JSON/SARIF writers surface it exactly as
+		// they already surface a blocked tag list (ISSUE-228).
+		if reason := client.UnavailableReason(); reason != "" {
+			pipeline.AdvisoryWarnings = append(pipeline.AdvisoryWarnings, reason)
+		}
 		return
 	}
 	// Pre-count unique refs for accurate N/total ratios.

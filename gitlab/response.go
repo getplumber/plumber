@@ -118,4 +118,46 @@ type MergedCIConfResponseInclude struct {
 		Project string `json:"project,omitempty"`
 		Ref     string `json:"ref,omitempty"`
 	} `json:"extra,omitempty"`
+
+	// The fields below are upstream OBSERVATIONS about this include's SOURCE
+	// project, supplied by an embedding host that collected them on the
+	// CLI's behalf (the Plumber platform). GitLab does not return them on the
+	// merged-config response; they are additive, and a run that receives none
+	// behaves exactly as it did before they existed.
+	//
+	// They exist because these questions can only be answered by talking to
+	// the SOURCE project - the catalogue that publishes a component, or the
+	// project an include points at - and a tokenless CI job has no
+	// credentials for it. The host that does holds them here.
+	//
+	// The host supplies observations only. Whether a ref is ambiguous, and
+	// whether a pin is behind, are judgements this package makes from them.
+	// A host that ships conclusions instead ends up with a second copy of
+	// the control logic, which is how it drifts.
+
+	// RefExistsAsTag and RefExistsAsBranch report whether this include's ref
+	// names an existing tag, and an existing branch, in the source project.
+	//
+	// Tri-state deliberately. A nil pointer means the host did not determine
+	// the answer - a skipped probe, a rate limit, a cancelled request - which
+	// is NOT a determined false and must not be read as one. A ref that could
+	// not be checked is not an unambiguous ref, and collapsing the two is the
+	// silent pass ISSUE-402 exists to catch.
+	RefExistsAsTag    *bool `json:"ref_exists_as_tag,omitempty"`
+	RefExistsAsBranch *bool `json:"ref_exists_as_branch,omitempty"`
+
+	// SourceCatalog is the CI catalogue listing for the include's source
+	// project, exactly as GetGitlabCIComponentResource returns it: every
+	// published version and the components each one carries.
+	//
+	// It is served verbatim rather than reduced to a "latest version" on
+	// purpose. Which versions count is a rule - only those still carrying
+	// the named component - and latestCatalogVersion applies it here. A host
+	// that reduces first has to reimplement that rule to do so, and a
+	// component dropped in a later version is then reported as upgradeable
+	// to a version that does not contain it.
+	//
+	// Nil means the lookup did not complete, which leaves the component with
+	// no known latest version and the up-to-date control without a verdict.
+	SourceCatalog *CICatalogResource `json:"source_catalog,omitempty"`
 }

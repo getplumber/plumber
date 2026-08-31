@@ -1,6 +1,8 @@
 package gitlab
 
 import (
+	"fmt"
+	"io"
 	"net/http"
 	"regexp"
 	"strings"
@@ -75,7 +77,7 @@ func GetGraphQLClient(url string, conf *configuration.Configuration) *graphql.Cl
 	}
 
 	// Initialize the GraphQL client
-	client := graphql.NewClient(url, graphql.WithHTTPClient(httpClient))
+	client := graphql.NewClient(url, graphql.WithHTTPClient(guardGraphQLStatus(httpClient)))
 
 	// Optionally add logging for debugging GraphQL queries
 	// Mask sensitive data like Authorization headers
@@ -102,3 +104,57 @@ func maskSensitiveData(s string) string {
 
 	return s
 }
+
+// guardGraphQLStatus returns a client that reports a non-2xx GraphQL
+// response as an ERROR rather than as an empty result.
+//
+// The GraphQL library decodes the body first and only consults the status
+// code if that decode fails. GitLab answers an unauthorized GraphQL request
+// with 401 and a JSON body - `{"message":"401 Unauthorized"}` - which
+// decodes perfectly into a response carrying no data and no `errors`. The
+// caller therefore receives success and an empty payload, and cannot tell a
+// refused request from a project that genuinely has no CI configuration, no
+// catalogue entry, or no variables.
+//
+// Every silent-pass this produces runs the same way: a control reads an
+// empty collection, finds nothing to object to, and reports compliant. That
+// is the one direction a compliance scanner must never fail in, and it is
+// invisible in a log because nothing errored.
+//
+// The client is copied rather than mutated: it may be one the embedding
+// host injected for its own rate limiting (ADR-0021 rule J), and its
+// Timeout, redirect policy and cookie jar have to survive. Only the
+// transport is wrapped.
+func guardGraphQLStatus(client *http.Client) *http.Client {
+	guarded := *client
+	next := client.Transport
+	if next == nil {
+		next = http.DefaultTransport
+	}
+	guarded.Transport = graphQLStatusGuard{next: next}
+	return &guarded
+}
+
+// graphQLStatusGuard turns a non-2xx response into a transport error.
+type graphQLStatusGuard struct{ next http.RoundTripper }
+
+func (g graphQLStatusGuard) RoundTrip(req *http.Request) (*http.Response, error) {
+	resp, err := g.next.RoundTrip(req)
+	if err != nil || resp == nil {
+		return resp, err
+	}
+	if resp.StatusCode >= 200 && resp.StatusCode <= 299 {
+		return resp, nil
+	}
+	// The body is drained and closed here rather than handed on: returning
+	// an error from RoundTrip means nothing downstream will read it, and an
+	// unread body leaks the connection.
+	_, _ = io.Copy(io.Discard, io.LimitReader(resp.Body, graphQLErrorBodyLimit))
+	_ = resp.Body.Close()
+	return nil, fmt.Errorf("graphql: %s", resp.Status)
+}
+
+// graphQLErrorBodyLimit bounds how much of a failed response is drained
+// before the connection is released. The content is not used; draining only
+// exists so the connection can be reused.
+const graphQLErrorBodyLimit = 4 << 10

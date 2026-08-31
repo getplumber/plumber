@@ -55,6 +55,17 @@ type GitlabPipelineImageInfo struct {
 	Tag      string `json:"tag"`
 	Registry string `json:"registry"`
 	Job      string `json:"job"`
+	// Unresolved records that the reference still contained a `$VARIABLE`
+	// after substitution, so the registry, name and tag below were parsed
+	// out of a placeholder rather than out of an image reference.
+	//
+	// This is not a small imprecision. `$CI_REGISTRY_IMAGE:$TAG` parses to
+	// the "unknown" registry and either an empty tag or the literal string
+	// "$TAG", and the rules then answer real questions about it: whether the
+	// registry is on the trusted list, whether the tag is forbidden. Both
+	// answers are arbitrary. Marking the reference lets the rules abstain on
+	// that one job and keep judging every other one.
+	Unresolved bool `json:"unresolved,omitempty"`
 }
 
 ///////////////////////////////
@@ -577,6 +588,7 @@ func (i *GitlabPipelineImageInfo) parseImageReference(l *logrus.Entry) {
 	// Check if it contains any unresolved variables
 	if strings.Contains(i.Link, "$") {
 		l.WithField("image", i).Debug("Image link contains variables")
+		i.Unresolved = true
 		i.handlePresenceOfVariables()
 		l.WithField("imageRegistry", i.Registry).WithField("imageName", i.Name).WithField("imageTag", i.Tag).Debug("Image link contains variables")
 		return
@@ -705,43 +717,58 @@ func (dc *GitlabPipelineImageDataCollection) Run(project *ProjectInfo, token str
 		return data, metrics, err
 	}
 
-	// Get instance variables only if it's an instance wide organization (not a group)
-	if !project.IsGroup {
-		instanceVarsResult, err := GetGitlabInstanceVariables(token, conf.GitlabURL, conf)
+	// Variable VALUES, used for one thing only: expanding placeholders in
+	// image references so a registry and a tag can be judged.
+	//
+	// In platform mode they come from the job's own environment. GitLab has
+	// already reduced instance, group and project scope there, applied
+	// environment scoping and protected-ref rules, and exported exactly what
+	// this job may see - so it is both the value the job will actually use
+	// and three fewer privileged API calls. The platform serves the variable
+	// NAMES and never the values; the job supplies the values for those
+	// names. See JobEnvironmentVariables.
+	if conf != nil && conf.PlatformRun.Engaged() {
+		data.ProjectVars = JobEnvironmentVariables(DeclaredVariableNames(conf.PlatformRun))
+		l.WithField("envVarKeys", GetMapKeys(data.ProjectVars)).Debug("Image-ref variables resolved from the job environment")
+	} else {
+		// Get instance variables only if it's an instance wide organization (not a group)
+		if !project.IsGroup {
+			instanceVarsResult, err := GetGitlabInstanceVariables(token, conf.GitlabURL, conf)
+			if err != nil {
+				l.WithError(err).Error("Unable to retrieve instance variables")
+				return data, metrics, err
+			}
+			data.InstanceVars = ConvertCICDVariableToMap(instanceVarsResult)
+			l.WithField("instanceVarKeys", GetMapKeys(data.InstanceVars)).Debug("Instance vars found")
+		}
+
+		// Get value of variables inherited from group(s)
+		groupVarsResult, err := GetGitlabProjectInheritedVariables(project.Path, token, conf.GitlabURL, conf)
 		if err != nil {
-			l.WithError(err).Error("Unable to retrieve instance variables")
+			l.WithError(err).Error("Unable to retrieve project inherited variables")
 			return data, metrics, err
 		}
-		data.InstanceVars = ConvertCICDVariableToMap(instanceVarsResult)
-		l.WithField("instanceVarKeys", GetMapKeys(data.InstanceVars)).Debug("Instance vars found")
-	}
+		data.GroupVars = ConvertCICDVariableToMap(groupVarsResult)
+		l.WithField("groupVarKeys", GetMapKeys(data.GroupVars)).Debug("Group vars found")
 
-	// Get value of variables inherited from group(s)
-	groupVarsResult, err := GetGitlabProjectInheritedVariables(project.Path, token, conf.GitlabURL, conf)
-	if err != nil {
-		l.WithError(err).Error("Unable to retrieve project inherited variables")
-		return data, metrics, err
-	}
-	data.GroupVars = ConvertCICDVariableToMap(groupVarsResult)
-	l.WithField("groupVarKeys", GetMapKeys(data.GroupVars)).Debug("Group vars found")
-
-	// Get project variables
-	projectVarsResult, err := GetGitlabProjectVariables(project.Path, token, conf.GitlabURL, conf)
-	if err != nil {
-		if errors.Is(err, ErrProjectVariablesUnreadable) {
-			// The token cannot read project variables; they are only used here
-			// to resolve image-ref placeholders like $CI_REGISTRY, so proceed
-			// without them rather than failing the whole image collection. This
-			// preserves the pre-#418 graceful degradation for image analysis.
-			l.WithError(err).Warn("project variables not readable; image analysis proceeds without them")
-			projectVarsResult = nil
-		} else {
-			l.WithError(err).Error("Unable to retrieve project variables")
-			return data, metrics, err
+		// Get project variables
+		projectVarsResult, err := GetGitlabProjectVariables(project.Path, token, conf.GitlabURL, conf)
+		if err != nil {
+			if errors.Is(err, ErrProjectVariablesUnreadable) {
+				// The token cannot read project variables; they are only used here
+				// to resolve image-ref placeholders like $CI_REGISTRY, so proceed
+				// without them rather than failing the whole image collection. This
+				// preserves the pre-#418 graceful degradation for image analysis.
+				l.WithError(err).Warn("project variables not readable; image analysis proceeds without them")
+				projectVarsResult = nil
+			} else {
+				l.WithError(err).Error("Unable to retrieve project variables")
+				return data, metrics, err
+			}
 		}
+		data.ProjectVars = ConvertCICDVariableToMap(projectVarsResult)
+		l.WithField("projectVarKeys", GetMapKeys(data.ProjectVars)).Debug("Project vars found")
 	}
-	data.ProjectVars = ConvertCICDVariableToMap(projectVarsResult)
-	l.WithField("projectVarKeys", GetMapKeys(data.ProjectVars)).Debug("Project vars found")
 
 	// Set predefined variables
 	predefinedVars := map[string]string{

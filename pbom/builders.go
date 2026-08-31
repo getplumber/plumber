@@ -20,6 +20,18 @@ func BuildImageComplianceData(result *control.AnalysisResult) *ImageComplianceDa
 	imagesByJob := make(map[string]string, len(result.PipelineImageData.Images))
 	for _, img := range result.PipelineImageData.Images {
 		imagesByJob[img.Job] = img.Link
+		// Seeding false is what makes "no finding for this image" mean
+		// "compliant". That is right for an image the rules judged and wrong
+		// for one they abstained on: a reference that never rendered to a
+		// literal was never checked against any registry or tag, so
+		// publishing it as authorized states a fact the run does not have.
+		//
+		// Leaving it unseeded uses the tri-state the generator already has -
+		// an absent key leaves the pointer nil and the field out of the
+		// document - so a consumer sees "not assessed" rather than "fine".
+		if img.Unresolved {
+			continue
+		}
 		data.ForbiddenTagImages[img.Link] = false
 		data.UnauthorizedImages[img.Link] = false
 	}

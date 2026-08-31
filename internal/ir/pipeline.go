@@ -403,6 +403,15 @@ type Image struct {
 	Digest              string `json:"digest,omitempty"`
 	Registry            string `json:"registry,omitempty"`
 	CredentialsPassword string `json:"credentialsPassword,omitempty"`
+	// Unresolved reports that the reference still held a `$VARIABLE` when it
+	// was parsed, so Registry, Name and Tag describe a placeholder rather
+	// than an image. A rule that judges a registry or a tag must skip such an
+	// image: those fields are present and WRONG, not absent, so a rule that
+	// merely checks for emptiness would answer confidently over a guess.
+	//
+	// The zero value is "resolved", so every hand-built fixture and every
+	// provider that does not set it behaves exactly as before.
+	Unresolved bool `json:"unresolved,omitempty"`
 }
 
 // Include models an external pipeline fragment pulled into the current one.

@@ -67,15 +67,47 @@ type GitlabPipelineOriginMetrics struct {
 type GitlabPipelineOriginData struct {
 
 	// Gitlab CI configuration
-	Conf            *GitlabCIConf
-	ConfString      string
-	MergedConf      *GitlabCIConf
-	MergedResponse  *MergedCIConfResponse
-	CiValid         bool
-	CiMissing       bool
-	CiErrors        []string // Specific CI config errors for output
-	IncludesFailed  []string // include locations whose fetch failed (jobs dropped from analysis, #220)
-	LimitedAnalysis bool
+	Conf           *GitlabCIConf
+	ConfString     string
+	MergedConf     *GitlabCIConf
+	MergedResponse *MergedCIConfResponse
+	CiValid        bool
+	CiMissing      bool
+	CiErrors       []string // Specific CI config errors for output
+	IncludesFailed []string // include locations whose fetch failed (jobs dropped from analysis, #220)
+	// RefProbesFailed names the includes whose tag-vs-branch ambiguity probe
+	// could not be completed.
+	//
+	// The probe is fail-safe by design: only a CONFIRMED tag-and-branch
+	// double hit sets RefIsAmbiguous, so a probe that errors leaves the flag
+	// false. That is the right default for the flag and the wrong answer for
+	// the report, because false reads as "this ref is unambiguous" - a pass
+	// the run has no evidence for. Recording the failures lets the caller
+	// mark the control not_evaluable instead of certifying a ref it never
+	// managed to look up.
+	RefProbesFailed []string
+	// VersionLookupsFailed names the includes whose LATEST upstream version
+	// could not be looked up - the component catalogue query, or the tag
+	// listing on a versioned project include.
+	//
+	// Same shape of hazard as RefProbesFailed and the same reason for
+	// recording it. A failed lookup leaves Current empty, and the
+	// up-to-date rule requires a non-empty Current, so the include is
+	// silently skipped and the control reports a clean pass over includes it
+	// never compared against anything. These queries hit the include's
+	// SOURCE project, so they are among the first to fail for a token scoped
+	// to the analyzed project.
+	VersionLookupsFailed []string
+	// RawConfigUnavailable records that the project's own UNMERGED CI file
+	// could not be read, while the merged pipeline was obtained anyway.
+	//
+	// Two controls read the pre-merge document by design, and both fail
+	// SILENTLY without it: the hardcoded-job map comes up empty, so every
+	// job reads as contributed by an include, and the local-variable
+	// comparison has nothing to compare. Neither produces a finding, so
+	// both would report a clean pass over a document nobody read.
+	RawConfigUnavailable bool
+	LimitedAnalysis      bool
 
 	// Origins and jobs data
 	Origins []GitlabPipelineOriginDataFull
@@ -105,10 +137,9 @@ type GitlabPipelineOriginDataGeneric struct {
 
 // GitlabPipelineJobPlumberOrigin represents a Plumber template origin
 type GitlabPipelineJobPlumberOrigin struct {
-	ID                uint   `json:"id"`
-	Path              string `json:"path"`
-	LatestVersion     string `json:"latestVersion"`
-	RepoDefaultBranch string `json:"repoDefaultBranch"`
+	ID            uint   `json:"id"`
+	Path          string `json:"path"`
+	LatestVersion string `json:"latestVersion"`
 }
 
 type GitlabPipelineOriginDataProjectSpecific struct {
@@ -473,6 +504,18 @@ func (dc *GitlabPipelineOriginDataCollection) Run(project *ProjectInfo, token st
 	// Get all infos about the CI configuration
 	// Use project.AnalyzeBranch as ref (set via --branch CLI flag, defaults to DefaultBranch)
 	data.Conf, data.MergedConf, data.MergedResponse, data.ConfString, _, err = GetFullGitlabCI(project, project.AnalyzeBranch, token, conf.GitlabURL, conf)
+
+	// An EMPTY root file beside a merged pipeline that has jobs is not a
+	// configuration anyone writes: an empty root declares no includes, so
+	// the merge would be empty too. The pair therefore means the root was
+	// not read - the tolerated failure in GetFullGitlabCI, or a
+	// ci_config_path pointing into another project. Inferring it here keeps
+	// GetFullGitlabCI's signature, which the platform also calls.
+	if conf.PlatformRun.Engaged() && strings.TrimSpace(data.ConfString) == "" &&
+		data.MergedConf != nil && len(data.MergedConf.GitlabJobs) > 0 {
+		data.RawConfigUnavailable = true
+		l.Warn("The project's own CI file was not read; the controls that compare against it will report not_evaluable")
+	}
 	if err != nil {
 		data.LimitedAnalysis = true
 		data.CiValid = false
@@ -540,12 +583,33 @@ func (dc *GitlabPipelineOriginDataCollection) Run(project *ProjectInfo, token st
 	// query.
 	catalogCache := map[string]*CICatalogResource{}
 	catalogTried := map[string]bool{}
-	resolveComponentLatest := func(project, component string) (latest, webPath, repoName string) {
+	resolveComponentLatest := func(inc MergedCIConfResponseInclude, project, component string) (latest, webPath, repoName string) {
 		webPath = "/" + project
 		repoName = component
+		// A host-supplied catalogue answers without a request. It is cached
+		// under the project exactly like a fetched one, so a later include
+		// of the same project reuses it rather than reaching for the
+		// network, and so VersionLookupsFailed stays untouched: nothing
+		// failed, because nothing was attempted.
+		//
+		// What arrives is the raw listing, not a "latest version".
+		// latestCatalogVersion below applies the rule that only versions
+		// still carrying THIS component count - the rule a host that
+		// reduced the listing first would have to reimplement, and get
+		// subtly wrong for a component dropped in a later version.
+		if !catalogTried[project] && inc.SourceCatalog != nil {
+			catalogCache[project] = inc.SourceCatalog
+			catalogTried[project] = true
+		}
 		if !catalogTried[project] {
 			r, qerr := GetGitlabCIComponentResource(project, token, conf.GitlabURL, conf)
 			if qerr != nil {
+				// Recorded, not just logged: with no catalogue answer the
+				// component has no known latest version, and the up-to-date
+				// rule skips an include with no latest version rather than
+				// reporting it out of date. Silence here reads as "every
+				// component is current".
+				data.VersionLookupsFailed = append(data.VersionLookupsFailed, project)
 				l.WithError(qerr).WithField("project", project).Debug("catalog resource lookup failed")
 			}
 			catalogCache[project] = r
@@ -738,7 +802,7 @@ func (dc *GitlabPipelineOriginDataCollection) Run(project *ProjectInfo, token st
 					lInclude.Warning("Component name is empty. It should not happen.")
 					continue
 				}
-				latestVersion, webPath, repoName := resolveComponentLatest(project, componentName)
+				latestVersion, webPath, repoName := resolveComponentLatest(include, project, componentName)
 				if latestVersion != "" {
 					originData.FromGitlabCatalog = true
 					originData.GitlabComponent = GitlabPipelineJobGitlabComponent{
@@ -763,9 +827,16 @@ func (dc *GitlabPipelineOriginDataCollection) Run(project *ProjectInfo, token st
 				// ref-confusion (ISSUE-402): a component pinned to a name that
 				// resolves upstream as BOTH a tag and a branch is ambiguous.
 				// Fail-safe — only a confirmed tag+branch double-hit sets the
-				// flag; a SHA / ~latest / failed probe leaves it false.
+				// flag; a SHA or ~latest leaves it false. A probe that could
+				// not be COMPLETED also leaves it false, which is right for
+				// the flag and wrong for the report, so it is recorded
+				// separately and the caller withholds the control's verdict.
 				if shouldProbeRefAmbiguity(version) {
-					if tagExists, branchExists, errAmb := RefResolvesAsTagAndBranch(project, version, token, conf.GitlabURL, conf); errAmb == nil && tagExists && branchExists {
+					tagExists, branchExists, known := refExistence(include, project, version, token, conf, lInclude)
+					switch {
+					case !known:
+						data.RefProbesFailed = append(data.RefProbesFailed, project+"@"+version)
+					case tagExists && branchExists:
 						originData.RefIsAmbiguous = true
 						lInclude.WithFields(logrus.Fields{"project": project, "ref": version}).Debug("Component ref resolves as both a tag and a branch (ref-confusion)")
 					}
@@ -781,9 +852,15 @@ func (dc *GitlabPipelineOriginDataCollection) Run(project *ProjectInfo, token st
 
 				// ref-confusion (ISSUE-402): a project include whose ref
 				// resolves as BOTH a tag and a branch in the source project is
-				// ambiguous. Fail-safe — confirmed tag+branch double-hit only.
+				// ambiguous. Fail-safe — confirmed tag+branch double-hit only,
+				// with a probe that could not be completed recorded rather
+				// than folded into "unambiguous" (see the component case).
 				if include.Extra.Project != "" && shouldProbeRefAmbiguity(include.Extra.Ref) {
-					if tagExists, branchExists, errAmb := RefResolvesAsTagAndBranch(include.Extra.Project, include.Extra.Ref, token, conf.GitlabURL, conf); errAmb == nil && tagExists && branchExists {
+					tagExists, branchExists, known := refExistence(include, include.Extra.Project, include.Extra.Ref, token, conf, lInclude)
+					switch {
+					case !known:
+						data.RefProbesFailed = append(data.RefProbesFailed, include.Extra.Project+"@"+include.Extra.Ref)
+					case tagExists && branchExists:
 						originData.RefIsAmbiguous = true
 						lInclude.WithFields(logrus.Fields{"project": include.Extra.Project, "ref": include.Extra.Ref}).Debug("Project include ref resolves as both a tag and a branch (ref-confusion)")
 					}
@@ -808,14 +885,13 @@ func (dc *GitlabPipelineOriginDataCollection) Run(project *ProjectInfo, token st
 								"currentVersion": currentVersion,
 							}).Debug("Fetching tags to check for outdated version")
 
-							// Fetch source project info to get default branch (for forbidden version check)
-							sourceProject, errProject := FetchProjectDetails(include.Extra.Project, token, conf.GitlabURL, conf)
-							if errProject == nil && sourceProject != nil {
-								originData.PlumberOrigin.RepoDefaultBranch = sourceProject.DefaultBranch
-							}
-
 							tags, errPlatform, err := SearchTags(include.Extra.Project, token, conf.GitlabURL, conf)
 							if err != nil || errPlatform != nil {
+								// Same reasoning as the catalogue lookup above:
+								// no tag listing means no latest version, and
+								// no latest version means the include is
+								// skipped rather than judged.
+								data.VersionLookupsFailed = append(data.VersionLookupsFailed, include.Extra.Project)
 								lInclude.WithFields(logrus.Fields{
 									"err":         err,
 									"errPlatform": errPlatform,

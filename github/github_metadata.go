@@ -242,6 +242,23 @@ func (c *GitHubMetadataClient) resolveUncached(owner, repo, ref string) GitHubMe
 	info := c.repoInfo(owner, repo)
 	m.RepoArchived = info.archived
 	m.StargazersCount = info.stars
+	if info.err != nil {
+		// An unreadable repo yields the ZERO entry, and the fields it
+		// feeds are only meaningful when they were actually read.
+		// archived=false is the pass verdict for ISSUE-702, so a 403, a
+		// rate limit or a since-deleted repo reported "not archived" for an
+		// action nobody could look at - the one case where the control's
+		// answer matters most.
+		//
+		// The rule fires only on archived==true, so it cannot be guarded
+		// from the Rego side: the honest signal has to come from here.
+		// (StargazersCount needs no equivalent; ISSUE-713 already abstains
+		// on a zero count rather than treating it as untrusted.)
+		c.recordDegradedMessage("repo:"+owner+"/"+repo, fmt.Sprintf(
+			"%s/%s: the repository could not be read (%v), so the archived-repo check was skipped for this action",
+			owner, repo, info.err,
+		))
+	}
 	m.LatestTag = c.latestReleaseTag(owner, repo)
 	if m.LatestTag != "" {
 		if sha, ok := c.resolveTag(owner, repo, m.LatestTag); ok {
@@ -355,6 +372,19 @@ func (c *GitHubMetadataClient) advisoriesForRef(owner, repo, ref string) []strin
 // Deduped by ref so a heavily-reused action warns only once.
 func (c *GitHubMetadataClient) recordDegraded(owner, repo, ref string) {
 	key := owner + "/" + repo + "@" + ref
+	c.recordDegradedMessage(key, fmt.Sprintf(
+		"%s: tag list unavailable, could not resolve the pinned commit to a version, so the known-CVE check was skipped for this action",
+		key,
+	))
+}
+
+// recordDegradedMessage appends one "could not verify" line, deduped by key.
+//
+// Every path that cannot complete a check must come through here. The cost of
+// not doing so is invisible: the check's result is a zero value, which reads
+// downstream as a clean answer, and the control reports a pass over a lookup
+// that never happened.
+func (c *GitHubMetadataClient) recordDegradedMessage(key, msg string) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.degradedSeen == nil {
@@ -364,10 +394,30 @@ func (c *GitHubMetadataClient) recordDegraded(owner, repo, ref string) {
 		return
 	}
 	c.degradedSeen[key] = struct{}{}
-	c.degraded = append(c.degraded, fmt.Sprintf(
-		"%s: tag list unavailable, could not resolve the pinned commit to a version, so the known-CVE check was skipped for this action",
-		key,
-	))
+	c.degraded = append(c.degraded, msg)
+}
+
+// UnavailableReason explains why metadata enrichment did not run at all,
+// or "" when it did.
+//
+// Without this the disable cause was recorded and never read: no token, a
+// disabled API, or a client-construction error returned from enrichment
+// before a single action was touched, leaving every metadata-driven control
+// reporting passed over an empty result.
+func (c *GitHubMetadataClient) UnavailableReason() string {
+	if c == nil {
+		return "GitHub API metadata enrichment did not run, so the checks that depend on it could not be completed"
+	}
+	if !c.disabled {
+		return ""
+	}
+	if c.disableCause != nil {
+		return fmt.Sprintf(
+			"GitHub API metadata enrichment unavailable (%v), so the known-CVE, archived-repo, ref-existence and star-count checks were skipped for every action",
+			c.disableCause,
+		)
+	}
+	return "GitHub API metadata enrichment unavailable (no usable token), so the known-CVE, archived-repo, ref-existence and star-count checks were skipped for every action"
 }
 
 // DegradedChecks returns the accumulated "could not verify" messages, one
@@ -407,7 +457,21 @@ func (c *GitHubMetadataClient) advisoriesForRepo(owner, repo string) []advisoryI
 		} `json:"vulnerabilities"`
 	}
 	out := []advisoryInfo{}
-	if err := c.rest.Get(fmt.Sprintf("advisories?ecosystem=actions&affects=%s/%s&per_page=100", owner, repo), &resp); err == nil {
+	// A failed lookup is NOT "this action has no advisories". Without the
+	// else branch below an empty result was cached and served as an answer,
+	// so a 403 secondary rate limit, a 5xx, or a GHES instance without the
+	// endpoint made every action from that repo report clean on ISSUE-703 -
+	// the one control whose whole purpose is knowing about published CVEs.
+	//
+	// The result is still cached on failure: retrying per action would turn
+	// one rate limit into many. The warning is what stops it reading as a
+	// pass.
+	if err := c.rest.Get(fmt.Sprintf("advisories?ecosystem=actions&affects=%s/%s&per_page=100", owner, repo), &resp); err != nil {
+		c.recordDegradedMessage("advisories:"+key, fmt.Sprintf(
+			"%s: the GitHub Advisory Database could not be queried (%v), so the known-CVE check was skipped for this action",
+			key, err,
+		))
+	} else {
 		want := key
 		for _, a := range resp {
 			for _, v := range a.Vulnerabilities {

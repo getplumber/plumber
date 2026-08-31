@@ -647,12 +647,22 @@ func enrichForbiddenVersion404IssueMaps(issues []map[string]any, result *control
 }
 
 func buildImageForbiddenTagsBlock(c legacyCommon, result *control.AnalysisResult, pc *configuration.PlumberConfig, findings []opaengine.Finding) map[string]any {
+	// The metrics below are computed here rather than derived from the
+	// findings, so they must make the same abstention the rules make. An
+	// image whose reference never rendered to a literal is neither pinned
+	// nor unpinned: the digest was looked for in placeholder text. Counting
+	// it either way puts the metrics at odds with the issues list.
 	total := 0
 	notPinned := 0
+	unresolved := 0
 	usingForbidden := 0
 	if result.PipelineImageData != nil {
 		total = len(result.PipelineImageData.Images)
 		for _, img := range result.PipelineImageData.Images {
+			if img.Unresolved {
+				unresolved++
+				continue
+			}
 			if !utils.HasDigestPin(img.Link) {
 				notPinned++
 			}
@@ -677,7 +687,8 @@ func buildImageForbiddenTagsBlock(c legacyCommon, result *control.AnalysisResult
 			"total":              total,
 			"usingForbiddenTags": usingForbidden,
 			"notPinnedByDigest":  notPinned,
-			"pinnedByDigest":     total - notPinned,
+			"pinnedByDigest":     total - notPinned - unresolved,
+			"unresolvedRefs":     unresolved,
 			"ciInvalid":          0,
 			"ciMissing":          0,
 		},
@@ -690,23 +701,35 @@ func buildImageForbiddenTagsBlock(c legacyCommon, result *control.AnalysisResult
 }
 
 func buildImageAuthorizedSourcesBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	// authorized is derived by subtraction, so an image the rule abstained
+	// on would be reported as coming from an authorized source. Subtract the
+	// unresolved references out and report them in their own field.
 	total := 0
+	unresolved := 0
 	if result.PipelineImageMetrics != nil {
 		total = int(result.PipelineImageMetrics.Total)
 	}
+	if result.PipelineImageData != nil {
+		for _, img := range result.PipelineImageData.Images {
+			if img.Unresolved {
+				unresolved++
+			}
+		}
+	}
 	unauthorized := len(findings)
-	authorized := total - unauthorized
+	authorized := total - unauthorized - unresolved
 	if authorized < 0 {
 		authorized = 0
 	}
 	return map[string]any{
 		"issues": projectFindings(findings, "job"),
 		"metrics": map[string]any{
-			"total":        total,
-			"authorized":   authorized,
-			"unauthorized": unauthorized,
-			"ciInvalid":    0,
-			"ciMissing":    0,
+			"total":          total,
+			"authorized":     authorized,
+			"unauthorized":   unauthorized,
+			"unresolvedRefs": unresolved,
+			"ciInvalid":      0,
+			"ciMissing":      0,
 		},
 		"version":   "0.1.0",
 		"ciValid":   c.CiValid,

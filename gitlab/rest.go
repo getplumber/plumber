@@ -2,7 +2,6 @@ package gitlab
 
 import (
 	"net/http"
-	"strings"
 
 	"github.com/getplumber/plumber/configuration"
 	"github.com/sirupsen/logrus"
@@ -271,63 +270,6 @@ func FetchProjectMRApprovalSettings(projectID int, token string, APIURL string, 
 	return settings, http.StatusOK, nil
 }
 
-// FetchProjectMembers retrieves all members of a project
-func FetchProjectMembers(projectID int, token string, APIURL string, conf *configuration.Configuration) ([]GitlabMemberInfo, error) {
-	l := logger.WithFields(logrus.Fields{
-		"action":    "FetchProjectMembers",
-		"projectID": projectID,
-		"APIURL":    APIURL,
-	})
-
-	glab, err := GetNewGitlabClient(token, APIURL, conf)
-	if err != nil {
-		l.WithError(err).Error("Unable to get a Gitlab client")
-		return nil, err
-	}
-
-	var allMembers []GitlabMemberInfo
-	var perPage int64 = 100
-	options := &gitlab.ListProjectMembersOptions{
-		ListOptions: gitlab.ListOptions{
-			PerPage: perPage,
-		},
-	}
-
-	for page := int64(1); ; page++ {
-		options.Page = page
-		members, _, err := glab.ProjectMembers.ListAllProjectMembers(projectID, options)
-		if err != nil {
-			l.WithError(err).Warn("Failed to fetch project members")
-			return nil, err
-		}
-
-		for _, m := range members {
-			// Skip bot users
-			if strings.Contains(m.Username, "_bot_") {
-				l.WithField("botUsername", m.Username).Debug("Skipping bot user")
-				continue
-			}
-
-			member := GitlabMemberInfo{
-				ID:            int(m.ID),
-				Name:          m.Username,
-				DisplayedName: m.Name,
-				Email:         m.Email,
-				AvatarURL:     m.AvatarURL,
-				AccessLevel:   int(m.AccessLevel),
-			}
-			allMembers = append(allMembers, member)
-		}
-
-		if int64(len(members)) < perPage {
-			break
-		}
-	}
-
-	l.WithField("memberCount", len(allMembers)).Debug("Fetched project members")
-	return allMembers, nil
-}
-
 // FetchProjectBranchData fetches branches and their protection settings
 func FetchProjectBranchData(projectPath string, token string, APIURL string, conf *configuration.Configuration) ([]string, []BranchProtection, error) {
 	l := logger.WithFields(logrus.Fields{
@@ -380,9 +322,19 @@ func FetchProjectBranchData(projectPath string, token string, APIURL string, con
 		protOptions.Page = page
 		protections, _, err := glab.ProtectedBranches.ListProtectedBranches(projectPath, protOptions)
 		if err != nil {
-			l.WithError(err).Warn("Failed to fetch branch protections (may require premium)")
-			// Return branches without protections
-			return allBranches, nil, nil
+			// Return the error rather than an empty list. "This project has
+			// no protected branches" is the exact violation
+			// branchMustBeProtected exists to catch, so a read that FAILED
+			// must not arrive looking like one - a token without the scope,
+			// or a 403, would otherwise be reported as every branch being
+			// unprotected.
+			//
+			// The branches collected so far are still returned: the caller
+			// can tell "which branches exist" from "how they are protected",
+			// and the first question is still answered. Callers that cannot
+			// use a partial answer check err and ignore the rest.
+			l.WithError(err).Warn("Failed to fetch branch protections; the protection detail is unknown, not empty")
+			return allBranches, nil, err
 		}
 
 		for _, p := range protections {

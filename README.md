@@ -218,7 +218,51 @@ Display it with a badge in your README (swap in your platform/owner/repo):
 | Flag | Purpose |
 |---|---|
 | `--score-endpoint` | Score service base URL (default `https://score.getplumber.io`). Override only for a self-hosted score service. |
-| `--platform` | Plumber platform base URL. Setting it pushes this run's full results there over CI OIDC, and takes precedence over `--score-push`. Requires an id-token grant: `permissions: id-token: write` on GitHub, the component's `id_tokens:` block on GitLab. Results are automatically keyed to the platform's own policies (fetched via `/context`) when the local policy name matches one exactly; no match, and the push still succeeds by name alone. |
+| `--platform` | Plumber platform base URL. Setting it turns on **platform mode** (see below) and pushes this run's full results there over CI OIDC, taking precedence over `--score-push`. Requires an id-token grant: `permissions: id-token: write` on GitHub, the component's `id_tokens:` block on GitLab. |
+
+### Platform mode
+
+Without `--platform` nothing changes: Plumber collects everything itself and
+evaluates one policy, exactly as it always has.
+
+With `--platform`, Plumber first reads the project's context from the
+platform - the resolved policy set and a cached settings snapshot - and uses
+it to decide what to collect and what to report:
+
+- **One result per policy.** The platform's policy set decides how many
+  results the run produces, each keyed to its own policy and carrying its own
+  score. Policies that share a control configuration are evaluated once.
+- **The CI configuration comes from the platform.** Resolving `include:`
+  directives needs an API a CI job token cannot reach, so platform mode reads
+  the resolved configuration from the platform instead of asking the git host
+  itself.
+- **So do the project settings.** Branch protections, merge-request approval
+  rules and settings, and CI/CD variable metadata are read from the snapshot
+  rather than collected per run. That is what stops a project scanned once
+  per policy file from re-fetching the same settings once per policy file.
+  Variable *values* are never served and never needed: the controls read the
+  protected and masked flags, not the secrets.
+- **A CI job needs no GitLab token.** Platform mode is built for CI, and a
+  job already has what the rest would have been fetched for: its own
+  identity in the predefined `CI_*` variables, its checkout, and its
+  environment. Set `--platform` and Plumber runs without a `GITLAB_TOKEN`.
+  A few checks still read the projects your pipeline *includes* from, and
+  without a token those report `not_evaluable` rather than passing.
+- **Your branch is evaluated against its own configuration.** Plumber hashes
+  the CI config in the checkout - the root file plus every local include -
+  and compares it to what the platform's snapshot was resolved from. A branch
+  that does not touch CI config matches and reuses the snapshot at no extra
+  cost; a branch that does changes gets its own resolution from the platform.
+- **Controls whose data is unavailable report `not_evaluable`, never a
+  pass.** If the platform cannot resolve a configuration, or reports a
+  settings collection as failed, the controls that read it say so instead of
+  reporting a clean result over data nobody collected. A lane the platform
+  vouches for as genuinely empty is still a real verdict a control may fail
+  on. A run prints which configuration it used and why, with no `--verbose`
+  needed.
+
+Platform mode reports *less* when data is missing, never something different:
+a run that cannot evaluate a control says so.
 
 The platform can gate the run: if it returns a blocking decision for this
 push, the job exits `1` with a line naming every blocking policy. A platform

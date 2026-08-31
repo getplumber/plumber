@@ -96,7 +96,9 @@ var analyzeCmd = &cobra.Command{
 GitLab path (when the git remote is GitLab, or when you pass --gitlab-url and --project):
   Connects to GitLab, retrieves CI/CD configuration and project settings, and runs
   checks including pipeline origins, images, tags, and branch protection.
-  Required environment variable: GITLAB_TOKEN
+  Required environment variable: GITLAB_TOKEN, unless --platform is set: platform
+  mode reads the configuration and project settings from the platform, so a CI job
+  can run with no GitLab token at all.
 
 GitHub path (when origin is GitHub and --gitlab-url / --project are not set):
   Scans local .github/workflows only (Rego). No GitLab token. Some flags apply only
@@ -203,7 +205,7 @@ func init() {
 	analyzeCmd.Flags().BoolVar(&showScorePoint, "score-point", false, "Like --score plus full points breakdown in stdout and MR comment; overrides --score when both are set")
 	analyzeCmd.Flags().BoolVar(&pushScore, "score-push", false, "Publish this repo's Plumber Score to the hosted badge service (CI only; needs a CI OIDC id-token, so a local run is a no-op)")
 	analyzeCmd.Flags().StringVar(&scoreEndpoint, "score-endpoint", "", "Score service base URL (default https://score.getplumber.io); override only for a self-hosted score service")
-	analyzeCmd.Flags().StringVar(&platformURL, "platform", "", "Plumber platform base URL; setting it pushes this run's full results there over CI OIDC (implies the push, and takes precedence over --score-push)")
+	analyzeCmd.Flags().StringVar(&platformURL, "platform", "", "Plumber platform base URL; turns on platform mode (policies and collected data come from the platform) and pushes this run's full results there over CI OIDC, taking precedence over --score-push")
 	analyzeCmd.Flags().StringVar(&controlsFilter, "controls", "", "Run only listed controls (comma-separated)")
 	analyzeCmd.Flags().StringVar(&skipControls, "skip-controls", "", "Skip listed controls (comma-separated)")
 	analyzeCmd.Flags().BoolVar(&noControls, "no-controls", false, "Run no controls at all: collect the pipeline and write the requested inventory artifacts (PBOM, JSON, CSV, OCSF), skip evaluation, withhold the score, and never fail the gate")
@@ -463,6 +465,21 @@ func resolveGitLabToken(flags analyzeFlags) (string, error) {
 	if token != "" {
 		return token, nil
 	}
+	// Platform mode is the case a personal token exists to avoid. The
+	// project's settings, its resolved CI configuration and its policy set
+	// all come from the platform over a CI-native OIDC id-token, so
+	// demanding a GITLAB_TOKEN before the run has even started would refuse
+	// the exact setup #368 is for.
+	//
+	// This is a permission to CONTINUE, not a promise that everything
+	// works. Whatever the migration has not moved yet still tries the API,
+	// fails, and is reported not_evaluable by its own lane - which is the
+	// documented behaviour for a collection that has not been switched
+	// over. A run that produces an honest partial report beats one that
+	// produces nothing.
+	if push, _ := effectivePlatformPush(); push {
+		return "", nil
+	}
 	// Only nudge toward GitHub when GitLab was auto-detected — if the user
 	// picked GitLab explicitly, the GHES hint is just noise.
 	if providerFlag == "" && !flags.gitlabURLFromFlag {
@@ -507,15 +524,21 @@ func buildGitLabConf(
 	applyControlScope(conf, controlsFilterList, skipControlsList)
 	conf.CIConfigPathOverride = ciConfigPath
 
-	// Local CI file support only applies when the local repo IS the analyzed
-	// project AND the user did not explicitly name a project on the CLI.
-	// Explicit project name = analyse exactly that project, ignore pwd.
-	// (Symmetric CLI semantics with the GitHub path.)
+	// Does the repository in the working directory hold the project being
+	// analyzed? This is a fact about the checkout, and nothing the operator
+	// typed changes it.
+	checkoutIsProject := remote.repoRoot != "" && remote.remoteURL != "" &&
+		strings.TrimSuffix(remote.remoteURL, "/") == cleanGitlabURL &&
+		remote.projectPath == projectPath
+	conf.CheckoutIsAnalyzedProject = checkoutIsProject
+
+	// Whether to READ the CI configuration from that checkout is a different
+	// question, and naming a project answers it: "analyse exactly that
+	// project, ignore pwd" (symmetric CLI semantics with the GitHub path).
+	// The two conditions are kept apart because platform mode's config
+	// digest needs the first and must not be gated on the second.
 	explicitProject := flags.gitlabURLFromFlag || flags.projectFromFlag
-	if !explicitProject && remote.repoRoot != "" && remote.remoteURL != "" {
-		conf.IsLocalProject = strings.TrimSuffix(remote.remoteURL, "/") == cleanGitlabURL &&
-			remote.projectPath == projectPath
-	}
+	conf.IsLocalProject = checkoutIsProject && !explicitProject
 
 	return conf
 }
@@ -750,6 +773,14 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	if !ok {
 		return fmt.Errorf("gitlab provider not registered")
 	}
+
+	// Platform mode resolves its policy set, snapshot and CI configuration
+	// BEFORE collection, because what it resolves decides which lanes
+	// collection needs to run at all. Returns nil (and changes nothing)
+	// unless --platform is set.
+	conf.PlatformRun = setupPlatformMode(p, conf)
+	reportPlatformMode(conf.PlatformRun)
+
 	return runWithProvider(p, cmd, conf, controlsFilterList, skipControlsList)
 }
 

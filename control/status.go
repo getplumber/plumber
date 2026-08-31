@@ -68,6 +68,22 @@ func StatusFor(e ControlEntry, result *AnalysisResult, findingCount int) string 
 	if e.Skipped {
 		return StatusSkipped
 	}
+	// A control whose own data lane could not feed it is not evaluable in
+	// EITHER direction, so this is checked before the findings count.
+	//
+	// The tempting rule is "findings still win, a violation on partial data
+	// is still a violation" — true when the missing data is a subset, and
+	// wrong here. A lane can supply a field that is present but WRONG
+	// rather than absent: without include attribution every job pulled in
+	// by a component reads as project-authored, and its upstream
+	// `when: never` reads as project-side tampering. Those findings are
+	// fabricated, so they are dropped from the result entirely
+	// (DropNotEvaluableFindings) and this status is what remains.
+	if result != nil {
+		if _, ok := result.NotEvaluable[e.ControlName]; ok {
+			return StatusError
+		}
+	}
 	if findingCount > 0 {
 		return StatusFailed
 	}

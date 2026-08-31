@@ -67,3 +67,58 @@ types in `cmd/platform_push.go` to match, then extend
 raw-map assertion) for the new or changed field: a change that only touches
 the Go struct and its own round-trip test would repeat the exact failure
 mode this file exists to catch.
+
+## Variable values and the 422
+
+The platform rejects a **whole push** with 422 when a finding carries a
+variable name beside a value-shaped key without declaring where that value
+came from. A single unlabelled value costs the operator every result in the
+run, so this is worth a moment's care when writing a rule.
+
+Two mechanisms cover it, and both are needed:
+
+1. A rule that reads a value from a source it knows declares it at the point
+   of emission - `"valueProvenance": "ci_file"` in `debug_trace.rego` and
+   `job_variable_override.rego`, because those values come out of the CI
+   configuration file, which lives in the repository.
+2. `sanitizeProvenance` (`cmd/platform_provenance.go`) is the safety net. It
+   walks the finding data and the effective config, and any value whose
+   provenance is missing or unrecognized is **removed** and replaced with
+   derived attributes - length, character class, whether it was truthy -
+   which describe the value without disclosing it. Unknown provenance is
+   treated as sensitive, which is the direction that cannot leak a secret.
+
+A rule that emits a value from a genuinely secret source (a masked or hidden
+CI/CD variable) must not emit it at all; declaring `settings_secret` is
+rejected by the platform by design.
+
+To check a change by hand against a live platform, POST a finding both ways
+and compare - without provenance it is a 422 naming the offending path, with
+`"valueProvenance": "ci_file"` it is a 201.
+
+## Testing platform mode end to end
+
+Platform mode (`--platform`) reads `/context` and `/resolved-config` before
+collection, so testing it needs a real backend. The backend has no dev mode
+and no signature-skip: the only way in is to run it with a fake OIDC
+issuer's URL in `PLUMBER_OIDC_ALLOWED_ISSUERS` and mint RS256 tokens whose
+`project_path` claim matches the analyzed project.
+
+A run then needs a `projects` row keyed on the full verified tuple
+`(issuer, provider, forge_project_id)` - the token's `iss`, `"gitlab"` and
+its `project_id` claim as a string - or the policy set falls back to the
+derived default. Policies attach through `policy_projects`, and the settings
+snapshot goes in `project_snapshots.data` using the shapes
+`platform/backend/snapshot/collector.go` writes (`branch_protection` is
+`{"protections": [...]}`, not a map of branch names).
+
+The one check worth doing on every change to the collection lanes: run the
+same commit with and without `--platform` and diff the per-control statuses.
+Every difference must be a control moving to `not_evaluable`. A control that
+gains findings under `--platform` is a false positive from a data lane that
+went missing, not a real detection - see `control/lanes.go` for why job
+attribution in particular fails that way.
+
+`internal/platform/live_test.go` exercises the client against a running
+platform and skips unless `PLUMBER_E2E_PLATFORM`, `PLUMBER_E2E_TOKEN` and
+`PLUMBER_E2E_PROJECT` are set.

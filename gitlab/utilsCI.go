@@ -2,6 +2,7 @@ package gitlab
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -143,6 +144,86 @@ type ProjectInfo struct {
 	IsGroup             bool // True if organization is a group (vs instance-wide)
 }
 
+// platformMergedConfig returns the merged CI configuration platform mode
+// supplies for this run, and whether platform mode is the source at all.
+//
+// A false second return means STANDALONE mode: the caller resolves the
+// merge through the GitLab API exactly as it always has, so no existing run
+// changes behaviour.
+//
+// A true second return with an EMPTY MergedYaml is the honest
+// "platform mode, nothing resolved" state, not an error: the run continues
+// so that collections on other lanes (branch protection, settings) still
+// produce verdicts, and the controls that read the pipeline are marked
+// not_evaluable by the caller rather than silently passing over an empty
+// job list.
+//
+// Status describes whether the git host could MERGE the configuration,
+// which is a different question from whether this CLI obtained one. An
+// unavailable resolution is reported VALID: telling users their CI file is
+// broken because a third party was unreachable would be a diagnosis the run
+// has no evidence for.
+//
+// A resolution the git host itself judged INVALID is the opposite case, and
+// it is carried through. That verdict is about the user's own config, and
+// an invalid merge is partial or empty - so reporting it valid would hand
+// the analysis a pipeline with the unmergeable jobs simply missing, and
+// every control would pass over what remained. A standalone run of the same
+// commit reports INCOMPLETE; platform mode has to agree with it.
+func platformMergedConfig(conf *configuration.Configuration) (MergedCIConfResponse, bool) {
+	var out MergedCIConfResponse
+	if conf == nil || !conf.PlatformRun.Engaged() {
+		return out, false
+	}
+	merged, _ := conf.PlatformRun.MergedYAML()
+	out.CiConfig.MergedYaml = merged
+	out.CiConfig.Status = "VALID"
+	if conf.PlatformRun.ConfigInvalid() {
+		out.CiConfig.Status = "INVALID"
+		out.CiConfig.Errors = []string{
+			"the git host reported this CI configuration as invalid; the merged pipeline it returned is incomplete",
+		}
+	}
+	out.CiConfig.Includes = platformIncludes(conf)
+	return out, true
+}
+
+// platformIncludes decodes the snapshot's per-include attribution into the
+// CLI's own include shape. The platform carries these AS-IS - they ARE
+// MergedCIConfResponseInclude values, never a translation - so a decode
+// failure means the contract was broken, not that a field moved.
+//
+// An entry that fails to decode is DROPPED rather than partially applied.
+// Attribution is used to decide whether a job came from upstream or from the
+// project, and a half-decoded include produces a confidently wrong answer;
+// dropping it leaves the list short, which the caller detects as missing
+// attribution and degrades honestly.
+// It also returns nothing when the merged configuration in use did NOT come
+// from the same snapshot these includes did. The snapshot's attribution
+// describes the anchor's configuration; on a digest-divergent branch the
+// config being evaluated is the branch's own, and attaching the anchor's
+// attribution to it mis-classifies every job the branch's include changes
+// touched. See RunContext.ConfigAndIncludesAgree.
+func platformIncludes(conf *configuration.Configuration) []MergedCIConfResponseInclude {
+	if !conf.PlatformRun.ConfigAndIncludesAgree() {
+		return nil
+	}
+	raw, ok := conf.PlatformRun.SnapshotIncludes()
+	if !ok {
+		return nil
+	}
+	out := make([]MergedCIConfResponseInclude, 0, len(raw))
+	for _, r := range raw {
+		var inc MergedCIConfResponseInclude
+		if err := json.Unmarshal(r, &inc); err != nil {
+			logger.WithError(err).Warn("platform snapshot carried an include this CLI could not decode; dropping it")
+			continue
+		}
+		out = append(out, inc)
+	}
+	return out
+}
+
 // GetFullGitlabCI retrieves the full GitLab CI configuration for a project
 func GetFullGitlabCI(project *ProjectInfo, ref, token, url string, conf *configuration.Configuration) (*GitlabCIConf, *GitlabCIConf, *MergedCIConfResponse, string, string, error) {
 	l := logger.WithFields(logrus.Fields{
@@ -169,7 +250,22 @@ func GetFullGitlabCI(project *ProjectInfo, ref, token, url string, conf *configu
 	// If local CI config content is provided (via --local or auto-detected), use it
 	// instead of fetching from the remote repository
 	var confByte []byte
-	if conf != nil && conf.LocalCIConfigContent != nil {
+	switch {
+	case conf != nil && conf.LocalCIConfigContent != nil && conf.PlatformRun.Engaged():
+		// Platform mode reads the project's own unmerged CI file off disk to
+		// avoid an API call, and must hand back exactly what that API call
+		// would have returned: the file as committed.
+		//
+		// Inlining local includes (the branch below) is right for --local,
+		// where the point is to merge uncommitted edits, and wrong here. The
+		// merge itself comes from the platform, so inlining buys nothing,
+		// and it moves every job from an `include: local` file into the
+		// project's own job map - which is what decides whether a job counts
+		// as hardcoded. The same commit would then score differently
+		// depending only on whether the runner happened to have a checkout.
+		confByte = conf.LocalCIConfigContent
+		l.Info("Using the checkout's CI configuration file instead of fetching it")
+	case conf != nil && conf.LocalCIConfigContent != nil:
 		// Resolve include:local entries from the local filesystem so they use
 		// local content instead of being resolved from the remote repo by GitLab.
 		// Since include:local jobs are always treated as hardcoded in the analysis,
@@ -181,10 +277,40 @@ func GetFullGitlabCI(project *ProjectInfo, ref, token, url string, conf *configu
 		}
 		confByte = resolved
 		l.Info("Using local CI configuration file instead of remote")
-	} else {
+	case conf != nil && conf.PlatformRun.Engaged() && CIConfigPathIsExternal(project.CiConfPath):
+		// The root config lives in another project, or at a URL. Neither is
+		// readable through THIS project's file API, so the fetch below would
+		// be a request guaranteed to 404. Skip it and take the same route a
+		// refused read takes: the merged pipeline still comes from the
+		// platform, and the two controls that compare against the pre-merge
+		// document report not_evaluable.
+		l.WithField("ciConfPath", project.CiConfPath).Info("CI configuration is hosted outside this project; the merged pipeline still comes from the platform")
+		confByte = nil
+
+	default:
 		var errPlatform error
 		confByte, errPlatform, err = FetchGitlabFile(project.Path, project.CiConfPath, ref, token, url, conf)
 		if err != nil || errPlatform != nil {
+			// In platform mode this is not fatal. The MERGED pipeline comes
+			// from the platform and is what almost every rule reads; the
+			// project's own unmerged file is needed by two controls only.
+			// Aborting here would discard a complete, analysable pipeline
+			// because of a file two checks wanted - and the run would end
+			// with no findings and no explanation, which is the least useful
+			// report there is.
+			//
+			// The caller detects the gap (an empty root beside a merged
+			// pipeline that has jobs is not a configuration anyone writes)
+			// and reports those two controls not_evaluable.
+			if conf != nil && conf.PlatformRun.Engaged() {
+				l.WithFields(logrus.Fields{
+					"err":         err,
+					"errPlatform": errPlatform,
+				}).Warn("Could not read the project's own CI file; continuing on the platform's merged configuration")
+				confByte = nil
+				break
+			}
+
 			l.WithFields(logrus.Fields{
 				"err":         err,
 				"errPlatform": errPlatform,
@@ -198,11 +324,28 @@ func GetFullGitlabCI(project *ProjectInfo, ref, token, url string, conf *configu
 	}
 	confStr := string(confByte)
 
-	// Get the merged response
-	mergedResponse, err = FetchGitlabMergedCIConf(project.Path, confStr, project.LatestHeadCommitSha, token, url, conf)
-	if err != nil {
-		l.WithError(err).Error("Unable to get project's CI merged conf")
-		return nil, nil, nil, confStr, "", err
+	// Get the merged response.
+	//
+	// Resolving a CI configuration means merging every include, which only
+	// GitLab can do and only through an API a CI job token cannot reach. In
+	// PLATFORM MODE that makes it an extended-rights collection: it is read
+	// from the platform, which resolved it out of band, and the runner
+	// makes no such call itself.
+	//
+	// A platform-supplied merge carries the merged document but NOT the
+	// per-include attribution GitLab's own response adds, and when the
+	// platform could resolve nothing it carries no document at all. Neither
+	// gap is papered over here: this returns what it actually has, and
+	// control/task.go marks the affected controls not_evaluable so an empty
+	// job or include list can never read as a clean pipeline.
+	if platformMerged, usePlatform := platformMergedConfig(conf); usePlatform {
+		mergedResponse = platformMerged
+	} else {
+		mergedResponse, err = FetchGitlabMergedCIConf(project.Path, confStr, project.LatestHeadCommitSha, token, url, conf)
+		if err != nil {
+			l.WithError(err).Error("Unable to get project's CI merged conf")
+			return nil, nil, nil, confStr, "", err
+		}
 	}
 
 	// Unmarshal the original configuration. CI component template files use a
@@ -552,27 +695,25 @@ func ReplaceVariable(input string, project, group, instance, job, defaultJob, pr
 	regex := `(\$[a-zA-Z_][a-zA-Z0-9_]*|\${[a-zA-Z_][a-zA-Z0-9_]*}|%[a-zA-Z_][a-zA-Z0-9_]*%)`
 	r := regexp.MustCompile(regex)
 
+	// An EMPTY value is not a substitution. Rendering `$SECURE_ANALYZERS_PREFIX/semgrep:5`
+	// as `/semgrep:5` produces a reference that looks resolved, carries no
+	// `$` for the caller to notice, and is not the reference the job uses -
+	// so the registry and tag checks then answer confidently about an image
+	// that does not exist. Leaving the placeholder in place is what lets
+	// parseImageReference mark the ref unresolved and the rules abstain.
+	lookup := func(m map[string]string, name string) (string, bool) {
+		val, found := m[name]
+		return val, found && val != ""
+	}
+
 	resolveVariables := func(input string) string {
 		return r.ReplaceAllStringFunc(input, func(match string) string {
 			varName := regexp.MustCompile(`[\$\{\}%]`).ReplaceAllString(match, "")
 
-			if val, found := project[varName]; found {
-				return val
-			}
-			if val, found := group[varName]; found {
-				return val
-			}
-			if val, found := instance[varName]; found {
-				return val
-			}
-			if val, found := job[varName]; found {
-				return val
-			}
-			if val, found := defaultJob[varName]; found {
-				return val
-			}
-			if val, found := predefined[varName]; found {
-				return val
+			for _, source := range []map[string]string{project, group, instance, job, defaultJob, predefined} {
+				if val, found := lookup(source, varName); found {
+					return val
+				}
 			}
 
 			return match

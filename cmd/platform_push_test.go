@@ -172,7 +172,7 @@ func TestBuildPublishPayload_GateAndBytes(t *testing.T) {
 // only way these failure modes, being silent or type-safe-in-isolation, are
 // actually caught.
 func TestBuildPlatformPush_KeysAreSnakeCaseAndPolicyIsAString(t *testing.T) {
-	body, err := buildPlatformPush(testProvider(t), nil, nil, nil, ".plumber.yaml", "")
+	body, err := buildPlatformPush(testProvider(t), nil, nil, nil, ".plumber.yaml")
 	if err != nil {
 		t.Fatalf("buildPlatformPush: %v", err)
 	}
@@ -228,7 +228,7 @@ func TestBuildPlatformPush_ScorePointsRoundToSignedInt(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			score := &control.PlumberScoreResult{Score: "E", RawPointsUnclamped: tc.raw}
-			body, err := buildPlatformPush(testProvider(t), nil, &control.AnalysisResult{}, score, ".plumber.yaml", "")
+			body, err := buildPlatformPush(testProvider(t), nil, &control.AnalysisResult{}, score, ".plumber.yaml")
 			if err != nil {
 				t.Fatalf("buildPlatformPush: %v", err)
 			}
@@ -892,7 +892,7 @@ func TestBuildPlatformPush_GitLabCIIdentityValuesReachTheWire(t *testing.T) {
 	t.Setenv("CI_JOB_ID", "job-gl-444")
 	t.Setenv("CI_PROJECT_ID", "proj-gl-555")
 
-	body, err := buildPlatformPush(p, nil, &control.AnalysisResult{}, nil, ".plumber.yaml", "")
+	body, err := buildPlatformPush(p, nil, &control.AnalysisResult{}, nil, ".plumber.yaml")
 	if err != nil {
 		t.Fatalf("buildPlatformPush: %v", err)
 	}
@@ -936,7 +936,7 @@ func TestBuildPlatformPush_GitHubCIIdentityValuesReachTheWire(t *testing.T) {
 	t.Setenv("GITHUB_RUN_ID", "run-gh-333")
 	t.Setenv("GITHUB_JOB", "job-gh-444")
 
-	body, err := buildPlatformPush(p, nil, &control.AnalysisResult{}, nil, ".plumber.yaml", "")
+	body, err := buildPlatformPush(p, nil, &control.AnalysisResult{}, nil, ".plumber.yaml")
 	if err != nil {
 		t.Fatalf("buildPlatformPush: %v", err)
 	}

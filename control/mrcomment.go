@@ -152,12 +152,15 @@ func generateMRComment(result *AnalysisResult, pc *configuration.PlumberConfig, 
 	}
 
 	// Gather controls from the config-driven catalog joined with the
-	// Rego Findings list. A control passes when no finding matches;
-	// skipped status comes from .plumber.yaml.
+	// Rego Findings list. An empty findings list is not automatically a
+	// pass: a control whose data lane supplied nothing has no findings
+	// either, and a green check beside it on a merge request is the most
+	// consequential place to get that wrong.
 	type controlEntry struct {
-		name    string
-		issues  int
-		skipped bool
+		name         string
+		issues       int
+		skipped      bool
+		notEvaluable bool
 	}
 
 	findingsByControl := FindingsByControl(result.Findings)
@@ -168,7 +171,16 @@ func generateMRComment(result *AnalysisResult, pc *configuration.PlumberConfig, 
 	MarkSkippedByFilter(mrEntries, controlsFilterList, skipControlsList)
 	for _, e := range mrEntries {
 		count := len(findingsByControl[e.ControlName])
-		controls = append(controls, controlEntry{e.DisplayName, count, e.Skipped})
+		// Keyed on result.NotEvaluable, not StatusFor: StatusFor also
+		// returns StatusError for the older run-wide degradation signals,
+		// and re-bucketing those would change what a STANDALONE run posts.
+		_, unevaluated := result.NotEvaluable[e.ControlName]
+		controls = append(controls, controlEntry{
+			name:         e.DisplayName,
+			issues:       count,
+			skipped:      e.Skipped,
+			notEvaluable: !e.Skipped && unevaluated,
+		})
 		if !e.Skipped {
 			totalIssues += count
 		}
@@ -181,6 +193,10 @@ func generateMRComment(result *AnalysisResult, pc *configuration.PlumberConfig, 
 	for _, c := range controls {
 		if c.skipped {
 			fmt.Fprintf(&b, "| %s | _skipped_ | — |\n", c.name)
+		} else if c.notEvaluable {
+			// Never a green check: this control was not checked at all, and
+			// a reviewer reading the MR must not take it for a pass.
+			fmt.Fprintf(&b, "| :grey_question: %s | _not evaluated_ | — |\n", c.name)
 		} else if c.issues > 0 {
 			fmt.Fprintf(&b, "| :x: %s | failed | %d |\n", c.name, c.issues)
 		} else {

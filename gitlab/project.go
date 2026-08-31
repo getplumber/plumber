@@ -65,6 +65,18 @@ func FetchProjectDetails(projectPath string, token string, instanceURL string, c
 		project.CiConfPath = gitlabProject.CIConfigPath
 	}
 
+	// The merge-request settings ISSUE-506 reads. Already in this response;
+	// projecting them here is what lets an embedding host serve them without
+	// a second call to the same endpoint (#368 ask 4).
+	project.MergeMethod = string(gitlabProject.MergeMethod)
+	project.SquashOption = string(gitlabProject.SquashOption)
+	project.MergePipelinesEnabled = gitlabProject.MergePipelinesEnabled
+	project.MergeTrainsEnabled = gitlabProject.MergeTrainsEnabled
+	project.AllowMergeOnSkippedPipeline = gitlabProject.AllowMergeOnSkippedPipeline
+	project.ResolveOutdatedDiffDiscussions = gitlabProject.ResolveOutdatedDiffDiscussions
+	project.PrintingMergeRequestLinkEnabled = gitlabProject.PrintingMergeRequestLinkEnabled
+	project.RemoveSourceBranchAfterMerge = gitlabProject.RemoveSourceBranchAfterMerge
+
 	// Determine group ID if project is in a group
 	if gitlabProject.Namespace != nil && gitlabProject.Namespace.Kind == "group" {
 		project.GroupIdOnPlatform = int(gitlabProject.Namespace.ID)

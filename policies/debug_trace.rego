@@ -24,13 +24,14 @@ deny contains finding if {
 	upper(k) == upper(var_name)
 	_is_truthy(v)
 	finding := {
-		"code":         "ISSUE-203",
-		"severity":     "critical",
-		"message":      sprintf("%s = %q (job %q)", [k, v, job.name]),
-		"job":          job.name,
-		"variableName": k,
-		"value":        v,
-		"location":     job.name,
+		"code":            "ISSUE-203",
+		"severity":        "critical",
+		"message":         sprintf("%s = %q (job %q)", [k, v, job.name]),
+		"job":             job.name,
+		"variableName":    k,
+		"value":           v,
+		"valueProvenance": "ci_file",
+		"location":        job.name,
 	}
 }
 
@@ -44,12 +45,13 @@ deny contains finding if {
 	upper(k) == upper(var_name)
 	_is_truthy(v)
 	finding := {
-		"code":         "ISSUE-203",
-		"severity":     "critical",
-		"message":      sprintf("%s = %q (global variables)", [k, v]),
-		"variableName": k,
-		"value":        v,
-		"location":     "global",
+		"code":            "ISSUE-203",
+		"severity":        "critical",
+		"message":         sprintf("%s = %q (global variables)", [k, v]),
+		"variableName":    k,
+		"value":           v,
+		"valueProvenance": "ci_file",
+		"location":        "global",
 	}
 }
 
@@ -74,13 +76,14 @@ deny contains finding if {
 	not _is_truthy(v)
 	_is_expression(v)
 	finding := {
-		"code":         "ISSUE-203",
-		"severity":     "critical",
-		"message":      sprintf("%s uses a GitHub expression %q (job %q) — debug logging cannot be verified off statically", [k, v, job.name]),
-		"job":          job.name,
-		"variableName": k,
-		"value":        v,
-		"location":     job.name,
+		"code":            "ISSUE-203",
+		"severity":        "critical",
+		"message":         sprintf("%s uses a GitHub expression %q (job %q) — debug logging cannot be verified off statically", [k, v, job.name]),
+		"job":             job.name,
+		"variableName":    k,
+		"value":           v,
+		"valueProvenance": "ci_file",
+		"location":        job.name,
 	}
 }
 

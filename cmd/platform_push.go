@@ -117,13 +117,17 @@ type platformCollectionMeta struct {
 // (a prior version of this file sent one; see the package doc above).
 type platformPolicyResult struct {
 	Policy string `json:"policy"`
-	// PolicyID is the /context-resolved uuid for Policy, when the run could
-	// resolve one (resolvePlatformPolicyID). A string, not a uuid type, and
-	// deliberately left "" rather than a placeholder when unresolved: with
-	// omitempty that means the key is genuinely absent from the wire, never
-	// present with a zero value — the CLI must never emit the literal
-	// all-zero uuid (see resolvePlatformPolicyID and
-	// matchPlatformContextPolicyID for how "" is reached).
+	// PolicyID is the platform's uuid for Policy, taken from the resolved
+	// policy set (buildPolicyResults). A string, not a uuid type, and
+	// deliberately left "" rather than a placeholder when there is none:
+	// with omitempty that means the key is genuinely absent from the wire,
+	// never present with a zero value.
+	//
+	// A uuid-typed field would make this impossible to express. Go's
+	// omitempty never omits a fixed-size array, so a zero uuid.UUID
+	// marshals as the literal all-zero uuid string — which the platform's
+	// contract explicitly forbids sending, because it is the id its derived
+	// fallback policy carries and names no real policies row.
 	PolicyID        string            `json:"policy_id,omitempty"`
 	EffectiveConfig json.RawMessage   `json:"effective_config,omitempty"`
 	Findings        []platformFinding `json:"findings"`
@@ -215,21 +219,14 @@ func platformPolicyNameFor(configPath string) string {
 
 // buildPlatformPush builds the body POSTed to the platform, matching
 // ingestion.Push field-for-field (see the type doc comments above).
+//
 // configPath is the resolved config path the caller computed
-// (conf.ConfigFilePath, falling back to the --config flag); it decides only
-// the policy NAME via platformPolicyNameFor. policyID is the /context-resolved
-// uuid for that name (resolvePlatformPolicyID), or "" when none was resolved;
-// it is threaded straight onto the single result entry's PolicyID field,
-// whose omitempty tag drops the key entirely when policyID is "".
-func buildPlatformPush(p providerPkg.Provider, conf *configuration.Configuration, result *control.AnalysisResult, score *control.PlumberScoreResult, configPath, policyID string) ([]byte, error) {
+// (conf.ConfigFilePath, falling back to the --config flag); it names the
+// single policy of a STANDALONE push. In platform mode the results array
+// instead carries one entry per policy the platform resolved - see
+// buildPolicyResults, which owns that decision.
+func buildPlatformPush(p providerPkg.Provider, conf *configuration.Configuration, result *control.AnalysisResult, score *control.PlumberScoreResult, configPath string) ([]byte, error) {
 	forgeHost, projectPath, _ := resolveScoreTarget(p, conf)
-
-	var pc *configuration.PlumberConfig
-	var includeOnly, skip []string
-	if conf != nil {
-		pc = conf.PlumberConfig
-		includeOnly, skip = conf.ControlsFilter, conf.SkipControlsFilter
-	}
 
 	push := platformPush{
 		SchemaVersion: 1,
@@ -239,14 +236,8 @@ func buildPlatformPush(p providerPkg.Provider, conf *configuration.Configuration
 		Ref:           platformRefFor(p),
 		Pipeline:      platformPipelineFor(p),
 		CLI:           platformCLI{Version: strings.TrimPrefix(Version, "v")},
-		Collection:    platformCollectionMeta{Degraded: result != nil && result.DataCollectionDegraded},
-		Results: []platformPolicyResult{{
-			Policy:          platformPolicyNameFor(configPath),
-			PolicyID:        policyID,
-			EffectiveConfig: platformEffectiveConfigRaw(pc),
-			Findings:        platformFindingsFor(p, result, pc, includeOnly, skip),
-			Score:           platformScoreFrom(score),
-		}},
+		Collection:    platformCollectionFor(conf, result),
+		Results:       buildPolicyResults(p, conf, result, score, configPath),
 	}
 
 	body, err := json.Marshal(push)
@@ -254,6 +245,24 @@ func buildPlatformPush(p providerPkg.Provider, conf *configuration.Configuration
 		return nil, fmt.Errorf("marshal platform push: %w", err)
 	}
 	return body, nil
+}
+
+// platformCollectionFor builds the honest-degradation block: whether this
+// run's collection degraded, which snapshot read it consumed, and which
+// snapshot lanes carried no data.
+//
+// snapshot_collected_at and missing_fields are populated only in platform
+// mode, where a snapshot exists to describe. A standalone run has no
+// snapshot, so both stay absent rather than being filled with a fabricated
+// "nothing was missing".
+func platformCollectionFor(conf *configuration.Configuration, result *control.AnalysisResult) platformCollectionMeta {
+	meta := platformCollectionMeta{Degraded: result != nil && result.DataCollectionDegraded}
+	if conf == nil || !conf.PlatformRun.Active() {
+		return meta
+	}
+	meta.SnapshotCollectedAt = conf.PlatformRun.SnapshotCollectedAt()
+	meta.MissingFields = conf.PlatformRun.MissingSnapshotFields()
+	return meta
 }
 
 // platformProjectID returns the project's stable numeric GitLab id when it is
@@ -317,7 +326,11 @@ func platformEffectiveConfigRaw(pc *configuration.PlumberConfig) json.RawMessage
 	if err != nil {
 		return nil
 	}
-	return raw
+	// The platform's value guard walks effective_config too, so the same
+	// sanitization applies: a config that ever carries a variable value
+	// beside its name must declare that value's provenance or not send it.
+	sanitized, _ := sanitizeProvenance(raw)
+	return sanitized
 }
 
 // platformFindingsFor builds the explicit-results findings list: one entry
@@ -370,12 +383,40 @@ func platformFindingsFor(p providerPkg.Provider, result *control.AnalysisResult,
 				})
 			}
 		case control.StatusError:
-			out = append(out, platformFinding{Control: e.ControlName, Status: platformStatusNotEvaluable})
+			out = append(out, platformFinding{
+				Control: e.ControlName,
+				Status:  platformStatusNotEvaluable,
+				Data:    notEvaluableReasonData(result, e.ControlName),
+			})
 		default: // control.StatusPassed
 			out = append(out, platformFinding{Control: e.ControlName, Status: platformStatusPass})
 		}
 	}
 	return out
+}
+
+// notEvaluableReasonData carries WHY a control could not be evaluated, as a
+// machine-readable reason on the finding, so the platform can distinguish
+// "the CI configuration could not be resolved" from "this control's data
+// lane is not switched over yet" without parsing prose.
+//
+// Absent when the run recorded no specific reason — the older, run-wide
+// degradation signals (a missing or invalid CI config, a failed collection)
+// name no single control, and inventing a reason for them would be worse
+// than saying nothing.
+func notEvaluableReasonData(result *control.AnalysisResult, controlName string) json.RawMessage {
+	if result == nil {
+		return nil
+	}
+	reason, ok := result.NotEvaluable[controlName]
+	if !ok || reason == "" {
+		return nil
+	}
+	raw, err := json.Marshal(map[string]string{"reason": reason})
+	if err != nil {
+		return nil
+	}
+	return raw
 }
 
 // platformFindingControlName names a failed finding's control via the same
@@ -398,12 +439,20 @@ func platformFindingControlName(f opaengine.Finding) string {
 // only fails for a JSON-incompatible value inside f.Data (a channel, a
 // function), which Rego cannot produce; nil (omitted) is the safe fallback
 // if it ever did.
+//
+// The serialized data then passes through sanitizeProvenance, which is what
+// keeps a finding carrying a variable value from costing the operator their
+// whole push: the platform rejects an ENTIRE push (422) over one value
+// whose provenance is not declared, so a rule that emits a value without
+// declaring where it came from has its value withheld and described here
+// rather than taken to the wire.
 func platformFindingDataRaw(f opaengine.Finding) json.RawMessage {
 	raw, err := json.Marshal(f)
 	if err != nil {
 		return nil
 	}
-	return raw
+	sanitized, _ := sanitizeProvenance(raw)
+	return sanitized
 }
 
 // PlatformTokenError reports that the run could not obtain the CI OIDC
@@ -476,8 +525,7 @@ func maybePushPlatform(p providerPkg.Provider, conf *configuration.Configuration
 			configPath = resolved
 		}
 	}
-	policyID := resolvePlatformPolicyID(p, conf, endpoint, token, configPath)
-	body, err := buildPlatformPush(p, conf, result, score, configPath, policyID)
+	body, err := buildPlatformPush(p, conf, result, score, configPath)
 	if err != nil {
 		scoreWarn(fmt.Sprintf("platform push skipped: %v", err))
 		return nil

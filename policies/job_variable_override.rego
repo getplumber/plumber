@@ -22,13 +22,14 @@ deny contains finding if {
 	some var_name in _protected_variables
 	job.localVariables[var_name]
 	finding := {
-		"code":         "ISSUE-205",
-		"severity":     "critical",
-		"message":      sprintf("%s = %q (job %q)", [var_name, job.localVariables[var_name], job.name]),
-		"job":          job.name,
-		"variableName": var_name,
-		"value":        job.localVariables[var_name],
-		"location":     job.name,
+		"code":            "ISSUE-205",
+		"severity":        "critical",
+		"message":         sprintf("%s = %q (job %q)", [var_name, job.localVariables[var_name], job.name]),
+		"job":             job.name,
+		"variableName":    var_name,
+		"value":           job.localVariables[var_name],
+		"valueProvenance": "ci_file",
+		"location":        job.name,
 	}
 }
 
@@ -42,12 +43,13 @@ deny contains finding if {
 	some var_name in _protected_variables
 	input.pipeline.localGlobalVariables[var_name]
 	finding := {
-		"code":         "ISSUE-205",
-		"severity":     "critical",
-		"message":      sprintf("%s = %q (global variables)", [var_name, input.pipeline.localGlobalVariables[var_name]]),
-		"variableName": var_name,
-		"value":        input.pipeline.localGlobalVariables[var_name],
-		"location":     "global",
+		"code":            "ISSUE-205",
+		"severity":        "critical",
+		"message":         sprintf("%s = %q (global variables)", [var_name, input.pipeline.localGlobalVariables[var_name]]),
+		"variableName":    var_name,
+		"value":           input.pipeline.localGlobalVariables[var_name],
+		"valueProvenance": "ci_file",
+		"location":        "global",
 	}
 }
 

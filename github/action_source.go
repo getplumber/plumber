@@ -306,7 +306,14 @@ func contains(s []string, v string) bool {
 //     not reach it) → exec. A digest-pinned image is immutable → ok.
 //   - docker with `image: Dockerfile`: the RUN lines of the Dockerfile
 //     are scanned with the same logic (curl|sh, obfuscation, …).
-func scanActionDefinition(actionYML, ymlKey string, fetchRel func(rel string) (string, bool)) *ir.MutableRemoteExec {
+//
+// fetchRel reports the STATUS of a sibling-file read, not just success. A
+// file that could not be FETCHED is not a file that does not exist: folding
+// the two together omits the entrypoint from the scan and grades the action
+// clean, which is the opposite of what an unreadable source should mean. The
+// action definition itself has always made this distinction; its siblings
+// now do too.
+func scanActionDefinition(actionYML, ymlKey string, fetchRel func(rel string) (string, fetchStatus)) *ir.MutableRemoteExec {
 	files := map[string]string{ymlKey: actionYML}
 	dir := path.Dir(ymlKey) // "" for a root action, the subpath for a nested one
 	key := func(rel string) string {
@@ -314,6 +321,11 @@ func scanActionDefinition(actionYML, ymlKey string, fetchRel func(rel string) (s
 			return rel
 		}
 		return path.Join(dir, rel)
+	}
+	// fetchDisabled is deliberate (the offline switch) and stays silent;
+	// only a genuine failure downgrades the verdict.
+	unverified := func(rel string) *ir.MutableRemoteExec {
+		return &ir.MutableRemoteExec{Tier: "unverified", File: key(rel)}
 	}
 
 	if u := reUsing.FindStringSubmatch(actionYML); len(u) == 2 && strings.EqualFold(u[1], "docker") {
@@ -331,15 +343,23 @@ func scanActionDefinition(actionYML, ymlKey string, fetchRel func(rel string) (s
 		if df == "" || strings.EqualFold(df, "dockerfile") {
 			df = "Dockerfile"
 		}
-		if src, ok := fetchRel(df); ok {
+		src, st := fetchRel(df)
+		switch st {
+		case fetchOK:
 			files[key(df)] = src
+		case fetchError:
+			return unverified(df)
 		}
 		return ScanActionSource(files)
 	}
 
 	for _, p := range entrypointPaths(actionYML) {
-		if src, ok := fetchRel(p); ok {
+		src, st := fetchRel(p)
+		switch st {
+		case fetchOK:
 			files[key(p)] = src
+		case fetchError:
+			return unverified(p)
 		}
 	}
 	return ScanActionSource(files)
@@ -459,9 +479,8 @@ func analyzeActionMutableExec(fetch rawFetcher, owner, repo, ref, subpath string
 			return nil // missing (not an action / subpath) or offline → silent
 		}
 	}
-	return scanActionDefinition(actionYML, ymlPath, func(rel string) (string, bool) {
-		src, st := fetch(owner, repo, ref, path.Join(subpath, rel))
-		return src, st == fetchOK
+	return scanActionDefinition(actionYML, ymlPath, func(rel string) (string, fetchStatus) {
+		return fetch(owner, repo, ref, path.Join(subpath, rel))
 	})
 }
 
@@ -479,8 +498,14 @@ func ScanLocalSelfAction(rootDir string) *ir.MutableRemoteExec {
 			return nil
 		}
 	}
-	return scanActionDefinition(actionYML, "action.yml", func(rel string) (string, bool) {
-		return readLocalFile(rootDir, rel)
+	return scanActionDefinition(actionYML, "action.yml", func(rel string) (string, fetchStatus) {
+		// A local read has no transport to fail: an unreadable path here is
+		// an absent file, which is a real answer.
+		src, ok := readLocalFile(rootDir, rel)
+		if !ok {
+			return "", fetchMissing
+		}
+		return src, fetchOK
 	})
 }
 

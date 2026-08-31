@@ -49,6 +49,20 @@ func (p *GitLabProvider) ComputeCompliance(result *control.AnalysisResult, conf 
 		if e.Skipped {
 			continue
 		}
+		// A control whose data lane supplied nothing is neither passed nor
+		// failed, so it leaves the ratio entirely rather than counting as a
+		// pass on an empty findings list. Counting it would report 100% on a
+		// run that evaluated nothing — the exact false green the
+		// not_evaluable status exists to prevent.
+		//
+		// Keyed on result.NotEvaluable, NOT on StatusFor: StatusFor also
+		// returns StatusError for the older run-wide degradation signals,
+		// and excluding those would change what a STANDALONE run reports.
+		// (Those cases can still render as a pass, which is a real but
+		// pre-existing gap, and not this change's to alter silently.)
+		if _, unevaluated := result.NotEvaluable[e.ControlName]; unevaluated {
+			continue
+		}
 		controlCount++
 		if findingCountsByControl[e.ControlName] == 0 {
 			passed++

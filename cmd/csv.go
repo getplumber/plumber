@@ -165,6 +165,13 @@ func csvStatusReason(status string, e control.ControlEntry, result *control.Anal
 		}
 		return "disabled in configuration"
 	case control.StatusError:
+		// This control's OWN reason first. StatusError is returned for a
+		// control marked not-evaluable, and that mark carries why; falling
+		// straight to the run-level DegradedReasons attributed an unrelated
+		// failure to it, or explained nothing at all.
+		if reason, ok := result.NotEvaluableReason(e.ControlName); ok && reason != "" {
+			return "could not verify: " + reason
+		}
 		if result != nil && len(result.DegradedReasons) > 0 {
 			return "could not verify: " + strings.Join(result.DegradedReasons, "; ")
 		}

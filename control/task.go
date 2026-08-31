@@ -302,6 +302,7 @@ func runRegoEngine(
 	protectionData *gitlab.GitlabProtectionAnalysisData,
 	variablesData *gitlab.GitlabVariablesAnalysisData,
 	securityPolicyData *gitlab.SecurityPolicyData,
+	result *AnalysisResult,
 ) []opaengine.Finding {
 	pipeline := gitlab.ToNormalizedPipeline(
 		conf.ProjectPath,
@@ -313,6 +314,12 @@ func runRegoEngine(
 		variablesData,
 		securityPolicyData,
 	)
+	// Retained so a later per-policy evaluation can re-run the rules over the
+	// SAME collected data under a different policy's parameters, without
+	// re-collecting anything from the git host.
+	if result != nil {
+		result.Pipeline = pipeline
+	}
 	return evaluatePolicies(l, conf, "gitlab", pipeline)
 }
 
@@ -674,22 +681,41 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	// Fetch Project Info from GitLab
 	///////////////////////
 	reportProgress(conf, 1, analysisStepCount, "Fetching project information")
-	l.Info("Fetching project information from GitLab")
-	project, err := gitlab.FetchProjectDetails(conf.ProjectPath, conf.GitlabToken, conf.GitlabURL, conf)
-	if err != nil {
-		// A network/timeout failure here is incomplete data, not a bad
-		// project: degrade (exit 3, honest) instead of hard-failing (exit 2).
-		// A definitive answer (404 not-found, auth) still hard-fails (#220).
-		if isNetworkError(err) {
-			l.WithError(err).Warn("Project information fetch failed (network); reporting incomplete data")
-			markDegraded(result, "project information could not be fetched (network or timeout)")
-			result.CiValid = false
-			return result, nil
+	var project *gitlab.Project
+	identityFromEnvironment := false
+	// In platform mode the project's identity comes from the environment
+	// GitLab already put it in. That is not only two requests cheaper: this
+	// lookup is the FIRST call a run makes, a 401 here is not a network
+	// error, and so a token that cannot read the project aborts the whole
+	// analysis before a single control is evaluated. Sourcing it from the
+	// job removes the one call that turns a missing token into no report at
+	// all.
+	if conf.PlatformRun.Engaged() {
+		if fromEnv, ok := gitlab.ProjectFromCIEnvironment(conf.ProjectPath, conf.PlatformRun.SnapshotCIConfigPath()); ok {
+			project = fromEnv
+			identityFromEnvironment = true
+			l.Info("Project information taken from the CI environment (no API call)")
 		}
-		l.WithError(err).Error("Failed to fetch project from GitLab")
-		result.CiValid = false
-		result.CiMissing = true
-		return result, err
+	}
+	if project == nil {
+		l.Info("Fetching project information from GitLab")
+		fetched, err := gitlab.FetchProjectDetails(conf.ProjectPath, conf.GitlabToken, conf.GitlabURL, conf)
+		if err != nil {
+			// A network/timeout failure here is incomplete data, not a bad
+			// project: degrade (exit 3, honest) instead of hard-failing (exit 2).
+			// A definitive answer (404 not-found, auth) still hard-fails (#220).
+			if isNetworkError(err) {
+				l.WithError(err).Warn("Project information fetch failed (network); reporting incomplete data")
+				markDegraded(result, "project information could not be fetched (network or timeout)")
+				result.CiValid = false
+				return result, nil
+			}
+			l.WithError(err).Error("Failed to fetch project from GitLab")
+			result.CiValid = false
+			result.CiMissing = true
+			return result, err
+		}
+		project = fetched
 	}
 
 	// Update result with project info
@@ -717,6 +743,17 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	// Convert to ProjectInfo for collectors
 	projectInfo := project.ToProjectInfo()
 
+	// ToProjectInfo defaults AnalyzeBranch to the project's DEFAULT branch,
+	// which is right for a run that named no branch and had to ask the API
+	// what it was looking at. A CI job knows: it analyses the ref it checked
+	// out. Leaving the default in place would read the branch's own CI file
+	// off disk and then label every source link with the default branch.
+	if identityFromEnvironment && conf.Branch == "" {
+		if ref := gitlab.CIAnalyzedRef(); ref != "" {
+			projectInfo.AnalyzeBranch = ref
+		}
+	}
+
 	// The --branch flag specifies which branch's CI config to analyze,
 	// NOT the project's default branch. Keep them separate.
 	// projectInfo.DefaultBranch = actual default branch from GitLab API (e.g., "main")
@@ -727,7 +764,21 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 		// When analyzing a non-default branch, fetch the correct SHA so that
 		// GitLab's ciConfig GraphQL query resolves include:local files from
 		// the target branch's file tree, not the default branch's.
-		if conf.Branch != projectInfo.DefaultBranch {
+		//
+		// This correction exists because the API hands back the DEFAULT
+		// branch's head. An identity taken from the environment already
+		// carries $CI_COMMIT_SHA, so there is usually nothing to correct.
+		//
+		// "Usually" is the whole point: $CI_COMMIT_SHA is the head of the ref
+		// this JOB is building, which is the analyzed ref only when the two
+		// are the same. Analysing release/2.0 from a job building main would
+		// otherwise read release/2.0's CI file while resolving its
+		// include:local entries against main's tree - a configuration that
+		// parses cleanly either way and is silently the wrong one. When they
+		// differ the run genuinely needs a sha it does not have, and the
+		// extra request is the correct price.
+		envShaIsAnalyzedRef := identityFromEnvironment && gitlab.CheckoutIsAtRef(conf.Branch)
+		if conf.Branch != projectInfo.DefaultBranch && !envShaIsAnalyzedRef {
 			branchSha, err := gitlab.FetchLatestCommitSha(
 				conf.GitlabToken, conf.GitlabURL, conf.ProjectPath, conf.Branch, conf,
 			)
@@ -752,7 +803,18 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	// 2. If in a git repo, the local repo IS the analyzed project, and the CI config
 	//    file exists locally: use local file (+ resolve include:local from filesystem)
 	// 3. Otherwise: use remote file (current default behavior)
-	if conf.Branch == "" && conf.IsLocalProject {
+	//
+	// Platform mode adds a fourth case that overrides rule 1. A CI job names
+	// its own branch on every run, so rule 1 would send every run to the API
+	// for a file the job already has on disk - and that read is the last
+	// thing standing between a tokenless run and a complete one. It is only
+	// taken when the checkout genuinely holds the analyzed ref
+	// (CheckoutIsAtRef): a working tree at a different branch parses just as
+	// cleanly and would be silently wrong.
+	useCheckoutInPlatformMode := conf.PlatformRun.Engaged() &&
+		conf.CheckoutIsAnalyzedProject &&
+		gitlab.CheckoutIsAtRef(conf.Branch)
+	if useCheckoutInPlatformMode || (conf.Branch == "" && conf.IsLocalProject) {
 		localCIPath, cErr := gitlab.ResolveWithinRepo(conf.GitRepoRoot, project.CiConfPath)
 		if cErr != nil {
 			l.WithFields(logrus.Fields{
@@ -819,7 +881,21 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	// pipeline, so the analysis ran on a partial config. Flag degraded (the
 	// run still evaluates what it has, like a GitHub partial) so the score is
 	// withheld rather than scored against an incomplete pipeline (#220).
-	if n := len(pipelineOriginData.IncludesFailed); n > 0 {
+	//
+	// That reasoning holds only when THIS run built the merged pipeline. In
+	// platform mode it did not: the pipeline comes from the platform and
+	// already contains every job, and the per-include merge is run purely to
+	// learn which include contributed which job. A failed include there
+	// costs attribution, not jobs - so degrading the run would withhold the
+	// score over a loss that did not happen, and, because degraded maps to
+	// exit 3, would fail the CI job that was working correctly.
+	//
+	// The attribution loss is not swallowed: markPlatformLaneGaps reports
+	// every control that depended on it as not_evaluable and drops their
+	// findings, which is the proportionate signal for what actually went
+	// missing.
+	_, mergedFromPlatform := conf.PlatformRun.MergedYAML()
+	if n := len(pipelineOriginData.IncludesFailed); n > 0 && !mergedFromPlatform {
 		markDegraded(result, fmt.Sprintf("%d include(s) could not be resolved; their jobs were not analysed", n))
 	}
 
@@ -893,46 +969,60 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	result.PipelineImageData = pipelineImageData
 	result.PipelineOriginData = pipelineOriginData
 
-	// Fetch branch-protection metadata when the user configured the
-	// corresponding control — the Rego policy needs the protection
-	// settings to check every branch against the declared bar.
+	// Branch protection and MR approvals: from the platform's snapshot when
+	// it has taken the lane over, from GitLab otherwise.
+	//
+	// This is issue #368's lane split at its clearest. Listing protected
+	// branches and reading approval rules both need rights a CI job token
+	// does not have, and both are the SAME data for every run of the same
+	// project, so a project scanned once per .plumber.yaml would pay for
+	// them once per config file. The platform collects them on its own
+	// schedule and the runner reads the result.
 	var protectionData *gitlab.GitlabProtectionAnalysisData
 	if protectionDataNeeded(conf) {
 		reportProgress(conf, 9, analysisStepCount, "Checking branch protection")
-		protectionDC := &gitlab.GitlabProtectionDataCollection{}
-		pData, _, pErr := protectionDC.Run(projectInfo, conf.GitlabToken, conf)
-		if pErr != nil {
-			// A network failure here leaves branchMustBeProtected with zero
-			// branches → a vacuous 100% green. Flag degraded so that control's
-			// pass is not trusted (mirrors the GitHub branch path, #220). A
-			// non-network failure stays a soft warn as before. The approval-rule
-			// controls need no degraded flag here: a nil protectionData makes
-			// them report not-evaluable via StatusFor.
-			if isNetworkError(pErr) {
-				markDegraded(result, degradedReasonBranchProtectionPrefix+" (network or timeout)")
-			}
-			l.WithError(pErr).Warn("Protection data collection failed; branch and approval-rule policies will see no data")
+		if fromSnapshot, served := gitlab.ProtectionFromSnapshot(conf.PlatformRun); served {
+			protectionData = fromSnapshot
 		} else {
-			protectionData = pData
+			protectionDC := &gitlab.GitlabProtectionDataCollection{}
+			pData, _, pErr := protectionDC.Run(projectInfo, conf.GitlabToken, conf)
+			if pErr != nil {
+				// A network failure here leaves branchMustBeProtected with zero
+				// branches → a vacuous 100% green. Flag degraded so that control's
+				// pass is not trusted (mirrors the GitHub branch path, #220). A
+				// non-network failure stays a soft warn as before. The approval-rule
+				// controls need no degraded flag here: a nil protectionData makes
+				// them report not-evaluable via StatusFor.
+				if isNetworkError(pErr) {
+					markDegraded(result, degradedReasonBranchProtectionPrefix+" (network or timeout)")
+				}
+				l.WithError(pErr).Warn("Protection data collection failed; branch and approval-rule policies will see no data")
+			} else {
+				protectionData = pData
+			}
 		}
 	}
 
-	// Fetch settings-variable metadata when either variable control is
-	// enabled — the Rego policies need the protected/masked flags, and the
-	// (extra API call) listing is fetched only when a control needs it. The
-	// variable values never reach the IR (per the #370 sensitivity tiers).
+	// Settings CI/CD variables: same split. The Rego policies need the
+	// protected/masked flags, never the values, which is exactly what the
+	// platform serves — and is why this lane can move without the snapshot
+	// ever holding a secret.
 	var variablesData *gitlab.GitlabVariablesAnalysisData
 	if cicdVariableControlEnabled(conf) {
 		reportProgress(conf, 10, analysisStepCount, "Checking CI/CD variables")
-		var vErr error
-		variablesData, vErr = gitlab.CollectGitlabVariables(conf.ProjectPath, conf.GitlabToken, conf)
-		if vErr != nil && isNetworkError(vErr) {
-			// A transient network failure fetching variables degrades the run
-			// (exit 3), matching the branch/image collectors (#220). A
-			// permission failure (401/403 or a null project) is NOT network, so
-			// it stays a plain not-evaluable — variablesData.Known is false and
-			// StatusFor reports it without failing an otherwise-complete run.
-			markDegraded(result, degradedReasonVariablesPrefix+" (network or timeout)")
+		if fromSnapshot, served := gitlab.VariablesFromSnapshot(conf.PlatformRun); served {
+			variablesData = fromSnapshot
+		} else {
+			var vErr error
+			variablesData, vErr = gitlab.CollectGitlabVariables(conf.ProjectPath, conf.GitlabToken, conf)
+			if vErr != nil && isNetworkError(vErr) {
+				// A transient network failure fetching variables degrades the run
+				// (exit 3), matching the branch/image collectors (#220). A
+				// permission failure (401/403 or a null project) is NOT network, so
+				// it stays a plain not-evaluable — variablesData.Known is false and
+				// StatusFor reports it without failing an otherwise-complete run.
+				markDegraded(result, degradedReasonVariablesPrefix+" (network or timeout)")
+			}
 		}
 	}
 
@@ -941,8 +1031,15 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	// endpoints, and nesting it there made ISSUE-601 hostage to them: a token
 	// that cannot list branches aborts that collection before the read is ever
 	// reached, leaving the control not-evaluable on a linkage it could have read.
+	//
+	// In platform mode it is not read at all. The snapshot contract carries
+	// no lane for it and a CI job token cannot reach GraphQL, so the call
+	// could only ever fail; control/lanes.go already reports the control
+	// lane_not_served, and making the request anyway would spend a
+	// privileged credential on an answer the run has already decided it
+	// cannot use.
 	var securityPolicyData *gitlab.SecurityPolicyData
-	if securityPolicyControlEnabled(conf) {
+	if securityPolicyControlEnabled(conf) && !conf.PlatformRun.Engaged() {
 		var spErr error
 		securityPolicyData, spErr = gitlab.CollectSecurityPolicy(conf.ProjectPath, conf.GitlabToken, conf.GitlabURL, conf)
 		if spErr != nil && isNetworkError(spErr) {
@@ -957,7 +1054,7 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	// Rego/OPA rule engine evaluation — the single authoritative
 	// compliance path (the legacy Go controls were retired in
 	// docs/REFACTOR_MULTI_PROVIDER.md §8 Phase A).
-	result.Findings = runRegoEngine(l, conf, project, pipelineOriginData, pipelineImageData, protectionData, variablesData, securityPolicyData)
+	result.Findings = runRegoEngine(l, conf, project, pipelineOriginData, pipelineImageData, protectionData, variablesData, securityPolicyData, result)
 	result.ProtectionData = protectionData
 	// An approval-rule control that ran but saw zero rules is the ambiguous
 	// GitLab-Free-vs-premium-with-no-rules case (the approvals API 200-empties
@@ -979,6 +1076,21 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	// nothing is linked, surface the conditional Ultimate tier caveat.
 	result.SecurityPolicyEvaluable = securityPolicyData != nil && securityPolicyData.Known
 	result.SecurityPolicyTierCaveat = securityPolicyTierCaveatApplies(conf, securityPolicyData)
+
+	// Platform mode reads the merged configuration from the platform rather
+	// than resolving it through an API the runner has no rights to. Record
+	// which controls that lane could not feed, so their empty findings
+	// lists report not_evaluable instead of passing.
+	// A collection this run makes itself and could not complete, in either
+	// mode. Runs before the platform lane marking so the more specific
+	// reason wins where both apply (MarkNotEvaluable is first-reason-wins).
+	result.MarkFailedCollections(GitLabControls(conf.PlumberConfig))
+
+	// Likewise unconditional: these are checks this run makes itself, and a
+	// standalone run that could not complete one was reporting a pass on it.
+	MarkOwnCollectionGaps(result, GitLabControls(conf.PlumberConfig))
+
+	markPlatformLaneGaps(result, conf)
 
 	reportProgress(conf, analysisStepCount, analysisStepCount, "Analysis complete")
 

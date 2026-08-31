@@ -207,7 +207,7 @@ func TestAnalyzeActionMutableExec_Unverified(t *testing.T) {
 }
 
 func TestScanActionDefinition_Docker(t *testing.T) {
-	noFetch := func(string) (string, bool) { return "", false }
+	noFetch := func(string) (string, fetchStatus) { return "", fetchMissing }
 
 	t.Run("docker:// mutable tag is exec", func(t *testing.T) {
 		yml := "runs:\n  using: docker\n  image: docker://ghcr.io/super-linter/super-linter:latest"
@@ -234,11 +234,11 @@ func TestScanActionDefinition_Docker(t *testing.T) {
 
 	t.Run("Dockerfile RUN curl|sh is exec", func(t *testing.T) {
 		yml := "runs:\n  using: docker\n  image: Dockerfile"
-		fetch := func(rel string) (string, bool) {
+		fetch := func(rel string) (string, fetchStatus) {
 			if rel == "Dockerfile" {
-				return "FROM alpine\nRUN curl -fsSL https://get.docker.com | sh\n", true
+				return "FROM alpine\nRUN curl -fsSL https://get.docker.com | sh\n", fetchOK
 			}
-			return "", false
+			return "", fetchMissing
 		}
 		got := scanActionDefinition(yml, "action.yml", fetch)
 		if got == nil || got.Tier != "exec" {
@@ -248,8 +248,8 @@ func TestScanActionDefinition_Docker(t *testing.T) {
 
 	t.Run("clean Dockerfile is not flagged", func(t *testing.T) {
 		yml := "runs:\n  using: docker\n  image: Dockerfile"
-		fetch := func(rel string) (string, bool) {
-			return "FROM alpine\nRUN apk add --no-cache bash\n", true
+		fetch := func(rel string) (string, fetchStatus) {
+			return "FROM alpine\nRUN apk add --no-cache bash\n", fetchOK
 		}
 		if got := scanActionDefinition(yml, "action.yml", fetch); got != nil {
 			t.Fatalf("clean Dockerfile must not be flagged, got %+v", got)
@@ -289,4 +289,47 @@ func TestEntrypointPaths(t *testing.T) {
 	if !contains(got, "action.js") || !contains(got, "dist/index.js") {
 		t.Fatalf("expected candidate paths appended, got %v", got)
 	}
+}
+
+// TestScanActionDefinition_UnreadableSiblingIsUnverified covers the collapse
+// that scanned a rate-limited action clean.
+//
+// An entrypoint or Dockerfile that could not be FETCHED is not one that does
+// not exist. Folding the two together omitted the file from the scan, and an
+// action whose source nobody could read graded exactly like one with nothing
+// to hide.
+func TestScanActionDefinition_UnreadableSiblingIsUnverified(t *testing.T) {
+	t.Run("Dockerfile fetch error", func(t *testing.T) {
+		yml := "runs:\n  using: docker\n  image: Dockerfile"
+		fetch := func(string) (string, fetchStatus) { return "", fetchError }
+		got := scanActionDefinition(yml, "action.yml", fetch)
+		if got == nil || got.Tier != "unverified" {
+			t.Fatalf("an unreadable Dockerfile must be unverified, got %+v", got)
+		}
+	})
+
+	t.Run("entrypoint fetch error", func(t *testing.T) {
+		yml := "runs:\n  using: node20\n  main: dist/index.js"
+		fetch := func(string) (string, fetchStatus) { return "", fetchError }
+		got := scanActionDefinition(yml, "action.yml", fetch)
+		if got == nil || got.Tier != "unverified" {
+			t.Fatalf("an unreadable entrypoint must be unverified, got %+v", got)
+		}
+	})
+
+	t.Run("a genuinely absent sibling stays clean", func(t *testing.T) {
+		yml := "runs:\n  using: node20\n  main: dist/index.js"
+		fetch := func(string) (string, fetchStatus) { return "", fetchMissing }
+		if got := scanActionDefinition(yml, "action.yml", fetch); got != nil {
+			t.Fatalf("a 404 is a real answer and must not downgrade the verdict, got %+v", got)
+		}
+	})
+
+	t.Run("the offline switch stays silent", func(t *testing.T) {
+		yml := "runs:\n  using: node20\n  main: dist/index.js"
+		fetch := func(string) (string, fetchStatus) { return "", fetchDisabled }
+		if got := scanActionDefinition(yml, "action.yml", fetch); got != nil {
+			t.Fatalf("a deliberate opt-out must abstain silently, got %+v", got)
+		}
+	})
 }
