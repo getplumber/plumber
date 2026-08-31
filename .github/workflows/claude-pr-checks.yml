@@ -77,6 +77,13 @@ jobs:
 
       - name: Claude review
         id: review
+        # continue-on-error hands the pass/fail decision to the
+        # zero-findings fallback step below, which can tell a review that
+        # completed with nothing to report apart from one that really
+        # failed. The action alone cannot: it hard-fails whenever the model
+        # finishes without calling the structured-output tool, and a review
+        # with zero findings reliably ends exactly that way.
+        continue-on-error: true
         uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b # v1.0.183
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
@@ -173,6 +180,37 @@ jobs:
             --allowedTools "Read,Grep,Glob"
             --disallowedTools "Read(/proc/**),Read(//proc/**),Read(/sys/**),Read(//sys/**),Read(/etc/**),Read(//etc/**),Read(/home/runner/work/_temp/**),Read(//home/runner/work/_temp/**),Grep(/proc/**),Grep(//proc/**),Grep(/sys/**),Grep(//sys/**),Grep(/etc/**),Grep(//etc/**),Grep(/home/runner/work/_temp/**),Grep(//home/runner/work/_temp/**)"
             --json-schema '{"type":"object","properties":{"has_findings":{"type":"boolean"},"findings":{"type":"array","items":{"type":"object","properties":{"summary":{"type":"string"},"severity":{"type":"string"},"file":{"type":"string"},"line":{"type":"integer"},"details":{"type":"string"}},"required":["summary","file","details"]}}},"required":["has_findings","findings"]}'
+
+      # The verdict for a failed review step. The action exports the
+      # execution transcript even when it fails (both its entrypoints set
+      # execution_file in their catch), and the transcript's final result
+      # message tells the two failure classes apart:
+      #
+      #   - subtype "success" without is_error: the review COMPLETED and
+      #     the model simply never called the structured-output tool - the
+      #     reliable shape of a review with nothing to report. Treat as no
+      #     findings: exit 0, no artifact, and the comment job already
+      #     reads a missing report as "control did not complete".
+      #   - anything else (no transcript, is_error, a non-success subtype):
+      #     a real failure - API error, timeout, refusal - that must stay
+      #     red rather than read as a clean review.
+      - name: Zero-findings fallback
+        if: steps.review.outcome == 'failure'
+        env:
+          EXECUTION_FILE: ${{ steps.review.outputs.execution_file }}
+        run: |
+          if [ -z "$EXECUTION_FILE" ] || [ ! -s "$EXECUTION_FILE" ]; then
+            echo "review failed before producing a transcript"
+            exit 1
+          fi
+          subtype=$(jq -r '[.[] | select(.type == "result")] | last | .subtype // empty' "$EXECUTION_FILE")
+          is_error=$(jq -r '[.[] | select(.type == "result")] | last | .is_error // false' "$EXECUTION_FILE")
+          if [ "$subtype" = "success" ] && [ "$is_error" != "true" ]; then
+            echo "review completed without structured output; treating as a review with no findings"
+          else
+            echo "review failed (subtype=${subtype:-none} is_error=${is_error})"
+            exit 1
+          fi
 
       # Review jobs never post; they hand their report to the comment job
       # below via an artifact.
