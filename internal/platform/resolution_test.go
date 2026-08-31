@@ -31,6 +31,16 @@ func snapWith(t *testing.T, mergedYAML, digest, version, sha, ref string) Snapsh
 	return Snapshot{Data: data}
 }
 
+// resolveRunConfigSync is the settled form the older tests were written
+// against: start the resolution and wait for its outcome. Production keeps
+// only the early-fired entry point, so the sync spelling lives with the
+// tests that want it.
+func resolveRunConfigSync(c resolver, snap Snapshot, projectPath, sha, localDigest, digestAbortReason string) *ConfigResolution {
+	out := StartRunConfigResolution(c, snap, projectPath, sha, localDigest, digestAbortReason)
+	out.join()
+	return out
+}
+
 func TestCompareDigest(t *testing.T) {
 	anchor := &ResolutionAnchor{Ref: "main", Sha: "s", ConfigDigest: "aaa", DigestVersion: "1"}
 	cases := []struct {
@@ -68,7 +78,7 @@ func TestResolveRunConfig_MatchUsesSnapshotWithNoCall(t *testing.T) {
 	f := &fakeResolver{}
 	snap := snapWith(t, "stages:\n  - build\n", "aaa", "1", "sha1", "main")
 
-	got := ResolveRunConfig(f, snap, "grp/proj", "sha1", "aaa", "")
+	got := resolveRunConfigSync(f, snap, "grp/proj", "sha1", "aaa", "")
 
 	if got.Source != SourceSnapshot {
 		t.Fatalf("source: got %q, want %q", got.Source, SourceSnapshot)
@@ -99,7 +109,7 @@ func TestResolveRunConfig_DivergentResolvesThisBranch(t *testing.T) {
 	}}
 	snap := snapWith(t, "stages:\n  - build\n", "aaa", "1", "defaultsha", "main")
 
-	got := ResolveRunConfig(f, snap, "grp/proj", "branchsha", "bbb", "")
+	got := resolveRunConfigSync(f, snap, "grp/proj", "branchsha", "bbb", "")
 
 	if got.Source != SourceResolved {
 		t.Fatalf("source: got %q, want %q", got.Source, SourceResolved)
@@ -122,7 +132,7 @@ func TestResolveRunConfig_AbortedDigestOmitsThePair(t *testing.T) {
 	f := &fakeResolver{result: &ResolvedConfig{MergedYaml: "a: 1\n", ResolvedSha: "s", Valid: true, Source: "resolved"}}
 	snap := snapWith(t, "b: 2\n", "aaa", "1", "s0", "main")
 
-	got := ResolveRunConfig(f, snap, "grp/proj", "s", "", "overflow")
+	got := resolveRunConfigSync(f, snap, "grp/proj", "s", "", "overflow")
 
 	if got.Digest != DigestNotComputed {
 		t.Fatalf("digest status: %q", got.Digest)
@@ -159,7 +169,7 @@ func TestResolveRunConfig_UnavailableNeverBlocks(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := ResolveRunConfig(&fakeResolver{err: tc.err}, snap, "grp/proj", "s", "bbb", "")
+			got := resolveRunConfigSync(&fakeResolver{err: tc.err}, snap, "grp/proj", "s", "bbb", "")
 			if got.Source != SourceUnavailable {
 				t.Fatalf("source: got %q, want %q", got.Source, SourceUnavailable)
 			}
@@ -184,7 +194,7 @@ func TestResolveRunConfig_MatchButEmptySnapshotConfigIsUnavailable(t *testing.T)
 	f := &fakeResolver{}
 	snap := snapWith(t, "", "aaa", "1", "s", "main")
 
-	got := ResolveRunConfig(f, snap, "grp/proj", "s", "aaa", "")
+	got := resolveRunConfigSync(f, snap, "grp/proj", "s", "aaa", "")
 
 	if got.Source != SourceUnavailable {
 		t.Fatalf("source: got %q, want %q", got.Source, SourceUnavailable)
@@ -200,7 +210,7 @@ func TestResolveRunConfig_MatchButEmptySnapshotConfigIsUnavailable(t *testing.T)
 func TestResolveRunConfig_NoSnapshotAtAllResolves(t *testing.T) {
 	f := &fakeResolver{result: &ResolvedConfig{MergedYaml: "a: 1\n", ResolvedSha: "s", Valid: true, Source: "resolved"}}
 
-	got := ResolveRunConfig(f, Snapshot{}, "grp/proj", "s", "aaa", "")
+	got := resolveRunConfigSync(f, Snapshot{}, "grp/proj", "s", "aaa", "")
 
 	if got.Digest != DigestNoAnchor {
 		t.Fatalf("digest status: %q", got.Digest)
@@ -218,7 +228,7 @@ func TestResolveRunConfig_InvalidMergeIsReportedAsResolved(t *testing.T) {
 	f := &fakeResolver{result: &ResolvedConfig{MergedYaml: "", ResolvedSha: "s", Valid: false, Source: "resolved"}}
 	snap := snapWith(t, "b: 2\n", "aaa", "1", "s0", "main")
 
-	got := ResolveRunConfig(f, snap, "grp/proj", "s", "bbb", "")
+	got := resolveRunConfigSync(f, snap, "grp/proj", "s", "bbb", "")
 
 	if got.Source != SourceResolved {
 		t.Fatalf("source: got %q, want %q", got.Source, SourceResolved)
@@ -238,7 +248,7 @@ func TestResolveRunConfig_CacheHitShaMayDiffer(t *testing.T) {
 	f := &fakeResolver{result: &ResolvedConfig{MergedYaml: "a: 1\n", ResolvedSha: "OTHER", Valid: true, Source: "cache"}}
 	snap := snapWith(t, "b: 2\n", "aaa", "1", "s0", "main")
 
-	got := ResolveRunConfig(f, snap, "grp/proj", "REQUESTED", "bbb", "")
+	got := resolveRunConfigSync(f, snap, "grp/proj", "REQUESTED", "bbb", "")
 
 	if got.ResolvedSha != "OTHER" || !got.FromCache {
 		t.Fatalf("cache hit not recorded faithfully: %+v", got)
@@ -251,7 +261,7 @@ func TestResolveRunConfig_CacheHitShaMayDiffer(t *testing.T) {
 // TestResolveRunConfig_NilResolverIsUnavailable: standalone mode reaching
 // this path with no platform client must degrade, never panic.
 func TestResolveRunConfig_NilResolverIsUnavailable(t *testing.T) {
-	got := ResolveRunConfig(nil, snapWith(t, "b: 2\n", "aaa", "1", "s", "main"), "grp/proj", "s", "bbb", "")
+	got := resolveRunConfigSync(nil, snapWith(t, "b: 2\n", "aaa", "1", "s", "main"), "grp/proj", "s", "bbb", "")
 	if got.Source != SourceUnavailable || got.Reason != ReasonResolutionUnavailable {
 		t.Fatalf("got %+v", got)
 	}
@@ -286,7 +296,7 @@ func TestResolveRunConfig_NoShaSkipsTheCall(t *testing.T) {
 	f := &fakeResolver{result: &ResolvedConfig{MergedYaml: "a: 1\n", Valid: true, Source: "resolved"}}
 	snap := snapWith(t, "b: 2\n", "aaa", "1", "s0", "main")
 
-	got := ResolveRunConfig(f, snap, "grp/proj", "   ", "bbb", "")
+	got := resolveRunConfigSync(f, snap, "grp/proj", "   ", "bbb", "")
 
 	if len(f.calls) != 0 {
 		t.Fatalf("an empty sha must not reach the endpoint, made %d call(s)", len(f.calls))
