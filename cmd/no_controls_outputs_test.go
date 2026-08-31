@@ -227,7 +227,11 @@ func gitHubPBOMFixture() *control.AnalysisResult {
 			Jobs: []ir.Job{{
 				Name:  "build",
 				Image: &ir.Image{Name: "alpine", Tag: "latest", Registry: "docker.io"},
-				Uses:  []ir.Action{{Uses: "actions/checkout@v4"}},
+				// Comment carries the human-readable version annotation
+				// ("@sha # v4.1.0"); the GitHub generator stashes it as the
+				// include's latestVersion, which is collected data and must
+				// survive --no-controls just like the GitLab equivalent.
+				Uses: []ir.Action{{Uses: "actions/checkout@v4", Comment: "v4.1.0"}},
 			}},
 		},
 		Findings: []opaengine.Finding{
@@ -365,6 +369,30 @@ func assertPBOMClaimsNothing(t *testing.T, raw []byte) {
 			if v, ok := entry[k]; ok {
 				t.Errorf("%v asserts %s=%v for a control that never ran", entry["image"], k, v)
 			}
+		}
+	}
+
+	// The other half of the contract, and the one the assertions above
+	// cannot express: suppression is scoped to VERDICTS, and the collected
+	// data has to survive. `latestVersion` is the upstream version the
+	// origin collector read; it states a fact, not a conclusion, so the
+	// artifact keeps it.
+	//
+	// It is worth pinning separately because in processIncludes the
+	// LatestVersion assignment sits one line above the suppressVerdicts
+	// guard, in both the FromPlumber and FromGitlabCatalog branches. A
+	// refactor that widened the guard by one line would silently strip
+	// upstream versions from every --no-controls PBOM, which is the very
+	// artifact the flag exists to produce, and nothing else here would
+	// fail: the checks above only assert that verdict fields are ABSENT.
+	// EVERY include, not just one: processIncludes has two branches that
+	// each set LatestVersion next to the guard (FromPlumber and
+	// FromGitlabCatalog), and the fixture exercises both. An "at least one"
+	// check would be satisfied by the healthy branch while the other
+	// silently lost its version.
+	for _, inc := range bom.Includes {
+		if v, _ := inc["latestVersion"].(string); v == "" {
+			t.Errorf("include %v lost its collected latestVersion; --no-controls must suppress verdicts, not the inventory", inc["location"])
 		}
 	}
 }
