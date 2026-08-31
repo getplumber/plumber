@@ -203,7 +203,7 @@ type resolver interface {
 	ResolveConfig(projectPath, sha, digest, digestVersion string) (*ResolvedConfig, error)
 }
 
-// ResolveRunConfig executes the branch-aware decision procedure for one run:
+// StartRunConfigResolution executes the branch-aware decision procedure for one run:
 //
 //  1. Compare the checkout's digest against the snapshot's anchor.
 //  2. On a match, evaluate against the snapshot's merged_yaml - the nominal
@@ -220,11 +220,11 @@ type resolver interface {
 // This never returns an error: every failure mode is a ConfigResolution the
 // caller can report and continue from. Platform availability must not gate
 // a pipeline.
-func ResolveRunConfig(c resolver, snap Snapshot, projectPath, sha, localDigest, digestAbortReason string) *ConfigResolution {
-	out := StartRunConfigResolution(c, snap, projectPath, sha, localDigest, digestAbortReason)
-	out.join()
-	return out
-}
+//
+// There is no synchronous wrapper: production has exactly one caller
+// (setupPlatformMode) and it wants the early fire; the repo's deadcode
+// gate rejects an exported function only tests reach. Tests that need the
+// settled outcome start and join (see resolveRunConfigSync in the tests).
 
 // StartRunConfigResolution is ResolveRunConfig fired EARLY (#368): the
 // digest comparison and every decision that needs no request settle before
