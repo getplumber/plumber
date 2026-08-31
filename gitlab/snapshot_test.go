@@ -615,3 +615,22 @@ func TestProtectionFromSnapshotMarksTheListingKnown(t *testing.T) {
 		}
 	})
 }
+
+// TestVariablesFromSnapshotCacheMissIsNotKnown: a platform cache miss (an
+// engaged run whose snapshot carries no data at all) proves nothing about
+// the project's variables - nothing was ever collected. Reporting the lane
+// as authoritative-and-empty made both variable controls pass vacuously,
+// while the branch-protection and approvals lanes correctly abstain on the
+// same state. An EXISTING snapshot without a variables lane stays a real
+// "this project has none" pass (TestVariablesFromSnapshotEmptyIsAPass);
+// only the no-snapshot state is unknowable.
+func TestVariablesFromSnapshotCacheMissIsNotKnown(t *testing.T) {
+	run := engagedRun(nil)
+	data, served := VariablesFromSnapshot(run)
+	if !served {
+		t.Fatal("an engaged run's variables lane is the platform's, even on a cache miss")
+	}
+	if data.Known {
+		t.Fatal("a cache miss must not be an authoritative empty listing: Known must be false so the controls report not_evaluable instead of passing over data never collected")
+	}
+}

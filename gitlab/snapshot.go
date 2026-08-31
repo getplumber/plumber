@@ -233,7 +233,18 @@ func VariablesFromSnapshot(run *platform.RunContext) (*GitlabVariablesAnalysisDa
 	data := &GitlabVariablesAnalysisData{Known: known}
 
 	snap := run.Snapshot()
-	if snap.Data == nil || len(snap.Data.Variables) == 0 {
+	if snap.Data == nil {
+		// A cache miss: the platform has never collected this project, so
+		// nothing here is an answer about its variables. An absent lane on an
+		// EXISTING snapshot is a real "this project has none" (the platform
+		// omits the lane then, and the controls rightly pass); an absent
+		// snapshot proves only that nothing was collected, and Known=true
+		// here made both variable controls pass vacuously while the
+		// branch-protection and approvals lanes abstain on the same state.
+		data.Known = false
+		return data, true
+	}
+	if len(snap.Data.Variables) == 0 {
 		return data, true
 	}
 
