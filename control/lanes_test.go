@@ -667,3 +667,62 @@ func TestOwnCollectionGapsStaySilentWhenNothingFailed(t *testing.T) {
 		t.Errorf("a clean collection must mark nothing, got %v", result.NotEvaluable)
 	}
 }
+
+// TestMarkFailedCollections pins the branch-protection collection-failure
+// path (re-raised #431 review thread): an unreadable protection listing is
+// indistinguishable from a project that protects nothing, which is the
+// exact violation branchMustBeProtected reports, so the control must
+// abstain and its findings must be dropped rather than fire the loudest
+// possible false positive.
+func TestMarkFailedCollections(t *testing.T) {
+	entries := []ControlEntry{{ControlName: controlBranchMustBeProtected}}
+
+	t.Run("unread listing marks the control and drops its findings", func(t *testing.T) {
+		r := &AnalysisResult{
+			ProtectionData: &gitlab.GitlabProtectionAnalysisData{BranchProtectionsKnown: false},
+			Findings: []opaengine.Finding{
+				{Code: "ISSUE-501", Message: "branch main unprotected"},
+				{Code: "ISSUE-401", Message: "unrelated finding survives"},
+			},
+		}
+		r.MarkFailedCollections(entries)
+		reason, marked := r.NotEvaluableReason(controlBranchMustBeProtected)
+		if !marked || reason != ReasonCollectionFailed {
+			t.Fatalf("want collection_failed mark, got (%q, %v)", reason, marked)
+		}
+		codes := map[string]bool{}
+		for _, f := range r.Findings {
+			codes[f.Code] = true
+		}
+		if codes["ISSUE-501"] {
+			t.Fatal("the branch-protection finding must be dropped: it was computed over data never read")
+		}
+		if !codes["ISSUE-401"] {
+			t.Fatal("unrelated findings must survive the drop")
+		}
+	})
+
+	t.Run("a read listing marks nothing", func(t *testing.T) {
+		r := &AnalysisResult{ProtectionData: &gitlab.GitlabProtectionAnalysisData{BranchProtectionsKnown: true}}
+		r.MarkFailedCollections(entries)
+		if _, marked := r.NotEvaluableReason(controlBranchMustBeProtected); marked {
+			t.Fatal("a successfully read listing must not be marked")
+		}
+	})
+
+	t.Run("a disabled control is skipped, not marked", func(t *testing.T) {
+		r := &AnalysisResult{ProtectionData: &gitlab.GitlabProtectionAnalysisData{BranchProtectionsKnown: false}}
+		r.MarkFailedCollections([]ControlEntry{{ControlName: controlBranchMustBeProtected, Skipped: true}})
+		if _, marked := r.NotEvaluableReason(controlBranchMustBeProtected); marked {
+			t.Fatal("a control the operator disabled was not unevaluated, it was turned off")
+		}
+	})
+
+	t.Run("no protection data at all marks nothing here", func(t *testing.T) {
+		r := &AnalysisResult{}
+		r.MarkFailedCollections(entries)
+		if _, marked := r.NotEvaluableReason(controlBranchMustBeProtected); marked {
+			t.Fatal("a collection that never ran is the other markers' concern, not this one's")
+		}
+	})
+}

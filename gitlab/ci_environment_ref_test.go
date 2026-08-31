@@ -49,3 +49,45 @@ func TestCIConfigPathIsExternal(t *testing.T) {
 		}
 	}
 }
+
+// CheckoutIsAtRef gates whether the analyzed project's CI file is read from
+// the checkout instead of fetched: reading one branch's file while
+// reporting on another parses cleanly and is silently wrong, which is why
+// every branch of this guard needs pinning (re-raised #431 review thread).
+func TestCheckoutIsAtRef(t *testing.T) {
+	t.Run("outside CI is never at the ref", func(t *testing.T) {
+		t.Setenv("CI", "")
+		t.Setenv("CI_COMMIT_REF_NAME", "main")
+		if CheckoutIsAtRef("main") {
+			t.Fatal("outside CI there is no checked-out ref to be at")
+		}
+	})
+	t.Run("empty branch means the analyzed ref by definition", func(t *testing.T) {
+		t.Setenv("CI", "true")
+		t.Setenv("CI_COMMIT_REF_NAME", "feature/x")
+		if !CheckoutIsAtRef("") {
+			t.Fatal("a run that names no branch analyses what it stands in")
+		}
+	})
+	t.Run("matching ref", func(t *testing.T) {
+		t.Setenv("CI", "true")
+		t.Setenv("CI_COMMIT_REF_NAME", "release/2.0")
+		if !CheckoutIsAtRef("release/2.0") {
+			t.Fatal("the job checked out exactly this ref")
+		}
+	})
+	t.Run("differing ref refuses the checkout", func(t *testing.T) {
+		t.Setenv("CI", "true")
+		t.Setenv("CI_COMMIT_REF_NAME", "main")
+		if CheckoutIsAtRef("release/2.0") {
+			t.Fatal("analyzing release/2.0 from a job building main must not read main's tree")
+		}
+	})
+	t.Run("no checked-out ref recorded refuses", func(t *testing.T) {
+		t.Setenv("CI", "true")
+		t.Setenv("CI_COMMIT_REF_NAME", "")
+		if CheckoutIsAtRef("main") {
+			t.Fatal("an absent $CI_COMMIT_REF_NAME cannot confirm the ref")
+		}
+	})
+}

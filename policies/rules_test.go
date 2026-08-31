@@ -722,6 +722,7 @@ func TestIssue208_InsecureCommands(t *testing.T) {
 //   - A ∧ B  → ISSUE-310 (high): the demonstrable ArtiPACKED leak.
 //   - A ∧ ¬B → ISSUE-307 (low): latent hygiene.
 //   - ¬A     → nothing (credentials disabled).
+//
 // expectedCodes lists the ISSUE codes each fixture must produce.
 func TestIssue307_Artipacked(t *testing.T) {
 	cases := []struct {
@@ -6014,4 +6015,56 @@ func TestIssue402_AmbiguousIncludeIdentifiesOnTheIncludePath(t *testing.T) {
 	assertSubjectKey(t, findings, "ISSUE-402", "includePath",
 		[]string{"gitlab.example.com/components/sast/sast"})
 	assertNoJob(t, findings, "ISSUE-402")
+}
+
+// TestUnresolvedImageGuardAbstains pins the `not job.image.unresolved`
+// guard the image rules gained in platform mode's audit (the re-raised
+// review debate): an image reference that still held a $VARIABLE parses
+// into registry/name/tag fields that are present and WRONG, so ISSUE-101
+// and ISSUE-102 must abstain on it - and the SAME literal reference without
+// the flag must still fire both, which is what keeps the guard from being
+// an evasion route for fully-literal violations.
+func TestUnresolvedImageGuardAbstains(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	cfg := map[string]any{
+		"imageMutableTag":        map[string]any{"forbiddenTags": []string{"latest"}},
+		"imageAuthorizedSources": map[string]any{"trustedUrls": []string{"registry.corp.example/"}},
+	}
+	job := func(unresolved bool) *ir.NormalizedPipeline {
+		return &ir.NormalizedPipeline{
+			Provider: ir.ProviderGitLab,
+			Jobs: []ir.Job{{
+				Name: "deploy",
+				Image: &ir.Image{
+					Registry:   "evil.example.com",
+					Name:       "app",
+					Tag:        "latest",
+					Unresolved: unresolved,
+				},
+			}},
+		}
+	}
+
+	unresolvedFindings, err := engine.Evaluate(context.Background(), job(true), cfg)
+	if err != nil {
+		t.Fatalf("evaluate unresolved: %v", err)
+	}
+	for _, code := range []string{"ISSUE-101", "ISSUE-102"} {
+		if got := countCode(unresolvedFindings, code); got != 0 {
+			t.Errorf("%s fired %d time(s) on an UNRESOLVED reference: the parsed fields describe a placeholder, not an image", code, got)
+		}
+	}
+
+	resolvedFindings, err := engine.Evaluate(context.Background(), job(false), cfg)
+	if err != nil {
+		t.Fatalf("evaluate resolved: %v", err)
+	}
+	for _, code := range []string{"ISSUE-101", "ISSUE-102"} {
+		if got := countCode(resolvedFindings, code); got == 0 {
+			t.Errorf("%s did not fire on the identical RESOLVED violation: the guard must never shield a literal reference", code)
+		}
+	}
 }
