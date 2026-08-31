@@ -3,6 +3,8 @@ package configuration
 import (
 	"net/http"
 	"time"
+
+	"github.com/getplumber/plumber/internal/platform"
 )
 
 // Configuration represents the simplified CLI configuration options
@@ -45,11 +47,43 @@ type Configuration struct {
 	// CI configuration path override (from --ci-config-path flag)
 	CIConfigPathOverride string // When set, overrides the project's CI config file path (e.g., "my-custom-ci.yml")
 
+	// PlatformRun, when non-nil, is the platform-mode context resolved
+	// before collection began: the project's policy set, the cached
+	// settings snapshot, and which merged CI configuration this run
+	// evaluates against.
+	//
+	// Nil means STANDALONE mode, which is the CLI's default and every
+	// existing behaviour unchanged. Platform mode is only ever entered by
+	// passing --platform, so no run gains a platform dependency it did not
+	// ask for.
+	PlatformRun *platform.RunContext
+
 	// Local CI configuration (from local filesystem)
 	LocalCIConfigContent []byte // Content of local .gitlab-ci.yml (nil if using remote)
 	UsingLocalCIConfig   bool   // True when using local CI config file
 	GitRepoRoot          string // Root of the git repository (empty if not in a git repo)
 	IsLocalProject       bool   // True when the local git repo matches the project being analyzed
+
+	// CheckoutIsAnalyzedProject reports whether the git repository in the
+	// working directory IS the project being analyzed, as a fact about the
+	// checkout alone.
+	//
+	// It is deliberately NOT IsLocalProject. That one additionally requires
+	// that the operator did not name a project or a host explicitly, because
+	// it decides whether to read the CI configuration from disk, and
+	// "analyse exactly the project I named, ignore my pwd" is the right
+	// answer for that question.
+	//
+	// It is the wrong answer for platform mode's config digest. The digest
+	// is a read-only comparison against the platform's anchor: matching it
+	// reuses an already-resolved configuration, and failing to match costs
+	// one resolve call. Naming the project does not make the checkout stop
+	// being that project. The GitLab CI component passes the project path as
+	// PLUMBER_ANALYZE_PROJECT, which marks the flag explicitly set, so
+	// gating the digest on IsLocalProject meant the digest was never
+	// computed in the one place it was designed for - a CI job with a full
+	// checkout - and platform mode could never take the snapshot path there.
+	CheckoutIsAnalyzedProject bool
 
 	// Version info
 	Version string

@@ -228,6 +228,12 @@ func ocsfStatusDetails(status string, e control.ControlEntry, findings []opaengi
 		}
 		return []string{"skipped: " + reason}
 	case control.StatusError:
+		// This control's OWN reason first; see csvStatusReason. The
+		// run-level DegradedReasons describe the run, so using them
+		// per-control names an unrelated cause or none.
+		if reason, ok := result.NotEvaluableReason(e.ControlName); ok && reason != "" {
+			return []string{"could not verify: " + reason}
+		}
 		if result != nil && len(result.DegradedReasons) > 0 {
 			return []string{"could not verify: " + strings.Join(result.DegradedReasons, "; ")}
 		}

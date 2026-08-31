@@ -83,6 +83,14 @@ type AnalysisResult struct {
 	// GitLab path.
 	GitHubStats *GitHubAnalysisStats `json:"-"`
 
+	// Pipeline is the normalized IR this run evaluated (GitLab path). It is
+	// retained so a per-policy evaluation can re-run the rules over the same
+	// collected data under different parameters: the platform serves each
+	// policy its OWN control config, and a policy's verdict must come from
+	// its own config rather than from whichever one happened to run first.
+	// Nil on the GitHub path, which has GitHubPipeline below.
+	Pipeline *ir.NormalizedPipeline `json:"-"`
+
 	// GitHubPipeline is the normalized IR produced by the GitHub
 	// collector, retained on the result so legacy JSON / PBOM /
 	// CycloneDX builders can read images, action references, and
@@ -142,6 +150,21 @@ type AnalysisResult struct {
 	// could not be fetched", "branch protection could not be fetched").
 	// Surfaced as a caveat in the terminal. Empty when not degraded.
 	DegradedReasons []string `json:"degradedReasons,omitempty"`
+
+	// NotEvaluable maps a control name to the machine-readable reason its
+	// verdict could not be established this run, for controls whose data
+	// lane supplied nothing while the rest of the run evaluated normally.
+	//
+	// It exists because DegradedReasons above is all-or-nothing: any entry
+	// turns EVERY control into an error. A lane split — where one source is
+	// unavailable and the others are fine — has to say so per control, or
+	// the unavailable lane either hides (a silent pass over data nobody
+	// collected) or wrongly discredits every other control's verdict.
+	//
+	// A control listed here reports not_evaluable instead of passing. Real
+	// findings still win: a control that DID fire is failed, because a
+	// violation found on partial data is still a violation.
+	NotEvaluable map[string]string `json:"notEvaluable,omitempty"`
 }
 
 // GitHubAnalysisStats holds per-control aggregations computed by

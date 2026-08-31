@@ -1,0 +1,27 @@
+{
+  "_source": "GitLab ciConfig merged response for getplumber/examples/go-test-with-hash, captured 2026-08-27 via the platform's /context.",
+  "_why": "Evidence for the #286 normalisation assumption. The project's own .gitlab-ci.yml writes the third include as `$CI_SERVER_FQDN/getplumber/plumber/plumber@<sha>`; GitLab returns it here already resolved to `gitlab.com/...`. That is what lets the hash computed over the UNMERGED config agree with the hash computed over this merged response - the agreement #286 restored. If GitLab ever stopped resolving server-side, include inputs would be dropped and an overridden component job would be misreported as hardcoded.",
+  "includes": [
+    {
+      "blob": "https://gitlab.com/components/secret-detection/-/blob/cf3a77aae89d7bbdd6fc5045af30f3ba3fed1fad/templates/secret-detection.yml",
+      "contextProject": "getplumber/examples/go-test-with-hash",
+      "extra": {},
+      "location": "gitlab.com/components/secret-detection/secret-detection@2.3.0",
+      "type": "component"
+    },
+    {
+      "blob": "https://gitlab.com/components/sast/-/blob/0a29cf13041d2693472a2ce536c126df209b1cd4/templates/sast.yml",
+      "contextProject": "getplumber/examples/go-test-with-hash",
+      "extra": {},
+      "location": "gitlab.com/components/sast/sast@3.4.0",
+      "type": "component"
+    },
+    {
+      "blob": "https://gitlab.com/getplumber/plumber/-/blob/4f88b0cbf9169c57ce174fecdb5484e2f73cb0cd/templates/plumber.yml",
+      "contextProject": "getplumber/examples/go-test-with-hash",
+      "extra": {},
+      "location": "gitlab.com/getplumber/plumber/plumber@4f88b0cbf9169c57ce174fecdb5484e2f73cb0cd",
+      "type": "component"
+    }
+  ]
+}

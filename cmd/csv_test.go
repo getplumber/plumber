@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/getplumber/plumber/control"
@@ -257,5 +258,32 @@ func TestCSVSafeCell_CoversEveryKnownVector(t *testing.T) {
 		if got := csvSafeCell(s); got != s {
 			t.Errorf("ordinary value was modified: %q -> %q", s, got)
 		}
+	}
+}
+
+// TestBuildCSV_NotEvaluableUsesTheControlsOwnReason covers the misattribution
+// the run-level fallback produced.
+//
+// The run is degraded for one reason (a variables fetch) while a DIFFERENT
+// control is not evaluable for another (its include attribution). Explaining
+// the second with the first is worse than saying nothing: it points an
+// operator at a subsystem that was working.
+func TestBuildCSV_NotEvaluableUsesTheControlsOwnReason(t *testing.T) {
+	entries := []control.ControlEntry{{ControlName: "someControl", DisplayName: "Some"}}
+	result := &control.AnalysisResult{
+		CiValid:         true,
+		DegradedReasons: []string{"project variables could not be fetched"},
+		NotEvaluable:    map[string]string{"someControl": "include_attribution_unavailable"},
+	}
+	records := buildCSV(entries, result)
+	if records[1][3] != "error" {
+		t.Fatalf("status = %q, want error", records[1][3])
+	}
+	msg := records[1][5]
+	if !strings.Contains(msg, "include_attribution_unavailable") {
+		t.Errorf("message %q must carry the control's own reason", msg)
+	}
+	if strings.Contains(msg, "variables") {
+		t.Errorf("message %q attributes an unrelated run-level failure to this control", msg)
 	}
 }

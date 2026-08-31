@@ -102,6 +102,7 @@ func publishAndFinalize(p provider.Provider, cmd *cobra.Command, result *control
 	jsonPayload := buildPublishPayload(p, conf, result, summary)
 	handleScorePublishing(p, conf, result, summary, jsonPayload)
 	platformErr := maybePushPlatform(p, conf, result, summary.score)
+	reportPlatformOutcome(conf.PlatformRun)
 
 	pas := provider.PostActionSummary{
 		Passed:     summary.passed(),
@@ -261,6 +262,16 @@ func outputTextWithProvider(p provider.Provider, result *control.AnalysisResult,
 		fmt.Println()
 	}
 
+	// A run that could not evaluate part of its controls must say so beside
+	// the verdict. The Plumber Score is deduction-based, so dropping the
+	// findings of an unevaluated control makes the score go UP: a run that
+	// checked nothing scores 100/A. The bucket above lists which controls,
+	// but a reader who skims to the Status line has to see the caveat too.
+	if n := countNotEvaluated(groups); n > 0 {
+		fmt.Printf("  %s⚠️  %d control(s) could not be evaluated — the score below is computed over the rest%s\n\n",
+			colorYellow, n, colorReset)
+	}
+
 	switch {
 	case result.DataCollectionDegraded:
 		fmt.Printf("  Status: %s%sINCOMPLETE — data collection failed%s\n\n", colorBold, colorYellow, colorReset)
@@ -290,6 +301,21 @@ func outputTextWithProvider(p provider.Provider, result *control.AnalysisResult,
 	return nil
 }
 
+// countNotEvaluated counts the controls actually rendered in the Not
+// Evaluated bucket, rather than the entries in result.NotEvaluable. The two
+// can differ — a control the operator disabled is skipped before it is ever
+// bucketed — and a summary line that disagrees with the section above it is
+// worse than no summary line.
+func countNotEvaluated(groups []findingGroup) int {
+	n := 0
+	for _, g := range groups {
+		if !g.Skipped && g.NotEvaluable {
+			n++
+		}
+	}
+	return n
+}
+
 // buildProviderControlSummariesAndGroups builds the control summary and finding
 // group slices for any provider using the provider's catalog and registered
 // stats builder.
@@ -309,6 +335,16 @@ func buildProviderControlSummariesAndGroups(p provider.Provider, result *control
 		codes, items := findingsToItems(findings)
 		skipped := e.Skipped || dataCollectionFailed
 		stats := provider.BuildControlStats(p.Name(), e.ControlName, result, conf.PlumberConfig, findings)
+		// A control whose lane supplied nothing must not render as passed.
+		//
+		// Keyed on result.NotEvaluable rather than StatusFor: StatusFor also
+		// returns StatusError for the older run-wide degradation signals,
+		// and re-bucketing those would change what a STANDALONE run prints.
+		reason := ""
+		notEvaluable := false
+		if !skipped && result != nil {
+			reason, notEvaluable = result.NotEvaluable[e.ControlName]
+		}
 		controls = append(controls, controlSummary{
 			name:       e.DisplayName,
 			issues:     len(items),
@@ -317,11 +353,13 @@ func buildProviderControlSummariesAndGroups(p provider.Provider, result *control
 			bySeverity: control.SeverityCountsFromIssueCodes(codes),
 		})
 		groups = append(groups, findingGroup{
-			Title:      e.DisplayName,
-			Skipped:    skipped,
-			SkipReason: e.SkipReason,
-			Stats:      stats,
-			Findings:   items,
+			Title:              e.DisplayName,
+			Skipped:            skipped,
+			SkipReason:         e.SkipReason,
+			NotEvaluable:       notEvaluable,
+			NotEvaluableReason: reason,
+			Stats:              stats,
+			Findings:           items,
 		})
 	}
 	return controls, groups
@@ -395,6 +433,20 @@ func writeOutputsWithProvider(p provider.Provider, result *control.AnalysisResul
 // analysis call (local scan, remote fetch) before handing off to the shared
 // pipeline.
 func presentResultWithProvider(p provider.Provider, cmd *cobra.Command, result *control.AnalysisResult, conf *configuration.Configuration) error {
+	// The GitHub paths reach the shared pipeline here rather than through
+	// runWithProvider, so platform mode has to be established here too.
+	// Without it conf.PlatformRun stays nil, the resolved policy set is
+	// never fetched, and every GitHub platform push is keyed name-only.
+	//
+	// It runs AFTER collection on this path (the caller already has a
+	// result), so it cannot feed GitHub's data lanes — it supplies the
+	// policy set for the push and the operator-facing report. GitHub lane
+	// wiring is a separate piece of work.
+	if conf != nil && conf.PlatformRun == nil {
+		conf.PlatformRun = setupPlatformMode(p, conf)
+		reportPlatformMode(conf.PlatformRun)
+	}
+
 	newLocationLinker(conf, result, p.Name()).Annotate(result.Findings)
 	opaengine.StampFingerprints(result.Findings, conf.GitRepoRoot)
 	summary := buildComplianceSummary(p, result, conf)

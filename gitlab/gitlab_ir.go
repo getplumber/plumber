@@ -523,9 +523,10 @@ func imageFromInfo(info GitlabPipelineImageInfo) ir.Image {
 	// info.Link may be "registry/name:tag" or "registry/name@sha256:..."
 	// info.Tag / info.Registry are already split by the collector.
 	img := ir.Image{
-		Name:     info.Name,
-		Tag:      info.Tag,
-		Registry: info.Registry,
+		Name:       info.Name,
+		Tag:        info.Tag,
+		Registry:   info.Registry,
+		Unresolved: info.Unresolved,
 	}
 	if idx := strings.Index(info.Link, "@"); idx >= 0 {
 		img.Digest = info.Link[idx+1:]

@@ -1,0 +1,108 @@
+{
+  "schema_version": "2",
+  "ci_config_path": ".gitlab-ci.yml",
+  "branch_protection": {
+    "branches": [
+      "main",
+      "feature/a",
+      "release/1.0"
+    ],
+    "protections": [
+      {
+        "allowForcePush": true,
+        "codeOwnerApprovalRequired": false,
+        "mergeAccessLevels": [
+          {
+            "accessLevel": 40,
+            "accessLevelDescription": "Maintainers"
+          }
+        ],
+        "minMergeAccessLevel": 0,
+        "minPushAccessLevel": 0,
+        "protectionPattern": "main",
+        "pushAccessLevels": [
+          {
+            "accessLevel": 40,
+            "accessLevelDescription": "Maintainers"
+          }
+        ]
+      }
+    ]
+  },
+  "mr_approvals": {
+    "settings": {
+      "approvals_before_merge": 0,
+      "approver_groups": [],
+      "approvers": [],
+      "disable_overriding_approvers_per_merge_request": false,
+      "merge_requests_author_approval": false,
+      "merge_requests_disable_committers_approval": false,
+      "require_password_to_approve": false,
+      "reset_approvals_on_push": false
+    }
+  },
+  "variables": {
+    "items": [
+      {
+        "environment": "*",
+        "masked": true,
+        "name": "GROUP_TOKEN",
+        "scope": "group",
+        "type": "ENV_VAR"
+      },
+      {
+        "environment": "*",
+        "masked": true,
+        "name": "PROJECT_VAR_1",
+        "scope": "project",
+        "type": "ENV_VAR"
+      },
+      {
+        "environment": "*",
+        "hidden": true,
+        "masked": true,
+        "name": "PROJECT_VAR_2",
+        "protected": true,
+        "scope": "project",
+        "type": "ENV_VAR"
+      },
+      {
+        "environment": "*",
+        "masked": true,
+        "name": "PROJECT_VAR_3",
+        "scope": "project",
+        "type": "ENV_VAR"
+      },
+      {
+        "environment": "*",
+        "name": "PROJECT_VAR_4",
+        "scope": "project",
+        "type": "ENV_VAR"
+      },
+      {
+        "environment": "*",
+        "masked": true,
+        "name": "PROJECT_VAR_5",
+        "protected": true,
+        "scope": "project",
+        "type": "ENV_VAR"
+      }
+    ]
+  },
+  "resolution_anchor": {
+    "config_digest": "2bedaee4a55573fcf961542e77f13d30bbdcc46c7b7a4d0ceb300b1cbdcbe040",
+    "digest_version": "1",
+    "ref": "main",
+    "sha": "6beab7217e510ad4a715dc71d6123853b386a03e"
+  },
+  "merged_yaml": "stages:\n  - build\n",
+  "includes": [
+    {
+      "blob": "https://gitlab.com/components/secret-detection/-/blob/cf3a77aae89d7bbdd6fc5045af30f3ba3fed1fad/templates/secret-detection.yml",
+      "contextProject": "getplumber/examples/go-test-with-hash",
+      "extra": {},
+      "location": "gitlab.com/components/secret-detection/secret-detection@2.3.0",
+      "type": "component"
+    }
+  ]
+}

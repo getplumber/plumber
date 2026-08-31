@@ -102,3 +102,50 @@ func TestProtectionRun_ApprovalRulesKnownMapping(t *testing.T) {
 		}
 	})
 }
+
+// TestProtectionRun_ProtectedBranchesFailureIsNotFatal pins the fix for a
+// swallowed error that produced the loudest false positive in the tool.
+//
+// Listing protected branches can 403 on a token that can still list
+// branches. That used to return (branches, nil, nil): a successful-looking
+// empty protection list, which reads as "this project protects nothing" -
+// exactly the violation branchMustBeProtected exists to report, fired on
+// every branch the config names.
+//
+// It must also not take the rest of the collection down. Approval rules and
+// settings are separate endpoints; aborting here would cost three more
+// controls their verdict over one permission.
+func TestProtectionRun_ProtectedBranchesFailureIsNotFatal(t *testing.T) {
+	mux := http.NewServeMux()
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		switch p := r.URL.Path; {
+		case strings.HasSuffix(p, "/protected_branches"):
+			w.WriteHeader(http.StatusForbidden)
+		case strings.HasSuffix(p, "/repository/branches"):
+			_, _ = w.Write([]byte(`[{"name":"main"}]`))
+		case strings.HasSuffix(p, "/approval_rules"):
+			_, _ = w.Write([]byte(`[{"id":7,"name":"r","approvals_required":1}]`))
+		case strings.HasSuffix(p, "/approvals"):
+			_, _ = w.Write([]byte(`{}`))
+		default:
+			_, _ = w.Write([]byte(`{"id":42,"name":"proj"}`))
+		}
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	conf := &configuration.Configuration{GitlabURL: srv.URL, HTTPClientTimeout: 30 * time.Second}
+	data, _, err := (&GitlabProtectionDataCollection{}).Run(&ProjectInfo{ID: 42, Path: "group/project"}, "tok", conf)
+	if err != nil {
+		t.Fatalf("a protections 403 must not fail the whole collection: %v", err)
+	}
+	if data.BranchProtectionsKnown {
+		t.Error("the listing 403'd; reporting it as authoritative would certify an unread project")
+	}
+	if len(data.Branches) != 1 {
+		t.Errorf("branches survive a protection failure, they are a different endpoint: %v", data.Branches)
+	}
+	if !data.MRApprovalRulesKnown || len(data.MRApprovalRules) != 1 {
+		t.Error("the approval endpoints answered fine and must still be collected")
+	}
+}

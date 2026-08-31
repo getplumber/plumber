@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/getplumber/plumber/control"
@@ -250,5 +251,28 @@ func TestBuildOCSF_FindingTypes(t *testing.T) {
 		if ty == "Compliance" {
 			t.Errorf("types still contains %q; it should be dropped", "Compliance")
 		}
+	}
+}
+
+// TestBuildOCSF_NotEvaluableUsesTheControlsOwnReason mirrors the CSV case:
+// a control marked not-evaluable must be explained by its OWN reason, not by
+// whatever unrelated failure degraded the run.
+func TestBuildOCSF_NotEvaluableUsesTheControlsOwnReason(t *testing.T) {
+	entries := []control.ControlEntry{
+		{ControlName: "someControl", DisplayName: "Some Control"},
+	}
+	result := &control.AnalysisResult{
+		CiValid:         true,
+		DegradedReasons: []string{"project variables could not be fetched"},
+		NotEvaluable:    map[string]string{"someControl": "include_attribution_unavailable"},
+	}
+
+	events := buildOCSF(entries, result, "gitlab", 1, "s")
+	details := strings.Join(events[0].Compliance.StatusDetails, " | ")
+	if !strings.Contains(details, "include_attribution_unavailable") {
+		t.Errorf("status_details %q must carry the control's own reason", details)
+	}
+	if strings.Contains(details, "variables") {
+		t.Errorf("status_details %q attributes an unrelated run-level failure to this control", details)
 	}
 }

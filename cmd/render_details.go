@@ -16,13 +16,17 @@ import (
 )
 
 const (
-	statTotalImages        = "Total Images"
-	statJobsChecked        = "Jobs Checked"
-	statScriptLinesChecked = "Script Lines Checked"
-	statRequirementGroups  = "Requirement Groups"
-	statSatisfiedGroups    = "Satisfied Groups"
-	statActionRefsChecked  = "Action Refs Checked"
-	statVariablesChecked   = "Variables Checked"
+	statTotalImages = "Total Images"
+	// statUnresolvedImageRefs names the images the run could not render to a
+	// literal reference, so a reader can tell an abstention from a clean
+	// result rather than inferring it from numbers that do not add up.
+	statUnresolvedImageRefs = "Unresolved References"
+	statJobsChecked         = "Jobs Checked"
+	statScriptLinesChecked  = "Script Lines Checked"
+	statRequirementGroups   = "Requirement Groups"
+	statSatisfiedGroups     = "Satisfied Groups"
+	statActionRefsChecked   = "Action Refs Checked"
+	statVariablesChecked    = "Variables Checked"
 )
 
 // statLine is an alias for control.StatLine used within the cmd package.
@@ -52,8 +56,17 @@ type findingGroup struct {
 	// string printed under a skipped header. Empty → renderer uses
 	// the default; non-empty → the renderer prints "(<reason>)".
 	SkipReason string
-	Stats      []statLine
-	Findings   []detailedFinding
+	// NotEvaluable marks a control whose data lane supplied nothing, so its
+	// empty findings list means "could not check", not "compliant". It gets
+	// its own bucket: rendering it under Passed would be the exact
+	// false-green this status exists to prevent, and rendering it under
+	// Skipped would claim the operator disabled it.
+	NotEvaluable bool
+	// NotEvaluableReason is the machine-readable cause, when the run
+	// recorded one (e.g. include_attribution_unavailable).
+	NotEvaluableReason string
+	Stats              []statLine
+	Findings           []detailedFinding
 }
 
 // renderWarnings prints the run's non-fatal "could not verify" messages,
@@ -174,11 +187,16 @@ func filterGroupsForDegraded(groups []findingGroup, degraded bool) []findingGrou
 // Groups with no findings, no stats and not marked skipped are dropped
 // (they would just be empty noise).
 func renderFindingGroups(groups []findingGroup) {
-	var passed, skipped, failed []findingGroup
+	var passed, skipped, notEvaluated, failed []findingGroup
 	for _, g := range groups {
 		switch {
 		case g.Skipped:
 			skipped = append(skipped, g)
+		// Checked before the findings count: a control whose lane could not
+		// feed it has no trustworthy verdict in either direction, and its
+		// findings are dropped upstream (control.DropNotEvaluableFindings).
+		case g.NotEvaluable:
+			notEvaluated = append(notEvaluated, g)
 		case len(g.Findings) > 0:
 			failed = append(failed, g)
 		case len(g.Stats) > 0:
@@ -191,7 +209,35 @@ func renderFindingGroups(groups []findingGroup) {
 
 	renderPassedControlsSummary(passed)
 	renderSkippedControlsSummary(skipped)
+	renderNotEvaluatedControlsSummary(notEvaluated)
 	renderFailedControlsSection(failed)
+}
+
+// renderNotEvaluatedControlsSummary prints the "Not Evaluated" section: the
+// controls whose data lane supplied nothing this run.
+//
+// It exists because the alternative is a lie. These controls have no
+// findings, so before this bucket they fell through to "✓ Passed" and the
+// terminal claimed the run had verified something it never looked at. A
+// platform-mode run without include attribution puts seven controls in that
+// state at once.
+//
+// Rendered in yellow rather than green or dim: this is neither a pass nor a
+// deliberate skip, it is missing information the reader has to weigh.
+func renderNotEvaluatedControlsSummary(groups []findingGroup) {
+	if len(groups) == 0 {
+		return
+	}
+	printStatusSectionHeader(fmt.Sprintf("Not Evaluated (%d)", len(groups)), "?", colorYellow)
+	fmt.Println()
+	for _, g := range groups {
+		reason := g.NotEvaluableReason
+		if reason == "" {
+			reason = "required data was not available"
+		}
+		fmt.Printf("  %s?%s %s %s(%s)%s\n", colorYellow, colorReset, g.Title, colorDim, reason, colorReset)
+	}
+	fmt.Println()
 }
 
 // renderPassedControlsSummary prints the "Passed Controls" section: a
@@ -729,17 +775,30 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 		// tags, OR require a digest pin. The pin-by-digest variant
 		// counts how many images carry an OCI digest reference (any
 		// algorithm — sha256, sha512, …).
+		// These counts are computed in Go, independently of the findings, so
+		// they have to make the SAME abstention the rules make. An image
+		// whose reference never resolved to a literal is not pinned and not
+		// unpinned - the digest, like the registry and the tag, was parsed
+		// out of placeholder text. Counting it under "Not Pinned By Digest"
+		// while the rule emits no finding for it makes the table and the
+		// findings contradict each other, and counting it as pinned is a
+		// false green.
 		total := 0
 		pinned := 0
+		unresolved := 0
 		if result.PipelineImageData != nil {
 			total = len(result.PipelineImageData.Images)
 			for _, img := range result.PipelineImageData.Images {
+				if img.Unresolved {
+					unresolved++
+					continue
+				}
 				if utils.HasDigestPin(img.Link) {
 					pinned++
 				}
 			}
 		}
-		notPinned := total - pinned
+		notPinned := total - pinned - unresolved
 		if notPinned < 0 {
 			notPinned = 0
 		}
@@ -759,22 +818,42 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 			)
 		}
 		lines = append(lines, statLine{Label: "Using Forbidden Tags", Value: fmt.Sprintf("%d", usingForbidden)})
+		if unresolved > 0 {
+			lines = append(lines, statLine{Label: statUnresolvedImageRefs, Value: fmt.Sprintf("%d", unresolved)})
+		}
 		return lines
 	case "containerImageMustComeFromAuthorizedSources":
+		// authorized is derived by subtraction, so anything the rule
+		// abstained on lands in it by default. An image whose reference
+		// never resolved would therefore be reported as coming from an
+		// authorized source - the exact false green the abstention exists to
+		// avoid - unless it is subtracted out here too.
 		total := 0
+		unresolved := 0
 		if result.PipelineImageMetrics != nil {
 			total = int(result.PipelineImageMetrics.Total)
 		}
+		if result.PipelineImageData != nil {
+			for _, img := range result.PipelineImageData.Images {
+				if img.Unresolved {
+					unresolved++
+				}
+			}
+		}
 		unauthorized := findingsCount
-		authorized := total - unauthorized
+		authorized := total - unauthorized - unresolved
 		if authorized < 0 {
 			authorized = 0
 		}
-		return []statLine{
+		lines := []statLine{
 			{Label: statTotalImages, Value: fmt.Sprintf("%d", total)},
 			{Label: "Authorized", Value: fmt.Sprintf("%d", authorized)},
 			{Label: "Unauthorized", Value: fmt.Sprintf("%d", unauthorized)},
 		}
+		if unresolved > 0 {
+			lines = append(lines, statLine{Label: statUnresolvedImageRefs, Value: fmt.Sprintf("%d", unresolved)})
+		}
+		return lines
 	case "pipelineMustNotIncludeHardcodedJobs":
 		total := uint(0)
 		hardcoded := uint(0)
