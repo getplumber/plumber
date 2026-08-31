@@ -11,6 +11,7 @@ import (
 
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
+	defaultconfig "github.com/getplumber/plumber/defaultConfig"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	providerPkg "github.com/getplumber/plumber/provider"
 )
@@ -310,19 +311,37 @@ func platformPipelineFor(p providerPkg.Provider) platformPipeline {
 	}
 }
 
-// platformEffectiveConfigRaw runs pc through buildPlumberConfigBlock — the
-// SAME builder the JSON report's plumberConfig block uses, so the platform
-// and the report describe this run's policy identically — and marshals it
-// for the wire. buildPlumberConfigBlock already falls back to the embedded
-// default when pc is nil or has no Raw, so this comes back empty only if
-// that builder itself ever does; the omitempty tag on EffectiveConfig then
-// drops it rather than sending "{}" or "null".
-func platformEffectiveConfigRaw(pc *configuration.PlumberConfig) json.RawMessage {
-	block := buildPlumberConfigBlock(pc)
-	if len(block) == 0 {
+// platformEffectiveConfigRaw renders the FLAT per-provider controls map the
+// push contract specifies for effective_config (the J12-F5 ruling,
+// 2026-08-31): top-level keys are control names, values their configs, in
+// the config file's own camelCase spelling. That is exactly what the
+// platform's issueident.ParamsFor unmarshals - it imports this module's
+// configuration.ControlsConfig, and Go's case-insensitive JSON field match
+// makes the camelCase keys land on the right fields. The previous nested
+// report shape decoded there to a zero value, storing empty params on every
+// issue.
+//
+// The map is parsed from the same raw text the report's plumberConfig block
+// uses (pc.Raw, falling back to the embedded default), so the two surfaces
+// cannot disagree about which policy ran; full provenance beyond the
+// controls map stays available in the raw push artifact (ADR-0017). An
+// absent or empty provider section returns nil and omitempty drops the
+// field rather than sending "{}".
+func platformEffectiveConfigRaw(pc *configuration.PlumberConfig, provider string) json.RawMessage {
+	rawCfg := ""
+	if pc != nil && pc.Raw != "" {
+		rawCfg = pc.Raw
+	}
+	if rawCfg == "" {
+		rawCfg = string(defaultconfig.Get())
+	}
+	policy := parsePolicyObject(rawCfg)
+	section, _ := policy[provider].(map[string]any)
+	controls, _ := section["controls"].(map[string]any)
+	if len(controls) == 0 {
 		return nil
 	}
-	raw, err := json.Marshal(block)
+	raw, err := json.Marshal(controls)
 	if err != nil {
 		return nil
 	}
