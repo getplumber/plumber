@@ -527,8 +527,15 @@ func buildGitLabConf(
 	// Does the repository in the working directory hold the project being
 	// analyzed? This is a fact about the checkout, and nothing the operator
 	// typed changes it.
-	checkoutIsProject := remote.repoRoot != "" && remote.remoteURL != "" &&
-		strings.TrimSuffix(remote.remoteURL, "/") == cleanGitlabURL &&
+	//
+	// The comparison ignores the URL scheme. ParseGitRemoteURL normalizes
+	// every remote to https://host, so comparing it whole against a plain-http
+	// --gitlab-url (a self-hosted instance without TLS) could never match and
+	// the CI-config digest was silently never computed for such instances.
+	// The scheme is transport, not identity; host, port and project path
+	// still have to agree exactly.
+	checkoutIsProject := remote.repoRoot != "" &&
+		equalIgnoringScheme(remote.remoteURL, cleanGitlabURL) &&
 		remote.projectPath == projectPath
 	conf.CheckoutIsAnalyzedProject = checkoutIsProject
 
@@ -1918,4 +1925,19 @@ func indentBlock(s, prefix string) string {
 		lines[i] = prefix + l
 	}
 	return strings.Join(lines, "\n")
+}
+
+// equalIgnoringScheme reports whether two base URLs name the same GitLab
+// instance, treating the scheme (http vs https) and a trailing slash as
+// transport detail rather than identity. Empty strings never match: an
+// absent remote must not equal an absent URL.
+func equalIgnoringScheme(a, b string) bool {
+	norm := func(s string) string {
+		s = strings.TrimSuffix(strings.TrimSpace(s), "/")
+		s = strings.TrimPrefix(s, "https://")
+		s = strings.TrimPrefix(s, "http://")
+		return s
+	}
+	na, nb := norm(a), norm(b)
+	return na != "" && na == nb
 }

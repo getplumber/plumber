@@ -395,3 +395,32 @@ func TestLoadConfigOrOffer_InvalidYAML_NonInteractive(t *testing.T) {
 		t.Errorf("error should mention 'configuration error', got: %s", msg)
 	}
 }
+
+// TestEqualIgnoringScheme pins the checkout-identity comparison's scheme
+// insensitivity. ParseGitRemoteURL normalizes every remote to https://host,
+// so a plain-http --gitlab-url (a self-hosted instance without TLS, or a
+// test rig) could never equal it and the CI-config digest was silently never
+// computed: the operator stood in the analyzed checkout while the verbose
+// line claimed there was none. Host, port and path stay significant; only
+// the scheme and a trailing slash are not identity.
+func TestEqualIgnoringScheme(t *testing.T) {
+	cases := []struct {
+		a, b string
+		want bool
+	}{
+		{"https://127.0.0.1:9501", "http://127.0.0.1:9501", true},
+		{"http://gitlab.example", "https://gitlab.example", true},
+		{"https://gitlab.com", "https://gitlab.com", true},
+		{"https://gitlab.com/", "https://gitlab.com", true},
+		{"https://gitlab.com", "https://gitlab.example", false},
+		{"https://127.0.0.1:9501", "https://127.0.0.1:9601", false},
+		{"", "https://gitlab.com", false},
+		{"https://gitlab.com", "", false},
+		{"", "", false},
+	}
+	for _, c := range cases {
+		if got := equalIgnoringScheme(c.a, c.b); got != c.want {
+			t.Errorf("equalIgnoringScheme(%q, %q) = %v, want %v", c.a, c.b, got, c.want)
+		}
+	}
+}
