@@ -1,6 +1,9 @@
 package platform
 
-import "strings"
+import (
+	"strings"
+	"time"
+)
 
 // ConfigSource names where a run's merged CI configuration came from. It is
 // reported in verbose output and decides which controls can be evaluated at
@@ -124,6 +127,66 @@ type ConfigResolution struct {
 	// own vocabulary (ReasonResolutionUnavailable / ReasonResolverBusy) so
 	// the not_evaluable findings it produces are machine-readable.
 	Reason string
+
+	// ShaFromAnchor records that the sha the resolve request asked about was
+	// the snapshot anchor's, because the environment carried none (an
+	// analyze outside CI). The run then evaluates the project's REMOTE state
+	// at that commit, and the describe output says so: without the note, a
+	// "digest diverges" line next to an anchor-sha resolution reads as a
+	// contradiction to an operator whose divergence is local uncommitted
+	// edits. Set by the caller that chose the sha, before any reader runs;
+	// the resolving goroutine never touches it.
+	ShaFromAnchor bool
+
+	// done is closed when the resolve request the early fire started has
+	// completed and every outcome field above is final. It is nil on every
+	// path that never fires a request (a digest match, a missing client or
+	// sha), which settles the resolution at construction. The channel close
+	// is the happens-before edge between the resolving goroutine's writes
+	// and any reader: outcome fields must only be read after Settled()
+	// answers true or join() returns.
+	done chan struct{}
+}
+
+// Settled reports whether the resolution's outcome fields are final. A
+// resolution that never fired a request is settled from birth; one whose
+// request is still in flight is not, and its outcome fields must not be
+// read yet.
+func (r *ConfigResolution) Settled() bool {
+	if r == nil || r.done == nil {
+		return true
+	}
+	select {
+	case <-r.done:
+		return true
+	default:
+		return false
+	}
+}
+
+// SettledWithin waits up to d for the resolution to settle and reports
+// whether it did. It exists for the one reader that wants the outcome if it
+// is cheap but has something honest to print when it is not: the pre-run
+// describe line.
+func (r *ConfigResolution) SettledWithin(d time.Duration) bool {
+	if r == nil || r.done == nil {
+		return true
+	}
+	select {
+	case <-r.done:
+		return true
+	case <-time.After(d):
+		return false
+	}
+}
+
+// join blocks until the resolution settles. The first accessor that needs
+// the outcome calls it; everything before that runs concurrently with the
+// platform's resolve, which is the point of firing early.
+func (r *ConfigResolution) join() {
+	if r != nil && r.done != nil {
+		<-r.done
+	}
 }
 
 // Available reports whether a merged configuration was obtained at all.
@@ -158,6 +221,24 @@ type resolver interface {
 // caller can report and continue from. Platform availability must not gate
 // a pipeline.
 func ResolveRunConfig(c resolver, snap Snapshot, projectPath, sha, localDigest, digestAbortReason string) *ConfigResolution {
+	out := StartRunConfigResolution(c, snap, projectPath, sha, localDigest, digestAbortReason)
+	out.join()
+	return out
+}
+
+// StartRunConfigResolution is ResolveRunConfig fired EARLY (#368): the
+// digest comparison and every decision that needs no request settle before
+// it returns, and on the one path that does need a request - a divergent
+// digest with a client and a sha to ask about - the request is already in
+// flight when it returns. The first accessor that needs the outcome joins
+// on it, so the platform's resolve overlaps whatever runs in between
+// instead of stalling the run up front; a hung endpoint costs its timeout
+// in parallel with local work rather than before any of it starts.
+//
+// Read outcome fields (Source, MergedYAML, ResolvedSha, FromCache, Valid,
+// Reason) only after Settled() answers true or join() returns; the
+// digest-side fields are final at return.
+func StartRunConfigResolution(c resolver, snap Snapshot, projectPath, sha, localDigest, digestAbortReason string) *ConfigResolution {
 	anchor := snap.Anchor()
 	out := &ConfigResolution{
 		LocalDigest:       localDigest,
@@ -196,6 +277,18 @@ func ResolveRunConfig(c resolver, snap Snapshot, projectPath, sha, localDigest, 
 		return out
 	}
 
+	out.done = make(chan struct{})
+	go func() {
+		defer close(out.done)
+		completeFromResolve(out, c, projectPath, sha)
+	}()
+	return out
+}
+
+// completeFromResolve performs the resolve request and writes the outcome
+// fields. It runs on the resolving goroutine; the done-channel close that
+// follows it is what publishes these writes to readers.
+func completeFromResolve(out *ConfigResolution, c resolver, projectPath, sha string) {
 	resolved, err := c.ResolveConfig(projectPath, sha, out.LocalDigest, out.DigestVersion)
 	if err != nil {
 		out.Source = SourceUnavailable
@@ -207,7 +300,7 @@ func ResolveRunConfig(c resolver, snap Snapshot, projectPath, sha, localDigest, 
 			// may block it.
 			out.Reason = ReasonResolutionUnavailable
 		}
-		return out
+		return
 	}
 
 	out.Source = SourceResolved
@@ -222,7 +315,6 @@ func ResolveRunConfig(c resolver, snap Snapshot, projectPath, sha, localDigest, 
 	if !resolved.Valid && resolved.MergedYaml == "" {
 		out.MergedYAML = ""
 	}
-	return out
 }
 
 // digestVersionForLocal is the version paired with every digest this CLI

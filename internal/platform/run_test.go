@@ -304,3 +304,84 @@ func TestEngaged_RequiresAFetchedContext(t *testing.T) {
 		t.Fatal("a fetched context engages the lanes even when it carries no config")
 	}
 }
+
+// TestDescribe_InFlightResolution: while the early-fired resolve is still in
+// flight, the describe lines say so honestly instead of blocking the pre-run
+// output on the platform's answer or printing an outcome nothing has
+// established yet.
+func TestDescribe_InFlightResolution(t *testing.T) {
+	pending := &ConfigResolution{
+		Digest:        DigestDiverged,
+		LocalDigest:   strings.Repeat("1", 64),
+		DigestVersion: "1",
+		AnchorDigest:  strings.Repeat("2", 64),
+		done:          make(chan struct{}), // never closed: still in flight
+	}
+	rc := &RunContext{Endpoint: "https://plat", ProjectPath: "org/repo",
+		Context: &ProjectContext{}, Config: pending}
+	lines := strings.Join(rc.Describe(), "\n")
+	if !strings.Contains(lines, "in flight") {
+		t.Fatalf("pending resolution must describe itself as in flight, got:\n%s", lines)
+	}
+	if strings.Contains(lines, "UNAVAILABLE") {
+		t.Fatalf("a pending resolution is not an unavailable one, got:\n%s", lines)
+	}
+}
+
+// TestDescribe_AnchorShaNote: outside CI a divergent checkout resolves at
+// the snapshot anchor's commit (there is no local commit to name), so the
+// run evaluates the project's remote state. The describe output must say
+// that next to the "diverges" line, or an operator with uncommitted CI
+// edits reads the two lines as contradicting each other.
+func TestDescribe_AnchorShaNote(t *testing.T) {
+	c := &ConfigResolution{
+		Digest:        DigestDiverged,
+		LocalDigest:   strings.Repeat("1", 64),
+		DigestVersion: "1",
+		AnchorDigest:  strings.Repeat("2", 64),
+		Source:        SourceResolved,
+		ResolvedSha:   "beef",
+		Valid:         true,
+		ShaFromAnchor: true,
+	}
+	rc := &RunContext{Endpoint: "https://plat", Context: &ProjectContext{}, Config: c}
+	lines := strings.Join(rc.Describe(), "\n")
+	if !strings.Contains(lines, "remote state") {
+		t.Fatalf("anchor-sha fallback must be explained, got:\n%s", lines)
+	}
+	// Without the fallback the note must not appear.
+	c.ShaFromAnchor = false
+	lines = strings.Join(rc.Describe(), "\n")
+	if strings.Contains(lines, "remote state") {
+		t.Fatalf("note printed without the anchor-sha fallback:\n%s", lines)
+	}
+}
+
+// TestRunContextAccessorsJoinPendingResolution: the outcome accessors must
+// wait for the early-fired request rather than reading half-written state.
+func TestRunContextAccessorsJoinPendingResolution(t *testing.T) {
+	pending := &ConfigResolution{Digest: DigestDiverged, done: make(chan struct{})}
+	rc := &RunContext{Context: &ProjectContext{}, Config: pending}
+	got := make(chan bool, 1)
+	go func() {
+		_, available := rc.MergedYAML()
+		got <- available
+	}()
+	select {
+	case <-got:
+		t.Fatal("MergedYAML answered before the resolution settled")
+	case <-time.After(50 * time.Millisecond):
+	}
+	pending.Source = SourceResolved
+	pending.MergedYAML = "yaml"
+	pending.Valid = true
+	close(pending.done)
+	select {
+	case available := <-got:
+		if !available {
+			t.Fatal("a settled resolved config must be available")
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("MergedYAML never answered after the resolution settled")
+	}
+}
