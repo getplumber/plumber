@@ -1,5 +1,7 @@
 package configuration
 
+import "sort"
+
 // ControlMeta describes a control's static properties: which providers
 // it applies to and whether it is currently considered production-
 // ready (i.e. NOT benched). Toggle semantics for individual users
@@ -10,6 +12,17 @@ type ControlMeta struct {
 	// "gitlab", "github", or both. Used by ValidateKnownKeys to warn
 	// when a control is placed under the wrong provider section.
 	Providers []string
+
+	// DisplayName is the human-readable control name, the docs catalog
+	// wording (#440). Display only: the technical control name stays the
+	// stable key everywhere.
+	DisplayName string
+
+	// Category is the docs catalog grouping this control belongs to, one
+	// of the Category* constants below. It follows the control's issue-code
+	// block (1xx container images, 2xx variables, ... 9xx repository
+	// hygiene), which TestControlCategoriesFollowTheCodeBlocks pins.
+	Category string
 }
 
 // providerGitLab and providerGitHub are exported as constants so call
@@ -17,6 +30,21 @@ type ControlMeta struct {
 const (
 	ProviderGitLab = "gitlab"
 	ProviderGitHub = "github"
+)
+
+// The docs catalog categories (https://getplumber.io/docs/cli/controls),
+// verbatim, plus one heading for the benched 9xx repository-hygiene block
+// the site does not document yet. Every control belongs to exactly one.
+const (
+	CategoryContainerImages                = "CI/CD Container Images"
+	CategoryCICDVariables                  = "CI/CD Variables"
+	CategoryCICDSecrets                    = "CI/CD Secrets"
+	CategoryPipelineComposition            = "Pipeline Composition"
+	CategoryAccessAndAuthorization         = "Access and Authorization"
+	CategorySecuritySource                 = "Security Source"
+	CategoryThirdPartyActions              = "Third-party Actions"
+	CategoryWorkflowTriggersAndPermissions = "Workflow Triggers and Permissions"
+	CategoryRepositoryHygiene              = "Repository Hygiene"
 )
 
 // controlsMeta is the canonical registry of every control name the
@@ -30,74 +58,338 @@ const (
 // GitHub-only control gets {ProviderGitHub}.
 var controlsMeta = map[string]ControlMeta{
 	// Cross-provider (same control name + rego logic, provider-specific values).
-	"branchMustBeProtected":                                  {Providers: []string{ProviderGitLab, ProviderGitHub}},
-	"mergeRequestApprovalRulesMustRequireMinimumApprovals":   {Providers: []string{ProviderGitLab}},
-	"mergeRequestApprovalRulesMustCoverAllProtectedBranches": {Providers: []string{ProviderGitLab}},
-	"mergeRequestApprovalSettingsMustBeCompliant":            {Providers: []string{ProviderGitLab}},
-	"mergeRequestSettingsMustBeCompliant":                    {Providers: []string{ProviderGitLab}},
-	"cicdVariablesMustBeProtected":                           {Providers: []string{ProviderGitLab}},
-	"cicdVariablesMustBeMasked":                              {Providers: []string{ProviderGitLab}},
-	"projectMustHaveSecurityPolicySource":                    {Providers: []string{ProviderGitLab}},
-	"containerImageMustComeFromAuthorizedSources":            {Providers: []string{ProviderGitLab, ProviderGitHub}},
-	"containerImageMustNotUseForbiddenTags":                  {Providers: []string{ProviderGitLab, ProviderGitHub}},
-	"externalRefsMustNotCollide":                             {Providers: []string{ProviderGitLab, ProviderGitHub}},
-	"includesMustBeUpToDate":                                 {Providers: []string{ProviderGitLab, ProviderGitHub}},
-	"includesMustNotUseForbiddenVersions":                    {Providers: []string{ProviderGitLab, ProviderGitHub}},
-	"pipelineMustIncludeComponent":                           {Providers: []string{ProviderGitLab, ProviderGitHub}},
-	"pipelineMustIncludeTemplate":                            {Providers: []string{ProviderGitLab, ProviderGitHub}},
-	"pipelineMustNotEnableDebugTrace":                        {Providers: []string{ProviderGitLab, ProviderGitHub}},
-	"pipelineMustNotExecuteUnverifiedScripts":                {Providers: []string{ProviderGitLab, ProviderGitHub}},
-	"pipelineMustNotIncludeHardcodedJobs":                    {Providers: []string{ProviderGitLab, ProviderGitHub}},
-	"pipelineMustNotOverrideJobVariables":                    {Providers: []string{ProviderGitLab, ProviderGitHub}},
-	"pipelineMustNotUseDockerInDocker":                       {Providers: []string{ProviderGitLab, ProviderGitHub}},
-	"pipelineMustNotUseUnsafeVariableExpansion":              {Providers: []string{ProviderGitLab, ProviderGitHub}},
-	"securityJobsMustNotBeWeakened":                          {Providers: []string{ProviderGitLab, ProviderGitHub}},
+	"branchMustBeProtected": {
+		Providers:   []string{ProviderGitLab, ProviderGitHub},
+		DisplayName: "Branch must be protected",
+		Category:    CategoryAccessAndAuthorization,
+	},
+	"mergeRequestApprovalRulesMustRequireMinimumApprovals": {
+		Providers:   []string{ProviderGitLab},
+		DisplayName: "MR approval rules must require a minimum number of approvals",
+		Category:    CategoryAccessAndAuthorization,
+	},
+	"mergeRequestApprovalRulesMustCoverAllProtectedBranches": {
+		Providers:   []string{ProviderGitLab},
+		DisplayName: "MR approval rules must cover all protected branches",
+		Category:    CategoryAccessAndAuthorization,
+	},
+	"mergeRequestApprovalSettingsMustBeCompliant": {
+		Providers:   []string{ProviderGitLab},
+		DisplayName: "MR approval settings must be compliant",
+		Category:    CategoryAccessAndAuthorization,
+	},
+	"mergeRequestSettingsMustBeCompliant": {
+		Providers:   []string{ProviderGitLab},
+		DisplayName: "MR settings must be compliant",
+		Category:    CategoryAccessAndAuthorization,
+	},
+	"cicdVariablesMustBeProtected": {
+		Providers:   []string{ProviderGitLab},
+		DisplayName: "CI/CD variables must be protected",
+		Category:    CategoryCICDVariables,
+	},
+	"cicdVariablesMustBeMasked": {
+		Providers:   []string{ProviderGitLab},
+		DisplayName: "CI/CD variables must be masked",
+		Category:    CategoryCICDVariables,
+	},
+	"projectMustHaveSecurityPolicySource": {
+		Providers:   []string{ProviderGitLab},
+		DisplayName: "Project must have a security policy source",
+		Category:    CategorySecuritySource,
+	},
+	"containerImageMustComeFromAuthorizedSources": {
+		Providers:   []string{ProviderGitLab, ProviderGitHub},
+		DisplayName: "Container images must come from authorized sources",
+		Category:    CategoryContainerImages,
+	},
+	"containerImageMustNotUseForbiddenTags": {
+		Providers:   []string{ProviderGitLab, ProviderGitHub},
+		DisplayName: "Container images must not use forbidden tags",
+		Category:    CategoryContainerImages,
+	},
+	"externalRefsMustNotCollide": {
+		Providers:   []string{ProviderGitLab, ProviderGitHub},
+		DisplayName: "Includes must not use ambiguous tag/branch refs",
+		Category:    CategoryPipelineComposition,
+	},
+	"includesMustBeUpToDate": {
+		Providers:   []string{ProviderGitLab, ProviderGitHub},
+		DisplayName: "Includes must be up to date",
+		Category:    CategoryPipelineComposition,
+	},
+	"includesMustNotUseForbiddenVersions": {
+		Providers:   []string{ProviderGitLab, ProviderGitHub},
+		DisplayName: "Includes must not use forbidden versions",
+		Category:    CategoryPipelineComposition,
+	},
+	"pipelineMustIncludeComponent": {
+		Providers:   []string{ProviderGitLab, ProviderGitHub},
+		DisplayName: "Pipeline must include required components",
+		Category:    CategoryPipelineComposition,
+	},
+	"pipelineMustIncludeTemplate": {
+		Providers:   []string{ProviderGitLab, ProviderGitHub},
+		DisplayName: "Pipeline must include required templates",
+		Category:    CategoryPipelineComposition,
+	},
+	"pipelineMustNotEnableDebugTrace": {
+		Providers:   []string{ProviderGitLab, ProviderGitHub},
+		DisplayName: "Pipeline must not enable debug trace",
+		Category:    CategoryCICDVariables,
+	},
+	"pipelineMustNotExecuteUnverifiedScripts": {
+		Providers:   []string{ProviderGitLab, ProviderGitHub},
+		DisplayName: "Pipeline must not execute unverified scripts",
+		Category:    CategoryPipelineComposition,
+	},
+	"pipelineMustNotIncludeHardcodedJobs": {
+		Providers:   []string{ProviderGitLab, ProviderGitHub},
+		DisplayName: "Pipeline must not include hardcoded jobs",
+		Category:    CategoryPipelineComposition,
+	},
+	"pipelineMustNotOverrideJobVariables": {
+		Providers:   []string{ProviderGitLab, ProviderGitHub},
+		DisplayName: "Pipeline must not override job variables",
+		Category:    CategoryCICDVariables,
+	},
+	"pipelineMustNotUseDockerInDocker": {
+		Providers:   []string{ProviderGitLab, ProviderGitHub},
+		DisplayName: "Pipeline must not use Docker-in-Docker",
+		Category:    CategoryPipelineComposition,
+	},
+	"pipelineMustNotUseUnsafeVariableExpansion": {
+		Providers:   []string{ProviderGitLab, ProviderGitHub},
+		DisplayName: "Pipeline must not use unsafe variable expansion",
+		Category:    CategoryCICDVariables,
+	},
+	"securityJobsMustNotBeWeakened": {
+		Providers:   []string{ProviderGitLab, ProviderGitHub},
+		DisplayName: "Security jobs must not be weakened",
+		Category:    CategoryPipelineComposition,
+	},
 
 	// GitHub-only.
-	"actionPinCommentsMustMatchSha":                       {Providers: []string{ProviderGitHub}},
-	"actionPinsMustNotBeStale":                            {Providers: []string{ProviderGitHub}},
-	"actionRefsMustExistUpstream":                         {Providers: []string{ProviderGitHub}},
-	"actionsMustBePinnedByCommitSha":                      {Providers: []string{ProviderGitHub}},
-	"actionsMustNotBeArchived":                            {Providers: []string{ProviderGitHub}},
-	"actionsMustNotCarryKnownCVEs":                        {Providers: []string{ProviderGitHub}},
-	"actionsMustNotDuplicateRunnerBuiltins":               {Providers: []string{ProviderGitHub}},
-	"actionsMustNotExecuteMutableRemoteCode":              {Providers: []string{ProviderGitHub}},
-	"checkoutMustNotPersistCredentials":                   {Providers: []string{ProviderGitHub}},
-	"containerCredentialsMustComeFromSecrets":             {Providers: []string{ProviderGitHub}},
-	"dependabotEcosystemsMustHaveCooldown":                {Providers: []string{ProviderGitHub}},
-	"dependabotMustNotAllowInsecureExternalCodeExecution": {Providers: []string{ProviderGitHub}},
-	"deployJobsMustUseEnvironmentGate":                    {Providers: []string{ProviderGitHub}},
-	"dockerfilesMustPinBaseImageByDigest":                 {Providers: []string{ProviderGitHub}},
-	"githubActionMustComeFromAuthorizedSources":           {Providers: []string{ProviderGitHub}},
-	"githubAppTokensMustBeRevokedOnExit":                  {Providers: []string{ProviderGitHub}},
-	"publishWorkflowsMustUseOidcTrustedPublishing":        {Providers: []string{ProviderGitHub}},
-	"pullRequestTargetMustNotCheckoutHead":                {Providers: []string{ProviderGitHub}},
-	"releaseWorkflowsMustNotRestoreUntrustedCache":        {Providers: []string{ProviderGitHub}},
-	"releaseWorkflowsMustSignArtefacts":                   {Providers: []string{ProviderGitHub}},
-	"repositoriesMustConfigureDependencyUpdates":          {Providers: []string{ProviderGitHub}},
-	"repositoriesMustPublishSecurityPolicy":               {Providers: []string{ProviderGitHub}},
-	"repositoriesMustRunSAST":                             {Providers: []string{ProviderGitHub}},
-	"reusableWorkflowsMustNotInheritSecrets":              {Providers: []string{ProviderGitHub}},
-	"workflowConditionsMustBeSound":                       {Providers: []string{ProviderGitHub}},
-	"workflowContainsCallsMustBeSound":                    {Providers: []string{ProviderGitHub}},
-	"workflowMustNotContainObfuscation":                   {Providers: []string{ProviderGitHub}},
-	"workflowMustNotExportEntireGitHubContext":            {Providers: []string{ProviderGitHub}},
-	"workflowMustNotExportEntireSecretsContext":           {Providers: []string{ProviderGitHub}},
-	"workflowMustNotGrantPermissionsWriteAll":             {Providers: []string{ProviderGitHub}},
-	"workflowMustNotIndexSecretsDynamically":              {Providers: []string{ProviderGitHub}},
-	"workflowMustNotInjectUserInputInScripts":             {Providers: []string{ProviderGitHub}},
-	"workflowMustNotInjectVarsInScripts":                  {Providers: []string{ProviderGitHub}},
-	"workflowMustNotReEnableInsecureCommands":             {Providers: []string{ProviderGitHub}},
-	"workflowMustNotTrustSpoofableActorChecks":            {Providers: []string{ProviderGitHub}},
-	"workflowMustNotUnredactSecretsViaFromJSON":           {Providers: []string{ProviderGitHub}},
-	"workflowMustNotUseDangerousTriggers":                 {Providers: []string{ProviderGitHub}},
-	"workflowMustNotUseKnownMisfeatures":                  {Providers: []string{ProviderGitHub}},
-	"workflowMustNotWriteUntrustedContentToGitHubEnv":     {Providers: []string{ProviderGitHub}},
-	"workflowMustIncludeRequiredActions":                  {Providers: []string{ProviderGitHub}},
-	"workflowMustPinPackageInstalls":                      {Providers: []string{ProviderGitHub}},
-	"workflowsMustDeclareConcurrency":                     {Providers: []string{ProviderGitHub}},
-	"workflowsMustDeclarePermissions":                     {Providers: []string{ProviderGitHub}},
-	"workflowsMustHaveExplicitName":                       {Providers: []string{ProviderGitHub}},
+	"actionPinCommentsMustMatchSha": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Action pin comments must match the pinned SHA",
+		Category:    CategoryThirdPartyActions,
+	},
+	"actionPinsMustNotBeStale": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Action pins must not be stale",
+		Category:    CategoryThirdPartyActions,
+	},
+	"actionRefsMustExistUpstream": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Actions must pin commits that exist upstream",
+		Category:    CategoryThirdPartyActions,
+	},
+	"actionsMustBePinnedByCommitSha": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Third-party actions must be pinned by commit SHA",
+		Category:    CategoryThirdPartyActions,
+	},
+	"actionsMustNotBeArchived": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Actions must not reference archived repositories",
+		Category:    CategoryThirdPartyActions,
+	},
+	"actionsMustNotCarryKnownCVEs": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Actions must not carry known CVEs",
+		Category:    CategoryThirdPartyActions,
+	},
+	"actionsMustNotDuplicateRunnerBuiltins": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Actions must not duplicate runner builtins",
+		Category:    CategoryThirdPartyActions,
+	},
+	"actionsMustNotExecuteMutableRemoteCode": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Actions must not execute mutable remote code",
+		Category:    CategoryThirdPartyActions,
+	},
+	"checkoutMustNotPersistCredentials": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Checkout must not persist credentials",
+		Category:    CategoryCICDSecrets,
+	},
+	"containerCredentialsMustComeFromSecrets": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Container credentials must come from secrets",
+		Category:    CategoryThirdPartyActions,
+	},
+	"dependabotEcosystemsMustHaveCooldown": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Dependabot ecosystems must have a cooldown",
+		Category:    CategoryRepositoryHygiene,
+	},
+	"dependabotMustNotAllowInsecureExternalCodeExecution": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Dependabot must not allow insecure external code execution",
+		Category:    CategoryRepositoryHygiene,
+	},
+	"deployJobsMustUseEnvironmentGate": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Deploy jobs must use an environment gate",
+		Category:    CategoryCICDSecrets,
+	},
+	"dockerfilesMustPinBaseImageByDigest": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Dockerfiles must pin base images by digest",
+		Category:    CategoryThirdPartyActions,
+	},
+	"githubActionMustComeFromAuthorizedSources": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Actions must come from authorized sources",
+		Category:    CategoryThirdPartyActions,
+	},
+	"githubAppTokensMustBeRevokedOnExit": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "GitHub App tokens must be revoked on exit",
+		Category:    CategoryCICDSecrets,
+	},
+	"publishWorkflowsMustUseOidcTrustedPublishing": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Publish workflows must use OIDC trusted publishing",
+		Category:    CategoryPipelineComposition,
+	},
+	"pullRequestTargetMustNotCheckoutHead": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "pull_request_target workflows must not check out the PR head",
+		Category:    CategoryWorkflowTriggersAndPermissions,
+	},
+	"releaseWorkflowsMustNotRestoreUntrustedCache": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Release workflows must not restore an untrusted cache",
+		Category:    CategoryThirdPartyActions,
+	},
+	"releaseWorkflowsMustSignArtefacts": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Release workflows must sign artefacts",
+		Category:    CategoryThirdPartyActions,
+	},
+	"repositoriesMustConfigureDependencyUpdates": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Repositories must configure dependency updates",
+		Category:    CategoryRepositoryHygiene,
+	},
+	"repositoriesMustPublishSecurityPolicy": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Repositories must publish a security policy",
+		Category:    CategoryRepositoryHygiene,
+	},
+	"repositoriesMustRunSAST": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Repositories must run SAST",
+		Category:    CategoryRepositoryHygiene,
+	},
+	"reusableWorkflowsMustNotInheritSecrets": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Reusable workflows must not inherit secrets",
+		Category:    CategoryCICDSecrets,
+	},
+	"workflowConditionsMustBeSound": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Workflow conditions must be sound",
+		Category:    CategoryCICDVariables,
+	},
+	"workflowContainsCallsMustBeSound": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Workflow contains() calls must be sound",
+		Category:    CategoryCICDVariables,
+	},
+	"workflowMustNotContainObfuscation": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Workflows must not contain obfuscation",
+		Category:    CategoryPipelineComposition,
+	},
+	"workflowMustNotExportEntireGitHubContext": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Workflows must not export the entire GitHub context",
+		Category:    CategoryCICDVariables,
+	},
+	"workflowMustNotExportEntireSecretsContext": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Workflows must not expose all secrets at once",
+		Category:    CategoryCICDSecrets,
+	},
+	"workflowMustNotGrantPermissionsWriteAll": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Workflow must not grant write-all permissions",
+		Category:    CategoryWorkflowTriggersAndPermissions,
+	},
+	"workflowMustNotIndexSecretsDynamically": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Workflows must not index secrets dynamically",
+		Category:    CategoryCICDSecrets,
+	},
+	"workflowMustNotInjectUserInputInScripts": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Workflows must not inject user input in scripts",
+		Category:    CategoryCICDVariables,
+	},
+	"workflowMustNotInjectVarsInScripts": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Workflows must not inject vars in scripts",
+		Category:    CategoryCICDVariables,
+	},
+	"workflowMustNotReEnableInsecureCommands": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Workflows must not re-enable insecure commands",
+		Category:    CategoryCICDVariables,
+	},
+	"workflowMustNotTrustSpoofableActorChecks": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Workflows must not trust spoofable actor checks",
+		Category:    CategoryCICDVariables,
+	},
+	"workflowMustNotUnredactSecretsViaFromJSON": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Workflows must not unredact secrets via fromJSON",
+		Category:    CategoryCICDSecrets,
+	},
+	"workflowMustNotUseDangerousTriggers": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Workflows must not use dangerous triggers",
+		Category:    CategoryWorkflowTriggersAndPermissions,
+	},
+	"workflowMustNotUseKnownMisfeatures": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Workflows must not use known misfeatures",
+		Category:    CategoryPipelineComposition,
+	},
+	"workflowMustNotWriteUntrustedContentToGitHubEnv": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Workflows must not write untrusted content to $GITHUB_ENV",
+		Category:    CategoryCICDVariables,
+	},
+	"workflowMustIncludeRequiredActions": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Workflows must include required actions",
+		Category:    CategoryPipelineComposition,
+	},
+	"workflowMustPinPackageInstalls": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Workflows must pin package installs",
+		Category:    CategoryCICDVariables,
+	},
+	"workflowsMustDeclareConcurrency": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Workflows must declare concurrency",
+		Category:    CategoryPipelineComposition,
+	},
+	"workflowsMustDeclarePermissions": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Workflows must declare permissions",
+		Category:    CategoryWorkflowTriggersAndPermissions,
+	},
+	"workflowsMustHaveExplicitName": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Workflows must have an explicit name",
+		Category:    CategoryPipelineComposition,
+	},
 }
 
 // removedControls maps control names that shipped in earlier releases
@@ -261,4 +553,38 @@ func IsControlApplicableTo(controlName, provider string) bool {
 		}
 	}
 	return false
+}
+
+// ControlCatalogEntry is one row of the exported control catalog: the
+// stable technical name plus its display metadata (#440).
+type ControlCatalogEntry struct {
+	// Name is the technical control name, the stable key used in
+	// .plumber.yaml, reports and the score push.
+	Name string
+	ControlMeta
+}
+
+// ControlsCatalog returns every control the engine knows about with its
+// display metadata, sorted by technical name. The slice and its entries are
+// copies: mutating them cannot corrupt the registry.
+func ControlsCatalog() []ControlCatalogEntry {
+	out := make([]ControlCatalogEntry, 0, len(controlsMeta))
+	for name, meta := range controlsMeta {
+		m := meta
+		m.Providers = append([]string(nil), meta.Providers...)
+		out = append(out, ControlCatalogEntry{Name: name, ControlMeta: m})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// ControlMetaFor returns the display metadata for one technical control
+// name, and whether the control is known at all.
+func ControlMetaFor(name string) (ControlMeta, bool) {
+	meta, ok := controlsMeta[name]
+	if !ok {
+		return ControlMeta{}, false
+	}
+	meta.Providers = append([]string(nil), meta.Providers...)
+	return meta, true
 }

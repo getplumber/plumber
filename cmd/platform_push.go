@@ -147,6 +147,25 @@ type platformFinding struct {
 	Requirement string          `json:"requirement,omitempty"`
 	Status      string          `json:"status"`
 	Data        json.RawMessage `json:"data,omitempty"`
+
+	// Name and Category are the control's display metadata (#440), the
+	// docs-catalog wording next to the stable technical id in Control.
+	// Additive: the platform ignores unknown fields, and consumers that
+	// keyed on Control keep working unchanged.
+	Name     string `json:"name,omitempty"`
+	Category string `json:"category,omitempty"`
+}
+
+// decoratedPlatformFinding builds a push finding entry with the control's
+// display metadata attached (#440), so every construction site stays in
+// step with the exported catalog.
+func decoratedPlatformFinding(controlName, status string, data json.RawMessage) platformFinding {
+	f := platformFinding{Control: controlName, Status: status, Data: data}
+	if meta, ok := configuration.ControlMetaFor(controlName); ok {
+		f.Name = meta.DisplayName
+		f.Category = meta.Category
+	}
+	return f
 }
 
 // Finding-status vocabulary the platform's contract defines.
@@ -395,20 +414,12 @@ func platformFindingsFor(p providerPkg.Provider, result *control.AnalysisResult,
 			continue
 		case control.StatusFailed:
 			for _, f := range fs {
-				out = append(out, platformFinding{
-					Control: platformFindingControlName(f),
-					Status:  platformStatusFail,
-					Data:    platformFindingDataRaw(f),
-				})
+				out = append(out, decoratedPlatformFinding(platformFindingControlName(f), platformStatusFail, platformFindingDataRaw(f)))
 			}
 		case control.StatusError:
-			out = append(out, platformFinding{
-				Control: e.ControlName,
-				Status:  platformStatusNotEvaluable,
-				Data:    notEvaluableReasonData(result, e.ControlName),
-			})
+			out = append(out, decoratedPlatformFinding(e.ControlName, platformStatusNotEvaluable, notEvaluableReasonData(result, e.ControlName)))
 		default: // control.StatusPassed
-			out = append(out, platformFinding{Control: e.ControlName, Status: platformStatusPass})
+			out = append(out, decoratedPlatformFinding(e.ControlName, platformStatusPass, nil))
 		}
 	}
 	return out

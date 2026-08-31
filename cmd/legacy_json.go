@@ -108,6 +108,13 @@ func legacyResultsByName(result *control.AnalysisResult, pc *configuration.Plumb
 func _withControlMeta(block any, e control.ControlEntry, result *control.AnalysisResult, findingCount int) any {
 	if m, ok := block.(map[string]any); ok {
 		m["controlName"] = e.ControlName
+		// Display metadata next to the stable technical id (#440): the
+		// docs-catalog wording and grouping, so no consumer has to maintain
+		// a technicalName -> human-name map that drifts on every release.
+		if meta, ok := configuration.ControlMetaFor(e.ControlName); ok {
+			m["name"] = meta.DisplayName
+			m["category"] = meta.Category
+		}
 		m["status"] = control.StatusFor(e, result, findingCount)
 		if result != nil && result.ApprovalRulesTierCaveat && isApprovalRuleControl(e.ControlName) {
 			// Structured so a consumer can key on it: the approvals API returned
@@ -398,6 +405,12 @@ func projectFinding(f opaengine.Finding, jobKey string) map[string]any {
 	out := map[string]any{
 		"code":   f.Code,
 		"docUrl": "https://getplumber.io/docs/cli/issues/" + f.Code,
+	}
+	// The issue TYPE's display name (#440), the docs wording from the code
+	// registry, so grouping findings by code needs no hand-made code map.
+	// The technical code above stays the stable key.
+	if info := control.LookupCode(control.ErrorCode(f.Code)); info != nil && info.Title != "" {
+		out["title"] = info.Title
 	}
 	if f.Job != "" && jobKey != "" {
 		out[jobKey] = f.Job
