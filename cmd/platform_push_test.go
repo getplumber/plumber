@@ -3,7 +3,9 @@ package cmd
 import (
 	"bytes"
 	"encoding/json"
+
 	"errors"
+	"gopkg.in/yaml.v2"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -548,9 +550,10 @@ func TestMaybePushPlatform_EffectiveConfigReflectsTheLoadedConfig(t *testing.T) 
 	restore := withPlatformTestEnv(t, srv.URL, "tok-123")
 	defer restore()
 
+	loaded := "version: \"2.0\"\ngitlab:\n  controls:\n    branchMustBeProtected:\n      enabled: true\n      minMergeAccessLevel: 40\n"
 	conf := &configuration.Configuration{
 		ConfigFilePath: ".plumber.yaml",
-		PlumberConfig:  &configuration.PlumberConfig{Source: ".plumber.yaml", Raw: "version: \"2.0\"\n"},
+		PlumberConfig:  &configuration.PlumberConfig{Source: ".plumber.yaml", Raw: loaded},
 	}
 	if err := maybePushPlatform(testProvider(t), conf, &control.AnalysisResult{}, nil); err != nil {
 		t.Fatalf("maybePushPlatform: %v", err)
@@ -561,18 +564,18 @@ func TestMaybePushPlatform_EffectiveConfigReflectsTheLoadedConfig(t *testing.T) 
 	}
 	raw := push.Results[0].EffectiveConfig
 	if len(raw) == 0 {
-		t.Fatal("effective_config = empty, want the loaded policy block")
+		t.Fatal("effective_config = empty, want the loaded config's flat controls map")
 	}
-	var got map[string]any
+	// The J12-F5 flat shape: control names at top level, values from the
+	// LOADED config (minMergeAccessLevel 40 does not exist in the embedded
+	// default fallback, so its presence proves the loaded Raw was read).
+	var got map[string]map[string]any
 	if err := json.Unmarshal(raw, &got); err != nil {
-		t.Fatalf("effective_config does not parse: %v", err)
+		t.Fatalf("effective_config does not parse as the flat controls map: %v", err)
 	}
-	if got["source"] != ".plumber.yaml" {
-		t.Errorf(`effective_config["source"] = %v, want ".plumber.yaml"`, got["source"])
-	}
-	policy, _ := got["effectivePolicy"].(map[string]any)
-	if policy == nil || policy["version"] != "2.0" {
-		t.Errorf(`effective_config["effectivePolicy"] = %v, want the parsed config (version: "2.0")`, got["effectivePolicy"])
+	bp := got["branchMustBeProtected"]
+	if bp == nil || bp["minMergeAccessLevel"] != float64(40) {
+		t.Errorf("effective_config[branchMustBeProtected] = %v, want the loaded config's values", got)
 	}
 }
 
@@ -972,4 +975,68 @@ func TestBuildPlatformPush_GitHubCIIdentityValuesReachTheWire(t *testing.T) {
 	if got.Project.ID != "" {
 		t.Errorf("project.id = %q, want empty for GitHub", got.Project.ID)
 	}
+}
+
+// TestPlatformEffectiveConfigIsTheFlatControlsMap pins the J12-F5 ruling
+// (2026-08-31): a push's effective_config is the FLAT per-provider controls
+// map, keys are control names, exactly what the platform's
+// issueident.ParamsFor unmarshals into configuration.ControlsConfig. The
+// previous nested report shape ({"effectivePolicy": {"gitlab": ...}})
+// decoded to a zero ControlsConfig on the platform, so every issue stored
+// empty params and See & fix could never run.
+func TestPlatformEffectiveConfigIsTheFlatControlsMap(t *testing.T) {
+	raw := `version: "2.0"
+gitlab:
+  controls:
+    mergeRequestApprovalRulesMustRequireMinimumApprovals:
+      enabled: true
+      minimumRequiredApprovals: 3
+    branchMustBeProtected:
+      enabled: true
+`
+	var pc configuration.PlumberConfig
+	if err := yaml.Unmarshal([]byte(raw), &pc); err != nil {
+		t.Fatalf("parse config: %v", err)
+	}
+	pc.Raw = raw
+
+	out := platformEffectiveConfigRaw(&pc, "gitlab")
+	if len(out) == 0 {
+		t.Fatal("expected a non-empty effective_config")
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(out, &top); err != nil {
+		t.Fatalf("effective_config is not a JSON object: %v", err)
+	}
+	for _, forbidden := range []string{"effectivePolicy", "gitlab", "github", "version", "controls"} {
+		if _, ok := top[forbidden]; ok {
+			t.Errorf("effective_config must be the flat controls map; found nesting key %q", forbidden)
+		}
+	}
+	if _, ok := top["mergeRequestApprovalRulesMustRequireMinimumApprovals"]; !ok {
+		t.Fatalf("control name missing at top level; keys: %v", keysOf(top))
+	}
+
+	// The platform-reader contract, verified against the EXACT shared type
+	// the platform unmarshals into (it imports this module's
+	// configuration.ControlsConfig).
+	var controls configuration.ControlsConfig
+	if err := json.Unmarshal(out, &controls); err != nil {
+		t.Fatalf("the platform's reader could not decode this effective_config: %v", err)
+	}
+	cfg := controls.MergeRequestApprovalRulesMustRequireMinimumApprovals
+	if cfg == nil || cfg.MinimumRequiredApprovals == nil || *cfg.MinimumRequiredApprovals != 3 {
+		t.Fatalf("the platform reader would extract empty params from this shape: %+v", cfg)
+	}
+	if controls.BranchMustBeProtected == nil || !controls.BranchMustBeProtected.IsEnabled() {
+		t.Fatalf("branchMustBeProtected did not survive the platform-reader decode")
+	}
+}
+
+func keysOf(m map[string]json.RawMessage) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	return out
 }

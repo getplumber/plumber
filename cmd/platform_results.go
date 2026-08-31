@@ -324,7 +324,7 @@ func evaluationFor(
 	}
 
 	return &policyEvaluation{
-		effectiveConfig: platformEffectiveConfigRaw(pc),
+		effectiveConfig: platformEffectiveConfigRaw(pc, p.Name()),
 		findings:        platformFindingsFor(p, scopedResult, pc, includeOnly, skip),
 		score:           platformScoreFrom(scopedScore),
 	}
