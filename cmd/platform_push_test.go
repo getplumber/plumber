@@ -1089,3 +1089,46 @@ func TestResolveGitLabToken_PlatformModeBypass(t *testing.T) {
 		t.Fatalf("a supplied token must always win: got (%q, %v)", token, err)
 	}
 }
+
+// The report's control blocks and issue rows carry display metadata next
+// to their technical ids (#440): name + category per control, title per
+// issue code, all sourced from the exported tables so no consumer keeps a
+// hand map.
+func TestReportCarriesDisplayMetadata(t *testing.T) {
+	entry := control.ControlEntry{ControlName: "branchMustBeProtected"}
+	block := _withControlMeta(map[string]any{}, entry, &control.AnalysisResult{CiValid: true}, 0)
+	m := block.(map[string]any)
+	if m["controlName"] != "branchMustBeProtected" {
+		t.Fatalf("technical id must stay: %v", m)
+	}
+	if m["name"] != "Branch must be protected" {
+		t.Errorf("display name missing or wrong: %v", m["name"])
+	}
+	if m["category"] != configuration.CategoryAccessAndAuthorization {
+		t.Errorf("category missing or wrong: %v", m["category"])
+	}
+
+	issue := projectFinding(opaengine.Finding{Code: "ISSUE-501", Message: "x"}, "job")
+	if issue["code"] != "ISSUE-501" {
+		t.Fatalf("technical code must stay: %v", issue)
+	}
+	title, _ := issue["title"].(string)
+	if title == "" {
+		t.Errorf("issue title missing: %v", issue)
+	}
+}
+
+// The push findings carry the same display metadata additively (#440): the
+// platform and any consumer of the raw artifact see the docs wording next
+// to the stable technical control name.
+func TestPlatformFindingsCarryDisplayMetadata(t *testing.T) {
+	f := decoratedPlatformFinding("branchMustBeProtected", platformStatusPass, nil)
+	if f.Control != "branchMustBeProtected" || f.Name != "Branch must be protected" ||
+		f.Category != configuration.CategoryAccessAndAuthorization {
+		t.Fatalf("decorated finding mismatch: %+v", f)
+	}
+	unknown := decoratedPlatformFinding("noSuchControl", platformStatusPass, nil)
+	if unknown.Name != "" || unknown.Category != "" {
+		t.Fatalf("an unknown control must not invent metadata: %+v", unknown)
+	}
+}
