@@ -81,6 +81,12 @@ func (r *RunContext) Snapshot() Snapshot {
 // whether one is available at all. A false second return means controls
 // reading the merged configuration must report not_evaluable.
 func (r *RunContext) MergedYAML() (string, bool) {
+	// Joining here is what collects the early-fired resolve request: the
+	// first consumer that needs the outcome waits for it, everything before
+	// ran concurrently with it.
+	if r != nil {
+		r.Config.join()
+	}
 	if r == nil || r.Config == nil || !r.Config.Available() {
 		return "", false
 	}
@@ -99,7 +105,11 @@ func (r *RunContext) MergedYAML() (string, bool) {
 // pipeline control passes over what is left. A run whose config does not
 // merge would print a clean green verdict.
 func (r *RunContext) ConfigInvalid() bool {
-	return r != nil && r.Config != nil && r.Config.Available() && !r.Config.Valid
+	if r == nil {
+		return false
+	}
+	r.Config.join()
+	return r.Config != nil && r.Config.Available() && !r.Config.Valid
 }
 
 // ConfigAndIncludesAgree reports whether the merged configuration in use and
@@ -121,13 +131,20 @@ func (r *RunContext) ConfigInvalid() bool {
 // prevent, landing on precisely the divergent branch the digest exists to
 // detect. Callers must treat attribution as unavailable when this is false.
 func (r *RunContext) ConfigAndIncludesAgree() bool {
-	return r != nil && r.Config != nil && r.Config.Source == SourceSnapshot
+	if r == nil {
+		return false
+	}
+	r.Config.join()
+	return r.Config != nil && r.Config.Source == SourceSnapshot
 }
 
 // UnavailableReason names why no merged configuration is available, or ""
 // when one is. It is the reason stamped onto the not_evaluable findings
 // this state produces.
 func (r *RunContext) UnavailableReason() string {
+	if r != nil {
+		r.Config.join()
+	}
 	if r == nil || r.Config == nil || r.Config.Available() {
 		return ""
 	}
@@ -377,6 +394,20 @@ func (r *RunContext) describeConfig() []string {
 			reason = "unknown"
 		}
 		out = append(out, "ci config digest: not computed ("+reason+") - treated as divergent")
+	}
+
+	if c.ShaFromAnchor && c.Digest.Divergent() {
+		out = append(out, "  note: no job commit in the environment; resolving at the snapshot anchor's commit, so this run evaluates the project's remote state, not local uncommitted edits")
+	}
+
+	// The early-fired resolve request may still be in flight. Wait briefly so
+	// the nominal fast answer (a platform cache hit) still prints its real
+	// outcome, and say "in flight" honestly for a slow one rather than block
+	// the pre-run output on a third party or print an outcome nothing has
+	// established.
+	if !c.SettledWithin(200 * time.Millisecond) {
+		out = append(out, "ci config source: platform resolve endpoint (request in flight; collected when evaluation needs it)")
+		return out
 	}
 
 	switch c.Source {

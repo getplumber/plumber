@@ -60,8 +60,14 @@ func setupPlatformMode(p providerPkg.Provider, conf *configuration.Configuration
 	// digest against, so digesting over anything else can never cache-hit on
 	// a project with a custom path.
 	localDigest, abortReason := computeLocalCIDigest(conf, rc.SnapshotCIConfigPath())
-	sha := platformAnalyzedSha(p, conf, ctx.Snapshot.Anchor())
-	rc.Config = platform.ResolveRunConfig(client, ctx.Snapshot, projectPath, sha, localDigest, abortReason)
+	sha, shaFromAnchor := platformAnalyzedSha(p, conf, ctx.Snapshot.Anchor())
+	// Started, not awaited: on a divergent digest the resolve request is in
+	// flight when setup returns, and the first consumer that needs the
+	// merged config joins on it (RunContext.MergedYAML). The local work in
+	// between runs concurrently with the platform's resolution, and a hung
+	// endpoint costs its timeout in parallel rather than before any of it.
+	rc.Config = platform.StartRunConfigResolution(client, ctx.Snapshot, projectPath, sha, localDigest, abortReason)
+	rc.Config.ShaFromAnchor = shaFromAnchor
 	return rc
 }
 
@@ -130,13 +136,17 @@ func ciConfigPathForDigest(conf *configuration.Configuration, snapshotPath strin
 // wrong-config verdict the whole digest mechanism exists to prevent.
 //
 // An empty return means "no sha to resolve at", and the caller degrades
-// rather than sending a request the platform will refuse.
-func platformAnalyzedSha(p providerPkg.Provider, conf *configuration.Configuration, anchor *platform.ResolutionAnchor) string {
+// rather than sending a request the platform will refuse. fromAnchor
+// reports that the sha is the ANCHOR's rather than the job's own: the run
+// then evaluates the project's remote state at that commit, which the
+// describe output states so a local-uncommitted-edits divergence is not
+// read as a contradiction (see ConfigResolution.ShaFromAnchor).
+func platformAnalyzedSha(p providerPkg.Provider, conf *configuration.Configuration, anchor *platform.ResolutionAnchor) (sha string, fromAnchor bool) {
 	if sha := strings.TrimSpace(os.Getenv(p.CIEnvVars().CommitSHA)); sha != "" {
-		return sha
+		return sha, false
 	}
 	if anchor == nil || strings.TrimSpace(anchor.Sha) == "" {
-		return ""
+		return "", false
 	}
 	// conf.Branch empty means the run analyzes the project's default
 	// branch, which is what the anchor's ref is.
@@ -145,9 +155,9 @@ func platformAnalyzedSha(p providerPkg.Provider, conf *configuration.Configurati
 		branch = strings.TrimSpace(conf.Branch)
 	}
 	if branch == "" || branch == anchor.Ref {
-		return anchor.Sha
+		return anchor.Sha, true
 	}
-	return ""
+	return "", false
 }
 
 // reportPlatformMode prints what platform mode resolved. It runs before the

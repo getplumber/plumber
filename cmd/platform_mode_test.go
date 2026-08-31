@@ -228,14 +228,14 @@ func TestPlatformAnalyzedSha(t *testing.T) {
 
 	t.Run("the CI environment wins when present", func(t *testing.T) {
 		t.Setenv(env, "cisha")
-		if got := platformAnalyzedSha(p, &configuration.Configuration{}, anchor); got != "cisha" {
+		if got, fromAnchor := platformAnalyzedSha(p, &configuration.Configuration{}, anchor); got != "cisha" || fromAnchor {
 			t.Fatalf("got %q", got)
 		}
 	})
 
 	t.Run("falls back to the anchor for the default branch", func(t *testing.T) {
 		t.Setenv(env, "")
-		if got := platformAnalyzedSha(p, &configuration.Configuration{}, anchor); got != "anchorsha" {
+		if got, fromAnchor := platformAnalyzedSha(p, &configuration.Configuration{}, anchor); got != "anchorsha" || !fromAnchor {
 			t.Fatalf("got %q, want the anchor's sha", got)
 		}
 	})
@@ -243,7 +243,7 @@ func TestPlatformAnalyzedSha(t *testing.T) {
 	t.Run("falls back when --branch names the anchor's own ref", func(t *testing.T) {
 		t.Setenv(env, "")
 		conf := &configuration.Configuration{Branch: "main"}
-		if got := platformAnalyzedSha(p, conf, anchor); got != "anchorsha" {
+		if got, fromAnchor := platformAnalyzedSha(p, conf, anchor); got != "anchorsha" || !fromAnchor {
 			t.Fatalf("got %q", got)
 		}
 	})
@@ -254,18 +254,18 @@ func TestPlatformAnalyzedSha(t *testing.T) {
 	t.Run("refuses to reuse the anchor for a DIFFERENT branch", func(t *testing.T) {
 		t.Setenv(env, "")
 		conf := &configuration.Configuration{Branch: "feature-x"}
-		if got := platformAnalyzedSha(p, conf, anchor); got != "" {
+		if got, _ := platformAnalyzedSha(p, conf, anchor); got != "" {
 			t.Fatalf("got %q, want no sha: the anchor describes %q, not %q", got, anchor.Ref, conf.Branch)
 		}
 	})
 
 	t.Run("no anchor and no CI env yields no sha", func(t *testing.T) {
 		t.Setenv(env, "")
-		if got := platformAnalyzedSha(p, &configuration.Configuration{}, nil); got != "" {
+		if got, _ := platformAnalyzedSha(p, &configuration.Configuration{}, nil); got != "" {
 			t.Fatalf("got %q", got)
 		}
 		empty := &platform.ResolutionAnchor{Ref: "main"}
-		if got := platformAnalyzedSha(p, &configuration.Configuration{}, empty); got != "" {
+		if got, _ := platformAnalyzedSha(p, &configuration.Configuration{}, empty); got != "" {
 			t.Fatalf("got %q", got)
 		}
 	})

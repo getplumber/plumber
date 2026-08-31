@@ -3,7 +3,9 @@ package platform
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
+	"time"
 )
 
 // fakeResolver records what ResolveRunConfig asked for and answers with a
@@ -291,5 +293,86 @@ func TestResolveRunConfig_NoShaSkipsTheCall(t *testing.T) {
 	}
 	if got.Source != SourceUnavailable || got.Reason != ReasonResolutionUnavailable {
 		t.Fatalf("got %+v", got)
+	}
+}
+
+// blockingResolver blocks every ResolveConfig call until released, so a test
+// can hold the platform's answer open and observe what the CLI does in the
+// meantime.
+type blockingResolver struct {
+	release chan struct{}
+	out     *ResolvedConfig
+}
+
+func (b *blockingResolver) ResolveConfig(projectPath, sha, digest, digestVersion string) (*ResolvedConfig, error) {
+	<-b.release
+	return b.out, nil
+}
+
+// TestStartRunConfigResolution_DivergentDoesNotBlock pins the early-fire
+// contract (#368: the resolve request "can be fired EARLY ... and collected
+// only when evaluation needs the config"): on a divergent digest,
+// StartRunConfigResolution returns while the platform is still thinking, and
+// the first accessor that needs the outcome joins on it.
+func TestStartRunConfigResolution_DivergentDoesNotBlock(t *testing.T) {
+	res := &blockingResolver{
+		release: make(chan struct{}),
+		out: &ResolvedConfig{MergedYaml: "resolved: yes\n", ResolvedSha: "beef",
+			Valid: true, Source: "resolved"},
+	}
+	snap := snapWith(t, "anchor-yaml", "f"+strings.Repeat("0", 63), "1", "anchorsha", "main")
+
+	done := make(chan *ConfigResolution, 1)
+	go func() {
+		done <- StartRunConfigResolution(res, snap, "org/repo", "abc123", strings.Repeat("1", 64), "")
+	}()
+	var out *ConfigResolution
+	select {
+	case out = <-done:
+		// returned while the resolver is still blocked: the early fire.
+	case <-time.After(2 * time.Second):
+		t.Fatal("StartRunConfigResolution blocked on the resolve call instead of firing it early")
+	}
+	if out.Settled() {
+		t.Fatal("resolution reports settled while the platform has not answered")
+	}
+
+	joined := make(chan struct{})
+	go func() {
+		out.join()
+		close(joined)
+	}()
+	select {
+	case <-joined:
+		t.Fatal("join returned before the platform answered")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	close(res.release)
+	select {
+	case <-joined:
+	case <-time.After(2 * time.Second):
+		t.Fatal("join did not complete after the platform answered")
+	}
+	if out.Source != SourceResolved || out.MergedYAML != "resolved: yes\n" || out.ResolvedSha != "beef" {
+		t.Fatalf("joined resolution mismatch: %+v", out)
+	}
+	if !out.Settled() {
+		t.Fatal("resolution must report settled after join")
+	}
+}
+
+// TestStartRunConfigResolution_MatchSettlesImmediately: the nominal
+// digest-match path involves no request, so it is settled the moment the
+// function returns and behaves exactly like the synchronous path.
+func TestStartRunConfigResolution_MatchSettlesImmediately(t *testing.T) {
+	digest := strings.Repeat("2", 64)
+	snap := snapWith(t, "anchor-yaml", digest, "1", "anchorsha", "main")
+	out := StartRunConfigResolution(nil, snap, "org/repo", "abc123", digest, "")
+	if !out.Settled() {
+		t.Fatal("a digest match must settle immediately")
+	}
+	if out.Source != SourceSnapshot || out.MergedYAML != "anchor-yaml" {
+		t.Fatalf("match path mismatch: %+v", out)
 	}
 }
