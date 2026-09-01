@@ -50,7 +50,7 @@ _cache_action_specs := object.get(input, ["config", "cachePoisoning", "cacheActi
 # "branch"/"tag" (shared by every release) — the `\$\{\{` anchor and the
 # trailing `\b` reject both. run_id / run_number are unique per run, so
 # a key woven with them can never restore another run's cache.
-release_scope_pattern := `\$\{\{[^}]*\bgithub\.(ref(_name)?|head_ref|sha|run_id|run_number|event\.release|event\.pull_request\.head\.sha)\b[^}]*\}\}`
+release_scope_pattern := `\$\{\{[^}]*\bgithub\.(ref(_name)?|sha|run_id|run_number|event\.release|event\.pull_request\.head\.sha)\b[^}]*\}\}`
 
 deny contains finding if {
 	some i, j
@@ -168,6 +168,7 @@ _key_is_release_scoped(action, _) if {
 
 # Buildx cache backends encode their key namespace in the backend options:
 # scope for gha, and name for s3/azblob. Treat those like an actions/cache key.
+# Specs without enableInput leave value undefined, skipping this clause so key applies.
 _key_is_release_scoped(action, spec) if {
 	value := action.with[spec.enableInput]
 	is_string(value)
@@ -175,6 +176,14 @@ _key_is_release_scoped(action, spec) if {
 	some backend in [["gha", "scope"], ["s3", "name"], ["azblob", "name"]]
 	regex.match(sprintf(`(?i)(^|,)[ ]*type[ ]*=[ ]*%s(,|$)`, [backend[0]]), entry)
 	regex.match(sprintf(`(?i)(^|,)[ ]*%s[ ]*=[ ]*[^,]*%s`, [backend[1], release_scope_pattern]), entry)
+	not _has_unscoped_backend_entry(value)
+}
+
+_has_unscoped_backend_entry(value) if {
+	some entry in split(value, "\n")
+	some backend in [["gha", "scope"], ["s3", "name"], ["azblob", "name"]]
+	regex.match(sprintf(`(?i)(^|,)[ ]*type[ ]*=[ ]*%s(,|$)`, [backend[0]]), entry)
+	not regex.match(sprintf(`(?i)(^|,)[ ]*%s[ ]*=[ ]*[^,]*%s`, [backend[1], release_scope_pattern]), entry)
 }
 
 _has_unscoped_restore_key(action) if {
