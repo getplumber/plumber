@@ -1,0 +1,11 @@
+name: violation_buildpush_scoped_export_only
+on: release
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/build-push-action@v6
+        with:
+          push: true
+          cache-from: type=gha
+          cache-to: type=gha,scope=myapp-${{ github.ref_name }}
