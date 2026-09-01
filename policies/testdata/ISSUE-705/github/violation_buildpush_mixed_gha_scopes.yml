@@ -1,0 +1,13 @@
+name: violation_buildpush_mixed_gha_scopes
+on: release
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/build-push-action@v6
+        with:
+          push: true
+          cache-from: |
+            type=gha,scope=myapp-${{ github.ref_name }}
+            type=gha
+          cache-to: type=gha,scope=myapp-${{ github.ref_name }},mode=max
