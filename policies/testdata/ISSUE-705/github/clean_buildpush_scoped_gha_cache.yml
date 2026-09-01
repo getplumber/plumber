@@ -1,0 +1,11 @@
+name: clean_buildpush_scoped_gha_cache
+on: release
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/build-push-action@v6
+        with:
+          push: true
+          cache-from: type=gha,scope=myapp-linux-amd64-${{ github.ref_name }}
+          cache-to: type=gha,scope=myapp-linux-amd64-${{ github.ref_name }},mode=max
