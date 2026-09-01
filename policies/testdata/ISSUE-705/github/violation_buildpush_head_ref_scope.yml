@@ -1,0 +1,11 @@
+name: violation_buildpush_head_ref_scope
+on: release
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/build-push-action@v6
+        with:
+          push: true
+          cache-from: type=gha,scope=myapp-${{ github.head_ref }}
+          cache-to: type=gha,scope=myapp-${{ github.head_ref }},mode=max

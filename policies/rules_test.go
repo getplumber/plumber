@@ -3690,6 +3690,8 @@ func TestIssue705_CachePoisoning(t *testing.T) {
 		// PR #300 bot review: enableContains — build-push-action GHA cache flags, registry cache does not.
 		{"violation_buildpush_gha_cache.yml", []string{"violation_buildpush_gha_cache/publish"}},
 		{"violation_buildpush_scoped_export_only.yml", []string{"violation_buildpush_scoped_export_only/publish"}},
+		{"violation_buildpush_mixed_gha_scopes.yml", []string{"violation_buildpush_mixed_gha_scopes/publish"}},
+		{"violation_buildpush_head_ref_scope.yml", []string{"violation_buildpush_head_ref_scope/publish"}},
 		{"clean_buildpush_scoped_gha_cache.yml", nil},
 		{"clean_buildpush_registry_cache.yml", nil},
 	}
