@@ -446,6 +446,26 @@ func TestMaybePushPlatform_FindingsCoverPassFailAndNotEvaluable(t *testing.T) {
 	if !ok || pass.Status != platformStatusPass || len(pass.Data) != 0 {
 		t.Errorf("pipelineMustNotEnableDebugTrace = %+v (present=%v), want status=pass with no data", pass, ok)
 	}
+
+	// Every branch carries the display metadata (#440), asserted on the
+	// DECODED BODY so the real platformFindingsFor wiring is what is
+	// pinned, not the helper in isolation. The fail branch matters most:
+	// it resolves its control name through LookupCode(f.Code) rather than
+	// e.ControlName, so its metadata lookup goes through a distinct path.
+	for name, f := range map[string]platformFinding{
+		"containerImageMustComeFromAuthorizedSources": fail,
+		"branchMustBeProtected":                       notEval,
+		"pipelineMustNotEnableDebugTrace":             pass,
+	} {
+		meta, ok := configuration.ControlMetaFor(name)
+		if !ok {
+			t.Fatalf("%s: no exported catalog row", name)
+		}
+		if f.Name != meta.DisplayName || f.Category != meta.Category {
+			t.Errorf("%s: pushed (name=%q, category=%q), want (%q, %q) from the exported catalog",
+				name, f.Name, f.Category, meta.DisplayName, meta.Category)
+		}
+	}
 }
 
 // A control excluded via --skip-controls (the same e.Skipped flag a control
