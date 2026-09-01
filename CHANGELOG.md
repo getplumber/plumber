@@ -1,3 +1,21 @@
+## [0.4.51](https://github.com/getplumber/plumber/compare/v0.4.50...v0.4.51) (2026-09-01)
+
+
+### ✨ Features
+
+* **catalog:** export human-readable control names and categories ([#440](https://github.com/getplumber/plumber/issues/440)) ([c50e9c7](https://github.com/getplumber/plumber/commit/c50e9c7d22cbe69b20cc9116a63436e422d68bca))
+
+
+### ✅ Tests
+
+* **platform:** assert display metadata on the decoded push body for all three finding branches ([2dbf0c5](https://github.com/getplumber/plumber/commit/2dbf0c51f59bd67b247ea6d5fc3c50fcd7a309ad))
+* **platform:** pin the review-flagged guards from the platform-mode audit ([8261477](https://github.com/getplumber/plumber/commit/8261477b5517446daae54bff6f879dce69b8d086)), closes [#431](https://github.com/getplumber/plumber/issues/431)
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.50 refs [skip ci] ([39b2b67](https://github.com/getplumber/plumber/commit/39b2b67cf1cc5ee5dff464b5e0d7682514cb5b1b))
+
 ## [0.4.50](https://github.com/getplumber/plumber/compare/v0.4.49...v0.4.50) (2026-08-31)
 
 
