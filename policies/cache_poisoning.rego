@@ -58,8 +58,10 @@ deny contains finding if {
 	not _job_allowed(job)
 	_is_release_context(job)
 	action := job.uses[j]
-	_restores_cache(action)
-	not _properly_scoped(action)
+	some spec in _cache_action_specs
+	_uses_prefix(action.uses, spec.action)
+	_cache_active(action, spec)
+	not _properly_scoped(action, spec)
 	finding := {
 		"code":     "ISSUE-705",
 		"severity": "high",
@@ -101,12 +103,6 @@ _is_publish_action(uses) if {
 }
 
 # ── does the action restore a cache? (fully spec-driven) ─────────────
-_restores_cache(action) if {
-	some spec in _cache_action_specs
-	_uses_prefix(action.uses, spec.action)
-	_cache_active(action, spec)
-}
-
 _cache_active(_, spec) if spec.mode == "always"
 
 _cache_active(action, spec) if {
@@ -159,15 +155,35 @@ _as_bool(v) := false if {
 # ── key scoping ──────────────────────────────────────────────────────
 # Properly scoped means the key weaves the ref AND no restore-keys entry
 # falls back to an unscoped prefix.
-_properly_scoped(action) if {
-	_key_is_release_scoped(action)
+_properly_scoped(action, spec) if {
+	_key_is_release_scoped(action, spec)
 	not _has_unscoped_restore_key(action)
 }
 
-_key_is_release_scoped(action) if {
+_key_is_release_scoped(action, _) if {
 	key := action.with.key
 	is_string(key)
 	regex.match(release_scope_pattern, key)
+}
+
+# Buildx cache backends encode their key namespace in the backend options:
+# scope for gha, and name for s3/azblob. Treat those like an actions/cache key.
+# Specs without enableInput leave value undefined, skipping this clause so key applies.
+_key_is_release_scoped(action, spec) if {
+	value := action.with[spec.enableInput]
+	is_string(value)
+	some entry in split(value, "\n")
+	some backend in [["gha", "scope"], ["s3", "name"], ["azblob", "name"]]
+	regex.match(sprintf(`(?i)(^|,)[ ]*type[ ]*=[ ]*%s(,|$)`, [backend[0]]), entry)
+	regex.match(sprintf(`(?i)(^|,)[ ]*%s[ ]*=[ ]*[^,]*%s`, [backend[1], release_scope_pattern]), entry)
+	not _has_unscoped_backend_entry(value)
+}
+
+_has_unscoped_backend_entry(value) if {
+	some entry in split(value, "\n")
+	some backend in [["gha", "scope"], ["s3", "name"], ["azblob", "name"]]
+	regex.match(sprintf(`(?i)(^|,)[ ]*type[ ]*=[ ]*%s(,|$)`, [backend[0]]), entry)
+	not regex.match(sprintf(`(?i)(^|,)[ ]*%s[ ]*=[ ]*[^,]*%s`, [backend[1], release_scope_pattern]), entry)
 }
 
 _has_unscoped_restore_key(action) if {
