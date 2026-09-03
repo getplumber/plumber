@@ -100,6 +100,26 @@ jobs:
 			t.Errorf("job %q: expected tag %q, got %q", name, tag, got[name])
 		}
 	}
+
+	// The scan wires the retained workflow files onto the pipeline for the JSON
+	// report's analyzed-CI-config block (#443): the two YAML files with their
+	// content, under their repo-relative paths; the .md is not a workflow.
+	wf := map[string]string{}
+	for _, w := range pipeline.AnalyzedWorkflows {
+		wf[w.Path] = w.Content
+	}
+	if len(wf) != 2 {
+		t.Fatalf("retained %d workflow files, want 2: %+v", len(wf), pipeline.AnalyzedWorkflows)
+	}
+	if wf[".github/workflows/ci.yml"] != ci {
+		t.Errorf("ci.yml content = %q, want it retained verbatim", wf[".github/workflows/ci.yml"])
+	}
+	if wf[".github/workflows/release.yaml"] != release {
+		t.Errorf("release.yaml content = %q, want it retained verbatim", wf[".github/workflows/release.yaml"])
+	}
+	if _, present := wf[".github/workflows/not-a-workflow.md"]; present {
+		t.Error("not-a-workflow.md retained as a workflow; it must be excluded")
+	}
 }
 
 func TestScanGitHubWorkflows_TriggersPropagation(t *testing.T) {

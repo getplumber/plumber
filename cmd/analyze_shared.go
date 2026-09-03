@@ -375,6 +375,10 @@ func writeOutputsWithProvider(p provider.Provider, result *control.AnalysisResul
 	if result.DataCollectionDegraded && (outputFile != "" || pbomFile != "" || pbomCycloneDXFile != "" || sarifFile != "" || glsastFile != "" || csvFile != "" || ocsfFile != "") {
 		fmt.Fprintf(os.Stderr, "Note: data collection was incomplete — artifacts are written but marked degraded; treat them as partial.\n")
 	}
+	// Resolve the analyzed commit once and stamp it on the result, so every
+	// artifact writer below reports the same commit the same way (#443).
+	result.ArtifactCommitSHA, result.ArtifactRef = resolveArtifactRef(p, result, conf)
+	result.ArtifactRepoURI = artifactRepoURI(conf, result, p.Name())
 	if outputFile != "" {
 		params := jsonOutputParams{filePath: outputFile, provider: p.Name(), includeOnly: conf.ControlsFilter, skip: conf.SkipControlsFilter, noControls: conf.NoControls}
 		if err := writeJSONToFile(result, conf.PlumberConfig, s, params); err != nil {
@@ -511,9 +515,12 @@ func computeScoreResult(result *control.AnalysisResult, scoreMode bool) *control
 }
 
 // buildPublishPayload builds the analysis JSON payload for the score badge
-// push (handleScorePublishing): the exact bytes buildAnalysisJSONReport
-// produced for --output, so the badge record and the file on disk can never
-// diverge. The platform push does NOT consume this payload — maybePushPlatform
+// push (handleScorePublishing): the same bytes buildAnalysisJSONReport produced
+// for --output, so the badge record and the file on disk cannot diverge on the
+// score or findings. The one deliberate exception is the analyzed CI config
+// (#443), a local artifact for the AI pipeline that forScorePush drops so the
+// merged pipeline content is not exported to the hosted service. The platform
+// push does NOT consume this payload — maybePushPlatform
 // builds its own structured envelope directly from result/conf/score — so the
 // gate below is scorePush alone; skipped (nil) when the badge push is not
 // configured, so a plain local run (or a --platform-only run) pays no
@@ -530,7 +537,7 @@ func buildPublishPayload(p provider.Provider, conf *configuration.Configuration,
 		includeOnly, skip = conf.ControlsFilter, conf.SkipControlsFilter
 	}
 	payload, err := buildAnalysisJSONReport(result, pc, summary, jsonOutputParams{
-		provider: p.Name(), includeOnly: includeOnly, skip: skip,
+		provider: p.Name(), includeOnly: includeOnly, skip: skip, forScorePush: true,
 	})
 	if err != nil {
 		scoreWarn(fmt.Sprintf("could not build the publish payload: %v", err))

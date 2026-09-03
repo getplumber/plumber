@@ -98,7 +98,8 @@ func (p *GitHubProvider) WritePBOM(result *control.AnalysisResult, conf *configu
 		host = "github.com"
 	}
 	gen := pbom.NewGitHubGenerator(result.ProjectPath, host, conf.Branch).
-		WithGitHubComplianceData(noControlsAwareGitHubCompliance(result, conf))
+		WithGitHubComplianceData(noControlsAwareGitHubCompliance(result, conf)).
+		WithCommit(result.ArtifactCommitSHA, result.ArtifactRef)
 	bom := gen.GenerateFromGitHubIR(result.GitHubPipeline)
 	bom.PlumberScore = pbom.BuildPlumberScoreSummary(score, scoreMode)
 
@@ -118,7 +119,8 @@ func (p *GitHubProvider) WritePBOMCycloneDX(result *control.AnalysisResult, conf
 		host = "github.com"
 	}
 	gen := pbom.NewGitHubGenerator(result.ProjectPath, host, conf.Branch).
-		WithGitHubComplianceData(noControlsAwareGitHubCompliance(result, conf))
+		WithGitHubComplianceData(noControlsAwareGitHubCompliance(result, conf)).
+		WithCommit(result.ArtifactCommitSHA, result.ArtifactRef)
 	bom := gen.GenerateFromGitHubIR(result.GitHubPipeline)
 	bom.PlumberScore = pbom.BuildPlumberScoreSummary(score, scoreMode)
 	cdx := bom.ToCycloneDX("")
@@ -144,5 +146,6 @@ func (p *GitHubProvider) CIEnvVars() CIEnvMapping {
 		ServerURL: "GITHUB_SERVER_URL",
 		RepoPath:  "GITHUB_REPOSITORY",
 		CommitSHA: "GITHUB_SHA",
+		RefName:   "GITHUB_REF_NAME",
 	}
 }

@@ -33,6 +33,27 @@ type AnalysisResult struct {
 	// not be resolved (e.g. local-only runs without a fetched HEAD).
 	HeadCommitSha string `json:"headCommitSha,omitempty"`
 
+	// ArtifactCommitSHA and ArtifactRef are the resolved analyzed commit and
+	// its branch/tag, computed once at output time and read by every artifact
+	// writer so the JSON report, PBOM, SARIF and OCSF all report the same
+	// commit the same way (#443). ArtifactCommitSHA is the resolved SHA, never
+	// the literal "HEAD" placeholder (empty when nothing real resolved). They
+	// are json:"-" because each writer places them in its own schema slot
+	// (the report's headCommitSha, SARIF's versionControlProvenance, ...),
+	// never as raw fields on the marshaled result.
+	ArtifactCommitSHA string `json:"-"`
+	ArtifactRef       string `json:"-"`
+	// ArtifactRepoURI is the analyzed project's web URL, carried so SARIF's
+	// versionControlProvenance can name the repository the commit belongs to
+	// (repositoryUri is required there). Empty when it cannot be derived.
+	ArtifactRepoURI string `json:"-"`
+
+	// AnalyzedCIConfig is the CI configuration this run actually evaluated:
+	// for GitLab the resolved merged pipeline, for GitHub each scanned
+	// workflow file (#443). It carries a json tag so it appears in the JSON
+	// report, and only there: no other artifact marshals the result whole.
+	AnalyzedCIConfig *AnalyzedCIConfig `json:"analyzedCiConfig,omitempty"`
+
 	// CI configuration status
 	CiValid        bool     `json:"ciValid"`
 	CiMissing      bool     `json:"ciMissing"`
@@ -267,4 +288,28 @@ type PipelineOriginMetricsSummary struct {
 // PipelineImageMetricsSummary is a simplified version of image metrics for output
 type PipelineImageMetricsSummary struct {
 	Total uint `json:"total"`
+}
+
+// AnalyzedCIConfig is the CI configuration a run evaluated, emitted in the
+// JSON report so a consumer knows exactly which input produced the findings
+// (#443). It is provider-shaped: a GitLab run fills Path/Content/Merged (one
+// resolved pipeline), a GitHub run fills Workflows (each scanned file).
+type AnalyzedCIConfig struct {
+	// Path is the GitLab CI config path that was analyzed (the project's
+	// ci_config_path, default ".gitlab-ci.yml"). Empty on the GitHub path.
+	Path string `json:"path,omitempty"`
+	// Content is the GitLab configuration that findings were evaluated
+	// against. Merged reports whether it is the include-merged pipeline
+	// (true) rather than a single raw file.
+	Content string `json:"content,omitempty"`
+	Merged  bool   `json:"merged,omitempty"`
+	// Workflows are the GitHub workflow files that were scanned, each with
+	// its repo-relative path and content. Empty on the GitLab path.
+	Workflows []AnalyzedWorkflowFile `json:"workflows,omitempty"`
+}
+
+// AnalyzedWorkflowFile is one scanned GitHub workflow file (#443).
+type AnalyzedWorkflowFile struct {
+	Path    string `json:"path"`
+	Content string `json:"content"`
 }

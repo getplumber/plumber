@@ -86,6 +86,27 @@ jobs:
 	if len(pipeline.Jobs) != 2 {
 		t.Fatalf("expected 2 jobs, got %d: %+v", len(pipeline.Jobs), jobNames(pipeline.Jobs))
 	}
+
+	// The remote scan retains the fetched workflow files for the JSON report's
+	// analyzed-CI-config block (#443): the two YAML files with their content,
+	// under their repo-relative paths; the README is not a workflow and is
+	// excluded.
+	byPath := map[string]string{}
+	for _, w := range pipeline.AnalyzedWorkflows {
+		byPath[w.Path] = w.Content
+	}
+	if len(byPath) != 2 {
+		t.Fatalf("retained %d workflow files, want 2: %+v", len(byPath), pipeline.AnalyzedWorkflows)
+	}
+	if byPath[".github/workflows/ci.yml"] != ciYAML {
+		t.Errorf("ci.yml content = %q, want the fetched YAML verbatim", byPath[".github/workflows/ci.yml"])
+	}
+	if byPath[".github/workflows/release.yml"] != releaseYAML {
+		t.Errorf("release.yml content = %q, want the fetched YAML verbatim", byPath[".github/workflows/release.yml"])
+	}
+	if _, present := byPath[".github/workflows/README.md"]; present {
+		t.Error("README.md retained as a workflow file; it must be excluded")
+	}
 }
 
 func TestScanGitHubWorkflowsRemote_NoWorkflowsDir(t *testing.T) {
@@ -210,6 +231,41 @@ jobs:
 	}
 	if len(pipeline.Jobs) != 1 {
 		t.Errorf("expected 1 job (from good.yml), got %d", len(pipeline.Jobs))
+	}
+}
+
+func TestScanGitHubWorkflowsRemote_RetainsUnparseableFile(t *testing.T) {
+	// A file that fetches successfully but fails to parse is still retained on
+	// AnalyzedWorkflows (recorded before the parse, #443), so the analyzed CI
+	// file is reported even when it does not parse; the parse failure lands in
+	// partial errors. Mirror of the local collectWorkflowJobs guarantee.
+	const brokenYAML = "jobs: [unterminated\n"
+	mux := http.NewServeMux()
+	mux.HandleFunc("/repos/owner/repo/contents/.github/workflows", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode([]map[string]any{
+			{"name": "broken.yml", "path": ".github/workflows/broken.yml", "type": "file"},
+		})
+	})
+	mux.HandleFunc("/repos/owner/repo/contents/.github/workflows/broken.yml", func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{"content": b64(brokenYAML), "encoding": "base64"})
+	})
+	server := httptest.NewServer(mux)
+	defer server.Close()
+	swapRESTClient(t, server)
+
+	pipeline, partial, err := ScanGitHubWorkflowsRemote("", "owner", "repo", "main", false, false, nil)
+	if err != nil {
+		t.Fatalf("unexpected hard error: %v", err)
+	}
+	if len(partial) != 1 {
+		t.Errorf("expected 1 partial error for the unparseable file, got %d: %v", len(partial), partial)
+	}
+	if len(pipeline.AnalyzedWorkflows) != 1 {
+		t.Fatalf("expected the unparseable file to still be retained, got %d: %+v", len(pipeline.AnalyzedWorkflows), pipeline.AnalyzedWorkflows)
+	}
+	w := pipeline.AnalyzedWorkflows[0]
+	if w.Path != ".github/workflows/broken.yml" || w.Content != brokenYAML {
+		t.Errorf("retained workflow = %+v, want the fetched path and verbatim content despite the parse failure", w)
 	}
 }
 

@@ -96,6 +96,8 @@ func ScanGitHubWorkflowsRemote(host, owner, repo, ref string, enrichActionMetada
 			partialErrors = append(partialErrors, fmt.Errorf("%s: %w", item.Name, fetchErr))
 			continue
 		}
+		// Retain the file for the JSON report's analyzed-CI-config block (#443).
+		pipeline.AnalyzedWorkflows = append(pipeline.AnalyzedWorkflows, ir.AnalyzedWorkflow{Path: item.Path, Content: string(raw)})
 		jobs, parseErr := parseGitHubWorkflowJobs(raw, baseName, item.Path)
 		if parseErr != nil {
 			partialErrors = append(partialErrors, fmt.Errorf("%s: %w", item.Name, parseErr))

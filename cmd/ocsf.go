@@ -47,7 +47,20 @@ type ocsfComplianceFinding struct {
 	Compliance  ocsfCompliance   `json:"compliance"`
 	FindingInfo ocsfFindingInfo  `json:"finding_info"`
 	Remediation *ocsfRemediation `json:"remediation,omitempty"`
+	Resources   []ocsfResource   `json:"resources,omitempty"`
 	Unmapped    map[string]any   `json:"unmapped,omitempty"`
+}
+
+// ocsfResource is an OCSF Resource Details object naming the analyzed code
+// this finding came from (#443): the repository (uid) at a specific commit
+// (version), on a branch or tag (labels). Emitted only when the commit or
+// repo URI resolved.
+type ocsfResource struct {
+	Type    string   `json:"type,omitempty"`
+	Name    string   `json:"name,omitempty"`
+	UID     string   `json:"uid,omitempty"`
+	Version string   `json:"version,omitempty"`
+	Labels  []string `json:"labels,omitempty"`
 }
 
 type ocsfMetadata struct {
@@ -142,6 +155,11 @@ func buildOCSF(entries []control.ControlEntry, result *control.AnalysisResult, p
 	byControl := control.FindingsByControl(result.Findings)
 	product := ocsfProduct{Name: "Plumber", VendorName: "getplumber", Version: ocsfProductVersion(), URL: "https://getplumber.io"}
 
+	// The analyzed code, as one OCSF resource shared by every finding (#443):
+	// the repository at the resolved commit. Built once, omitted entirely
+	// when nothing resolved.
+	resources := analyzedCommitResources(result)
+
 	events := make([]ocsfComplianceFinding, 0, len(entries))
 	for _, e := range entries {
 		findings := byControl[e.ControlName]
@@ -190,10 +208,30 @@ func buildOCSF(entries []control.ControlEntry, result *control.AnalysisResult, p
 			ev.Remediation = &ocsfRemediation{Desc: ocsfRemediationText(codes)}
 			ev.Unmapped = ocsfFailUnmapped(findings)
 		}
+		ev.Resources = resources
 
 		events = append(events, ev)
 	}
 	return events
+}
+
+// analyzedCommitResources returns the OCSF resource describing the analyzed
+// repository and commit, or nil when neither a commit nor a repo URI
+// resolved (#443).
+func analyzedCommitResources(result *control.AnalysisResult) []ocsfResource {
+	if result == nil || (result.ArtifactCommitSHA == "" && result.ArtifactRepoURI == "") {
+		return nil
+	}
+	r := ocsfResource{
+		Type:    "code_repository",
+		Name:    result.ProjectPath,
+		UID:     result.ArtifactRepoURI,
+		Version: result.ArtifactCommitSHA,
+	}
+	if result.ArtifactRef != "" {
+		r.Labels = []string{result.ArtifactRef}
+	}
+	return []ocsfResource{r}
 }
 
 func ocsfControlMessage(displayName, status string, n int) string {

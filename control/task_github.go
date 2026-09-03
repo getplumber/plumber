@@ -245,16 +245,17 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 		defaultBranch = conf.Branch
 	}
 	result := &AnalysisResult{
-		ProjectPath:    conf.ProjectPath,
-		DefaultBranch:  defaultBranch,
-		AnalyzeBranch:  conf.Branch,
-		CIConfigSource: "local",
-		CiValid:        len(pipeline.Jobs) > 0,
-		CiMissing:      len(pipeline.Jobs) == 0,
-		Findings:       evaluatePolicies(l, conf, "github", pipeline),
-		GitHubStats:    AggregateGitHubStats(pipeline, conf.PlumberConfig),
-		GitHubPipeline: pipeline,
-		Warnings:       pipeline.AdvisoryWarnings,
+		ProjectPath:      conf.ProjectPath,
+		DefaultBranch:    defaultBranch,
+		AnalyzeBranch:    conf.Branch,
+		CIConfigSource:   "local",
+		CiValid:          len(pipeline.Jobs) > 0,
+		CiMissing:        len(pipeline.Jobs) == 0,
+		Findings:         evaluatePolicies(l, conf, "github", pipeline),
+		GitHubStats:      AggregateGitHubStats(pipeline, conf.PlumberConfig),
+		GitHubPipeline:   pipeline,
+		AnalyzedCIConfig: githubAnalyzedCIConfig(pipeline),
+		Warnings:         pipeline.AdvisoryWarnings,
 	}
 	// Local scans read workflow files from disk, so a skipped file is a
 	// parse/read problem (user-fixable), not a degraded collection — only
@@ -358,16 +359,17 @@ func RunGitHubAnalysisRemote(conf *configuration.Configuration, owner, repo, ref
 		defaultBranch = ref
 	}
 	result := &AnalysisResult{
-		ProjectPath:    owner + "/" + repo,
-		DefaultBranch:  defaultBranch,
-		AnalyzeBranch:  ref,
-		CIConfigSource: "remote",
-		CiValid:        len(pipeline.Jobs) > 0,
-		CiMissing:      len(pipeline.Jobs) == 0,
-		Findings:       evaluatePolicies(l, conf, "github", pipeline),
-		GitHubStats:    AggregateGitHubStats(pipeline, conf.PlumberConfig),
-		GitHubPipeline: pipeline,
-		Warnings:       pipeline.AdvisoryWarnings,
+		ProjectPath:      owner + "/" + repo,
+		DefaultBranch:    defaultBranch,
+		AnalyzeBranch:    ref,
+		CIConfigSource:   "remote",
+		CiValid:          len(pipeline.Jobs) > 0,
+		CiMissing:        len(pipeline.Jobs) == 0,
+		Findings:         evaluatePolicies(l, conf, "github", pipeline),
+		GitHubStats:      AggregateGitHubStats(pipeline, conf.PlumberConfig),
+		GitHubPipeline:   pipeline,
+		AnalyzedCIConfig: githubAnalyzedCIConfig(pipeline),
+		Warnings:         pipeline.AdvisoryWarnings,
 	}
 	applyGitHubDegraded(result, len(partial), branchFetchFailed)
 	ApplyGitHubFindingCounts(result.GitHubStats, result.Findings)
@@ -382,4 +384,29 @@ func RunGitHubAnalysisRemote(conf *configuration.Configuration, owner, repo, ref
 	}).Info("GitHub Actions analysis completed (remote fetch)")
 
 	return result, nil
+}
+
+// githubAnalyzedCIConfig projects the scanned workflow files onto the JSON
+// report's analyzed-CI-config block (#443). Nil when no workflow file was
+// read, so the field is omitted rather than emitted empty.
+func githubAnalyzedCIConfig(pipeline *ir.NormalizedPipeline) *AnalyzedCIConfig {
+	if pipeline == nil || len(pipeline.AnalyzedWorkflows) == 0 {
+		return nil
+	}
+	out := &AnalyzedCIConfig{Workflows: make([]AnalyzedWorkflowFile, 0, len(pipeline.AnalyzedWorkflows))}
+	for _, w := range pipeline.AnalyzedWorkflows {
+		out.Workflows = append(out.Workflows, AnalyzedWorkflowFile{Path: w.Path, Content: w.Content})
+	}
+	return out
+}
+
+// gitlabAnalyzedCIConfig records the resolved GitLab merged pipeline as the
+// report's analyzedCiConfig block (#443), or nil when no merged YAML resolved
+// so the field is omitted. Symmetric with githubAnalyzedCIConfig, JSON-report
+// only.
+func gitlabAnalyzedCIConfig(ciConfPath, mergedYaml string) *AnalyzedCIConfig {
+	if mergedYaml == "" {
+		return nil
+	}
+	return &AnalyzedCIConfig{Path: ciConfPath, Content: mergedYaml, Merged: true}
 }

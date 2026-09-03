@@ -35,6 +35,16 @@ type Generator struct {
 	suppressVerdicts bool
 	includeOverrides *IncludeOverrideData
 	githubData       *GitHubComplianceData
+	commitSHA        string
+	ref              string
+}
+
+// WithCommit attaches the resolved analyzed commit and its branch/tag so the
+// PBOM names the exact code it describes (#443).
+func (g *Generator) WithCommit(sha, ref string) *Generator {
+	g.commitSHA = sha
+	g.ref = ref
+	return g
 }
 
 // NewGenerator creates a new PBOM generator
@@ -88,6 +98,8 @@ func (g *Generator) Generate(
 			URL:       g.gitlabURL,
 			GitLabURL: g.gitlabURL,
 			Branch:    g.branch,
+			CommitSHA: g.commitSHA,
+			Ref:       g.ref,
 		},
 		ContainerImages: make([]ContainerImage, 0),
 		Includes:        make([]Include, 0),

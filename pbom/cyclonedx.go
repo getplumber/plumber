@@ -328,6 +328,13 @@ func projectComponentProperties(p ProjectInfo) []CycloneDXProperty {
 			CycloneDXProperty{Name: "plumber:project-id", Value: fmt.Sprintf("%d", p.ID)},
 		)
 	}
+	// The analyzed commit and ref (#443), emitted only when resolved.
+	if p.CommitSHA != "" {
+		props = append(props, CycloneDXProperty{Name: "plumber:git:commit", Value: p.CommitSHA})
+	}
+	if p.Ref != "" {
+		props = append(props, CycloneDXProperty{Name: "plumber:git:ref", Value: p.Ref})
+	}
 	return props
 }
 

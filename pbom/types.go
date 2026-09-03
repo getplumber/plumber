@@ -65,6 +65,10 @@ type ProjectInfo struct {
 	URL       string `json:"url,omitempty"`
 	GitLabURL string `json:"gitlabUrl,omitempty"`
 	Branch    string `json:"branch,omitempty"`
+	// CommitSHA and Ref are the analyzed commit and its branch/tag (#443).
+	// Empty when the commit could not be resolved.
+	CommitSHA string `json:"commitSHA,omitempty"`
+	Ref       string `json:"ref,omitempty"`
 }
 
 // ContainerImage represents a container image used in the pipeline

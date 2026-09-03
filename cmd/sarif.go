@@ -50,9 +50,19 @@ type sarifLog struct {
 }
 
 type sarifRun struct {
-	Tool        sarifTool         `json:"tool"`
-	Results     []sarifResult     `json:"results"`
-	Invocations []sarifInvocation `json:"invocations,omitempty"`
+	Tool                     sarifTool             `json:"tool"`
+	Results                  []sarifResult         `json:"results"`
+	Invocations              []sarifInvocation     `json:"invocations,omitempty"`
+	VersionControlProvenance []sarifVersionControl `json:"versionControlProvenance,omitempty"`
+}
+
+// sarifVersionControl is a SARIF versionControlDetails object: it ties the
+// run to the analyzed commit (#443). repositoryUri is required by the SARIF
+// spec, so the whole entry is emitted only when it can be filled.
+type sarifVersionControl struct {
+	RepositoryURI string `json:"repositoryUri"`
+	RevisionID    string `json:"revisionId,omitempty"`
+	Branch        string `json:"branch,omitempty"`
 }
 
 // sarifInvocation carries tool-level (not finding-level) messages. We use
@@ -449,6 +459,15 @@ func writeSARIFToFile(result *control.AnalysisResult, filePath, provider string)
 		fallbackURI = reportFilePath(configFile)
 	}
 	log := buildSARIF(result.Findings, fallbackURI, provider)
+	if len(log.Runs) > 0 && result.ArtifactRepoURI != "" {
+		// The analyzed commit, in SARIF's standard slot (#443). repositoryUri
+		// is required by the spec, so the entry rides on it being derivable.
+		log.Runs[0].VersionControlProvenance = []sarifVersionControl{{
+			RepositoryURI: result.ArtifactRepoURI,
+			RevisionID:    result.ArtifactCommitSHA,
+			Branch:        result.ArtifactRef,
+		}}
+	}
 	if len(log.Runs) > 0 {
 		notifs := make([]sarifNotification, 0, len(result.DegradedReasons)+len(result.Warnings))
 		// Error-level notifications for incomplete collection (#220), so the
