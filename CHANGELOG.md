@@ -1,3 +1,15 @@
+## [0.4.52](https://github.com/getplumber/plumber/compare/v0.4.51...v0.4.52) (2026-09-03)
+
+
+### ✨ Features
+
+* **artifacts:** emit the analyzed commit ref in every artifact and the analyzed CI file in the JSON report ([#443](https://github.com/getplumber/plumber/issues/443)) ([15e5bd6](https://github.com/getplumber/plumber/commit/15e5bd69a5605aec893d65139bfe247a7dbdfbba))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.51 refs [skip ci] ([d71e846](https://github.com/getplumber/plumber/commit/d71e846c3c466dd81320057bed01aeb1a726ca85))
+
 ## [0.4.51](https://github.com/getplumber/plumber/compare/v0.4.50...v0.4.51) (2026-09-01)
 
 
