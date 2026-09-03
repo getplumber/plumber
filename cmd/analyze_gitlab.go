@@ -888,6 +888,29 @@ func buildAnalysisJSONReport(result *control.AnalysisResult, pc *configuration.P
 			output["minScore"] = s.minScore
 		}
 	}
+	// The reported commit is the resolved one, never the "HEAD" placeholder a
+	// --project run leaves in HeadCommitSha (#443). When nothing real
+	// resolved, headCommitSha is omitted rather than emitted as "HEAD".
+	if result.ArtifactCommitSHA != "" {
+		output["headCommitSha"] = result.ArtifactCommitSHA
+	} else {
+		delete(output, "headCommitSha")
+	}
+	// analyzeBranch gets the same treatment: the marshal above seeds it from
+	// the raw AnalyzeBranch (which can be the "HEAD" placeholder), so when no
+	// real ref resolved it is deleted rather than left leaking that value.
+	if result.ArtifactRef != "" {
+		output["analyzeBranch"] = result.ArtifactRef
+	} else {
+		delete(output, "analyzeBranch")
+	}
+	// The analyzed CI config (the merged pipeline content, #443) is a local
+	// artifact for the AI pipeline; it is not exported to the hosted score
+	// service, so drop it from the score-push payload. The report on disk keeps
+	// it; every other key stays byte-identical between the two.
+	if p.forScorePush {
+		delete(output, "analyzedCiConfig")
+	}
 	output["passed"] = s.passed()
 	// `passed` means "the gate was met", and under --no-controls there was no
 	// gate to fail. Say so explicitly so a consumer can tell that apart from
@@ -1309,6 +1332,11 @@ type jsonOutputParams struct {
 	// noControls mirrors conf.NoControls so the report can say plainly that
 	// nothing was evaluated instead of leaving a consumer to infer it.
 	noControls bool
+	// forScorePush marks the payload built for the hosted score service rather
+	// than the local --output file. The analyzed CI config (the merged pipeline
+	// content, #443) is a local artifact for the AI pipeline and is kept out of
+	// the external payload; everything else is byte-identical.
+	forScorePush bool
 }
 
 // noControlsSkipReason is the SkipReason stamped on every control of a

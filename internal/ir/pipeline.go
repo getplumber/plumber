@@ -39,6 +39,12 @@ type NormalizedPipeline struct {
 	// single "Scanning" tick rather than per-file).
 	WorkflowFileCount int `json:"-"`
 
+	// AnalyzedWorkflows are the GitHub workflow files this scan read, each
+	// with its repo-relative path and content (#443). Carried json:"-" like
+	// WorkflowFileCount above: a collector-side record for the JSON report,
+	// never part of the OPA evaluation input. Empty on the GitLab path.
+	AnalyzedWorkflows []AnalyzedWorkflow `json:"-"`
+
 	// GlobalVariables are pipeline-level variables declared at the top
 	// of the source (e.g. `variables:` block at the root of
 	// .gitlab-ci.yml). Includes the merge with upstream component /
@@ -598,4 +604,11 @@ type MRSettings struct {
 	// RemoveSourceBranchAfterMerge is true when the source branch is deleted by
 	// default after merge (GitLab: remove_source_branch_after_merge).
 	RemoveSourceBranchAfterMerge bool `json:"removeSourceBranchAfterMerge"`
+}
+
+// AnalyzedWorkflow is one GitHub workflow file a scan read, retained for the
+// JSON report so a consumer knows which files produced the findings (#443).
+type AnalyzedWorkflow struct {
+	Path    string
+	Content string
 }

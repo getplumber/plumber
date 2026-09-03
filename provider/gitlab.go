@@ -106,7 +106,8 @@ func (p *GitLabProvider) WritePBOM(result *control.AnalysisResult, conf *configu
 	overrideData := pbom.BuildIncludeOverrideData(result)
 	gen := pbom.NewGenerator(result.ProjectPath, result.ProjectID, conf.GitlabURL, conf.Branch).
 		WithComplianceData(complianceData).
-		WithIncludeOverrideData(overrideData)
+		WithIncludeOverrideData(overrideData).
+		WithCommit(result.ArtifactCommitSHA, result.ArtifactRef)
 	if conf.NoControls {
 		gen = gen.WithoutComplianceVerdicts()
 	}
@@ -128,7 +129,8 @@ func (p *GitLabProvider) WritePBOMCycloneDX(result *control.AnalysisResult, conf
 	overrideData := pbom.BuildIncludeOverrideData(result)
 	gen := pbom.NewGenerator(result.ProjectPath, result.ProjectID, conf.GitlabURL, conf.Branch).
 		WithComplianceData(complianceData).
-		WithIncludeOverrideData(overrideData)
+		WithIncludeOverrideData(overrideData).
+		WithCommit(result.ArtifactCommitSHA, result.ArtifactRef)
 	if conf.NoControls {
 		gen = gen.WithoutComplianceVerdicts()
 	}
@@ -185,6 +187,7 @@ func (p *GitLabProvider) CIEnvVars() CIEnvMapping {
 		ServerURL: "CI_SERVER_URL",
 		RepoPath:  "CI_PROJECT_PATH",
 		CommitSHA: "CI_COMMIT_SHA",
+		RefName:   "CI_COMMIT_REF_NAME",
 	}
 }
 

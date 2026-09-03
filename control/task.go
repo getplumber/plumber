@@ -877,6 +877,13 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	result.CiValid = pipelineOriginData.CiValid
 	result.CiMissing = pipelineOriginData.CiMissing
 
+	// Record the CI configuration this run evaluated (#443): the resolved
+	// merged pipeline every finding came from, under its ci_config_path.
+	// JSON-report only (the field is read only by the report builder).
+	if pipelineOriginData.MergedResponse != nil {
+		result.AnalyzedCIConfig = gitlabAnalyzedCIConfig(project.CiConfPath, pipelineOriginData.MergedResponse.CiConfig.MergedYaml)
+	}
+
 	// An include that failed to resolve drops its jobs from the merged
 	// pipeline, so the analysis ran on a partial config. Flag degraded (the
 	// run still evaluates what it has, like a GitHub partial) so the score is

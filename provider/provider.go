@@ -60,6 +60,10 @@ type CIEnvMapping struct {
 	// CommitSHA is the env var that holds the commit SHA (e.g.
 	// "CI_COMMIT_SHA" / "GITHUB_SHA").
 	CommitSHA string
+	// RefName is the env var that holds the analyzed branch or tag name
+	// (e.g. "CI_COMMIT_REF_NAME" / "GITHUB_REF_NAME"). It is the
+	// authoritative ref in CI, preferred over the resolved default branch.
+	RefName string
 }
 
 // PostActionSummary bundles the gate outcome needed by PostAnalysisActions

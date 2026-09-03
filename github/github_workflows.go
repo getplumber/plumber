@@ -54,17 +54,17 @@ const (
 // Dockerfiles) that do not depend on that directory. Individual
 // unreadable or unparseable files land in partialErrors so the caller
 // can surface them without aborting the whole scan.
-func collectWorkflowJobs(rootDir string) (jobs []ir.Job, partialErrors []error, err error) {
+func collectWorkflowJobs(rootDir string) (jobs []ir.Job, files []ir.AnalyzedWorkflow, partialErrors []error, err error) {
 	dir, ok := resolveWithinRoot(rootDir, githubWorkflowsSubdir)
 	if !ok {
-		return nil, nil, nil
+		return nil, nil, nil, nil
 	}
 	entries, err := os.ReadDir(dir)
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, nil, nil
+			return nil, nil, nil, nil
 		}
-		return nil, nil, fmt.Errorf(fmtReadErr, dir, err)
+		return nil, nil, nil, fmt.Errorf(fmtReadErr, dir, err)
 	}
 	for _, entry := range entries {
 		if entry.IsDir() || entry.Type()&os.ModeSymlink != 0 {
@@ -80,6 +80,10 @@ func collectWorkflowJobs(rootDir string) (jobs []ir.Job, partialErrors []error, 
 			partialErrors = append(partialErrors, fmt.Errorf(fmtFileErr, name, readErr))
 			continue
 		}
+		// Retain the file for the JSON report's analyzed-CI-config block,
+		// under its repo-relative path (#443).
+		rel := githubWorkflowsSubdir + "/" + name
+		files = append(files, ir.AnalyzedWorkflow{Path: rel, Content: string(data)})
 		fileJobs, parseErr := parseGitHubWorkflowJobs(data, workflowBaseName(name), path)
 		if parseErr != nil {
 			partialErrors = append(partialErrors, fmt.Errorf(fmtFileErr, name, parseErr))
@@ -90,7 +94,8 @@ func collectWorkflowJobs(rootDir string) (jobs []ir.Job, partialErrors []error, 
 	sort.Slice(jobs, func(i, j int) bool {
 		return jobs[i].Name < jobs[j].Name
 	})
-	return jobs, partialErrors, nil
+	sort.Slice(files, func(i, j int) bool { return files[i].Path < files[j].Path })
+	return jobs, files, partialErrors, nil
 }
 
 // ScanGitHubWorkflowsWithProgress reads every .yml/.yaml file under
@@ -128,11 +133,12 @@ func ScanGitHubWorkflowsWithProgress(projectPath, defaultBranch, rootDir, apiHos
 	if scanMutableExec {
 		pipeline.SelfActionMutableExec = ScanLocalSelfAction(rootDir)
 	}
-	jobs, partialErrors, err := collectWorkflowJobs(rootDir)
+	jobs, workflowFiles, partialErrors, err := collectWorkflowJobs(rootDir)
 	if err != nil {
 		return nil, nil, err
 	}
 	pipeline.Jobs = jobs
+	pipeline.AnalyzedWorkflows = workflowFiles
 	if dcfg, derr := scanDependabotConfig(rootDir); derr != nil {
 		partialErrors = append(partialErrors, derr)
 	} else if dcfg != nil {
