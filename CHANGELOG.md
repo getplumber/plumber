@@ -1,3 +1,15 @@
+## [0.4.53](https://github.com/getplumber/plumber/compare/v0.4.52...v0.4.53) (2026-09-07)
+
+
+### 🐛 Bug Fixes
+
+* **image:** move to Alpine 3.23 and bump x/crypto to v0.56.0 to clear image CVEs ([77425b9](https://github.com/getplumber/plumber/commit/77425b918cc6cae638b51c4aa80b2897358b83cf))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.52 refs [skip ci] ([dcafb49](https://github.com/getplumber/plumber/commit/dcafb49afc4d56183289cfcafcc9f66142a39341))
+
 ## [0.4.52](https://github.com/getplumber/plumber/compare/v0.4.51...v0.4.52) (2026-09-03)
 
 
