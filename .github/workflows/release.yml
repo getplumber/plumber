@@ -114,7 +114,11 @@ jobs:
       - name: Setup Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.25.11'
+          # Must be >= the go.mod `go` directive (1.26.0, raised by
+          # golang.org/x/crypto v0.56.0). setup-go pins GOTOOLCHAIN=local, so a
+          # pin below the directive fails the build. Kept on the 1.26.6 toolchain
+          # so the release binaries carry the same stdlib as the Docker image.
+          go-version: '1.26.6'
 
       - name: Build binary
         env:
