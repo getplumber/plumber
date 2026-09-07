@@ -1,3 +1,15 @@
+## [0.4.54](https://github.com/getplumber/plumber/compare/v0.4.53...v0.4.54) (2026-09-07)
+
+
+### 🐛 Bug Fixes
+
+* **ci:** build release binaries with Go 1.26.6 ([a5fc07c](https://github.com/getplumber/plumber/commit/a5fc07c785f62dd7be14b4794104e7f7fea8ca6f)), closes [#446](https://github.com/getplumber/plumber/issues/446)
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.53 refs [skip ci] ([b03e5d3](https://github.com/getplumber/plumber/commit/b03e5d3d5d168c741072f6833d2e9196a9e07066))
+
 ## [0.4.53](https://github.com/getplumber/plumber/compare/v0.4.52...v0.4.53) (2026-09-07)
 
 
