@@ -42,7 +42,13 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X github.com
 # that, BuildKit caches this layer (its key is the pinned base digest + the literal
 # RUN command, neither of which changes between releases) and `apk upgrade` silently
 # stops pulling OS security fixes, leaving published images on stale openssl/curl/git.
-FROM alpine:3.22@sha256:55ae5d250caebc548793f321534bc6a8ef1d116f334f18f4ada1b2daad3251b2 AS runtime
+#
+# Track the current stable Alpine branch, not just the latest patch of an older
+# one: 3.22 is frozen on curl/libcurl 8.14.1-r3 and git 2.49.1-r0, which carry
+# Critical/High CVEs with NO fixed package in the 3.22 repo (so `apk upgrade`
+# cannot clear them). Alpine 3.23 ships curl 8.22.0-r0 and git 2.52.0-r0, which
+# resolve them. Bump this digest when a newer stable Alpine branch is released.
+FROM alpine:3.23@sha256:fd791d74b68913cbb027c6546007b3f0d3bc45125f797758156952bc2d6daf40 AS runtime
 
 # Upgrade base packages (including OpenSSL) and install CA certificates +
 # git. Plumber shells out to `git` for auto-detection of the remote URL,

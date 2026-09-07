@@ -21,7 +21,10 @@ jobs:
       matrix:
         # Exact patch versions: floating specs (stable/oldstable) resolve
         # to a different toolchain over time without any workflow change.
-        go-version: ['1.26.6', '1.25.13']
+        # Floor is 1.26.0, the module's minimum (go.mod `go` directive, raised
+        # to 1.26 by golang.org/x/crypto v0.56.0 which clears the x/crypto/ssh
+        # advisories); 1.26.6 matches the pinned toolchain.
+        go-version: ['1.26.6', '1.26.0']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
