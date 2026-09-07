@@ -1,3 +1,16 @@
+## [0.4.55](https://github.com/getplumber/plumber/compare/v0.4.54...v0.4.55) (2026-09-07)
+
+
+### 🐛 Bug Fixes
+
+* address review comment on [#442](https://github.com/getplumber/plumber/issues/442) ([0d67cd6](https://github.com/getplumber/plumber/commit/0d67cd63952c92ba6c370511e90f8d3b61735ec9))
+* BUG: ISSUE-705 cannot see a ref-scoped type=gha buildx cache (scope= parameter ignored) ([#433](https://github.com/getplumber/plumber/issues/433)) ([25facb0](https://github.com/getplumber/plumber/commit/25facb03bda272faaa223c76f179269fa8c424f6))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.54 refs [skip ci] ([a5d3fd5](https://github.com/getplumber/plumber/commit/a5d3fd54c679e10dcb0e2b89fa122d2ecad75821))
+
 ## [0.4.54](https://github.com/getplumber/plumber/compare/v0.4.53...v0.4.54) (2026-09-07)
 
 
