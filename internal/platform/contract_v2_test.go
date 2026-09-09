@@ -203,3 +203,221 @@ func TestDegradedFieldsGateComparesNumerically(t *testing.T) {
 		}
 	}
 }
+
+// The 2026-08-27/28 contract additions: project_details (with its eight
+// OPTIONAL merge settings), security_policy_project, raw_config,
+// merged_yaml_status and ci_errors. This pins the full-body decode: every
+// field the contract now serves must reach the CLI's types, verbatim.
+func TestSnapshotDecodesProjectDetailsSecurityPolicyRawConfigAndMergeStatus(t *testing.T) {
+	body := `{
+	  "schema_version": "2",
+	  "raw_config": "stages: [test]\n",
+	  "merged_yaml_status": "VALID",
+	  "ci_errors": ["deprecated keyword: only"],
+	  "project_details": {
+	    "default_branch": "main",
+	    "archived": false,
+	    "path_with_namespace": "grp/app",
+	    "merge_method": "ff",
+	    "squash_option": "default_on",
+	    "merge_pipelines_enabled": true,
+	    "merge_trains_enabled": false,
+	    "allow_merge_on_skipped_pipeline": true,
+	    "resolve_outdated_diff_discussions": false,
+	    "printing_merge_request_link_enabled": true,
+	    "remove_source_branch_after_merge": true
+	  },
+	  "security_policy_project": {
+	    "known": true,
+	    "id": 4242,
+	    "full_path": "grp/security-policies"
+	  }
+	}`
+	var d SnapshotData
+	if err := json.Unmarshal([]byte(body), &d); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+
+	if d.RawConfig != "stages: [test]\n" {
+		t.Errorf("RawConfig = %q", d.RawConfig)
+	}
+	if d.MergedYamlStatus != "VALID" {
+		t.Errorf("MergedYamlStatus = %q", d.MergedYamlStatus)
+	}
+	if len(d.CiErrors) != 1 || d.CiErrors[0] != "deprecated keyword: only" {
+		t.Errorf("CiErrors = %v", d.CiErrors)
+	}
+
+	pd := d.ProjectDetails
+	if pd == nil {
+		t.Fatal("ProjectDetails must decode")
+	}
+	if pd.DefaultBranch != "main" || pd.Archived != false || pd.PathWithNamespace != "grp/app" {
+		t.Errorf("ProjectDetails required fields = %+v", pd)
+	}
+	switch {
+	case pd.MergeMethod == nil || *pd.MergeMethod != "ff":
+		t.Errorf("MergeMethod = %v", pd.MergeMethod)
+	case pd.SquashOption == nil || *pd.SquashOption != "default_on":
+		t.Errorf("SquashOption = %v", pd.SquashOption)
+	case pd.MergePipelinesEnabled == nil || *pd.MergePipelinesEnabled != true:
+		t.Errorf("MergePipelinesEnabled = %v", pd.MergePipelinesEnabled)
+	case pd.MergeTrainsEnabled == nil || *pd.MergeTrainsEnabled != false:
+		t.Errorf("MergeTrainsEnabled = %v", pd.MergeTrainsEnabled)
+	case pd.AllowMergeOnSkippedPipeline == nil || *pd.AllowMergeOnSkippedPipeline != true:
+		t.Errorf("AllowMergeOnSkippedPipeline = %v", pd.AllowMergeOnSkippedPipeline)
+	case pd.ResolveOutdatedDiffDiscussions == nil || *pd.ResolveOutdatedDiffDiscussions != false:
+		t.Errorf("ResolveOutdatedDiffDiscussions = %v", pd.ResolveOutdatedDiffDiscussions)
+	case pd.PrintingMergeRequestLinkEnabled == nil || *pd.PrintingMergeRequestLinkEnabled != true:
+		t.Errorf("PrintingMergeRequestLinkEnabled = %v", pd.PrintingMergeRequestLinkEnabled)
+	case pd.RemoveSourceBranchAfterMerge == nil || *pd.RemoveSourceBranchAfterMerge != true:
+		t.Errorf("RemoveSourceBranchAfterMerge = %v", pd.RemoveSourceBranchAfterMerge)
+	}
+
+	sp := d.SecurityPolicyProject
+	if sp == nil {
+		t.Fatal("SecurityPolicyProject must decode")
+	}
+	if !sp.Known {
+		t.Error("Known must be true")
+	}
+	if sp.ID == nil || *sp.ID != 4242 {
+		t.Errorf("ID = %v", sp.ID)
+	}
+	if sp.FullPath == nil || *sp.FullPath != "grp/security-policies" {
+		t.Errorf("FullPath = %v", sp.FullPath)
+	}
+}
+
+// project_details on a snapshot stored before 2026-08-28 carries the three
+// required facts but none of the eight merge settings. A required/non-pointer
+// decode would fabricate false or zero values for a stale blob; the pointers
+// must all stay nil instead - self-healing arrives on the next refresh, not
+// by guessing now.
+func TestSnapshotProjectDetailsOptionalMergeSettingsAbsentStayNil(t *testing.T) {
+	body := `{"schema_version":"2","project_details":{
+	  "default_branch":"main","archived":true,"path_with_namespace":"grp/app"
+	}}`
+	var d SnapshotData
+	if err := json.Unmarshal([]byte(body), &d); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	pd := d.ProjectDetails
+	if pd == nil {
+		t.Fatal("ProjectDetails must decode")
+	}
+	if pd.DefaultBranch != "main" || !pd.Archived || pd.PathWithNamespace != "grp/app" {
+		t.Errorf("required fields = %+v", pd)
+	}
+	if pd.MergeMethod != nil || pd.SquashOption != nil || pd.MergePipelinesEnabled != nil ||
+		pd.MergeTrainsEnabled != nil || pd.AllowMergeOnSkippedPipeline != nil ||
+		pd.ResolveOutdatedDiffDiscussions != nil || pd.PrintingMergeRequestLinkEnabled != nil ||
+		pd.RemoveSourceBranchAfterMerge != nil {
+		t.Errorf("an absent optional merge setting must decode nil, not a zero value: %+v", pd)
+	}
+}
+
+// security_policy_project's three shapes: linked (known+id+full_path),
+// read authoritatively but nothing linked (known alone - the real Critical
+// for ISSUE-601), and not read authoritatively (known=false, paired with
+// the degraded_fields entry). id/full_path must stay nil, not zero/"".
+func TestSecurityPolicyProjectVariants(t *testing.T) {
+	cases := []struct {
+		name         string
+		body         string
+		wantKnown    bool
+		wantID       *int
+		wantFullPath *string
+	}{
+		{
+			name:      "not read authoritatively",
+			body:      `{"known":false}`,
+			wantKnown: false,
+		},
+		{
+			name:      "known, nothing linked",
+			body:      `{"known":true}`,
+			wantKnown: true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			var sp SecurityPolicyProject
+			if err := json.Unmarshal([]byte(tc.body), &sp); err != nil {
+				t.Fatalf("decode: %v", err)
+			}
+			if sp.Known != tc.wantKnown {
+				t.Errorf("Known = %v, want %v", sp.Known, tc.wantKnown)
+			}
+			if sp.ID != nil {
+				t.Errorf("ID = %v, want nil", *sp.ID)
+			}
+			if sp.FullPath != nil {
+				t.Errorf("FullPath = %v, want nil", *sp.FullPath)
+			}
+		})
+	}
+}
+
+// A snapshot omitting the whole optional block (older payload, no merge
+// happened yet) must decode with all four new top-level pointers/values
+// absent, never fabricated.
+func TestSnapshotNewFieldsAbsentWhenOmitted(t *testing.T) {
+	var d SnapshotData
+	if err := json.Unmarshal([]byte(`{"schema_version":"2"}`), &d); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	if d.ProjectDetails != nil {
+		t.Error("ProjectDetails must be nil when omitted")
+	}
+	if d.SecurityPolicyProject != nil {
+		t.Error("SecurityPolicyProject must be nil when omitted")
+	}
+	if d.RawConfig != "" {
+		t.Errorf("RawConfig = %q, want empty", d.RawConfig)
+	}
+	if d.MergedYamlStatus != "" {
+		t.Errorf("MergedYamlStatus = %q, want empty", d.MergedYamlStatus)
+	}
+	if d.CiErrors != nil {
+		t.Errorf("CiErrors = %v, want nil", d.CiErrors)
+	}
+}
+
+// The contract's degraded_fields enum gained four identifiers on top of the
+// original five: raw_config, source_catalog, security_policy_project,
+// includes_jobs. IsDegraded is generic over the DegradedFields slice (the
+// set is closed by documentation, not by a switch), so a new constant needs
+// no new decode logic to participate - this pins that it actually does, and
+// that an identifier outside even this larger set still passes through
+// rather than being dropped.
+func TestNewDegradedFieldIdentifiersRecognized(t *testing.T) {
+	newFields := []struct {
+		constant string
+		wire     string
+	}{
+		{DegradedFieldRawConfig, "raw_config"},
+		{DegradedFieldSourceCatalog, "source_catalog"},
+		{DegradedFieldSecurityPolicyProject, "security_policy_project"},
+		{DegradedFieldIncludesJobs, "includes_jobs"},
+	}
+	for _, f := range newFields {
+		if f.constant != f.wire {
+			t.Errorf("constant for %q = %q, want it to equal the wire identifier", f.wire, f.constant)
+		}
+		d := &SnapshotData{SchemaVersion: "2", DegradedFields: []string{f.wire}}
+		if !d.IsDegraded(f.constant) {
+			t.Errorf("IsDegraded(%q) = false, want true", f.constant)
+		}
+	}
+
+	// An identifier the CLI has never heard of, even alongside the new
+	// ones, must still be carried through - the closed set is documentation
+	// only, and swallowing it would hide a platform bug.
+	d := &SnapshotData{SchemaVersion: "2", DegradedFields: []string{
+		DegradedFieldRawConfig, "not_even_in_the_docs_yet",
+	}}
+	if !d.IsDegraded("not_even_in_the_docs_yet") {
+		t.Error("an unrecognised identifier alongside a known one must still report as degraded")
+	}
+}
