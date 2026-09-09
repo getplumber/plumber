@@ -151,3 +151,172 @@ func TestPlatformIncludesDropsWhatItCannotDecode(t *testing.T) {
 		t.Fatalf("the surviving include must be the decodable one, got %q", got[0].Location)
 	}
 }
+
+// snapshotMergeVerdict attaches the git host's own answer about the
+// snapshot's merged configuration, as the platform has served it since
+// 2026-08-28.
+func snapshotMergeVerdict(conf *configuration.Configuration, status string, errs ...string) *configuration.Configuration {
+	data := conf.PlatformRun.Context.Snapshot.Data
+	data.MergedYamlStatus = status
+	data.CiErrors = errs
+	return conf
+}
+
+// The git host's verdict on the SNAPSHOT's merged configuration is served,
+// and the served one is the only place a snapshot-path run can learn it.
+// StartRunConfigResolution starts every resolution Valid and never clears
+// the flag on the snapshot path, so the local synthesis can only ever say
+// VALID there: a snapshot whose merge GitLab itself rejected was reported
+// as a clean config, and every control passed over the jobs that failed to
+// merge - exactly the silent-green mode platformMergedConfig's own doc
+// comment says must never happen.
+func TestPlatformMergedConfigUsesTheServedMergeVerdict(t *testing.T) {
+	t.Run("a served INVALID and its errors are carried verbatim", func(t *testing.T) {
+		conf := snapshotMergeVerdict(
+			platformConf(platform.SourceSnapshot, "partial:\n  script: echo\n"),
+			"INVALID",
+			"jobs config should contain at least one visible job",
+		)
+
+		resp, platformMode := platformMergedConfig(conf)
+		if !platformMode {
+			t.Fatal("an engaged platform run must not fall back to the GitLab merge API")
+		}
+		if resp.CiConfig.Status != "INVALID" {
+			t.Errorf("status = %q, want the served INVALID", resp.CiConfig.Status)
+		}
+		want := "jobs config should contain at least one visible job"
+		if len(resp.CiConfig.Errors) != 1 || resp.CiConfig.Errors[0] != want {
+			t.Errorf("errors = %v, want the host's own message %q, not a synthesized one", resp.CiConfig.Errors, want)
+		}
+	})
+
+	t.Run("a served VALID invents no errors", func(t *testing.T) {
+		conf := snapshotMergeVerdict(platformConf(platform.SourceSnapshot, "stages: [build]\n"), "VALID")
+
+		resp, _ := platformMergedConfig(conf)
+		if resp.CiConfig.Status != "VALID" {
+			t.Errorf("status = %q, want VALID", resp.CiConfig.Status)
+		}
+		if len(resp.CiConfig.Errors) != 0 {
+			t.Errorf("errors = %v, want none on a valid merge", resp.CiConfig.Errors)
+		}
+	})
+
+	// Older snapshots carry neither field. The synthesis stays exactly what
+	// it was for them, so no run that works today changes.
+	t.Run("a snapshot serving neither falls back to the synthesis", func(t *testing.T) {
+		conf := platformConf(platform.SourceSnapshot, "stages: [build]\n")
+		if resp, _ := platformMergedConfig(conf); resp.CiConfig.Status != "VALID" {
+			t.Errorf("status = %q, want the synthesized VALID", resp.CiConfig.Status)
+		}
+
+		conf = platformConf(platform.SourceResolved, "partial:\n  script: echo\n")
+		conf.PlatformRun.Config.Valid = false
+		resp, _ := platformMergedConfig(conf)
+		if resp.CiConfig.Status != "INVALID" {
+			t.Errorf("status = %q, want the synthesized INVALID", resp.CiConfig.Status)
+		}
+		if len(resp.CiConfig.Errors) == 0 {
+			t.Error("an INVALID merge must carry an error the report can show")
+		}
+	})
+
+	// The served verdict describes the snapshot's merged_yaml. On a
+	// digest-divergent branch the configuration being evaluated is the one
+	// the resolve endpoint returned for THIS branch, and the anchor's
+	// verdict is a statement about a different document - the same reason
+	// the anchor's include attribution does not travel either. Borrowing it
+	// would report the branch's own config broken (or clean) on evidence
+	// nothing gathered about it.
+	t.Run("the anchor's verdict does not travel to a divergent branch's config", func(t *testing.T) {
+		conf := snapshotMergeVerdict(
+			platformConf(platform.SourceResolved, "job:\n  script: echo\n"),
+			"INVALID",
+			"the anchor's own merge error",
+		)
+
+		resp, _ := platformMergedConfig(conf)
+		if resp.CiConfig.Status != "VALID" {
+			t.Errorf("status = %q: the resolve endpoint judged THIS branch's config valid", resp.CiConfig.Status)
+		}
+		if len(resp.CiConfig.Errors) != 0 {
+			t.Errorf("errors = %v, want none: these describe the anchor's configuration", resp.CiConfig.Errors)
+		}
+	})
+}
+
+// TestGetFullGitlabCIUsesTheServedRawConfig covers the run with no checkout
+// of the analyzed project: a ci_config_path pointing into another project,
+// GIT_STRATEGY none, a sparse checkout, or a job whose file read was
+// refused. The project's own UNMERGED CI file is then unreadable, and the
+// two controls that compare it against the merged pipeline
+// (pipelineMustNotIncludeHardcodedJobs, pipelineMustNotOverrideJobVariables)
+// abstain with raw_config_unavailable.
+//
+// The platform has served that exact file as raw_config since 2026-08-27.
+// Using it closes the lane without a request; a lane the platform reports
+// as degraded (its own size cap) keeps today's honest abstention rather
+// than being read as an empty root file, which yields no hardcoded jobs and
+// no overridden variables - a silent pass.
+func TestGetFullGitlabCIUsesTheServedRawConfig(t *testing.T) {
+	const rawConfig = "include:\n  - component: example.com/vendor/build@1.0.0\nlocal_job:\n  script:\n    - echo local\n"
+
+	// A ci_config_path in another project: this project's file API cannot
+	// serve it, so GetFullGitlabCI never even tries. The URL below would
+	// fail every request, which is what proves the root file came from the
+	// snapshot rather than from the network.
+	newRun := func(raw string, degraded ...string) (*ProjectInfo, *configuration.Configuration) {
+		conf := platformConf(platform.SourceSnapshot, "local_job:\n  script:\n    - echo local\n")
+		conf.PlatformRun.Context.Snapshot.Data.RawConfig = raw
+		conf.PlatformRun.Context.Snapshot.Data.DegradedFields = degraded
+		return &ProjectInfo{
+			Path:          "group/project",
+			CiConfPath:    "shared.yml@platform/ci-templates",
+			DefaultBranch: "main",
+			AnalyzeBranch: "main",
+		}, conf
+	}
+
+	t.Run("the served file becomes the pre-merge document", func(t *testing.T) {
+		project, conf := newRun(rawConfig)
+
+		gitlabConf, _, _, confStr, _, err := GetFullGitlabCI(project, "main", "", "http://127.0.0.1:1", conf)
+		if err != nil {
+			t.Fatalf("GetFullGitlabCI: %v", err)
+		}
+		if confStr != rawConfig {
+			t.Errorf("root config = %q, want the snapshot's raw_config", confStr)
+		}
+		if gitlabConf == nil {
+			t.Fatal("the served root file must be parsed like any other")
+		}
+		if _, ok := gitlabConf.GitlabJobs["local_job"]; !ok {
+			t.Errorf("the parsed root file must carry the project's own jobs, got %v", gitlabConf.GitlabJobs)
+		}
+	})
+
+	t.Run("a degraded raw_config lane keeps the honest gap", func(t *testing.T) {
+		project, conf := newRun(rawConfig, platform.DegradedFieldRawConfig)
+
+		_, _, _, confStr, _, err := GetFullGitlabCI(project, "main", "", "http://127.0.0.1:1", conf)
+		if err != nil {
+			t.Fatalf("GetFullGitlabCI: %v", err)
+		}
+		if confStr != "" {
+			t.Errorf("root config = %q, want none: the platform reported this lane degraded", confStr)
+		}
+	})
+
+	t.Run("a snapshot serving no raw_config keeps the honest gap", func(t *testing.T) {
+		project, conf := newRun("")
+
+		_, _, _, confStr, _, err := GetFullGitlabCI(project, "main", "", "http://127.0.0.1:1", conf)
+		if err != nil {
+			t.Fatalf("GetFullGitlabCI: %v", err)
+		}
+		if confStr != "" {
+			t.Errorf("root config = %q, want none: nothing served it", confStr)
+		}
+	})
+}

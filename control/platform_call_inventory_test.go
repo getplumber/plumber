@@ -11,6 +11,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -311,10 +312,13 @@ func platformSnapshot(t *testing.T, sha string) *platform.RunContext {
 					MrApprovals:      json.RawMessage(`{"rules":[],"settings":{}}`),
 					Variables:        json.RawMessage(`{"items":[]}`),
 					// The project's merge settings and its security-policy
-					// linkage, describing the SAME project the fake GitLab
-					// does: merge_method is not "ff" (the configured
-					// expectation) and nothing is linked, so both controls
-					// reach the same verdict through either lane.
+					// linkage, describing the same project the rest of this
+					// fixture does. Neither has a counterpart in the fake
+					// GitLab's payload - which is the point: these lanes
+					// exist so the run never asks for them. Both deviate
+					// from the configured expectation (merge_method is not
+					// "ff", nothing is linked), so each control produces a
+					// real verdict rather than a silence.
 					ProjectDetails:        snapshotProjectDetails(),
 					SecurityPolicyProject: &platform.SecurityPolicyProject{Known: true},
 					ResolutionAnchor: &platform.ResolutionAnchor{
@@ -341,11 +345,14 @@ func platformSnapshot(t *testing.T, sha string) *platform.RunContext {
 // snapshotProjectDetails is the project_details lane as the platform serves
 // it since 2026-08-28: the core facts plus all eight merge settings.
 //
-// The values mirror what the fake GitLab returns for the same project, so a
-// lane that moved from the API to the snapshot reaches the same verdict.
+// It describes the same project the fake GitLab does, but the merge
+// settings have NO counterpart in the fake's payload: the snapshot is the
+// only place this run can learn them, which is what makes an assertion on
+// their values proof that the lane fed the control.
+//
 // merge_method is deliberately "merge" against a config expecting "ff": the
-// control has to produce a real finding here, or every parity assertion
-// below would be satisfied by two silences.
+// control has to produce a real finding here, or every assertion below
+// would be satisfied by two silences.
 func snapshotProjectDetails() *platform.ProjectDetails {
 	str := func(v string) *string { return &v }
 	b := func(v bool) *bool { return &v }
@@ -857,10 +864,13 @@ func TestSnapshotLanesEvaluateMergeSettingsAndSecurityPolicy(t *testing.T) {
 		t.Error("the snapshot reports an authoritative 'nothing linked'; ISSUE-601 must fire")
 	}
 	// The finding has to carry the SNAPSHOT's values, or it was computed
-	// somewhere else.
+	// somewhere else. The clause names the served merge method against the
+	// configured expectation, and only the snapshot carries the former: the
+	// fake GitLab's project payload has no merge settings at all.
+	const wantClause = "merge method is merge (expected ff)"
 	for _, f := range result.Findings {
-		if f.Code == "ISSUE-506" && !strings.Contains(f.Message, "merge") {
-			t.Errorf("ISSUE-506 does not report the served merge method: %q", f.Message)
+		if f.Code == "ISSUE-506" && !strings.Contains(f.Message, wantClause) {
+			t.Errorf("ISSUE-506 does not report the served merge method (%q): %q", wantClause, f.Message)
 		}
 	}
 
@@ -884,11 +894,27 @@ func TestSnapshotLanesEvaluateMergeSettingsAndSecurityPolicy(t *testing.T) {
 		}
 	}
 
+	// The project payload is read ONCE, by FetchProjectDetails. The second
+	// read was the protection collection going back for the merge settings,
+	// and the lane is what removes it.
+	//
+	// The count is parsed rather than compared as a whole line ("2x GET
+	// /api/v4/projects/:id"): an equality test passes for every count it
+	// does not name, so a regression to three reads would go unnoticed by
+	// the assertion written to catch two.
+	const projectPayload = "GET /api/v4/projects/:id"
 	for _, line := range rec.ledger() {
 		if strings.Contains(line, "getSecurityPolicyProject") {
 			t.Errorf("the linkage came from the snapshot; the runner must not query GraphQL for it: %s", line)
 		}
-		if line == "2x GET /api/v4/projects/:id" {
+		if !strings.HasSuffix(line, projectPayload) {
+			continue
+		}
+		count, err := strconv.Atoi(strings.TrimSuffix(strings.TrimSuffix(line, projectPayload), "x "))
+		if err != nil {
+			t.Fatalf("ledger line %q no longer starts with a count; this assertion cannot read it", line)
+		}
+		if count > 1 {
 			t.Errorf("the merge settings came from the snapshot; the payload must not be re-read for them: %s", line)
 		}
 	}
@@ -1076,6 +1102,79 @@ func TestCIRunWithNoCheckoutStaysUseful(t *testing.T) {
 	if reason != ReasonRawConfigUnavailable {
 		t.Errorf("reason = %q, want %q", reason, ReasonRawConfigUnavailable)
 	}
+}
+
+// TestServedRawConfigClosesTheNoCheckoutGap is the same run as
+// TestCIRunWithNoCheckoutStaysUseful with one difference: the snapshot
+// carries raw_config, the project's own UNMERGED root file, which the
+// platform has collected since 2026-08-27 and the CLI ignored.
+//
+// pipelineMustNotOverrideJobVariables compares the pre-merge file against
+// the merged pipeline, so it now has its document and must produce a
+// verdict instead of abstaining. Its sibling
+// pipelineMustNotIncludeHardcodedJobs still abstains here for an unrelated
+// reason this fixture cannot avoid: the fake refuses every request, so the
+// component include never resolves and its attribution is incomplete.
+//
+// A lane the platform reports DEGRADED is the opposite direction and is
+// asserted with it: what is on offer there is a truncation (the platform's
+// own size cap), and scoring against a short root file yields fewer
+// hardcoded jobs and fewer overridden variables, which is a silent pass.
+func TestServedRawConfigClosesTheNoCheckoutGap(t *testing.T) {
+	// The root file that merges into mergedYAML: the project declares
+	// local_job itself and pulls component_job in through the component.
+	const rawConfig = `include:
+  - component: $CI_SERVER_FQDN/vendor/components/build@1.0.0
+local_job:
+  image: alpine:latest
+  script:
+    - echo local
+`
+
+	run := func(t *testing.T, degraded ...string) *AnalysisResult {
+		t.Helper()
+		rec := &gitlabRecorder{sha: "0123456789abcdef0123456789abcdef01234567"}
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			rec.record(r.Method + " " + r.URL.EscapedPath())
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"message":"401 Unauthorized"}`))
+		}))
+		defer srv.Close()
+
+		conf := inventoryConf(t, srv.URL)
+		conf.GitlabToken = ""
+		conf.PlatformRun = platformSnapshot(t, rec.sha)
+		conf.PlatformRun.Context.Snapshot.Data.RawConfig = rawConfig
+		conf.PlatformRun.Context.Snapshot.Data.DegradedFields = degraded
+		inCIJob(t, conf, rec.sha)
+		conf.CheckoutIsAnalyzedProject = false
+		conf.GitRepoRoot = ""
+
+		result, err := RunAnalysis(conf)
+		if err != nil {
+			t.Fatalf("a run with no checkout must still report: %v", err)
+		}
+		return result
+	}
+
+	t.Run("the served file lets the pre-merge control evaluate", func(t *testing.T) {
+		result := run(t)
+		if reason, marked := result.NotEvaluable["pipelineMustNotOverrideJobVariables"]; marked {
+			t.Errorf("this control has the pre-merge file the platform served and must not abstain, got %q", reason)
+		}
+	})
+
+	t.Run("a degraded lane keeps the honest abstention", func(t *testing.T) {
+		result := run(t, platform.DegradedFieldRawConfig)
+		reason, marked := result.NotEvaluable["pipelineMustNotOverrideJobVariables"]
+		if !marked {
+			t.Fatal("a truncated root file is not a root file; the control must abstain rather than score against it")
+		}
+		if reason != ReasonRawConfigUnavailable {
+			t.Errorf("reason = %q, want %q", reason, ReasonRawConfigUnavailable)
+		}
+	})
 }
 
 // TestAnalyzedRefFollowsTheCheckoutWhenNoBranchIsNamed covers a mislabelling

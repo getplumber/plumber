@@ -1,6 +1,6 @@
 # Platform mode: close the snapshot lanes the CLI does not consume yet
 
-Status: APPROVED scope (Thomas, 2026-09-09: "Go" on the token-free platform mode); REWRITTEN the same day after the first implementation pass found the premise stale. Decision owner: Thomas (interim CLI lead).
+Status: IMPLEMENTED (2026-09-09). Approved scope (Thomas, 2026-09-09: "Go" on the token-free platform mode); REWRITTEN the same day after the first implementation pass found the premise stale. Decision owner: Thomas (interim CLI lead).
 
 ## Correction and problem
 

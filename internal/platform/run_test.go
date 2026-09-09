@@ -357,6 +357,71 @@ func TestDescribe_AnchorShaNote(t *testing.T) {
 	}
 }
 
+// TestLaneMissingCoversEveryServedLane pins LaneMissing's answer for each
+// lane identifier it knows.
+//
+// The question it answers is "did this lane carry no data at all", which
+// the caller pairs with lanesWhoseAbsenceIsAFailure to decide whether an
+// absence is a real answer or a collection that never completed. A lane the
+// switch does not name falls through to false, which reads as "the lane is
+// present" - so a lane added to the constants and forgotten here would be
+// certified served on every run that lacks it.
+func TestLaneMissingCoversEveryServedLane(t *testing.T) {
+	id := 7
+	full := &SnapshotData{
+		SchemaVersion:         SnapshotSchemaV2,
+		BranchProtection:      json.RawMessage(`{"protections":[]}`),
+		MergedYaml:            "stages: [build]",
+		MrApprovals:           json.RawMessage(`{"rules":[]}`),
+		Variables:             json.RawMessage(`{"items":[]}`),
+		ProjectDetails:        &ProjectDetails{DefaultBranch: "main"},
+		SecurityPolicyProject: &SecurityPolicyProject{Known: true, ID: &id},
+	}
+
+	for _, tc := range []struct {
+		lane  string
+		empty func(*SnapshotData)
+	}{
+		{DegradedFieldBranchProtection, func(d *SnapshotData) { d.BranchProtection = nil }},
+		{DegradedFieldMergedYaml, func(d *SnapshotData) { d.MergedYaml = "" }},
+		{DegradedFieldMrApprovals, func(d *SnapshotData) { d.MrApprovals = nil }},
+		{DegradedFieldVariables, func(d *SnapshotData) { d.Variables = nil }},
+		{DegradedFieldProjectDetails, func(d *SnapshotData) { d.ProjectDetails = nil }},
+		{DegradedFieldSecurityPolicyProject, func(d *SnapshotData) { d.SecurityPolicyProject = nil }},
+	} {
+		t.Run(tc.lane, func(t *testing.T) {
+			served := *full
+			rc := &RunContext{Context: &ProjectContext{Snapshot: Snapshot{Data: &served}}}
+			if rc.LaneMissing(tc.lane) {
+				t.Errorf("%s is served in this snapshot and must not read as missing", tc.lane)
+			}
+
+			absent := *full
+			tc.empty(&absent)
+			rc = &RunContext{Context: &ProjectContext{Snapshot: Snapshot{Data: &absent}}}
+			if !rc.LaneMissing(tc.lane) {
+				t.Errorf("%s carried nothing and must read as missing", tc.lane)
+			}
+		})
+	}
+
+	// No snapshot at all: every lane is missing, including the two added
+	// for the merge settings and the security-policy linkage.
+	none := &RunContext{Context: &ProjectContext{}}
+	for _, lane := range []string{DegradedFieldProjectDetails, DegradedFieldSecurityPolicyProject} {
+		if !none.LaneMissing(lane) {
+			t.Errorf("%s must read as missing when there is no snapshot", lane)
+		}
+	}
+
+	// Standalone mode has no lanes to be missing: answering true there
+	// would report a platform gap on a run that never asked for one.
+	var standalone *RunContext
+	if standalone.LaneMissing(DegradedFieldProjectDetails) {
+		t.Error("a nil RunContext is standalone mode; no lane is missing")
+	}
+}
+
 // TestRunContextAccessorsJoinPendingResolution: the outcome accessors must
 // wait for the early-fired request rather than reading half-written state.
 func TestRunContextAccessorsJoinPendingResolution(t *testing.T) {

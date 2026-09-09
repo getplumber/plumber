@@ -278,6 +278,67 @@ func (r *RunContext) SnapshotCIConfigPath() string {
 	return strings.TrimSpace(snap.Data.CiConfigPath)
 }
 
+// SnapshotMergeVerdict returns the git host's OWN answer about the
+// snapshot's merged_yaml - its status ("VALID" / "INVALID") and the merge
+// errors that go with it - and whether the platform served either.
+//
+// It is the only place a snapshot-path run can learn that verdict.
+// StartRunConfigResolution starts every resolution Valid and never clears
+// the flag when the merged configuration comes from the snapshot, so a
+// caller synthesizing the status locally can only ever say VALID there: a
+// snapshot whose merge GitLab itself rejected reads as a clean config,
+// with the jobs that failed to merge simply absent and every control
+// passing over what is left.
+//
+// The verdict describes the SNAPSHOT's document. A caller evaluating a
+// different one (a digest-divergent branch, resolved by the platform for
+// this run) must not attach it - see RunContext.ConfigAndIncludesAgree,
+// which decides exactly that question for the include attribution served
+// beside it.
+//
+// The error slice is copied: the snapshot is shared for the whole run and
+// a caller that appends to what it is handed would edit it.
+func (r *RunContext) SnapshotMergeVerdict() (status string, errs []string, served bool) {
+	snap := r.Snapshot()
+	if snap.Data == nil {
+		return "", nil, false
+	}
+	status = strings.TrimSpace(snap.Data.MergedYamlStatus)
+	if len(snap.Data.CiErrors) > 0 {
+		errs = append([]string(nil), snap.Data.CiErrors...)
+	}
+	return status, errs, status != "" || len(errs) > 0
+}
+
+// SnapshotRawConfig returns the project's own UNMERGED root CI file as the
+// platform served it, and whether it may be used.
+//
+// It closes the gap a run with no checkout of the analyzed project has: the
+// merged pipeline comes from the platform, but the pre-merge document two
+// controls compare against (pipelineMustNotIncludeHardcodedJobs,
+// pipelineMustNotOverrideJobVariables) is unreadable, and both fail
+// silently without it rather than loudly.
+//
+// A false second return keeps that honest gap rather than closing it with
+// something weaker. A DEGRADED lane is the case worth naming: the platform
+// fetched the file and could not serve it faithfully (its own size cap), so
+// what is on offer is a truncation, and an incomplete root file yields
+// fewer hardcoded jobs and fewer overridden variables - a silent pass, the
+// one direction the abstention exists to prevent.
+func (r *RunContext) SnapshotRawConfig() (string, bool) {
+	if !r.Engaged() {
+		return "", false
+	}
+	snap := r.Snapshot()
+	if snap.Data == nil || snap.Data.RawConfig == "" {
+		return "", false
+	}
+	if r.LaneDegraded(DegradedFieldRawConfig) {
+		return "", false
+	}
+	return snap.Data.RawConfig, true
+}
+
 // LaneDegraded reports whether a named snapshot lane failed collection on
 // the platform side. False when there is no snapshot, or when the payload
 // predates the bookkeeping - see SnapshotData.DegradedFieldsTrusted.
