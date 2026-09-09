@@ -222,6 +222,49 @@ func TestPlatformMergedConfigUsesTheServedMergeVerdict(t *testing.T) {
 		}
 	})
 
+	// The contract's status is a closed set of two values. Anything else is
+	// a platform bug or a field that has grown a meaning this CLI does not
+	// know, and neither may be forwarded: "VALID" and "INVALID" are the only
+	// strings the readers downstream compare against, so an unrecognized one
+	// would be read as "not INVALID" - a pass by default, decided by a value
+	// nobody here understood.
+	t.Run("a status outside the closed set falls back to the synthesis", func(t *testing.T) {
+		conf := snapshotMergeVerdict(
+			platformConf(platform.SourceSnapshot, "stages: [build]\n"),
+			"PENDING",
+			"a message about a state this CLI cannot read",
+		)
+
+		resp, _ := platformMergedConfig(conf)
+		if resp.CiConfig.Status != "VALID" {
+			t.Errorf("status = %q, want the synthesized VALID: PENDING is not in the contract", resp.CiConfig.Status)
+		}
+		if len(resp.CiConfig.Errors) != 0 {
+			t.Errorf("errors = %v, want none: they describe a status this run did not adopt", resp.CiConfig.Errors)
+		}
+	})
+
+	// Errors are attached to an INVALID verdict only. The origin collector
+	// treats a non-empty error list as an invalid configuration on its own
+	// (len(Errors) > 0 || Status == "INVALID"), so carrying errors under a
+	// VALID status would flip the run to LimitedAnalysis and withhold the
+	// score over a merge the git host accepted.
+	t.Run("errors under a VALID verdict are not carried", func(t *testing.T) {
+		conf := snapshotMergeVerdict(
+			platformConf(platform.SourceSnapshot, "stages: [build]\n"),
+			"VALID",
+			"a warning that is not a merge failure",
+		)
+
+		resp, _ := platformMergedConfig(conf)
+		if resp.CiConfig.Status != "VALID" {
+			t.Errorf("status = %q, want VALID", resp.CiConfig.Status)
+		}
+		if len(resp.CiConfig.Errors) != 0 {
+			t.Errorf("errors = %v: a valid merge has no errors to report, and these would invalidate the run", resp.CiConfig.Errors)
+		}
+	})
+
 	// The served verdict describes the snapshot's merged_yaml. On a
 	// digest-divergent branch the configuration being evaluated is the one
 	// the resolve endpoint returned for THIS branch, and the anchor's
@@ -259,8 +302,14 @@ func TestPlatformMergedConfigUsesTheServedMergeVerdict(t *testing.T) {
 // as degraded (its own size cap) keeps today's honest abstention rather
 // than being read as an empty root file, which yields no hardcoded jobs and
 // no overridden variables - a silent pass.
+//
+// The served file is the one collected at the snapshot's ANCHOR, so it is
+// used only for a run analysing that same ref or commit. See the divergent
+// subtest for what pairing it with another revision's merged pipeline
+// would produce.
 func TestGetFullGitlabCIUsesTheServedRawConfig(t *testing.T) {
 	const rawConfig = "include:\n  - component: example.com/vendor/build@1.0.0\nlocal_job:\n  script:\n    - echo local\n"
+	const anchorSha = "0123456789abcdef0123456789abcdef01234567"
 
 	// A ci_config_path in another project: this project's file API cannot
 	// serve it, so GetFullGitlabCI never even tries. The URL below would
@@ -270,11 +319,14 @@ func TestGetFullGitlabCIUsesTheServedRawConfig(t *testing.T) {
 		conf := platformConf(platform.SourceSnapshot, "local_job:\n  script:\n    - echo local\n")
 		conf.PlatformRun.Context.Snapshot.Data.RawConfig = raw
 		conf.PlatformRun.Context.Snapshot.Data.DegradedFields = degraded
+		conf.PlatformRun.Config.AnchorRef = "main"
+		conf.PlatformRun.Config.AnchorSha = anchorSha
 		return &ProjectInfo{
-			Path:          "group/project",
-			CiConfPath:    "shared.yml@platform/ci-templates",
-			DefaultBranch: "main",
-			AnalyzeBranch: "main",
+			Path:                "group/project",
+			CiConfPath:          "shared.yml@platform/ci-templates",
+			DefaultBranch:       "main",
+			AnalyzeBranch:       "main",
+			LatestHeadCommitSha: anchorSha,
 		}, conf
 	}
 
@@ -317,6 +369,67 @@ func TestGetFullGitlabCIUsesTheServedRawConfig(t *testing.T) {
 		}
 		if confStr != "" {
 			t.Errorf("root config = %q, want none: nothing served it", confStr)
+		}
+	})
+
+	// A run analysing another ref must not borrow the anchor's root file.
+	// The two documents are then different revisions, and the controls that
+	// read the pre-merge file compare it against a merged pipeline resolved
+	// for THIS branch: a variable the anchor declares globally and this
+	// branch does not still reads as declared (ISSUE-205 from
+	// localGlobalVariables), and every finding the root file carries points
+	// at line numbers in a file this ref does not have. A run with no
+	// checkout is always digest-divergent - there is no local file to
+	// digest - so this is the state the gate exists for, not a corner.
+	t.Run("another ref does not borrow the anchor's root file", func(t *testing.T) {
+		project, conf := newRun(rawConfig)
+		project.AnalyzeBranch = "feature/x"
+		project.LatestHeadCommitSha = "fedcba9876543210fedcba9876543210fedcba98"
+		conf.PlatformRun.Config.Source = platform.SourceResolved
+
+		_, _, _, confStr, _, err := GetFullGitlabCI(project, "feature/x", "", "http://127.0.0.1:1", conf)
+		if err != nil {
+			t.Fatalf("GetFullGitlabCI: %v", err)
+		}
+		if confStr != "" {
+			t.Errorf("root config = %q, want none: this file is the anchor's, not this branch's", confStr)
+		}
+	})
+
+	// The commit answers when there is no ref to compare - a detached job.
+	// It is the exact form of the same question: this run is reading the
+	// very revision the platform collected.
+	t.Run("with no ref to compare the anchor's own commit is served", func(t *testing.T) {
+		project, conf := newRun(rawConfig)
+		project.AnalyzeBranch = ""
+		conf.PlatformRun.Config.Source = platform.SourceResolved
+
+		_, _, _, confStr, _, err := GetFullGitlabCI(project, "", "", "http://127.0.0.1:1", conf)
+		if err != nil {
+			t.Fatalf("GetFullGitlabCI: %v", err)
+		}
+		if confStr != rawConfig {
+			t.Errorf("root config = %q, want the snapshot's raw_config: this run is at the anchor's commit", confStr)
+		}
+	})
+
+	// The sha is NOT an alternative to the ref, and this is the case that
+	// says why. A run analysing another branch whose head could not be
+	// fetched keeps the DEFAULT branch's sha (control/task.go warns and
+	// carries on), which is the anchor's - so a sha that could stand in for
+	// a ref would hand the anchor's root file to a feature branch exactly
+	// when the run knew least about it.
+	t.Run("another ref is withheld even at the anchor's sha", func(t *testing.T) {
+		project, conf := newRun(rawConfig)
+		project.AnalyzeBranch = "feature/x"
+		conf.PlatformRun.Config.Source = platform.SourceResolved
+
+		_, _, _, confStr, _, err := GetFullGitlabCI(project, "feature/x", "", "http://127.0.0.1:1", conf)
+		if err != nil {
+			t.Fatalf("GetFullGitlabCI: %v", err)
+		}
+		if confStr != "" {
+			t.Errorf("root config = %q, want none: the sha is the analysed ref's head only when that lookup worked", confStr)
 		}
 	})
 }

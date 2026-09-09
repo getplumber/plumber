@@ -186,6 +186,15 @@ func platformMergedConfig(conf *configuration.Configuration) (MergedCIConfRespon
 // has no host message for. It states only what the run established.
 const genericInvalidMergeError = "the git host reported this CI configuration as invalid; the merged pipeline it returned is incomplete"
 
+// The closed set of merge statuses. Every reader downstream compares
+// against these two strings and treats everything else as "not INVALID", so
+// a third value would be read as a pass by a comparison that never looked
+// at it.
+const (
+	mergeStatusValid   = "VALID"
+	mergeStatusInvalid = "INVALID"
+)
+
 // platformMergeVerdict decides the status and errors reported for the
 // platform-supplied merge.
 //
@@ -204,34 +213,35 @@ const genericInvalidMergeError = "the git host reported this CI configuration as
 // ConfigInvalid.
 //
 // Snapshots older than 2026-08-28 serve neither field, so the synthesis
-// stays the fallback rather than being replaced.
+// stays the fallback rather than being replaced - and so does a status
+// outside the contract's closed set, which this CLI has no reading for.
 func platformMergeVerdict(conf *configuration.Configuration) (string, []string) {
-	status := "VALID"
-	var errs []string
-	if conf.PlatformRun.ConfigInvalid() {
-		status = "INVALID"
-		errs = []string{genericInvalidMergeError}
-	}
-
 	if conf.PlatformRun.ConfigAndIncludesAgree() {
-		if servedStatus, servedErrs, served := conf.PlatformRun.SnapshotMergeVerdict(); served {
-			if servedStatus != "" {
-				status = servedStatus
-				errs = nil
-			}
-			if len(servedErrs) > 0 {
-				errs = servedErrs
+		if status, errs, served := conf.PlatformRun.SnapshotMergeVerdict(); served {
+			switch status {
+			case mergeStatusValid:
+				// Errors are dropped on a VALID verdict rather than carried
+				// beside it. The origin collector reads a non-empty error
+				// list as an invalid configuration ON ITS OWN, so attaching
+				// a warning to a merge the git host accepted would withhold
+				// the run's score over nothing.
+				return mergeStatusValid, nil
+			case mergeStatusInvalid:
+				if len(errs) == 0 {
+					// An INVALID merge always carries something the report
+					// can show; this is what is left when the host sent no
+					// message of its own.
+					errs = []string{genericInvalidMergeError}
+				}
+				return mergeStatusInvalid, errs
 			}
 		}
 	}
 
-	// An INVALID merge always carries something the report can show. The
-	// host's own messages are the useful ones; this is what is left when it
-	// sent none.
-	if status == "INVALID" && len(errs) == 0 {
-		errs = []string{genericInvalidMergeError}
+	if conf.PlatformRun.ConfigInvalid() {
+		return mergeStatusInvalid, []string{genericInvalidMergeError}
 	}
-	return status, errs
+	return mergeStatusValid, nil
 }
 
 // platformIncludes decodes the snapshot's per-include attribution into the
@@ -379,18 +389,14 @@ func GetFullGitlabCI(project *ProjectInfo, ref, token, url string, conf *configu
 	// A nil confByte, not an empty one: a root file that is genuinely empty
 	// was read, and reading it is the fact this branch is about.
 	//
-	// The served file is the one the platform fetched when it collected the
-	// snapshot, at the anchor. It is a snapshot lane like every other one
-	// and carries the same staleness: as current as the collection the run
-	// prints the timestamp of, not as current as the commit being analysed.
-	// That is the trade this closes a permanently-abstaining control with,
-	// and it is the pairing the platform itself merged from.
-	//
-	// RunContext.SnapshotRawConfig withholds a lane the platform reported
-	// degraded, which keeps today's honest gap instead of scoring against a
-	// root file that is missing part of itself.
+	// The served file is the one the platform fetched at the snapshot's
+	// ANCHOR, so the revision under analysis is passed in and the file is
+	// withheld unless it is that same revision - see
+	// RunContext.SnapshotRawConfig, which also withholds a lane the platform
+	// reported degraded. Both cases keep today's honest gap instead of
+	// comparing the merged pipeline against a document from somewhere else.
 	if confByte == nil && conf != nil && conf.PlatformRun.Engaged() {
-		if raw, served := conf.PlatformRun.SnapshotRawConfig(); served {
+		if raw, served := conf.PlatformRun.SnapshotRawConfig(ref, project.LatestHeadCommitSha); served {
 			confByte = []byte(raw)
 			l.Info("Using the platform snapshot's copy of the project's own CI configuration file")
 		}

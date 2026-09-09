@@ -320,12 +320,42 @@ func (r *RunContext) SnapshotMergeVerdict() (status string, errs []string, serve
 // silently without it rather than loudly.
 //
 // A false second return keeps that honest gap rather than closing it with
-// something weaker. A DEGRADED lane is the case worth naming: the platform
-// fetched the file and could not serve it faithfully (its own size cap), so
-// what is on offer is a truncation, and an incomplete root file yields
-// fewer hardcoded jobs and fewer overridden variables - a silent pass, the
-// one direction the abstention exists to prevent.
-func (r *RunContext) SnapshotRawConfig() (string, bool) {
+// something weaker. Three states produce one:
+//
+//   - The lane is DEGRADED: the platform fetched the file and could not
+//     serve it faithfully (its own size cap), so what is on offer is a
+//     truncation, and an incomplete root file yields fewer hardcoded jobs
+//     and fewer overridden variables - a silent pass, the one direction the
+//     abstention exists to prevent.
+//   - Nothing was served at all.
+//   - The run is analysing a different revision from the one the file was
+//     collected at: see the ref and sha arguments.
+//
+// ref and sha are the revision under analysis, and the file is served only
+// when one of them IS the snapshot's anchor. The file is the root config at
+// the anchor - the default branch, at collection time - while the merged
+// pipeline it would be compared against may have been resolved by the
+// platform for THIS branch. Pairing two revisions is not a smaller version
+// of pairing one: a variable the anchor declares globally and this branch
+// does not still reads as declared, which is a fabricated Critical, and
+// every finding carried by the root file points at line numbers in a file
+// this ref does not have. A run with no checkout is always digest-divergent
+// (there is no local file to digest), so this is the state the check exists
+// for rather than a corner of it.
+//
+// The REF is what decides whenever both refs are known: it is the
+// same-branch answer, and it carries the snapshot's ordinary staleness,
+// which is what every other lane carries too. The commit is the fallback
+// for a run with no ref to compare (a detached job), where it is the exact
+// answer - the same revision, whatever it is called.
+//
+// The two are deliberately not an either-or. The analysed sha a caller has
+// is the head of the analysed ref, and when THAT lookup fails the codebase
+// falls back to the default branch's head (control/task.go) - which is the
+// anchor's. A sha that could stand in for a ref would then serve the
+// anchor's root file to a feature branch precisely when the run knew least
+// about it.
+func (r *RunContext) SnapshotRawConfig(ref, sha string) (string, bool) {
 	if !r.Engaged() {
 		return "", false
 	}
@@ -336,7 +366,29 @@ func (r *RunContext) SnapshotRawConfig() (string, bool) {
 	if r.LaneDegraded(DegradedFieldRawConfig) {
 		return "", false
 	}
+	if !r.anchorCovers(ref, sha) {
+		return "", false
+	}
 	return snap.Data.RawConfig, true
+}
+
+// anchorCovers reports whether the revision under analysis is the one the
+// snapshot was collected at: the ref when both are known, the commit when
+// there is no ref to compare.
+//
+// It reads the anchor off the resolution, which fills AnchorSha and
+// AnchorRef synchronously in StartRunConfigResolution - before any resolve
+// request is fired - so it needs no join. An empty anchor field never
+// matches: "unknown" is not "the same".
+func (r *RunContext) anchorCovers(ref, sha string) bool {
+	if r == nil || r.Config == nil {
+		return false
+	}
+	anchorRef, anchorSha := strings.TrimSpace(r.Config.AnchorRef), strings.TrimSpace(r.Config.AnchorSha)
+	if anchorRef != "" && strings.TrimSpace(ref) != "" {
+		return anchorRef == strings.TrimSpace(ref)
+	}
+	return anchorSha != "" && strings.EqualFold(anchorSha, strings.TrimSpace(sha))
 }
 
 // LaneDegraded reports whether a named snapshot lane failed collection on

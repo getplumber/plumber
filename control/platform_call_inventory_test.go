@@ -1131,7 +1131,7 @@ local_job:
     - echo local
 `
 
-	run := func(t *testing.T, degraded ...string) *AnalysisResult {
+	run := func(t *testing.T, branch string, degraded ...string) *AnalysisResult {
 		t.Helper()
 		rec := &gitlabRecorder{sha: "0123456789abcdef0123456789abcdef01234567"}
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1150,6 +1150,7 @@ local_job:
 		inCIJob(t, conf, rec.sha)
 		conf.CheckoutIsAnalyzedProject = false
 		conf.GitRepoRoot = ""
+		conf.Branch = branch
 
 		result, err := RunAnalysis(conf)
 		if err != nil {
@@ -1158,18 +1159,37 @@ local_job:
 		return result
 	}
 
+	// "main" is the snapshot's anchor ref, so the served file describes the
+	// revision under analysis.
 	t.Run("the served file lets the pre-merge control evaluate", func(t *testing.T) {
-		result := run(t)
+		result := run(t, "main")
 		if reason, marked := result.NotEvaluable["pipelineMustNotOverrideJobVariables"]; marked {
 			t.Errorf("this control has the pre-merge file the platform served and must not abstain, got %q", reason)
 		}
 	})
 
 	t.Run("a degraded lane keeps the honest abstention", func(t *testing.T) {
-		result := run(t, platform.DegradedFieldRawConfig)
+		result := run(t, "main", platform.DegradedFieldRawConfig)
 		reason, marked := result.NotEvaluable["pipelineMustNotOverrideJobVariables"]
 		if !marked {
 			t.Fatal("a truncated root file is not a root file; the control must abstain rather than score against it")
+		}
+		if reason != ReasonRawConfigUnavailable {
+			t.Errorf("reason = %q, want %q", reason, ReasonRawConfigUnavailable)
+		}
+	})
+
+	// Another branch: the merged pipeline is resolved for THIS ref while the
+	// served root file is the anchor's, and comparing two revisions
+	// fabricates rather than degrades - a global variable the anchor
+	// declares and this branch does not still reads as declared. The
+	// abstention is the honest answer, and it is the same one this run gave
+	// before the lane existed.
+	t.Run("another branch does not borrow the anchor's root file", func(t *testing.T) {
+		result := run(t, "feature/x")
+		reason, marked := result.NotEvaluable["pipelineMustNotOverrideJobVariables"]
+		if !marked {
+			t.Fatal("the served file describes the anchor, not this branch; the control must abstain")
 		}
 		if reason != ReasonRawConfigUnavailable {
 			t.Errorf("reason = %q, want %q", reason, ReasonRawConfigUnavailable)
