@@ -1,3 +1,27 @@
+## [0.4.56](https://github.com/getplumber/plumber/compare/v0.4.55...v0.4.56) (2026-09-09)
+
+
+### ✨ Features
+
+* **catalog:** authored requiresConfig flag for controls inert without configuration ([#458](https://github.com/getplumber/plumber/issues/458)) ([747baab](https://github.com/getplumber/plumber/commit/747baabb1b15d57433b896526ebe3ba6d74051ba)), closes [getplumber/plumber#459](https://github.com/getplumber/plumber/issues/459)
+* **catalog:** export the control/issue catalog as the single source of truth ([#458](https://github.com/getplumber/plumber/issues/458)) ([15ed919](https://github.com/getplumber/plumber/commit/15ed91957b1ed746cf63a98f6d4f2c8679a67964)), closes [#448](https://github.com/getplumber/plumber/issues/448)
+
+
+### 🐛 Bug Fixes
+
+* **catalog:** drop the false debug-trace default; the engine has no built-in list ([6a7c2dd](https://github.com/getplumber/plumber/commit/6a7c2dd6f3ef45dce289c1fdbaf82d0c44b84b93))
+* **catalog:** rendered-string cleanup, contract guard tests and CI deadcode exemption ([#458](https://github.com/getplumber/plumber/issues/458)) ([8317e03](https://github.com/getplumber/plumber/commit/8317e03e526a85360019a69ea40bdbafc0b8f863))
+
+
+### 📚 Documentation
+
+* **catalog:** design spec and implementation plan for the catalog export ([#458](https://github.com/getplumber/plumber/issues/458)) ([6ebc83c](https://github.com/getplumber/plumber/commit/6ebc83ced4272ae162ea4bb93bbd846e5507721b))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.55 refs [skip ci] ([bad1d73](https://github.com/getplumber/plumber/commit/bad1d73e063cf3be2ec88591e5083b9fa46f17a7))
+
 ## [0.4.55](https://github.com/getplumber/plumber/compare/v0.4.54...v0.4.55) (2026-09-07)
 
 
