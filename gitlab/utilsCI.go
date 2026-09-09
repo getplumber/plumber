@@ -195,6 +195,13 @@ const (
 	mergeStatusInvalid = "INVALID"
 )
 
+// maxServedRawConfigBytes bounds the root CI file the platform serves, the
+// same ceiling control.maxLocalCIConfigBytes reads the checkout's own file
+// under. The platform is authenticated; the body is still a project's file
+// that arrived through a third party, and it is parsed and evaluated in
+// full.
+const maxServedRawConfigBytes = 2 << 20 // 2 MiB
+
 // platformMergeVerdict decides the status and errors reported for the
 // platform-supplied merge.
 //
@@ -234,6 +241,14 @@ func platformMergeVerdict(conf *configuration.Configuration) (string, []string) 
 					errs = []string{genericInvalidMergeError}
 				}
 				return mergeStatusInvalid, errs
+			default:
+				// Silently falling back would hide a contract that moved:
+				// the run still reports, and the operator can see which
+				// value this CLI did not know.
+				logger.WithFields(logrus.Fields{
+					"action": "platformMergeVerdict",
+					"status": status,
+				}).Debug("The platform served a merge status outside the contract's closed set; using this run's own resolution instead")
 			}
 		}
 	}
@@ -390,15 +405,27 @@ func GetFullGitlabCI(project *ProjectInfo, ref, token, url string, conf *configu
 	// was read, and reading it is the fact this branch is about.
 	//
 	// The served file is the one the platform fetched at the snapshot's
-	// ANCHOR, so the revision under analysis is passed in and the file is
-	// withheld unless it is that same revision - see
-	// RunContext.SnapshotRawConfig, which also withholds a lane the platform
-	// reported degraded. Both cases keep today's honest gap instead of
-	// comparing the merged pipeline against a document from somewhere else.
+	// ANCHOR, so RunContext.SnapshotRawConfig withholds it unless the
+	// configuration this run evaluates came from that same commit - and
+	// withholds a lane the platform reported degraded. Both cases keep
+	// today's honest gap instead of comparing the merged pipeline against a
+	// document from somewhere else.
 	if confByte == nil && conf != nil && conf.PlatformRun.Engaged() {
-		if raw, served := conf.PlatformRun.SnapshotRawConfig(ref, project.LatestHeadCommitSha); served {
-			confByte = []byte(raw)
-			l.Info("Using the platform snapshot's copy of the project's own CI configuration file")
+		if raw, served := conf.PlatformRun.SnapshotRawConfig(); served {
+			// Same ceiling the checkout's own file is read under. The
+			// platform is authenticated, not trusted to be small: this body
+			// is a project's file that reached us through a third party,
+			// and the parse and the rule evaluation that follow are both
+			// linear in its size.
+			if len(raw) > maxServedRawConfigBytes {
+				l.WithFields(logrus.Fields{
+					"bytes": len(raw),
+					"limit": maxServedRawConfigBytes,
+				}).Debug("The platform served a CI configuration file past the size limit; the controls that compare against it will report not_evaluable")
+			} else {
+				confByte = []byte(raw)
+				l.Info("Using the platform snapshot's copy of the project's own CI configuration file")
+			}
 		}
 	}
 	confStr := string(confByte)

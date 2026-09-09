@@ -428,6 +428,53 @@ func TestMarkDegradedSnapshotLanes(t *testing.T) {
 		}
 	})
 
+	// The third state, and the one that used to disappear: a snapshot from a
+	// platform that predates these lanes (they arrived 2026-08-27) carries
+	// neither key, and nothing failed. The controls cannot evaluate, and
+	// they have to SAY so - the verdict is already honest through StatusFor,
+	// but the terminal report's "Not evaluated" bucket and the push's
+	// not_evaluable reason both read result.NotEvaluable, so an unmarked
+	// control renders as an ordinary one with zero findings and the platform
+	// is sent a status with no explanation.
+	//
+	// lane_not_served, not snapshot_lane_degraded: telling an on-prem
+	// operator their collection failed would send them looking for a fault
+	// that is not there.
+	t.Run("an absent lane says lane_not_served", func(t *testing.T) {
+		r := &AnalysisResult{}
+		served := append(entries,
+			ControlEntry{ControlName: "projectMustHaveSecurityPolicySource"},
+			ControlEntry{ControlName: "mergeRequestSettingsMustBeCompliant"},
+		)
+		run := runWithDegraded(t, "2")
+		run.Context.Snapshot.Data.ProjectDetails = nil
+		run.Context.Snapshot.Data.SecurityPolicyProject = nil
+
+		r.MarkDegradedSnapshotLanes(served, run)
+		for _, name := range []string{"projectMustHaveSecurityPolicySource", "mergeRequestSettingsMustBeCompliant"} {
+			if got := r.NotEvaluable[name]; got != ReasonLaneNotServed {
+				t.Errorf("%s reads a lane this snapshot does not carry: reason = %q, want %q", name, got, ReasonLaneNotServed)
+			}
+		}
+		if _, marked := r.NotEvaluable["branchMustBeProtected"]; marked {
+			t.Error("an unrelated lane must not be marked")
+		}
+	})
+
+	// A pre-v2 snapshot cannot be trusted about degradation, but absence is
+	// still absence: the key is not there, whatever the schema says.
+	t.Run("an absent lane says lane_not_served below schema v2 too", func(t *testing.T) {
+		r := &AnalysisResult{}
+		served := append(entries, ControlEntry{ControlName: "mergeRequestSettingsMustBeCompliant"})
+		run := runWithDegraded(t, "1")
+		run.Context.Snapshot.Data.ProjectDetails = nil
+
+		r.MarkDegradedSnapshotLanes(served, run)
+		if got := r.NotEvaluable["mergeRequestSettingsMustBeCompliant"]; got != ReasonLaneNotServed {
+			t.Errorf("reason = %q, want %q: an absent key needs no degraded_fields bookkeeping to be absent", got, ReasonLaneNotServed)
+		}
+	})
+
 	t.Run("a disabled control is never marked", func(t *testing.T) {
 		r := &AnalysisResult{}
 		disabled := []ControlEntry{{ControlName: "cicdVariablesMustBeMasked", Skipped: true}}
@@ -458,10 +505,14 @@ func runWithDegraded(t *testing.T, schemaVersion string, degraded ...string) *pl
 				DegradedFields: degraded,
 				// Present so these cases isolate DEGRADATION. An absent
 				// branch_protection or mr_approvals lane degrades its
-				// controls on its own (lanesWhoseAbsenceIsAFailure), which
-				// would mask what each case is actually asserting.
-				BranchProtection: json.RawMessage(`{"branches":["main"],"protections":[]}`),
-				MrApprovals:      json.RawMessage(`{"rules":[]}`),
+				// controls on its own (lanesWhoseAbsenceIsAFailure), and an
+				// absent project_details or security_policy_project marks
+				// its control lane_not_served (lanesWhoseAbsenceIsNotServed);
+				// either would mask what each case is actually asserting.
+				BranchProtection:      json.RawMessage(`{"branches":["main"],"protections":[]}`),
+				MrApprovals:           json.RawMessage(`{"rules":[]}`),
+				ProjectDetails:        &platform.ProjectDetails{DefaultBranch: "main"},
+				SecurityPolicyProject: &platform.SecurityPolicyProject{Known: true},
 			}},
 		},
 	}

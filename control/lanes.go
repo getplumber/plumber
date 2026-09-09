@@ -29,9 +29,17 @@ const (
 	// against.
 	ReasonSnapshotLaneDegraded = "snapshot_lane_degraded"
 
-	// ReasonLaneNotServed: neither lane can feed this control in platform
-	// mode - the snapshot contract does not carry its data, and the runner's
-	// CI_JOB_TOKEN cannot fetch it either.
+	// ReasonLaneNotServed: the snapshot in hand does not carry this
+	// control's data, and the runner's CI_JOB_TOKEN cannot fetch it either.
+	//
+	// Distinct from ReasonSnapshotLaneDegraded, which says a collection was
+	// attempted and FAILED. This one says the data was never on offer:
+	// either the contract carries no such lane at all
+	// (controlsWithNoPlatformLane), or this deployment's snapshot predates
+	// the lane the contract has since grown (lanesWhoseAbsenceIsNotServed).
+	// Nothing is broken in either case, and telling an operator their
+	// collection failed would send them looking for a fault that is not
+	// there.
 	ReasonLaneNotServed = "lane_not_served"
 
 	// ReasonIncludeResolutionFailed: at least one include could not be
@@ -503,6 +511,55 @@ var lanesWhoseAbsenceIsAFailure = map[string]bool{
 	platform.DegradedFieldMrApprovals:      true,
 }
 
+// lanesWhoseAbsenceIsNotServed names the lanes whose absence means THIS
+// snapshot does not carry them at all - not that the collection failed, and
+// not that the project has nothing to report.
+//
+// The two entries are the lanes the platform started serving on 2026-08-27.
+// A snapshot collected by an older platform (an on-prem or air-gapped
+// deployment that has not refreshed since) simply has no such key, and the
+// difference from lanesWhoseAbsenceIsAFailure is what the operator is told:
+// nothing failed here, this deployment's snapshot predates the lane.
+//
+// Marking it matters because the alternative is an abstention with no
+// reason at all. The verdict is honest either way - StatusFor reports
+// not_evaluable from a nil projection - but two surfaces read
+// result.NotEvaluable rather than StatusFor: the terminal report's
+// "Not evaluated" bucket (cmd/analyze_shared.go) and the push's
+// not_evaluable reason (cmd/platform_push.go). Without an entry the control
+// renders as an ordinary control with zero findings and the platform is
+// sent a status with no explanation.
+var lanesWhoseAbsenceIsNotServed = map[string]bool{
+	platform.DegradedFieldProjectDetails:        true,
+	platform.DegradedFieldSecurityPolicyProject: true,
+}
+
+// laneUnusableReason names why a snapshot lane cannot feed its controls this
+// run, or "" when it can.
+//
+// The three answers are different facts about the platform, and the CLI
+// reports which one it is rather than collapsing them:
+//
+//   - DEGRADED: the platform tried and the collection failed.
+//   - ABSENT from a lane the platform writes on every success: the
+//     collection did not complete either, so it is the same answer
+//     (lanesWhoseAbsenceIsAFailure).
+//   - ABSENT from a lane this snapshot's platform version never served:
+//     nothing failed, the data was never on offer (lanesWhoseAbsenceIsNotServed).
+func laneUnusableReason(run *platform.RunContext, lane string) string {
+	switch {
+	case run.LaneDegraded(lane):
+		return ReasonSnapshotLaneDegraded
+	case !run.LaneMissing(lane):
+		return ""
+	case lanesWhoseAbsenceIsAFailure[lane]:
+		return ReasonSnapshotLaneDegraded
+	case lanesWhoseAbsenceIsNotServed[lane]:
+		return ReasonLaneNotServed
+	}
+	return ""
+}
+
 // controlsWithNoPlatformLane names controls the platform snapshot carries no
 // data for at all. They are not degraded and not empty: the lane does not
 // exist, so in platform mode there is nothing they could honestly evaluate
@@ -516,13 +573,17 @@ var lanesWhoseAbsenceIsAFailure = map[string]bool{
 // eight merge settings inside project_details since 2026-08-28, while the
 // CLI kept reporting lane_not_served over data it was already being sent.
 // Both now read their lane through snapshotLaneControls above, which
-// degrades them when the platform reports the collection as FAILED instead
-// of writing them off unconditionally.
+// reports ReasonSnapshotLaneDegraded when the platform says the collection
+// FAILED and ReasonLaneNotServed when this snapshot simply predates the
+// lane (lanesWhoseAbsenceIsNotServed), instead of writing them off
+// unconditionally.
 //
-// A control genuinely served by neither lane belongs here rather than being
-// left to abstain unexplained: that is what makes it visible as a platform
-// ask instead of a mystery. Whatever is added, check first that the
-// contract has not already grown the lane.
+// A control served by neither lane on ANY platform version belongs here
+// rather than being left to abstain unexplained: that is what makes it
+// visible as a platform ask instead of a mystery. It carries the same
+// ReasonLaneNotServed, for the same reason - the data was never on offer.
+// Whatever is added, check first that the contract has not already grown
+// the lane.
 var controlsWithNoPlatformLane = map[string]string{}
 
 // MarkDegradedSnapshotLanes flags the controls whose platform snapshot lane
@@ -550,17 +611,12 @@ func (r *AnalysisResult) MarkDegradedSnapshotLanes(entries []ControlEntry, run *
 		r.MarkNotEvaluable(name, reason)
 	}
 	for lane, controls := range snapshotLaneControls {
-		// Two ways a lane cannot feed its controls, reported the same way
-		// because they mean the same thing to the run: the platform said
-		// the collection failed, or the lane is absent from a payload that
-		// would carry it on any success. See lanesWhoseAbsenceIsAFailure.
-		unusable := run.LaneDegraded(lane) ||
-			(lanesWhoseAbsenceIsAFailure[lane] && run.LaneMissing(lane))
-		if !unusable {
+		reason := laneUnusableReason(run, lane)
+		if reason == "" {
 			continue
 		}
 		for _, name := range controls {
-			mark(name, ReasonSnapshotLaneDegraded)
+			mark(name, reason)
 		}
 	}
 	for name, reason := range controlsWithNoPlatformLane {
