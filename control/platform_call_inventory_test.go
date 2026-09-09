@@ -310,6 +310,13 @@ func platformSnapshot(t *testing.T, sha string) *platform.RunContext {
 					BranchProtection: json.RawMessage(`{"branches":["main"],"protections":[]}`),
 					MrApprovals:      json.RawMessage(`{"rules":[],"settings":{}}`),
 					Variables:        json.RawMessage(`{"items":[]}`),
+					// The project's merge settings and its security-policy
+					// linkage, describing the SAME project the fake GitLab
+					// does: merge_method is not "ff" (the configured
+					// expectation) and nothing is linked, so both controls
+					// reach the same verdict through either lane.
+					ProjectDetails:        snapshotProjectDetails(),
+					SecurityPolicyProject: &platform.SecurityPolicyProject{Known: true},
 					ResolutionAnchor: &platform.ResolutionAnchor{
 						Ref: "main", Sha: sha,
 						ConfigDigest: "abc", DigestVersion: platform.LocalDigestVersion,
@@ -328,6 +335,31 @@ func platformSnapshot(t *testing.T, sha string) *platform.RunContext {
 			AnchorDigest:  "abc",
 			Valid:         true,
 		},
+	}
+}
+
+// snapshotProjectDetails is the project_details lane as the platform serves
+// it since 2026-08-28: the core facts plus all eight merge settings.
+//
+// The values mirror what the fake GitLab returns for the same project, so a
+// lane that moved from the API to the snapshot reaches the same verdict.
+// merge_method is deliberately "merge" against a config expecting "ff": the
+// control has to produce a real finding here, or every parity assertion
+// below would be satisfied by two silences.
+func snapshotProjectDetails() *platform.ProjectDetails {
+	str := func(v string) *string { return &v }
+	b := func(v bool) *bool { return &v }
+	return &platform.ProjectDetails{
+		DefaultBranch:                   "main",
+		PathWithNamespace:               testProjectPath,
+		MergeMethod:                     str("merge"),
+		SquashOption:                    str("default_off"),
+		MergePipelinesEnabled:           b(false),
+		MergeTrainsEnabled:              b(false),
+		AllowMergeOnSkippedPipeline:     b(false),
+		ResolveOutdatedDiffDiscussions:  b(false),
+		PrintingMergeRequestLinkEnabled: b(true),
+		RemoveSourceBranchAfterMerge:    b(false),
 	}
 }
 
@@ -752,8 +784,10 @@ func TestTokenlessCIRunCompletes(t *testing.T) {
 
 	// The lanes the platform served must produce real verdicts. ISSUE-501 is
 	// branch protection, straight out of the snapshot; ISSUE-504 is the MR
-	// approval rules. Neither needed GitLab.
-	for _, code := range []string{"ISSUE-501", "ISSUE-504"} {
+	// approval rules; ISSUE-506 is the project's merge settings and
+	// ISSUE-601 its security-policy linkage, both served since 2026-08-27.
+	// None of them needed GitLab.
+	for _, code := range []string{"ISSUE-501", "ISSUE-504", "ISSUE-506", "ISSUE-601"} {
 		if codes[code] == 0 {
 			t.Errorf("%s should have been evaluated from the snapshot, with no token", code)
 		}
@@ -766,11 +800,131 @@ func TestTokenlessCIRunCompletes(t *testing.T) {
 		"pipelineMustNotIncludeHardcodedJobs",
 		"externalRefsMustNotCollide",
 		"includesMustBeUpToDate",
-		"projectMustHaveSecurityPolicySource",
-		"mergeRequestSettingsMustBeCompliant",
 	} {
 		if _, marked := result.NotEvaluable[control]; !marked {
 			t.Errorf("%s could not be evaluated without a token and must say so, not pass", control)
+		}
+	}
+}
+
+// TestSnapshotLanesEvaluateMergeSettingsAndSecurityPolicy is the end-to-end
+// statement of this change: ISSUE-506 and ISSUE-601 are evaluated in
+// platform mode, from the snapshot, without one GitLab request of their own.
+//
+// Both used to be written off as lane_not_served on comments that had gone
+// stale: the platform has served project_details (2026-08-27), its eight
+// merge settings (2026-08-28) and security_policy_project (2026-08-27) for
+// weeks while the CLI reported "we cannot check this" on every platform run.
+//
+// The two requests those controls make in standalone mode are the second
+// GET /projects/:id (the protection collection re-reads the payload for the
+// merge settings) and the getSecurityPolicyProject GraphQL query. Neither may
+// come back: the lane is the point, and the second one cannot succeed with a
+// job token anyway.
+func TestSnapshotLanesEvaluateMergeSettingsAndSecurityPolicy(t *testing.T) {
+	rec := &gitlabRecorder{sha: "0123456789abcdef0123456789abcdef01234567"}
+	srv := httptest.NewServer(rec)
+	defer srv.Close()
+
+	conf := inventoryConf(t, srv.URL)
+	conf.PlatformRun = platformSnapshot(t, rec.sha)
+
+	result, err := RunAnalysis(conf)
+	if err != nil {
+		t.Fatalf("analysis failed: %v", err)
+	}
+
+	codes := map[string]int{}
+	for _, f := range result.Findings {
+		codes[f.Code]++
+	}
+	t.Logf("findings: %v", codes)
+	t.Logf("not_evaluable: %v", result.NotEvaluable)
+
+	for _, control := range []string{"mergeRequestSettingsMustBeCompliant", "projectMustHaveSecurityPolicySource"} {
+		if reason, marked := result.NotEvaluable[control]; marked {
+			t.Errorf("%s reads a served lane and must not abstain, got %q", control, reason)
+		}
+	}
+
+	// The verdicts themselves, not merely the absence of an abstention: the
+	// snapshot says merge_method is "merge" where the config expects "ff",
+	// and that the linkage was read and nothing is linked.
+	if codes["ISSUE-506"] == 0 {
+		t.Error("the snapshot's merge settings deviate from the configured expectation; ISSUE-506 must fire")
+	}
+	if codes["ISSUE-601"] == 0 {
+		t.Error("the snapshot reports an authoritative 'nothing linked'; ISSUE-601 must fire")
+	}
+	// The finding has to carry the SNAPSHOT's values, or it was computed
+	// somewhere else.
+	for _, f := range result.Findings {
+		if f.Code == "ISSUE-506" && !strings.Contains(f.Message, "merge") {
+			t.Errorf("ISSUE-506 does not report the served merge method: %q", f.Message)
+		}
+	}
+
+	// StatusFor is what the report and the push carry; a control whose lane
+	// was served must read as a real verdict rather than an error.
+	for _, tc := range []struct{ control, code string }{
+		{"mergeRequestSettingsMustBeCompliant", "ISSUE-506"},
+		{"projectMustHaveSecurityPolicySource", "ISSUE-601"},
+	} {
+		var entry ControlEntry
+		for _, e := range GitLabControls(conf.PlumberConfig) {
+			if e.ControlName == tc.control {
+				entry = e
+			}
+		}
+		if entry.ControlName == "" {
+			t.Fatalf("%s is not in the run's control set; the fixture no longer enables it", tc.control)
+		}
+		if got := StatusFor(entry, result, codes[tc.code]); got != StatusFailed {
+			t.Errorf("%s status = %q, want %q", tc.control, got, StatusFailed)
+		}
+	}
+
+	for _, line := range rec.ledger() {
+		if strings.Contains(line, "getSecurityPolicyProject") {
+			t.Errorf("the linkage came from the snapshot; the runner must not query GraphQL for it: %s", line)
+		}
+		if line == "2x GET /api/v4/projects/:id" {
+			t.Errorf("the merge settings came from the snapshot; the payload must not be re-read for them: %s", line)
+		}
+	}
+}
+
+// TestDegradedNewLanesAbstainEndToEnd is the same run with both new lanes
+// reported as failed collections. The controls must withhold their verdicts
+// entirely rather than fail the project against settings nobody read, which
+// is the direction that would fabricate a Critical.
+func TestDegradedNewLanesAbstainEndToEnd(t *testing.T) {
+	rec := &gitlabRecorder{sha: "0123456789abcdef0123456789abcdef01234567"}
+	srv := httptest.NewServer(rec)
+	defer srv.Close()
+
+	conf := inventoryConf(t, srv.URL)
+	run := platformSnapshot(t, rec.sha)
+	run.Context.Snapshot.Data.DegradedFields = []string{
+		platform.DegradedFieldProjectDetails,
+		platform.DegradedFieldSecurityPolicyProject,
+	}
+	conf.PlatformRun = run
+
+	result, err := RunAnalysis(conf)
+	if err != nil {
+		t.Fatalf("analysis failed: %v", err)
+	}
+
+	for _, control := range []string{"mergeRequestSettingsMustBeCompliant", "projectMustHaveSecurityPolicySource"} {
+		if result.NotEvaluable[control] != ReasonSnapshotLaneDegraded {
+			t.Errorf("%s must report %q on a failed collection, got %v",
+				control, ReasonSnapshotLaneDegraded, result.NotEvaluable[control])
+		}
+	}
+	for _, f := range result.Findings {
+		if f.Code == "ISSUE-506" || f.Code == "ISSUE-601" {
+			t.Errorf("a finding computed over a lane that failed collection must be dropped: %+v", f)
 		}
 	}
 }
