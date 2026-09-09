@@ -522,8 +522,10 @@ func TestGitLabCallInventory(t *testing.T) {
 
 	// What the platform has taken over: the project's config merge, branch
 	// protection, MR approval rules and settings, the settings-variable
-	// flags, and the security-policy read (which no lane can feed, so the
-	// runner no longer spends a credential discovering that).
+	// flags, and the security-policy read - that last one because the
+	// snapshot now ANSWERS it (security_policy_project, 2026-08-27), not
+	// because nothing can: a CI job token could never have read it, and the
+	// runner no longer spends a credential discovering that.
 	//
 	// What is left, and why each one is still here:
 	//
@@ -631,10 +633,17 @@ func ledgerDiff(want, got []string) string {
 // TestSwitchedLanesReportTheSameVerdicts is the other half of the ledger.
 //
 // Removing a call is only progress if the verdict survives it. The fake
-// GitLab and the snapshot fixture describe the SAME project - one branch
-// named main, no branch protections, no approval rules, no settings
-// variables - so a lane that moved from the API to the snapshot must
-// produce the identical finding it produced before.
+// GitLab and the snapshot fixture describe the same project, and agree
+// wherever both carry a fact - one branch named main, no branch
+// protections, no approval rules, no settings variables - so a lane that
+// moved from the API to the snapshot must produce the identical finding it
+// produced before.
+//
+// Two of the snapshot's lanes have no counterpart in the fake's payload at
+// all (the merge settings, the security-policy linkage). Those are not a
+// parity claim: they are lanes only the snapshot can feed, and
+// TestSnapshotLanesEvaluateMergeSettingsAndSecurityPolicy is where their
+// values are asserted.
 //
 // The rule this enforces is the one `scripts/platform-e2e/compare.sh`
 // enforces against a real project: platform mode may report LESS than a
@@ -1111,15 +1120,24 @@ func TestCIRunWithNoCheckoutStaysUseful(t *testing.T) {
 //
 // pipelineMustNotOverrideJobVariables compares the pre-merge file against
 // the merged pipeline, so it now has its document and must produce a
-// verdict instead of abstaining. Its sibling
-// pipelineMustNotIncludeHardcodedJobs still abstains here for an unrelated
-// reason this fixture cannot avoid: the fake refuses every request, so the
-// component include never resolves and its attribution is incomplete.
+// verdict instead of abstaining. It is the ONLY control this lane can
+// unblock in this shape of run: its sibling
+// pipelineMustNotIncludeHardcodedJobs is in
+// controlsRequiringIncludeAttribution, and a run with no checkout is always
+// digest-divergent, so markPlatformLaneGapsFor abstains it on every such
+// run no matter what root file is available.
 //
-// A lane the platform reports DEGRADED is the opposite direction and is
-// asserted with it: what is on offer there is a truncation (the platform's
-// own size cap), and scoring against a short root file yields fewer
-// hardcoded jobs and fewer overridden variables, which is a silent pass.
+// The resolution is SourceResolved at the anchor's own sha, which is the
+// shape production can actually produce here: no checkout means no local
+// digest, so the run is divergent and its config comes from the resolve
+// endpoint - at the commit the snapshot was taken from, in the covered
+// case.
+//
+// Two directions are asserted beside it, both of which must keep today's
+// abstention: a lane the platform reports DEGRADED (a truncation past its
+// size cap, which would yield fewer overridden variables - a silent pass),
+// and a config resolved at a commit the snapshot does not cover (an older
+// root file beside a newer pipeline, which fabricates rather than hides).
 func TestServedRawConfigClosesTheNoCheckoutGap(t *testing.T) {
 	// The root file that merges into mergedYAML: the project declares
 	// local_job itself and pulls component_job in through the component.
@@ -1131,7 +1149,7 @@ local_job:
     - echo local
 `
 
-	run := func(t *testing.T, branch string, degraded ...string) *AnalysisResult {
+	run := func(t *testing.T, resolvedSha string, degraded ...string) *AnalysisResult {
 		t.Helper()
 		rec := &gitlabRecorder{sha: "0123456789abcdef0123456789abcdef01234567"}
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -1147,10 +1165,14 @@ local_job:
 		conf.PlatformRun = platformSnapshot(t, rec.sha)
 		conf.PlatformRun.Context.Snapshot.Data.RawConfig = rawConfig
 		conf.PlatformRun.Context.Snapshot.Data.DegradedFields = degraded
+		// The reachable resolution for a run with no checkout: divergent by
+		// construction, so the config comes from the resolve endpoint.
+		conf.PlatformRun.Config.Source = platform.SourceResolved
+		conf.PlatformRun.Config.Digest = platform.DigestNoAnchor
+		conf.PlatformRun.Config.ResolvedSha = resolvedSha
 		inCIJob(t, conf, rec.sha)
 		conf.CheckoutIsAnalyzedProject = false
 		conf.GitRepoRoot = ""
-		conf.Branch = branch
 
 		result, err := RunAnalysis(conf)
 		if err != nil {
@@ -1159,17 +1181,17 @@ local_job:
 		return result
 	}
 
-	// "main" is the snapshot's anchor ref, so the served file describes the
-	// revision under analysis.
+	// Resolved at the anchor's own commit: the served file is the file that
+	// produced the pipeline being analysed.
 	t.Run("the served file lets the pre-merge control evaluate", func(t *testing.T) {
-		result := run(t, "main")
+		result := run(t, "0123456789abcdef0123456789abcdef01234567")
 		if reason, marked := result.NotEvaluable["pipelineMustNotOverrideJobVariables"]; marked {
 			t.Errorf("this control has the pre-merge file the platform served and must not abstain, got %q", reason)
 		}
 	})
 
 	t.Run("a degraded lane keeps the honest abstention", func(t *testing.T) {
-		result := run(t, "main", platform.DegradedFieldRawConfig)
+		result := run(t, "0123456789abcdef0123456789abcdef01234567", platform.DegradedFieldRawConfig)
 		reason, marked := result.NotEvaluable["pipelineMustNotOverrideJobVariables"]
 		if !marked {
 			t.Fatal("a truncated root file is not a root file; the control must abstain rather than score against it")
@@ -1179,17 +1201,18 @@ local_job:
 		}
 	})
 
-	// Another branch: the merged pipeline is resolved for THIS ref while the
-	// served root file is the anchor's, and comparing two revisions
-	// fabricates rather than degrades - a global variable the anchor
-	// declares and this branch does not still reads as declared. The
-	// abstention is the honest answer, and it is the same one this run gave
-	// before the lane existed.
-	t.Run("another branch does not borrow the anchor's root file", func(t *testing.T) {
-		result := run(t, "feature/x")
+	// A commit the snapshot does not cover - the ordinary case of a pipeline
+	// that ran because the CI file changed. The merged pipeline is this
+	// commit's and the served root file is the snapshot's, and comparing two
+	// revisions fabricates rather than degrades: a protected variable
+	// removed in this commit still reads as declared, which is an ISSUE-205
+	// Critical nobody can act on. The abstention is the honest answer, and
+	// it is the same one this run gave before the lane existed.
+	t.Run("a commit the snapshot does not cover keeps the abstention", func(t *testing.T) {
+		result := run(t, "fedcba9876543210fedcba9876543210fedcba98")
 		reason, marked := result.NotEvaluable["pipelineMustNotOverrideJobVariables"]
 		if !marked {
-			t.Fatal("the served file describes the anchor, not this branch; the control must abstain")
+			t.Fatal("the served file is an older commit's; the control must abstain")
 		}
 		if reason != ReasonRawConfigUnavailable {
 			t.Errorf("reason = %q, want %q", reason, ReasonRawConfigUnavailable)

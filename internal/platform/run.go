@@ -314,10 +314,9 @@ func (r *RunContext) SnapshotMergeVerdict() (status string, errs []string, serve
 // platform served it, and whether it may be used.
 //
 // It closes the gap a run with no checkout of the analyzed project has: the
-// merged pipeline comes from the platform, but the pre-merge document two
-// controls compare against (pipelineMustNotIncludeHardcodedJobs,
-// pipelineMustNotOverrideJobVariables) is unreadable, and both fail
-// silently without it rather than loudly.
+// merged pipeline comes from the platform, but the pre-merge document
+// pipelineMustNotOverrideJobVariables compares against is unreadable, and
+// that control fails silently without it rather than loudly.
 //
 // A false second return keeps that honest gap rather than closing it with
 // something weaker. Three states produce one:
@@ -328,34 +327,9 @@ func (r *RunContext) SnapshotMergeVerdict() (status string, errs []string, serve
 //     and fewer overridden variables - a silent pass, the one direction the
 //     abstention exists to prevent.
 //   - Nothing was served at all.
-//   - The run is analysing a different revision from the one the file was
-//     collected at: see the ref and sha arguments.
-//
-// ref and sha are the revision under analysis, and the file is served only
-// when one of them IS the snapshot's anchor. The file is the root config at
-// the anchor - the default branch, at collection time - while the merged
-// pipeline it would be compared against may have been resolved by the
-// platform for THIS branch. Pairing two revisions is not a smaller version
-// of pairing one: a variable the anchor declares globally and this branch
-// does not still reads as declared, which is a fabricated Critical, and
-// every finding carried by the root file points at line numbers in a file
-// this ref does not have. A run with no checkout is always digest-divergent
-// (there is no local file to digest), so this is the state the check exists
-// for rather than a corner of it.
-//
-// The REF is what decides whenever both refs are known: it is the
-// same-branch answer, and it carries the snapshot's ordinary staleness,
-// which is what every other lane carries too. The commit is the fallback
-// for a run with no ref to compare (a detached job), where it is the exact
-// answer - the same revision, whatever it is called.
-//
-// The two are deliberately not an either-or. The analysed sha a caller has
-// is the head of the analysed ref, and when THAT lookup fails the codebase
-// falls back to the default branch's head (control/task.go) - which is the
-// anchor's. A sha that could stand in for a ref would then serve the
-// anchor's root file to a feature branch precisely when the run knew least
-// about it.
-func (r *RunContext) SnapshotRawConfig(ref, sha string) (string, bool) {
+//   - The configuration under evaluation is not the one the file was
+//     collected beside: see anchorCoversEvaluatedConfig.
+func (r *RunContext) SnapshotRawConfig() (string, bool) {
 	if !r.Engaged() {
 		return "", false
 	}
@@ -366,29 +340,65 @@ func (r *RunContext) SnapshotRawConfig(ref, sha string) (string, bool) {
 	if r.LaneDegraded(DegradedFieldRawConfig) {
 		return "", false
 	}
-	if !r.anchorCovers(ref, sha) {
+	if !r.anchorCoversEvaluatedConfig() {
 		return "", false
 	}
 	return snap.Data.RawConfig, true
 }
 
-// anchorCovers reports whether the revision under analysis is the one the
-// snapshot was collected at: the ref when both are known, the commit when
-// there is no ref to compare.
+// anchorCoversEvaluatedConfig reports whether the merged configuration this
+// run evaluates was produced from the SAME commit the snapshot's raw_config
+// was collected at.
 //
-// It reads the anchor off the resolution, which fills AnchorSha and
-// AnchorRef synchronously in StartRunConfigResolution - before any resolve
-// request is fired - so it needs no join. An empty anchor field never
-// matches: "unknown" is not "the same".
-func (r *RunContext) anchorCovers(ref, sha string) bool {
+// It is a question about two documents, not about branches, and only the
+// commit answers it. The served file is the root config at the anchor; the
+// merged pipeline beside it may have been resolved by the platform for this
+// run at a different commit, and pairing two revisions does not degrade a
+// verdict, it invents one: policies/job_variable_override.rego reads the
+// root file directly (localVariables, localGlobalVariables), so a protected
+// variable removed in the analysed commit is still reported as an ISSUE-205
+// CRITICAL, and one added in it is missed. Every finding the root file
+// carries also points at line numbers in a file that commit does not have.
+//
+// A same-BRANCH check does not answer it. A run with no checkout has no
+// local digest (cmd/platform_mode.go computes none), so it is always
+// divergent and its config is resolved at the job's own commit: on the
+// anchor's own ref, every commit made since the snapshot was collected
+// would be analysed against an older copy of its CI file. That population -
+// "the CI file changed, so the pipeline ran" - is the common one, not a
+// corner, which is why the ref is not consulted at all.
+//
+// The two sources agree on what the evaluated commit is:
+//
+//   - SourceSnapshot: the merged document IS the anchor's own merged_yaml
+//     (StartRunConfigResolution takes that path only when the checkout's
+//     digest equals the anchor's), so the file beside it is the file that
+//     produced it.
+//   - SourceResolved: the platform resolved this run's config at
+//     ResolvedSha, and only an exact match with the anchor makes the served
+//     file that commit's.
+//
+// An empty anchor sha never covers anything: "unknown" is not "the same".
+// The comparison is on the full sha both sides carry; an abbreviated one
+// would not match, which errs toward the abstention.
+func (r *RunContext) anchorCoversEvaluatedConfig() bool {
 	if r == nil || r.Config == nil {
 		return false
 	}
-	anchorRef, anchorSha := strings.TrimSpace(r.Config.AnchorRef), strings.TrimSpace(r.Config.AnchorSha)
-	if anchorRef != "" && strings.TrimSpace(ref) != "" {
-		return anchorRef == strings.TrimSpace(ref)
+	// ResolvedSha is written by the resolving goroutine, so this must join
+	// before reading it. AnchorSha is set synchronously and needs no join.
+	r.Config.join()
+	anchorSha := strings.TrimSpace(r.Config.AnchorSha)
+	if anchorSha == "" {
+		return false
 	}
-	return anchorSha != "" && strings.EqualFold(anchorSha, strings.TrimSpace(sha))
+	switch r.Config.Source {
+	case SourceSnapshot:
+		return true
+	case SourceResolved:
+		return strings.EqualFold(anchorSha, strings.TrimSpace(r.Config.ResolvedSha))
+	}
+	return false
 }
 
 // LaneDegraded reports whether a named snapshot lane failed collection on
