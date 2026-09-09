@@ -169,8 +169,7 @@ var controlFieldDocs = map[string]FieldDoc{
 		Description: "Turns the control on; when false or absent the control is skipped.",
 	},
 	"pipelineMustNotEnableDebugTrace.forbiddenVariables": {
-		Description: "List of CI/CD variable names that must not be set to true.",
-		Default:     "CI_DEBUG_TRACE, CI_DEBUG_SERVICES",
+		Description: "List of CI/CD variable names that must not be set to true; there is no built-in list, so the control asserts nothing until it is set (CI_DEBUG_TRACE and CI_DEBUG_SERVICES are the typical entries).",
 	},
 	"pipelineMustNotUseUnsafeVariableExpansion.enabled": {
 		Description: "Turns the control on; when false or absent the control is skipped.",

@@ -1034,8 +1034,11 @@ type DebugTraceControlConfig struct {
 	// Enabled controls whether this check runs
 	Enabled *bool `yaml:"enabled,omitempty"`
 
-	// ForbiddenVariables is a list of CI/CD variable names that must not be set to "true"
-	// Defaults: CI_DEBUG_TRACE, CI_DEBUG_SERVICES
+	// ForbiddenVariables is a list of CI/CD variable names that must not be
+	// set to "true". There is NO built-in default list: the rego denies only
+	// when this list is non-empty, so the control asserts nothing until it is
+	// set (see policies/debug_trace.rego). CI_DEBUG_TRACE and
+	// CI_DEBUG_SERVICES are the typical entries.
 	ForbiddenVariables []string `yaml:"forbiddenVariables,omitempty"`
 }
 

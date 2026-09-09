@@ -975,12 +975,11 @@
             "name": "forbiddenVariables",
             "type": "array",
             "optional": true,
-            "description": "List of CI/CD variable names that must not be set to true.",
+            "description": "List of CI/CD variable names that must not be set to true; there is no built-in list, so the control asserts nothing until it is set (CI_DEBUG_TRACE and CI_DEBUG_SERVICES are the typical entries).",
             "elem": {
               "type": "string",
               "optional": false
-            },
-            "default": "CI_DEBUG_TRACE, CI_DEBUG_SERVICES"
+            }
           }
         ]
       },
