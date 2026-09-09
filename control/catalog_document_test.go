@@ -51,4 +51,17 @@ func TestCatalogDocument(t *testing.T) {
 	if c := byName["cicdVariablesMustBeProtected"]; c.ConfigSchema == nil {
 		t.Error("cicdVariablesMustBeProtected has a config block but no schema in the catalog")
 	}
+
+	// requiresConfig is exported authored truth (#458 amendment): a
+	// control that is inert without configuration (mergeRequestApproval-
+	// RulesMustRequireMinimumApprovals: "unset asserts nothing") carries
+	// requiresConfig true, while a control whose logic is self-contained
+	// once enabled (cicdVariablesMustBeProtected: config-free beyond
+	// enabled) carries requiresConfig false.
+	if c := byName["mergeRequestApprovalRulesMustRequireMinimumApprovals"]; !c.RequiresConfig {
+		t.Error("mergeRequestApprovalRulesMustRequireMinimumApprovals should carry requiresConfig true")
+	}
+	if c := byName["cicdVariablesMustBeProtected"]; c.RequiresConfig {
+		t.Error("cicdVariablesMustBeProtected should carry requiresConfig false")
+	}
 }
