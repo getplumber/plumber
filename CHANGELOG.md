@@ -1,3 +1,31 @@
+## [0.4.57](https://github.com/getplumber/plumber/compare/v0.4.56...v0.4.57) (2026-09-09)
+
+
+### ✨ Features
+
+* **cidigest:** add the wire-stable ci config digest_v1 replica (ADR-0034 rule 1) ([3cb009c](https://github.com/getplumber/plumber/commit/3cb009ca0d651caa1173545cde1f2dde40f18e13))
+* **platform:** decode project details, security policy, raw config and merge status from the snapshot ([f0abae3](https://github.com/getplumber/plumber/commit/f0abae3d2132fdc6d1cba27808cd0c0544cd6e47))
+* **platform:** evaluate merge settings and security policy from the snapshot lanes ([1892301](https://github.com/getplumber/plumber/commit/1892301fa2f0e0ae1eb25f861c10bdda774d9179))
+* **platform:** use the served merge status, ci errors and raw config ([607912c](https://github.com/getplumber/plumber/commit/607912cb3e2b32615095655c30e6373bb495bdae))
+
+
+### 🐛 Bug Fixes
+
+* **platform:** gate the served raw config on the anchor, validate the merge status ([628c343](https://github.com/getplumber/plumber/commit/628c34301eb415b4743b7617e1eed9912fbe83d5))
+* **platform:** serve the raw config only at the snapshot's commit; name absent lanes ([7faf706](https://github.com/getplumber/plumber/commit/7faf706c673b9f22bf51916a968b7f381842f029))
+
+
+### 📚 Documentation
+
+* **platform:** design spec for platform-mode collection without a GitLab token ([640128f](https://github.com/getplumber/plumber/commit/640128f99114e46f159904ff29e762bc9b251fa5))
+* **platform:** implementation plan for token-free platform-mode collection ([7c9e6d1](https://github.com/getplumber/plumber/commit/7c9e6d1c27b1f82a495371f31441b06cd892463d))
+* **platform:** rescope the platform-mode work to the snapshot lanes the cli does not consume yet ([68c25e5](https://github.com/getplumber/plumber/commit/68c25e5576129681056e80867c81e6ca61a6ff1c))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.56 refs [skip ci] ([2c9b116](https://github.com/getplumber/plumber/commit/2c9b116abe4096e04456e0f1b1662756eb3b000d))
+
 ## [0.4.56](https://github.com/getplumber/plumber/compare/v0.4.55...v0.4.56) (2026-09-09)
 
 
