@@ -1,16 +1,3 @@
-## Unreleased
-
-### ✨ Features
-
-* **platform:** evaluate `mergeRequestSettingsMustBeCompliant` (ISSUE-506) and `projectMustHaveSecurityPolicySource` (ISSUE-601) from the snapshot. Both were written off as `lane_not_served` on comments that had gone stale: the platform has served `project_details` and `security_policy_project` since 2026-08-27 and the eight merge settings since 2026-08-28, so in platform mode the two controls were permanently `not_evaluable` over data the CLI was already being sent. No new request in either mode.
-* **platform:** use the git host's own merge verdict. `merged_yaml_status` and `ci_errors` are read from the snapshot instead of being synthesized locally, which is the only way a snapshot-path run can learn that GitLab rejected the merge: the local synthesis always said `VALID`, so an unmergeable configuration was analysed with its missing jobs simply absent. Snapshots that serve neither field keep the synthesis, and the anchor's verdict is never attached to a digest-divergent branch's own configuration.
-* **platform:** use the served `raw_config` as the pre-merge document when the checkout is not the analysed project or its root CI file could not be read. `pipelineMustNotIncludeHardcodedJobs` and `pipelineMustNotOverrideJobVariables` then report instead of abstaining with `raw_config_unavailable`; a lane the platform reports as degraded (its own size cap) keeps that abstention rather than scoring against a truncated file.
-* **platform:** recognize the four `degraded_fields` identifiers the CLI lacked - `raw_config`, `source_catalog`, `security_policy_project`, `includes_jobs` - so a failed lane degrades its control instead of reaching the operator as an unknown value.
-
-### 📚 Documentation
-
-* **platform:** `GITLAB_TOKEN` has not been required in platform mode since v0.4.50; the note is repeated here because the gap this release closes was mistaken for that one.
-
 ## [0.4.56](https://github.com/getplumber/plumber/compare/v0.4.55...v0.4.56) (2026-09-09)
 
 

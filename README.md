@@ -243,17 +243,21 @@ it to decide what to collect and what to report:
   per policy file from re-fetching the same settings once per policy file.
   Variable *values* are never served and never needed: the controls read the
   protected and masked flags, not the secrets.
-- **A job with no checkout still gets the pre-merge file.** When the working
-  tree is not the analysed project (`GIT_STRATEGY: none`, a sparse checkout,
-  a `ci_config_path` in another project), the snapshot's copy of the
-  project's own un-merged CI file stands in for the one that could not be
-  read, so the controls that compare it against the merged pipeline still
-  report. A copy the platform flags as incomplete is not used: those
-  controls report `not_evaluable` instead.
+- **A job with no checkout still gets the pre-merge file, on the branch the
+  snapshot covers.** When the working tree is not the analysed project
+  (`GIT_STRATEGY: none`, a sparse checkout, a `ci_config_path` in another
+  project), the snapshot's copy of the project's own un-merged CI file
+  stands in for the one that could not be read, so the controls that compare
+  it against the merged pipeline still report. That copy is the file
+  collected at the default branch when the snapshot was built, so it is used
+  only when the run is analysing that same ref or commit; on any other
+  branch, and on a copy the platform flags as incomplete, those controls
+  report `not_evaluable` rather than compare two different revisions.
 - **A CI job needs no GitLab token.** Platform mode is built for CI, and a
   job already has what the rest would have been fetched for: its own
   identity in the predefined `CI_*` variables, its checkout, and its
-  environment. Set `--platform` and Plumber runs without a `GITLAB_TOKEN`.
+  environment. Set `--platform` and Plumber runs without a `GITLAB_TOKEN`,
+  as it has since v0.4.50.
   A few checks still read the projects your pipeline *includes* from, and
   without a token those report `not_evaluable` rather than passing.
 - **Your branch is evaluated against its own configuration.** Plumber hashes

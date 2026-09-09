@@ -364,8 +364,12 @@ func TestDescribe_AnchorShaNote(t *testing.T) {
 // the caller pairs with lanesWhoseAbsenceIsAFailure to decide whether an
 // absence is a real answer or a collection that never completed. A lane the
 // switch does not name falls through to false, which reads as "the lane is
-// present" - so a lane added to the constants and forgotten here would be
-// certified served on every run that lacks it.
+// present", so an unhandled lane is certified served on every run that
+// lacks it - the direction worth pinning.
+//
+// The table is hand-maintained and cannot notice a lane nobody added to it:
+// it pins the six answers that exist today, and a new lane needs its own
+// row here as much as its own case in the switch.
 func TestLaneMissingCoversEveryServedLane(t *testing.T) {
 	id := 7
 	full := &SnapshotData{
