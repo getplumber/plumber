@@ -5,6 +5,13 @@ package control
 const docsBaseURL = "https://getplumber.io/docs/cli/issues/"
 
 // ErrorCode represents a unique Plumber issue code (ISSUE-XXX format).
+//
+// ISSUE codes are immutable identifiers (#458): the platform keys durable
+// state (issues, history, dismissals) on them. A code is never renumbered,
+// never reused for a different meaning, and survives any rename of titles
+// or control names. TestIssueCodesAreUnique pins uniqueness;
+// TestEveryRegoIssueCodeIsRegistered pins that no policy emits an
+// unregistered code.
 type ErrorCode string
 
 // IssueSeverity is the documented severity for an issue code (aligned with getplumber.io issue docs).

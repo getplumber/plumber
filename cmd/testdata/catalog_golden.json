@@ -1,0 +1,2501 @@
+{
+  "catalogVersion": 1,
+  "cliVersion": "test",
+  "controls": [
+    {
+      "id": "CTRL-708",
+      "name": "actionPinCommentsMustMatchSha",
+      "displayName": "Action pin comments must match the pinned SHA",
+      "category": "Third-party Actions",
+      "providers": [
+        "github"
+      ],
+      "description": "Verifies that a `# vX.Y.Z` version comment on a pinned action matches the tag the pinned commit SHA actually corresponds to.",
+      "issueCodes": [
+        "ISSUE-708"
+      ]
+    },
+    {
+      "id": "CTRL-709",
+      "name": "actionPinsMustNotBeStale",
+      "displayName": "Action pins must not be stale",
+      "category": "Third-party Actions",
+      "providers": [
+        "github"
+      ],
+      "description": "Flags actions pinned to a commit SHA that predates the repository's most recent upstream release.",
+      "issueCodes": [
+        "ISSUE-709"
+      ]
+    },
+    {
+      "id": "CTRL-707",
+      "name": "actionRefsMustExistUpstream",
+      "displayName": "Actions must pin commits that exist upstream",
+      "category": "Third-party Actions",
+      "providers": [
+        "github"
+      ],
+      "description": "Verifies that a pinned action commit SHA actually exists in the action's upstream repository.",
+      "configSchema": {
+        "control": "actionRefsMustExistUpstream",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-707"
+      ]
+    },
+    {
+      "id": "CTRL-701",
+      "name": "actionsMustBePinnedByCommitSha",
+      "displayName": "Third-party actions must be pinned by commit SHA",
+      "category": "Third-party Actions",
+      "providers": [
+        "github"
+      ],
+      "description": "Requires third-party GitHub Actions to be pinned to a full commit SHA instead of a mutable tag or branch reference.",
+      "configSchema": {
+        "control": "actionsMustBePinnedByCommitSha",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          },
+          {
+            "name": "trustedOwners",
+            "type": "array",
+            "optional": true,
+            "description": "List of action-owner prefixes exempt from the pin-by-SHA requirement; only owners already inside the workflow's trust boundary should be listed.",
+            "elem": {
+              "type": "string",
+              "optional": false
+            }
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-701"
+      ]
+    },
+    {
+      "id": "CTRL-702",
+      "name": "actionsMustNotBeArchived",
+      "displayName": "Actions must not reference archived repositories",
+      "category": "Third-party Actions",
+      "providers": [
+        "github"
+      ],
+      "description": "Flags actions hosted in a GitHub repository that has been archived, since it no longer receives maintenance or security fixes.",
+      "configSchema": {
+        "control": "actionsMustNotBeArchived",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-702"
+      ]
+    },
+    {
+      "id": "CTRL-703",
+      "name": "actionsMustNotCarryKnownCVEs",
+      "displayName": "Actions must not carry known CVEs",
+      "category": "Third-party Actions",
+      "providers": [
+        "github"
+      ],
+      "description": "Verifies that the pinned version of every third-party action is free of published security advisories in the GitHub Advisory Database.",
+      "configSchema": {
+        "control": "actionsMustNotCarryKnownCVEs",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-703"
+      ]
+    },
+    {
+      "id": "CTRL-711",
+      "name": "actionsMustNotDuplicateRunnerBuiltins",
+      "displayName": "Actions must not duplicate runner builtins",
+      "category": "Third-party Actions",
+      "providers": [
+        "github"
+      ],
+      "description": "Flags third-party actions that duplicate functionality the GitHub-hosted runner already provides, an unnecessary supply-chain dependency.",
+      "issueCodes": [
+        "ISSUE-711"
+      ]
+    },
+    {
+      "id": "CTRL-714",
+      "name": "actionsMustNotExecuteMutableRemoteCode",
+      "displayName": "Actions must not execute mutable remote code",
+      "category": "Third-party Actions",
+      "providers": [
+        "github"
+      ],
+      "description": "Detects third-party actions whose own source fetches and executes code from a mutable ref without verifying it against a checksum, including obfuscated fetch-then-execute patterns.",
+      "configSchema": {
+        "control": "actionsMustNotExecuteMutableRemoteCode",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-714",
+        "ISSUE-715",
+        "ISSUE-716"
+      ]
+    },
+    {
+      "id": "CTRL-501",
+      "name": "branchMustBeProtected",
+      "displayName": "Branch must be protected",
+      "category": "Access and Authorization",
+      "providers": [
+        "gitlab",
+        "github"
+      ],
+      "description": "Verifies that the analyzed branch is protected and that the protection settings are compliant: direct pushes and force pushes blocked, access levels tight enough, and code owner approval enforced where required.",
+      "configSchema": {
+        "control": "branchMustBeProtected",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          },
+          {
+            "name": "namePatterns",
+            "type": "array",
+            "optional": true,
+            "description": "List of branch name patterns that must be protected; supports wildcards.",
+            "elem": {
+              "type": "string",
+              "optional": false
+            }
+          },
+          {
+            "name": "defaultMustBeProtected",
+            "type": "bool",
+            "optional": true,
+            "description": "Requires the default branch to be protected."
+          },
+          {
+            "name": "allowForcePush",
+            "type": "bool",
+            "optional": true,
+            "description": "When false, force push must be disabled on protected branches."
+          },
+          {
+            "name": "codeOwnerApprovalRequired",
+            "type": "bool",
+            "optional": true,
+            "description": "When true, code owner approval is required."
+          },
+          {
+            "name": "minMergeAccessLevel",
+            "type": "integer",
+            "optional": true,
+            "description": "Minimum access level required to merge (0 = No one, 30 = Developer, 40 = Maintainer)."
+          },
+          {
+            "name": "minPushAccessLevel",
+            "type": "integer",
+            "optional": true,
+            "description": "Minimum access level required to push (0 = No one, 30 = Developer, 40 = Maintainer)."
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-501",
+        "ISSUE-505"
+      ]
+    },
+    {
+      "id": "CTRL-307",
+      "name": "checkoutMustNotPersistCredentials",
+      "displayName": "Checkout must not persist credentials",
+      "category": "CI/CD Secrets",
+      "providers": [
+        "github"
+      ],
+      "description": "Detects checkout steps that persist credentials in .git/config, especially when a later step uploads that path into an artifact.",
+      "configSchema": {
+        "control": "checkoutMustNotPersistCredentials",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-307",
+        "ISSUE-310"
+      ]
+    },
+    {
+      "id": "CTRL-202",
+      "name": "cicdVariablesMustBeMasked",
+      "displayName": "CI/CD variables must be masked",
+      "category": "CI/CD Variables",
+      "providers": [
+        "gitlab"
+      ],
+      "description": "Verifies that CI/CD settings variables are masked so their values do not print in job logs.",
+      "configSchema": {
+        "control": "cicdVariablesMustBeMasked",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-202"
+      ]
+    },
+    {
+      "id": "CTRL-201",
+      "name": "cicdVariablesMustBeProtected",
+      "displayName": "CI/CD variables must be protected",
+      "category": "CI/CD Variables",
+      "providers": [
+        "gitlab"
+      ],
+      "description": "Verifies that CI/CD settings variables are marked protected so they are not exposed to pipelines running on unprotected branches.",
+      "configSchema": {
+        "control": "cicdVariablesMustBeProtected",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-201"
+      ]
+    },
+    {
+      "id": "CTRL-704",
+      "name": "containerCredentialsMustComeFromSecrets",
+      "displayName": "Container credentials must come from secrets",
+      "category": "Third-party Actions",
+      "providers": [
+        "github"
+      ],
+      "description": "Verifies that container registry credentials are referenced from secrets instead of hardcoded as literal values in the workflow.",
+      "issueCodes": [
+        "ISSUE-704"
+      ]
+    },
+    {
+      "id": "CTRL-101",
+      "name": "containerImageMustComeFromAuthorizedSources",
+      "displayName": "Container images must come from authorized sources",
+      "category": "CI/CD Container Images",
+      "providers": [
+        "gitlab",
+        "github"
+      ],
+      "description": "Verifies that container images referenced in the pipeline are pulled only from an authorized registry.",
+      "configSchema": {
+        "control": "containerImageMustComeFromAuthorizedSources",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          },
+          {
+            "name": "trustedUrls",
+            "type": "array",
+            "optional": true,
+            "description": "List of trusted registry URLs or patterns; supports wildcards.",
+            "elem": {
+              "type": "string",
+              "optional": false
+            }
+          },
+          {
+            "name": "trustDockerHubOfficialImages",
+            "type": "bool",
+            "optional": true,
+            "description": "Trusts official Docker Hub images, such as nginx or alpine."
+          },
+          {
+            "name": "includePlumberDefaults",
+            "type": "bool",
+            "optional": true,
+            "description": "In overlay mode, unions Plumber's curated default trusted list with trustedUrls; set false to trust only the listed entries; ignored in legacy mode.",
+            "default": "true"
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-101"
+      ]
+    },
+    {
+      "id": "CTRL-102",
+      "name": "containerImageMustNotUseForbiddenTags",
+      "displayName": "Container images must not use forbidden tags",
+      "category": "CI/CD Container Images",
+      "providers": [
+        "gitlab",
+        "github"
+      ],
+      "description": "Flags container images referenced by mutable or forbidden tags (such as latest) and, when configured, requires images to be pinned by digest.",
+      "configSchema": {
+        "control": "containerImageMustNotUseForbiddenTags",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          },
+          {
+            "name": "tags",
+            "type": "array",
+            "optional": true,
+            "description": "List of forbidden tags, such as latest or dev.",
+            "elem": {
+              "type": "string",
+              "optional": false
+            }
+          },
+          {
+            "name": "containerImagesMustBePinnedByDigest",
+            "type": "bool",
+            "optional": true,
+            "description": "When true, all images must use immutable digest references, taking precedence over the forbidden tags list."
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-102",
+        "ISSUE-103"
+      ]
+    },
+    {
+      "id": "CTRL-902",
+      "name": "dependabotEcosystemsMustHaveCooldown",
+      "displayName": "Dependabot ecosystems must have a cooldown",
+      "category": "Repository Hygiene",
+      "providers": [
+        "github"
+      ],
+      "description": "Verifies that every Dependabot update ecosystem declares a cooldown window before opening pull requests for newly published versions.",
+      "issueCodes": [
+        "ISSUE-902"
+      ]
+    },
+    {
+      "id": "CTRL-901",
+      "name": "dependabotMustNotAllowInsecureExternalCodeExecution",
+      "displayName": "Dependabot must not allow insecure external code execution",
+      "category": "Repository Hygiene",
+      "providers": [
+        "github"
+      ],
+      "description": "Detects Dependabot configuration that re-enables insecure external code execution for an update ecosystem.",
+      "issueCodes": [
+        "ISSUE-901"
+      ]
+    },
+    {
+      "id": "CTRL-305",
+      "name": "deployJobsMustUseEnvironmentGate",
+      "displayName": "Deploy jobs must use an environment gate",
+      "category": "CI/CD Secrets",
+      "providers": [
+        "github"
+      ],
+      "description": "Verifies that deploy and release jobs consuming production secrets declare an environment gate.",
+      "issueCodes": [
+        "ISSUE-305"
+      ]
+    },
+    {
+      "id": "CTRL-706",
+      "name": "dockerfilesMustPinBaseImageByDigest",
+      "displayName": "Dockerfiles must pin base images by digest",
+      "category": "Third-party Actions",
+      "providers": [
+        "github"
+      ],
+      "description": "Verifies that Dockerfile FROM references pin the base image by SHA256 digest instead of a mutable tag.",
+      "issueCodes": [
+        "ISSUE-706"
+      ]
+    },
+    {
+      "id": "CTRL-402",
+      "name": "externalRefsMustNotCollide",
+      "displayName": "Includes must not use ambiguous tag/branch refs",
+      "category": "Pipeline Composition",
+      "providers": [
+        "gitlab",
+        "github"
+      ],
+      "description": "Flags external CI references pinned to a name that exists upstream as both a tag and a branch, since the ambiguity can silently switch which revision runs.",
+      "configSchema": {
+        "control": "externalRefsMustNotCollide",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-402"
+      ]
+    },
+    {
+      "id": "CTRL-713",
+      "name": "githubActionMustComeFromAuthorizedSources",
+      "displayName": "Actions must come from authorized sources",
+      "category": "Third-party Actions",
+      "providers": [
+        "github"
+      ],
+      "description": "Verifies that third-party GitHub Actions referenced in workflows come from an authorized owner, org allowlist, or minimum-popularity source.",
+      "configSchema": {
+        "control": "githubActionMustComeFromAuthorizedSources",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          },
+          {
+            "name": "trustGithubOfficialActions",
+            "type": "bool",
+            "optional": true,
+            "description": "Trusts first-party GitHub-owned actions (actions/*, github/*); defaults to true when unset.",
+            "default": "true"
+          },
+          {
+            "name": "trustSameOrgActions",
+            "type": "bool",
+            "optional": true,
+            "description": "Trusts actions whose owner is the same org or user as the scanned repository; defaults to true when unset.",
+            "default": "true"
+          },
+          {
+            "name": "minimumStars",
+            "type": "integer",
+            "optional": true,
+            "description": "When greater than 0, trusts any action whose upstream repository has at least this many GitHub stars; 0 disables the star check.",
+            "default": "0"
+          },
+          {
+            "name": "trustedGithubActions",
+            "type": "array",
+            "optional": true,
+            "description": "Lists action sources that are always allowed; each entry is an exact owner/repo or an owner/* wildcard.",
+            "elem": {
+              "type": "string",
+              "optional": false
+            }
+          },
+          {
+            "name": "includePlumberDefaults",
+            "type": "bool",
+            "optional": true,
+            "description": "In overlay mode, unions Plumber's curated default trusted list with trustedGithubActions; set false to trust only the listed entries; ignored in legacy mode.",
+            "default": "true"
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-713"
+      ]
+    },
+    {
+      "id": "CTRL-306",
+      "name": "githubAppTokensMustBeRevokedOnExit",
+      "displayName": "GitHub App tokens must be revoked on exit",
+      "category": "CI/CD Secrets",
+      "providers": [
+        "github"
+      ],
+      "description": "Detects GitHub App installation tokens minted with revocation disabled, which keeps the token alive after the workflow finishes.",
+      "issueCodes": [
+        "ISSUE-306"
+      ]
+    },
+    {
+      "id": "CTRL-403",
+      "name": "includesMustBeUpToDate",
+      "displayName": "Includes must be up to date",
+      "category": "Pipeline Composition",
+      "providers": [
+        "gitlab",
+        "github"
+      ],
+      "description": "Verifies that included CI/CD components and templates use the latest available version.",
+      "configSchema": {
+        "control": "includesMustBeUpToDate",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-403"
+      ]
+    },
+    {
+      "id": "CTRL-404",
+      "name": "includesMustNotUseForbiddenVersions",
+      "displayName": "Includes must not use forbidden versions",
+      "category": "Pipeline Composition",
+      "providers": [
+        "gitlab",
+        "github"
+      ],
+      "description": "Flags included CI/CD components and templates that use a version forbidden by the configuration, such as a mutable branch reference.",
+      "configSchema": {
+        "control": "includesMustNotUseForbiddenVersions",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          },
+          {
+            "name": "forbiddenVersions",
+            "type": "array",
+            "optional": true,
+            "description": "List of version patterns considered forbidden, such as latest, main, or HEAD.",
+            "elem": {
+              "type": "string",
+              "optional": false
+            }
+          },
+          {
+            "name": "defaultBranchIsForbiddenVersion",
+            "type": "bool",
+            "optional": true,
+            "description": "When true, adds the project's default branch to the forbidden versions list."
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-404"
+      ]
+    },
+    {
+      "id": "CTRL-504",
+      "name": "mergeRequestApprovalRulesMustCoverAllProtectedBranches",
+      "displayName": "MR approval rules must cover all protected branches",
+      "category": "Access and Authorization",
+      "providers": [
+        "gitlab"
+      ],
+      "description": "Verifies that at least one merge request approval rule applies to every protected branch, so none can be merged without a required approval.",
+      "configSchema": {
+        "control": "mergeRequestApprovalRulesMustCoverAllProtectedBranches",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-504"
+      ]
+    },
+    {
+      "id": "CTRL-502",
+      "name": "mergeRequestApprovalRulesMustRequireMinimumApprovals",
+      "displayName": "MR approval rules must require a minimum number of approvals",
+      "category": "Access and Authorization",
+      "providers": [
+        "gitlab"
+      ],
+      "description": "Verifies that every merge request approval rule covering all protected branches requires at least the configured minimum number of approvals.",
+      "configSchema": {
+        "control": "mergeRequestApprovalRulesMustRequireMinimumApprovals",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          },
+          {
+            "name": "minimumRequiredApprovals",
+            "type": "integer",
+            "optional": true,
+            "description": "Fewest approvals a rule covering all protected branches must require; a covering rule below this is flagged. Unset asserts nothing."
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-502"
+      ]
+    },
+    {
+      "id": "CTRL-503",
+      "name": "mergeRequestApprovalSettingsMustBeCompliant",
+      "displayName": "MR approval settings must be compliant",
+      "category": "Access and Authorization",
+      "providers": [
+        "gitlab"
+      ],
+      "description": "Verifies that the project's merge request approval settings (author and committer approval, rule overrides, re-authentication, approval reset on new commits) meet the configured policy.",
+      "configSchema": {
+        "control": "mergeRequestApprovalSettingsMustBeCompliant",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          },
+          {
+            "name": "preventApprovalByAuthor",
+            "type": "bool",
+            "optional": true,
+            "description": "When true, expects that merge request authors cannot approve their own merge requests."
+          },
+          {
+            "name": "preventApprovalsByCommitters",
+            "type": "bool",
+            "optional": true,
+            "description": "When true, expects that users who committed to a merge request cannot approve it."
+          },
+          {
+            "name": "preventEditingApprovalRulesInMR",
+            "type": "bool",
+            "optional": true,
+            "description": "When true, expects that approval rules cannot be overridden per merge request."
+          },
+          {
+            "name": "requireReAuthToApprove",
+            "type": "bool",
+            "optional": true,
+            "description": "When true, expects that approving a merge request requires re-authentication."
+          },
+          {
+            "name": "behaviorWhenCommitIsAdded",
+            "type": "string",
+            "optional": true,
+            "description": "Minimum required strictness for what happens to existing approvals when a commit is added to an open merge request; a project below the configured rung is flagged.",
+            "enum": [
+              "keep_approvals",
+              "remove_approvals_by_code_owners",
+              "remove_all_approvals"
+            ]
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-503"
+      ]
+    },
+    {
+      "id": "CTRL-506",
+      "name": "mergeRequestSettingsMustBeCompliant",
+      "displayName": "MR settings must be compliant",
+      "category": "Access and Authorization",
+      "providers": [
+        "gitlab"
+      ],
+      "description": "Verifies that the project's merge request and merge settings (merge method, squash policy, merge trains, source-branch removal) match the configured policy.",
+      "configSchema": {
+        "control": "mergeRequestSettingsMustBeCompliant",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          },
+          {
+            "name": "mergeMethod",
+            "type": "string",
+            "optional": true,
+            "description": "Expected merge method; any other value fails config validation.",
+            "enum": [
+              "merge",
+              "ff",
+              "rebase_merge"
+            ]
+          },
+          {
+            "name": "squashOption",
+            "type": "string",
+            "optional": true,
+            "description": "Expected squash policy; any other value fails config validation.",
+            "enum": [
+              "never",
+              "always",
+              "default_on",
+              "default_off"
+            ]
+          },
+          {
+            "name": "mergePipelinesEnabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Expected merged-results-pipelines setting."
+          },
+          {
+            "name": "mergeTrainsEnabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Expected merge-trains setting."
+          },
+          {
+            "name": "allowMergeOnSkippedPipeline",
+            "type": "bool",
+            "optional": true,
+            "description": "Expected allow-merge-when-pipeline-is-skipped setting."
+          },
+          {
+            "name": "resolveOutdatedDiffDiscussions",
+            "type": "bool",
+            "optional": true,
+            "description": "Expected auto-resolve-outdated-discussions setting."
+          },
+          {
+            "name": "printingMergeRequestLinkEnabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Expected print-merge-request-link-on-push setting."
+          },
+          {
+            "name": "removeSourceBranchAfterMerge",
+            "type": "bool",
+            "optional": true,
+            "description": "Expected delete-source-branch-after-merge default."
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-506"
+      ]
+    },
+    {
+      "id": "CTRL-408",
+      "name": "pipelineMustIncludeComponent",
+      "displayName": "Pipeline must include required components",
+      "category": "Pipeline Composition",
+      "providers": [
+        "gitlab",
+        "github"
+      ],
+      "description": "Verifies that every CI/CD component required by the configuration is included in the pipeline and that its job keys are not overridden.",
+      "configSchema": {
+        "control": "pipelineMustIncludeComponent",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          },
+          {
+            "name": "required",
+            "type": "string",
+            "optional": true,
+            "description": "Human-readable boolean expression defining required components; supports AND, OR, and parentheses, with AND binding tighter than OR. Mutually exclusive with requiredGroups."
+          },
+          {
+            "name": "requiredGroups",
+            "type": "array",
+            "optional": true,
+            "description": "Required components in DNF form: outer array is OR, inner array is AND. Mutually exclusive with required.",
+            "elem": {
+              "type": "array",
+              "optional": false,
+              "elem": {
+                "type": "string",
+                "optional": false
+              }
+            }
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-408",
+        "ISSUE-409"
+      ]
+    },
+    {
+      "id": "CTRL-405",
+      "name": "pipelineMustIncludeTemplate",
+      "displayName": "Pipeline must include required templates",
+      "category": "Pipeline Composition",
+      "providers": [
+        "gitlab",
+        "github"
+      ],
+      "description": "Verifies that every CI/CD template required by the configuration is included in the pipeline and that its job keys are not overridden.",
+      "configSchema": {
+        "control": "pipelineMustIncludeTemplate",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          },
+          {
+            "name": "required",
+            "type": "string",
+            "optional": true,
+            "description": "Human-readable boolean expression defining required templates; supports AND, OR, and parentheses, with AND binding tighter than OR. Mutually exclusive with requiredGroups."
+          },
+          {
+            "name": "requiredGroups",
+            "type": "array",
+            "optional": true,
+            "description": "Required templates in DNF form: outer array is OR, inner array is AND. Mutually exclusive with required.",
+            "elem": {
+              "type": "array",
+              "optional": false,
+              "elem": {
+                "type": "string",
+                "optional": false
+              }
+            }
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-405",
+        "ISSUE-406"
+      ]
+    },
+    {
+      "id": "CTRL-203",
+      "name": "pipelineMustNotEnableDebugTrace",
+      "displayName": "Pipeline must not enable debug trace",
+      "category": "CI/CD Variables",
+      "providers": [
+        "gitlab",
+        "github"
+      ],
+      "description": "Detects pipelines that enable CI debug tracing, which prints masked variable values into job logs.",
+      "configSchema": {
+        "control": "pipelineMustNotEnableDebugTrace",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          },
+          {
+            "name": "forbiddenVariables",
+            "type": "array",
+            "optional": true,
+            "description": "List of CI/CD variable names that must not be set to true.",
+            "elem": {
+              "type": "string",
+              "optional": false
+            },
+            "default": "CI_DEBUG_TRACE, CI_DEBUG_SERVICES"
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-203"
+      ]
+    },
+    {
+      "id": "CTRL-411",
+      "name": "pipelineMustNotExecuteUnverifiedScripts",
+      "displayName": "Pipeline must not execute unverified scripts",
+      "category": "Pipeline Composition",
+      "providers": [
+        "gitlab",
+        "github"
+      ],
+      "description": "Detects pipeline jobs that execute a script without integrity verification, such as piping a remote download directly into a shell.",
+      "configSchema": {
+        "control": "pipelineMustNotExecuteUnverifiedScripts",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          },
+          {
+            "name": "trustedUrls",
+            "type": "array",
+            "optional": true,
+            "description": "List of URL patterns that should not trigger findings; supports wildcards.",
+            "elem": {
+              "type": "string",
+              "optional": false
+            }
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-411"
+      ]
+    },
+    {
+      "id": "CTRL-401",
+      "name": "pipelineMustNotIncludeHardcodedJobs",
+      "displayName": "Pipeline must not include hardcoded jobs",
+      "category": "Pipeline Composition",
+      "providers": [
+        "gitlab",
+        "github"
+      ],
+      "description": "Flags pipeline jobs defined directly in the CI configuration instead of sourced from an approved CI/CD component or include.",
+      "configSchema": {
+        "control": "pipelineMustNotIncludeHardcodedJobs",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-401"
+      ]
+    },
+    {
+      "id": "CTRL-205",
+      "name": "pipelineMustNotOverrideJobVariables",
+      "displayName": "Pipeline must not override job variables",
+      "category": "CI/CD Variables",
+      "providers": [
+        "gitlab",
+        "github"
+      ],
+      "description": "Detects pipeline configuration that redefines a CI/CD variable that should only be set in CI/CD Settings.",
+      "configSchema": {
+        "control": "pipelineMustNotOverrideJobVariables",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          },
+          {
+            "name": "variables",
+            "type": "array",
+            "optional": true,
+            "description": "List of CI/CD variable names that must not be defined in the pipeline file; they should only be set via GitLab CI/CD Settings \u003e Variables.",
+            "elem": {
+              "type": "string",
+              "optional": false
+            }
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-205"
+      ]
+    },
+    {
+      "id": "CTRL-412",
+      "name": "pipelineMustNotUseDockerInDocker",
+      "displayName": "Pipeline must not use Docker-in-Docker",
+      "category": "Pipeline Composition",
+      "providers": [
+        "gitlab",
+        "github"
+      ],
+      "description": "Flags CI/CD jobs that use a Docker-in-Docker service, or that configure it with an insecure, TLS-disabled daemon.",
+      "configSchema": {
+        "control": "pipelineMustNotUseDockerInDocker",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          },
+          {
+            "name": "detectInsecureDaemon",
+            "type": "bool",
+            "optional": true,
+            "description": "When true, also flags insecure daemon configuration in jobs that use a Docker-in-Docker service."
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-412",
+        "ISSUE-413"
+      ]
+    },
+    {
+      "id": "CTRL-204",
+      "name": "pipelineMustNotUseUnsafeVariableExpansion",
+      "displayName": "Pipeline must not use unsafe variable expansion",
+      "category": "CI/CD Variables",
+      "providers": [
+        "gitlab",
+        "github"
+      ],
+      "description": "Detects CI variables expanded in a shell re-interpretation context such as eval or sh -c, where an attacker-controlled value could execute as code.",
+      "configSchema": {
+        "control": "pipelineMustNotUseUnsafeVariableExpansion",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          },
+          {
+            "name": "dangerousVariables",
+            "type": "array",
+            "optional": true,
+            "description": "List of CI/CD variable names whose values come from user input and should not appear in script blocks susceptible to shell injection.",
+            "elem": {
+              "type": "string",
+              "optional": false
+            }
+          },
+          {
+            "name": "allowedPatterns",
+            "type": "array",
+            "optional": true,
+            "description": "List of regex patterns; script lines matching any of them are not flagged even if they contain a dangerous variable.",
+            "elem": {
+              "type": "string",
+              "optional": false
+            }
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-204"
+      ]
+    },
+    {
+      "id": "CTRL-601",
+      "name": "projectMustHaveSecurityPolicySource",
+      "displayName": "Project must have a security policy source",
+      "category": "Security Source",
+      "providers": [
+        "gitlab"
+      ],
+      "description": "Verifies that the project directly links the expected GitLab security policy project.",
+      "configSchema": {
+        "control": "projectMustHaveSecurityPolicySource",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          },
+          {
+            "name": "expectedProjectId",
+            "type": "integer",
+            "optional": true,
+            "description": "Numeric GitLab project ID the linked security policy project must match; unset requires only that some policy project is linked."
+          },
+          {
+            "name": "expectedProjectPath",
+            "type": "string",
+            "optional": true,
+            "description": "Full namespace/project path the linked security policy project must match, compared case-insensitively; ignored when expectedProjectId is also set."
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-601"
+      ]
+    },
+    {
+      "id": "CTRL-421",
+      "name": "publishWorkflowsMustUseOidcTrustedPublishing",
+      "displayName": "Publish workflows must use OIDC trusted publishing",
+      "category": "Pipeline Composition",
+      "providers": [
+        "github"
+      ],
+      "description": "Verifies that publish workflows to PyPI, npm, or Maven Central use OIDC trusted publishing instead of a long-lived static token.",
+      "issueCodes": [
+        "ISSUE-421"
+      ]
+    },
+    {
+      "id": "CTRL-804",
+      "name": "pullRequestTargetMustNotCheckoutHead",
+      "displayName": "pull_request_target workflows must not check out the PR head",
+      "category": "Workflow Triggers and Permissions",
+      "providers": [
+        "github"
+      ],
+      "description": "Detects pull_request_target workflows that explicitly check out the pull request head, combining access to base-repo secrets with PR-author-controlled code.",
+      "configSchema": {
+        "control": "pullRequestTargetMustNotCheckoutHead",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-804"
+      ]
+    },
+    {
+      "id": "CTRL-705",
+      "name": "releaseWorkflowsMustNotRestoreUntrustedCache",
+      "displayName": "Release workflows must not restore an untrusted cache",
+      "category": "Third-party Actions",
+      "providers": [
+        "github"
+      ],
+      "description": "Flags release and publish jobs that restore a build cache whose key is not scoped to the release ref, closing the cross-branch cache poisoning vector.",
+      "configSchema": {
+        "control": "releaseWorkflowsMustNotRestoreUntrustedCache",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          },
+          {
+            "name": "publishActions",
+            "type": "array",
+            "optional": true,
+            "description": "List of uses: owner/repo prefixes that mark a job as release intent.",
+            "elem": {
+              "type": "string",
+              "optional": false
+            }
+          },
+          {
+            "name": "cacheActions",
+            "type": "array",
+            "optional": true,
+            "description": "Full inventory of cache-restoring actions with their per-action caching semantics; nothing about which actions cache is hardcoded.",
+            "elem": {
+              "type": "object",
+              "optional": false,
+              "fields": [
+                {
+                  "name": "action",
+                  "type": "string",
+                  "optional": false,
+                  "description": "The uses: owner/repo prefix, such as actions/setup-go."
+                },
+                {
+                  "name": "mode",
+                  "type": "string",
+                  "optional": false,
+                  "description": "Caching mode for this action.",
+                  "enum": [
+                    "always",
+                    "default",
+                    "opt-in"
+                  ]
+                },
+                {
+                  "name": "disableInput",
+                  "type": "string",
+                  "optional": true,
+                  "description": "For mode default, the action's with: input whose value turns caching off."
+                },
+                {
+                  "name": "disableValue",
+                  "type": "bool",
+                  "optional": true,
+                  "description": "For mode default, the value of disableInput that turns caching off."
+                },
+                {
+                  "name": "enableInput",
+                  "type": "string",
+                  "optional": true,
+                  "description": "For mode opt-in, the with: input that turns caching on when set to a package manager."
+                },
+                {
+                  "name": "enableContains",
+                  "type": "string",
+                  "optional": true,
+                  "description": "Additionally requires enableInput's value to contain this substring, case-insensitive, for the cache to count as active."
+                }
+              ]
+            }
+          },
+          {
+            "name": "publishScriptPatterns",
+            "type": "array",
+            "optional": true,
+            "description": "List of regexes matched against run: scripts to mark a job as release intent.",
+            "elem": {
+              "type": "string",
+              "optional": false
+            }
+          },
+          {
+            "name": "publishScriptExcludePatterns",
+            "type": "array",
+            "optional": true,
+            "description": "List of regexes that veto a publishScriptPatterns match on the same run: block, for verification-only forms that never publish.",
+            "elem": {
+              "type": "string",
+              "optional": false
+            }
+          },
+          {
+            "name": "allowedJobs",
+            "type": "array",
+            "optional": true,
+            "description": "List of glob patterns matched against the namespaced job name; a matching job is exempt from this control.",
+            "elem": {
+              "type": "string",
+              "optional": false
+            }
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-705"
+      ]
+    },
+    {
+      "id": "CTRL-712",
+      "name": "releaseWorkflowsMustSignArtefacts",
+      "displayName": "Release workflows must sign artefacts",
+      "category": "Third-party Actions",
+      "providers": [
+        "github"
+      ],
+      "description": "Verifies that release and publish workflows sign the artefacts they produce.",
+      "issueCodes": [
+        "ISSUE-712"
+      ]
+    },
+    {
+      "id": "CTRL-903",
+      "name": "repositoriesMustConfigureDependencyUpdates",
+      "displayName": "Repositories must configure dependency updates",
+      "category": "Repository Hygiene",
+      "providers": [
+        "github"
+      ],
+      "description": "Verifies that repositories with CI/CD workflows configure a dependency update tool such as Dependabot or Renovate.",
+      "issueCodes": [
+        "ISSUE-903"
+      ]
+    },
+    {
+      "id": "CTRL-905",
+      "name": "repositoriesMustPublishSecurityPolicy",
+      "displayName": "Repositories must publish a security policy",
+      "category": "Repository Hygiene",
+      "providers": [
+        "github"
+      ],
+      "description": "Verifies that repositories with CI/CD workflows publish a SECURITY.md vulnerability disclosure policy.",
+      "issueCodes": [
+        "ISSUE-905"
+      ]
+    },
+    {
+      "id": "CTRL-904",
+      "name": "repositoriesMustRunSAST",
+      "displayName": "Repositories must run SAST",
+      "category": "Repository Hygiene",
+      "providers": [
+        "github"
+      ],
+      "description": "Verifies that repositories with CI/CD workflows run a recognized static analysis (SAST) scanner.",
+      "issueCodes": [
+        "ISSUE-904"
+      ]
+    },
+    {
+      "id": "CTRL-302",
+      "name": "reusableWorkflowsMustNotInheritSecrets",
+      "displayName": "Reusable workflows must not inherit secrets",
+      "category": "CI/CD Secrets",
+      "providers": [
+        "github"
+      ],
+      "description": "Detects reusable workflow calls made with secrets: inherit, which forwards every secret visible to the caller regardless of what the reusable workflow needs.",
+      "configSchema": {
+        "control": "reusableWorkflowsMustNotInheritSecrets",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-302"
+      ]
+    },
+    {
+      "id": "CTRL-410",
+      "name": "securityJobsMustNotBeWeakened",
+      "displayName": "Security jobs must not be weakened",
+      "category": "Pipeline Composition",
+      "providers": [
+        "gitlab",
+        "github"
+      ],
+      "description": "Detects security jobs weakened by allow_failure, a rules override, or when: manual, any of which can let a critical scan be skipped.",
+      "configSchema": {
+        "control": "securityJobsMustNotBeWeakened",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          },
+          {
+            "name": "securityJobPatterns",
+            "type": "array",
+            "optional": true,
+            "description": "List of job name patterns considered security jobs; supports wildcards.",
+            "elem": {
+              "type": "string",
+              "optional": false
+            }
+          },
+          {
+            "name": "allowFailureMustBeFalse",
+            "type": "object",
+            "optional": true,
+            "description": "Sub-control toggle requiring allow_failure to be false on matched security jobs.",
+            "fields": [
+              {
+                "name": "enabled",
+                "type": "bool",
+                "optional": true,
+                "description": "Turns the control on; when false or absent the control is skipped."
+              }
+            ]
+          },
+          {
+            "name": "rulesMustNotBeRedefined",
+            "type": "object",
+            "optional": true,
+            "description": "Sub-control toggle requiring rules to not be redefined on matched security jobs.",
+            "fields": [
+              {
+                "name": "enabled",
+                "type": "bool",
+                "optional": true,
+                "description": "Turns the control on; when false or absent the control is skipped."
+              }
+            ]
+          },
+          {
+            "name": "whenMustNotBeManual",
+            "type": "object",
+            "optional": true,
+            "description": "Sub-control toggle requiring when to not be set to manual on matched security jobs.",
+            "fields": [
+              {
+                "name": "enabled",
+                "type": "bool",
+                "optional": true,
+                "description": "Turns the control on; when false or absent the control is skipped."
+              }
+            ]
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-410"
+      ]
+    },
+    {
+      "id": "CTRL-211",
+      "name": "workflowConditionsMustBeSound",
+      "displayName": "Workflow conditions must be sound",
+      "category": "CI/CD Variables",
+      "providers": [
+        "github"
+      ],
+      "description": "Detects workflow if: conditions that are logically unsound, such as a tautology, a contradiction, or a bare boolean not wrapped in template braces.",
+      "issueCodes": [
+        "ISSUE-211"
+      ]
+    },
+    {
+      "id": "CTRL-212",
+      "name": "workflowContainsCallsMustBeSound",
+      "displayName": "Workflow contains() calls must be sound",
+      "category": "CI/CD Variables",
+      "providers": [
+        "github"
+      ],
+      "description": "Detects contains() expressions called with arguments in the wrong order or of incompatible types, which makes the intended check silently never match.",
+      "issueCodes": [
+        "ISSUE-212"
+      ]
+    },
+    {
+      "id": "CTRL-417",
+      "name": "workflowMustIncludeRequiredActions",
+      "displayName": "Workflows must include required actions",
+      "category": "Pipeline Composition",
+      "providers": [
+        "github"
+      ],
+      "description": "Verifies that every action or reusable workflow declared as required in the configuration is actually referenced by the project's workflows.",
+      "configSchema": {
+        "control": "workflowMustIncludeRequiredActions",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          },
+          {
+            "name": "required",
+            "type": "string",
+            "optional": true,
+            "description": "Human-readable boolean expression defining required actions or reusable workflows; each entry is an owner/repo[/path] prefix matched ref-agnostically. Mutually exclusive with requiredGroups."
+          },
+          {
+            "name": "requiredGroups",
+            "type": "array",
+            "optional": true,
+            "description": "Required actions or reusable workflows in DNF form: outer array is OR, inner array is AND. Mutually exclusive with required.",
+            "elem": {
+              "type": "array",
+              "optional": false,
+              "elem": {
+                "type": "string",
+                "optional": false
+              }
+            }
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-417"
+      ]
+    },
+    {
+      "id": "CTRL-420",
+      "name": "workflowMustNotContainObfuscation",
+      "displayName": "Workflows must not contain obfuscation",
+      "category": "Pipeline Composition",
+      "providers": [
+        "github"
+      ],
+      "description": "Detects workflow scripts and expressions that carry invisible or homoglyph characters used to hide what actually executes.",
+      "issueCodes": [
+        "ISSUE-420"
+      ]
+    },
+    {
+      "id": "CTRL-213",
+      "name": "workflowMustNotExportEntireGitHubContext",
+      "displayName": "Workflows must not export the entire GitHub context",
+      "category": "CI/CD Variables",
+      "providers": [
+        "github"
+      ],
+      "description": "Flags workflow steps that serialize the entire github context with toJson, exposing every user-controllable field to whatever consumes the output.",
+      "issueCodes": [
+        "ISSUE-213"
+      ]
+    },
+    {
+      "id": "CTRL-309",
+      "name": "workflowMustNotExportEntireSecretsContext",
+      "displayName": "Workflows must not expose all secrets at once",
+      "category": "CI/CD Secrets",
+      "providers": [
+        "github"
+      ],
+      "description": "Flags workflow steps that serialize the entire secrets context with toJson, exposing every secret the job can access.",
+      "configSchema": {
+        "control": "workflowMustNotExportEntireSecretsContext",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-309"
+      ]
+    },
+    {
+      "id": "CTRL-803",
+      "name": "workflowMustNotGrantPermissionsWriteAll",
+      "displayName": "Workflow must not grant write-all permissions",
+      "category": "Workflow Triggers and Permissions",
+      "providers": [
+        "github"
+      ],
+      "description": "Detects workflow permissions blocks that grant write-all, giving the GITHUB_TOKEN write access to every API scope.",
+      "configSchema": {
+        "control": "workflowMustNotGrantPermissionsWriteAll",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-803"
+      ]
+    },
+    {
+      "id": "CTRL-308",
+      "name": "workflowMustNotIndexSecretsDynamically",
+      "displayName": "Workflows must not index secrets dynamically",
+      "category": "CI/CD Secrets",
+      "providers": [
+        "github"
+      ],
+      "description": "Detects workflows that read a secret through a dynamic index instead of naming it directly.",
+      "issueCodes": [
+        "ISSUE-308"
+      ]
+    },
+    {
+      "id": "CTRL-207",
+      "name": "workflowMustNotInjectUserInputInScripts",
+      "displayName": "Workflows must not inject user input in scripts",
+      "category": "CI/CD Variables",
+      "providers": [
+        "github"
+      ],
+      "description": "Detects workflow run scripts that inline user-controlled template expressions directly, letting attacker-controlled values break out and execute commands.",
+      "configSchema": {
+        "control": "workflowMustNotInjectUserInputInScripts",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-207"
+      ]
+    },
+    {
+      "id": "CTRL-215",
+      "name": "workflowMustNotInjectVarsInScripts",
+      "displayName": "Workflows must not inject vars in scripts",
+      "category": "CI/CD Variables",
+      "providers": [
+        "github"
+      ],
+      "description": "Detects workflow run scripts that inline vars or inputs template expressions directly instead of binding them through an env variable first.",
+      "issueCodes": [
+        "ISSUE-215"
+      ]
+    },
+    {
+      "id": "CTRL-208",
+      "name": "workflowMustNotReEnableInsecureCommands",
+      "displayName": "Workflows must not re-enable insecure commands",
+      "category": "CI/CD Variables",
+      "providers": [
+        "github"
+      ],
+      "description": "Detects workflows that re-enable the deprecated set-env and add-path workflow commands via ACTIONS_ALLOW_UNSECURE_COMMANDS.",
+      "issueCodes": [
+        "ISSUE-208"
+      ]
+    },
+    {
+      "id": "CTRL-210",
+      "name": "workflowMustNotTrustSpoofableActorChecks",
+      "displayName": "Workflows must not trust spoofable actor checks",
+      "category": "CI/CD Variables",
+      "providers": [
+        "github"
+      ],
+      "description": "Detects workflows that gate behaviour on a spoofable actor identity check such as github.actor instead of a cryptographically verified signal.",
+      "issueCodes": [
+        "ISSUE-210"
+      ]
+    },
+    {
+      "id": "CTRL-303",
+      "name": "workflowMustNotUnredactSecretsViaFromJSON",
+      "displayName": "Workflows must not unredact secrets via fromJSON",
+      "category": "CI/CD Secrets",
+      "providers": [
+        "github"
+      ],
+      "description": "Detects secrets dereferenced via fromJSON, which bypasses GitHub's log redaction for the resulting sub-fields.",
+      "issueCodes": [
+        "ISSUE-303"
+      ]
+    },
+    {
+      "id": "CTRL-802",
+      "name": "workflowMustNotUseDangerousTriggers",
+      "displayName": "Workflows must not use dangerous triggers",
+      "category": "Workflow Triggers and Permissions",
+      "providers": [
+        "github"
+      ],
+      "description": "Detects workflows reachable via a trigger that runs with base-repository secrets while being influenceable by an unprivileged caller, combined with checking out fork-controlled code.",
+      "configSchema": {
+        "control": "workflowMustNotUseDangerousTriggers",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-802"
+      ]
+    },
+    {
+      "id": "CTRL-419",
+      "name": "workflowMustNotUseKnownMisfeatures",
+      "displayName": "Workflows must not use known misfeatures",
+      "category": "Pipeline Composition",
+      "providers": [
+        "github"
+      ],
+      "description": "Detects workflows that use a known-harmful pattern such as legacy Windows shells, inline network installs, or uploading the checkout directory as an artifact.",
+      "issueCodes": [
+        "ISSUE-419"
+      ]
+    },
+    {
+      "id": "CTRL-209",
+      "name": "workflowMustNotWriteUntrustedContentToGitHubEnv",
+      "displayName": "Workflows must not write untrusted content to $GITHUB_ENV",
+      "category": "CI/CD Variables",
+      "providers": [
+        "github"
+      ],
+      "description": "Detects workflows that write user-controlled content to GITHUB_ENV or GITHUB_PATH, letting an attacker override variables or hijack later steps.",
+      "configSchema": {
+        "control": "workflowMustNotWriteUntrustedContentToGitHubEnv",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-209"
+      ]
+    },
+    {
+      "id": "CTRL-214",
+      "name": "workflowMustPinPackageInstalls",
+      "displayName": "Workflows must pin package installs",
+      "category": "CI/CD Variables",
+      "providers": [
+        "github"
+      ],
+      "description": "Detects package installs that neither pin a version nor use a lockfile, so every run resolves whatever is latest at execution time.",
+      "issueCodes": [
+        "ISSUE-214"
+      ]
+    },
+    {
+      "id": "CTRL-418",
+      "name": "workflowsMustDeclareConcurrency",
+      "displayName": "Workflows must declare concurrency",
+      "category": "Pipeline Composition",
+      "providers": [
+        "github"
+      ],
+      "description": "Verifies that workflows declare a concurrency block so concurrent runs on the same ref do not race on caches, artifacts, and external state.",
+      "issueCodes": [
+        "ISSUE-418"
+      ]
+    },
+    {
+      "id": "CTRL-801",
+      "name": "workflowsMustDeclarePermissions",
+      "displayName": "Workflows must declare permissions",
+      "category": "Workflow Triggers and Permissions",
+      "providers": [
+        "github"
+      ],
+      "description": "Verifies that workflows declare an explicit permissions block instead of falling back to the repository's default GITHUB_TOKEN permissions.",
+      "configSchema": {
+        "control": "workflowsMustDeclarePermissions",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-801"
+      ]
+    },
+    {
+      "id": "CTRL-422",
+      "name": "workflowsMustHaveExplicitName",
+      "displayName": "Workflows must have an explicit name",
+      "category": "Pipeline Composition",
+      "providers": [
+        "github"
+      ],
+      "description": "Verifies that every workflow declares a top-level name instead of falling back to its file path in the Actions UI and status checks.",
+      "issueCodes": [
+        "ISSUE-422"
+      ]
+    }
+  ],
+  "issueTypes": [
+    {
+      "code": "ISSUE-101",
+      "severity": "high",
+      "title": "Untrusted image source",
+      "description": "A container image is pulled from a registry that is not listed in the authorized sources. Using untrusted registries increases supply chain attack risk.",
+      "remediation": "Use images from an authorized registry configured in .plumber.yaml under containerImageMustComeFromAuthorizedSources.authorizedSources, or add the registry to the authorized list.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-101",
+      "controlName": "containerImageMustComeFromAuthorizedSources"
+    },
+    {
+      "code": "ISSUE-102",
+      "severity": "medium",
+      "title": "Forbidden container image tag",
+      "description": "A container image in the pipeline uses a tag that is forbidden by the configuration (e.g., 'latest', 'dev'). Mutable tags make builds non-reproducible because the underlying image can change without notice.",
+      "remediation": "Pin the image to a specific immutable version tag (e.g., 'python:3.12.1' instead of 'python:latest'). Configure forbidden tags in .plumber.yaml under containerImageMustNotUseForbiddenTags.forbiddenTags.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-102",
+      "controlName": "containerImageMustNotUseForbiddenTags"
+    },
+    {
+      "code": "ISSUE-103",
+      "severity": "high",
+      "title": "Container image is not pinned by digest",
+      "description": "A container image in the pipeline is not pinned by its SHA256 digest. Without digest pinning, a tag can be reassigned to a different image, introducing supply chain risks.",
+      "remediation": "Pin the image using its digest: 'image: registry.example.com/myimage@sha256:abc123...'. You can find the digest with 'docker inspect --format={{.RepoDigests}} \u003cimage\u003e'.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-103",
+      "controlName": "containerImageMustNotUseForbiddenTags"
+    },
+    {
+      "code": "ISSUE-201",
+      "severity": "medium",
+      "title": "CI/CD settings variable is not protected",
+      "description": "A project CI/CD settings variable is not marked protected, so it is injected into pipelines running on unprotected branches. Anyone who can push to such a branch can exfiltrate its value.",
+      "remediation": "Mark the variable protected in Settings \u003e CI/CD \u003e Variables so it is only exposed to pipelines on protected branches and tags.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-201",
+      "controlName": "cicdVariablesMustBeProtected"
+    },
+    {
+      "code": "ISSUE-202",
+      "severity": "medium",
+      "title": "CI/CD settings variable is not masked",
+      "description": "A project CI/CD settings variable is not masked, so its value prints verbatim in every job log a project member can read.",
+      "remediation": "Enable masking in Settings \u003e CI/CD \u003e Variables. GitLab requires a value of at least 8 characters; restructure the secret if it cannot be masked by length.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-202",
+      "controlName": "cicdVariablesMustBeMasked"
+    },
+    {
+      "code": "ISSUE-203",
+      "severity": "critical",
+      "title": "Pipeline enables CI debug trace",
+      "description": "The pipeline has CI_DEBUG_TRACE or CI_DEBUG_SERVICES enabled, which exposes all secret variables in the job log output. This is a critical security risk in production pipelines.",
+      "remediation": "Remove or set CI_DEBUG_TRACE and CI_DEBUG_SERVICES to 'false' in your .gitlab-ci.yml variables section. These should only be used temporarily for debugging and never committed.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-203",
+      "controlName": "pipelineMustNotEnableDebugTrace"
+    },
+    {
+      "code": "ISSUE-204",
+      "severity": "medium",
+      "title": "Unsafe variable expansion",
+      "description": "A dangerous CI variable is expanded in a shell re-interpretation context (eval, sh -c, bash -c, source, etc.). The expanded value is executed as code, enabling command injection if the variable is user-controlled.",
+      "remediation": "Avoid passing variables to commands that re-interpret input as shell code. Use the variable in a safe context (e.g. echo, env) or sanitize/allowlist values. Configure dangerousVariables and allowedPatterns in .plumber.yaml under pipelineMustNotUseUnsafeVariableExpansion.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-204",
+      "controlName": "pipelineMustNotUseUnsafeVariableExpansion"
+    },
+    {
+      "code": "ISSUE-205",
+      "severity": "high",
+      "title": "Job variable overrides controlled variable",
+      "description": "A CI/CD variable that should only be set in GitLab CI/CD Settings (as a protected or project-level variable) is redefined in the pipeline configuration. This can neutralize security scanners, disable protections, or alter intended behavior.",
+      "remediation": "Remove the variable from .gitlab-ci.yml and set it in GitLab CI/CD Settings \u003e Variables instead. Configure the list of controlled variables in .plumber.yaml under pipelineMustNotOverrideJobVariables.variables.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-205",
+      "controlName": "pipelineMustNotOverrideJobVariables"
+    },
+    {
+      "code": "ISSUE-207",
+      "severity": "critical",
+      "title": "Template injection in workflow script",
+      "description": "A GitHub Actions workflow inlines user-controlled template expressions (github.event.*, github.head_ref, ...) directly into a `run:` shell script. Attacker-controlled values such as PR titles, issue bodies or fork branch names can break out of the intended string and execute arbitrary commands with the job's secrets.",
+      "remediation": "Move the template expression into an `env:` binding first, then reference the environment variable from the shell (`\"$TITLE\"`). Shell expansion of a bound variable quotes the value and neutralises injection payloads.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-207",
+      "controlName": "workflowMustNotInjectUserInputInScripts"
+    },
+    {
+      "code": "ISSUE-208",
+      "severity": "high",
+      "title": "Deprecated workflow commands re-enabled",
+      "description": "A GitHub Actions job re-enables the deprecated `::set-env::` / `::add-path::` workflow commands via ACTIONS_ALLOW_UNSECURE_COMMANDS. Those commands were disabled after CVE-2020-15228 because attacker-controlled log output can rewrite the running job's environment and PATH.",
+      "remediation": "Remove the `ACTIONS_ALLOW_UNSECURE_COMMANDS` environment variable. Use the `$GITHUB_ENV` and `$GITHUB_PATH` files explicitly when you need to propagate values, and validate any untrusted content before writing to them.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-208",
+      "controlName": "workflowMustNotReEnableInsecureCommands"
+    },
+    {
+      "code": "ISSUE-209",
+      "severity": "high",
+      "title": "Untrusted content written to $GITHUB_ENV or $GITHUB_PATH",
+      "description": "A GitHub Actions `run:` step appends a user-controlled value (PR title, issue body, fork branch name, ...) to `$GITHUB_ENV` or `$GITHUB_PATH`. The appended value becomes an environment variable or PATH entry for every subsequent step in the job. An attacker who controls the value can override existing variables (for example `NODE_OPTIONS=--require=./exfil.js`) or inject a malicious directory at the front of PATH, hijacking any later `npm`, `bash`, etc. invocation and exfiltrating secrets from privileged triggers.",
+      "remediation": "Do not write user-controlled values into `$GITHUB_ENV` or `$GITHUB_PATH`. If you must propagate a value derived from user input, bind it through an `env:` block first (`env: { TITLE: ${{ github.event.issue.title }} }`) and validate/escape it before writing — or pass it as a step output instead. Restrict workflows touching these files to non-PR triggers when possible.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-209",
+      "controlName": "workflowMustNotWriteUntrustedContentToGitHubEnv"
+    },
+    {
+      "code": "ISSUE-210",
+      "severity": "high",
+      "title": "Workflow gates behaviour on a spoofable actor/bot check",
+      "description": "A GitHub Actions workflow gates behaviour on `github.actor`, `github.triggering_actor` or equivalent identity strings (`dependabot[bot]`, `renovate[bot]`, a specific username) without cryptographic backing. Those values are filled from whoever opened or synchronised the PR — an attacker can open a fork PR using a crafted username, or in some trigger types the `actor` field reflects the fork author, not the verified bot. Any step that trusts such a check (`if: github.actor == 'dependabot[bot]'`) can be bypassed by a malicious contributor forging the right login.",
+      "remediation": "Never grant elevated behaviour based on `github.actor` / `github.triggering_actor` alone. For Dependabot-specific flows use the `pull_request` event with a separate privileged workflow triggered by `pull_request_target` only after a manual review, or rely on branch protections. For bots, verify the commit signature/author via git rather than the GitHub actor string.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-210",
+      "controlName": "workflowMustNotTrustSpoofableActorChecks"
+    },
+    {
+      "code": "ISSUE-211",
+      "severity": "medium",
+      "title": "Unsound `if:` condition (tautology, contradiction, or missing ${{ }})",
+      "description": "A GitHub Actions `if:` expression contains a pattern that cannot be evaluated as intended: a tautology (`always() || ...`, `true == true`), a contradiction (`false \u0026\u0026 anything`), or a bare boolean string that is not wrapped in `${{ }}` (GitHub parses it as the literal string \"true\" / \"false\", which is always truthy). The gate the author thought they installed is not actually there — the step/job runs unconditionally (or never), usually silently.",
+      "remediation": "Review the condition: remove dead branches (`always()` short-circuits OR), wrap every template expression in `${{ … }}`, and prefer simple comparisons over nested constructs. For debugging, `if: ${{ github.event_name == 'push' }}` is safer than `if: github.event_name == 'push'` which often parses as the literal string.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-211",
+      "controlName": "workflowConditionsMustBeSound"
+    },
+    {
+      "code": "ISSUE-212",
+      "severity": "medium",
+      "title": "`contains()` built-in misused (argument order or type)",
+      "description": "A GitHub Actions expression calls `contains()` with arguments in the wrong order or of incompatible types. The signature is `contains(haystack, needle)`: passing a single string as the first argument and a whole expression as the second inverts the semantics and the gate never matches the intended case. A common failure mode is `contains('main', github.ref)` — the literal `'main'` does not contain the full ref `refs/heads/main`, so the check always fails even on the `main` branch.",
+      "remediation": "Use `contains(github.ref, 'refs/heads/main')` — the ref is the haystack, the branch name is the needle. For filter lists, convert to a set: `contains(fromJSON('[\"main\", \"release\"]'), github.ref_name)` makes the intent explicit.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-212",
+      "controlName": "workflowContainsCallsMustBeSound"
+    },
+    {
+      "code": "ISSUE-213",
+      "severity": "high",
+      "title": "Entire `github` context serialised with toJson(github)",
+      "description": "A `run:` step, env binding or action input serialises the whole `github` context (or `github.event`) with `toJson(...)`. The resulting JSON carries every user-controllable field GitHub exposes — PR title, issue body, fork branch name, commit message — bundled with metadata the workflow might otherwise believe is trusted. Any downstream consumer (log line, third-party action, HTTP header) then sees a payload that is trivially shell-injectable under a privileged trigger (`pull_request_target`, `workflow_run`). Same risk class as ISSUE-207 template-injection, but the dump form is worse: a single `echo $JSON` leaks the full attack surface rather than one field.",
+      "remediation": "Never pass the `github` context whole. Extract the exact fields you need into named `env:` bindings first (`env: { PR_TITLE: ${{ github.event.pull_request.title }} }`), then reference the environment variable from the shell — expansion quotes the value automatically. If the downstream tool genuinely requires JSON, build it explicitly from the named fields with `jq -n --arg title \"$PR_TITLE\" '{title: $title}'`.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-213",
+      "controlName": "workflowMustNotExportEntireGitHubContext"
+    },
+    {
+      "code": "ISSUE-214",
+      "severity": "medium",
+      "title": "Package installed without a pinned version or lockfile",
+      "description": "A `run:` step invokes `pip install PKG` or `npm install PKG` without a pinned version (`pip install pkg==1.2.3`, `npm install pkg@1.2.3`) and without a lockfile install (`pip install -r requirements.txt`, `npm ci`). Every run then resolves whatever is latest on the registry at execution time — a window exploited repeatedly by typosquat and maintainer-account compromise attacks. Lockfiles (`package-lock.json`, `poetry.lock`, `pdm.lock`, …) combined with `npm ci` / `pip install -r requirements.txt --require-hashes` turn every run into a reproducible, verifiable install.",
+      "remediation": "Replace `pip install pkg` with `pip install -r requirements.txt` (with hashes generated via `pip-compile --generate-hashes`) or pin every package explicitly: `pip install 'pkg==1.2.3'`. Replace `npm install pkg` with `npm ci` once the lockfile is committed. Enable Dependabot or Renovate on the locked manifest so upgrades still flow, reviewed, rather than silently.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-214",
+      "controlName": "workflowMustPinPackageInstalls"
+    },
+    {
+      "code": "ISSUE-215",
+      "severity": "low",
+      "title": "Maintainer-adjacent template (`vars.*` or `inputs.*`) expanded into a shell script",
+      "description": "A `run:` step inlines a `${{ vars.X }}` or `${{ inputs.X }}` expression directly into the shell command. `vars` values come from repository / organisation / environment variables set by maintainers; `inputs` values come from the caller of a reusable workflow. Neither is PR-author-controlled by default (ISSUE-207 covers that case), but both flip to attacker-controlled under specific conditions: a compromised maintainer account, a misconfigured org-level variable, or a caller workflow that proxies `github.event.*` into a reusable-workflow input. The canonical remediation is identical to ISSUE-207: bind the value through `env:` first, then reference the environment variable from the shell so expansion quotes it automatically.",
+      "remediation": "Replace `${{ vars.X }}` / `${{ inputs.X }}` in the `run:` body with an `env:` binding plus `$X` dereference. Example: `env: { REGISTRY: ${{ vars.REGISTRY }} }` at the step, then `docker login \"$REGISTRY\"` in the script.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-215",
+      "controlName": "workflowMustNotInjectVarsInScripts"
+    },
+    {
+      "code": "ISSUE-302",
+      "severity": "high",
+      "title": "Reusable workflow called with `secrets: inherit`",
+      "description": "A GitHub Actions job calls a reusable workflow (`jobs.\u003cname\u003e.uses: owner/repo/.github/workflows/x.yml@ref`) with `secrets: inherit`. The call forwards every secret visible to the caller — repo, organisation, environment — to the reusable workflow, regardless of what the reusable workflow actually needs. A compromise of the reusable workflow (upstream maintainer account, malicious PR merged on the reusable side, tag retag) then sees the full secret surface of every caller.",
+      "remediation": "Replace `secrets: inherit` with an explicit mapping that names only the secrets the reusable workflow needs: `secrets: { NPM_TOKEN: ${{ secrets.NPM_TOKEN }} }`. For internal reusable workflows hosted in the same repository the risk is lower but the principle stands — narrow the scope so a future incident exposes a minimum.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-302",
+      "controlName": "reusableWorkflowsMustNotInheritSecrets"
+    },
+    {
+      "code": "ISSUE-303",
+      "severity": "high",
+      "title": "Secret dereferenced via fromJSON bypasses log redaction",
+      "description": "A GitHub Actions workflow dereferences a secret value with `fromJSON(secrets.X).y` — once fromJSON parses the secret, the inner fields are fresh strings GitHub does not recognise as masked values. Anything that echoes the sub-field (print, log, HTTP header, error message) leaks the plaintext to the job log.",
+      "remediation": "Pass structured secrets through `env:` bindings that reference each leaf individually (`env: { API_KEY: ${{ secrets.MY_API_KEY }} }`) so log redaction keeps working. If a JSON blob must be split, do it inside a step that never echoes the result and writes only the necessary parts back to the environment.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-303",
+      "controlName": "workflowMustNotUnredactSecretsViaFromJSON"
+    },
+    {
+      "code": "ISSUE-305",
+      "severity": "medium",
+      "title": "Deploy / release job uses secrets without an `environment:` gate",
+      "description": "A GitHub Actions job that consumes production secrets (deploy, release, publish) does not declare an `environment:` field. Environments are the gatekeeper GitHub exposes for required reviewers, wait timers, and deployment branch rules — without one, any caller on the configured trigger goes straight to the secret-bearing step, no human-in-the-loop. Combined with a spoofable trigger (ISSUE-802) or an over-broad branch pattern, the secret can be exfiltrated without any review.",
+      "remediation": "Put production secrets behind environments. Attach the environment to the deploy job (`environment: production`) and configure required reviewers / wait timers on the environment in the repository settings.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-305",
+      "controlName": "deployJobsMustUseEnvironmentGate"
+    },
+    {
+      "code": "ISSUE-306",
+      "severity": "high",
+      "title": "GitHub App token issued with revocation disabled",
+      "description": "A workflow step that mints a GitHub App installation token (e.g. `actions/create-github-app-token`) sets `skip-token-revoke: true`. That keeps the minted token alive after the workflow finishes, which turns a scoped, short-lived credential into a long-lived one. Any later leak (log fragment, restored cache, exfiltrated artefact) hands the attacker a working token well after the run completes, instead of getting back a revoked one.",
+      "remediation": "Remove the `skip-token-revoke: true` input (the default is to revoke). Only keep revocation disabled for workflows that legitimately need to hand the token to a downstream step launched after this workflow — and even then, prefer re-minting it fresh in the downstream workflow.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-306",
+      "controlName": "githubAppTokensMustBeRevokedOnExit"
+    },
+    {
+      "code": "ISSUE-307",
+      "severity": "low",
+      "title": "Checkout persists credentials in .git/config (latent)",
+      "description": "A GitHub Actions job runs `actions/checkout` without disabling credential persistence. By default the action writes GITHUB_TOKEN into the cloned repository's .git/config, where it survives for the lifetime of the job. On its own this is latent hygiene: the token is discarded when the job ends. It becomes a demonstrable leak only when a later step packs `.git` into an uploaded artifact (escalated to ISSUE-310) or when fork-controlled code runs in the job (covered by ISSUE-802 / ISSUE-804).",
+      "remediation": "Add `with: { persist-credentials: false }` on every `uses: actions/checkout@*` step unless the job legitimately needs to push back. When push is required, scope the token with an explicit `permissions:` block.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-307",
+      "controlName": "checkoutMustNotPersistCredentials"
+    },
+    {
+      "code": "ISSUE-308",
+      "severity": "low",
+      "title": "Secret accessed via a dynamic index `secrets[expr]`",
+      "description": "A workflow reads `${{ secrets[expr] }}` where `expr` is not a quoted literal — typically an `env.VAR_NAME`, `inputs.NAME`, or a computed expression. The dynamic form lets the runtime resolve the secret name at execution, which effectively hands read access to every secret the job can see to whatever source controls `expr`. When `expr` comes from a maintainer-controlled env binding the risk is theoretical, but the pattern is brittle: a rename of the named secret, or a later refactor that introduces a template expression at the indexed position, silently promotes the weakness. Prefer naming each secret directly so the grant surface is explicit in the workflow source.",
+      "remediation": "Replace `${{ secrets[env.X] }}` with a direct reference `${{ secrets.EXPECTED_NAME }}`. When a matrix really needs to select among N secrets, split the job into N copies with static names rather than indexing; the verbosity is worth the reviewability.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-308",
+      "controlName": "workflowMustNotIndexSecretsDynamically"
+    },
+    {
+      "code": "ISSUE-309",
+      "severity": "critical",
+      "title": "Entire secrets context exported via toJson(secrets)",
+      "description": "A GitHub Actions workflow serialises the whole `secrets` context with `toJson(secrets)` or `toJSON(secrets)` and pipes the result into a step's environment, run script, or `with:` input. The resulting string contains every secret the job has access to — repository, organisation and environment — and travels through whatever downstream consumer the step passes it to (a third-party action, a remote server, a log line). Even with GitHub's automatic log redaction, a single `echo` of the JSON payload has been enough to leak tokens in past supply-chain incidents; a compromised reusable action sees them directly regardless of logging.",
+      "remediation": "Pass only the specific secrets the step needs, by name: `env: { TOKEN: ${{ secrets.NPM_TOKEN }} }`. If the step forwards credentials to a reusable workflow, name each one in the `secrets:` block of the call rather than using `toJson(secrets)`.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-309",
+      "controlName": "workflowMustNotExportEntireSecretsContext"
+    },
+    {
+      "code": "ISSUE-310",
+      "severity": "high",
+      "title": "Persisted checkout credentials packed into an uploaded artifact",
+      "description": "A GitHub Actions job runs `actions/checkout` with credential persistence enabled and then a later `actions/upload-artifact` step uploads a `.git`-inclusive path (the workspace root, `.`, or a path naming `.git`). The GITHUB_TOKEN written into `.git/config` is packed into the artifact, which is downloadable (anonymously, on public repos), so the token is exfiltrable. This is the canonical, demonstrable ArtiPACKED leak.",
+      "remediation": "Add `with: { persist-credentials: false }` on the `actions/checkout@*` step, or upload a scoped path that excludes `.git` (e.g. `path: dist/` instead of `path: .`). When push is required, scope the token with an explicit `permissions:` block.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-310",
+      "controlName": "checkoutMustNotPersistCredentials"
+    },
+    {
+      "code": "ISSUE-401",
+      "severity": "medium",
+      "title": "Hardcoded job",
+      "description": "A job in the pipeline is defined directly in the CI configuration instead of being sourced from a CI/CD component or include. Hardcoded jobs bypass governance and standardization.",
+      "remediation": "Replace the hardcoded job with a CI/CD component or an include from an approved catalog. Use 'include:' or 'component:' directives in your .gitlab-ci.yml.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-401",
+      "controlName": "pipelineMustNotIncludeHardcodedJobs"
+    },
+    {
+      "code": "ISSUE-402",
+      "severity": "medium",
+      "title": "Reference collides with both a tag and a branch",
+      "description": "An external CI reference is pinned to a name that exists upstream **as both a tag and a branch** (classic case: a tag `v1` kept in parallel with a branch `v1`). This covers GitHub Actions `uses:` refs and GitLab `include:` project `ref:` / component `@version` refs. The platform resolves the tag first, so today the pinned, tagged revision runs — but a maintainer rename, a typo, or a parameter that drops a character can switch the binding to the branch, which tracks every push. The ambiguity makes the reference fundamentally unreliable: the reviewer cannot tell from the YAML alone which of the two upstream revisions will execute, and the referenced code runs in the pipeline with its secrets and tokens.",
+      "remediation": "Pin the reference to a 40-character commit SHA (preferred), which is unambiguous. Alternatively, ask the upstream maintainer to remove one of the two colliding refs; keeping both is a supply-chain landmine for every caller.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-402",
+      "controlName": "externalRefsMustNotCollide"
+    },
+    {
+      "code": "ISSUE-403",
+      "severity": "low",
+      "title": "Outdated template",
+      "description": "An included CI/CD component or template is not using the latest available version. Outdated versions may miss security patches, bug fixes, or improvements.",
+      "remediation": "Update the include to use the latest version. Check the component/template repository for the latest release and update the version reference in your .gitlab-ci.yml.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-403",
+      "controlName": "includesMustBeUpToDate"
+    },
+    {
+      "code": "ISSUE-404",
+      "severity": "medium",
+      "title": "Forbidden include version",
+      "description": "An included CI/CD component or template uses a version that is explicitly forbidden (e.g., a mutable branch reference like 'main' instead of a tagged version).",
+      "remediation": "Replace the forbidden version with an authorized version format. Use semantic version tags (e.g., '1.2.3' or '~latest') instead of branch names or mutable references as configured in .plumber.yaml.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-404",
+      "controlName": "includesMustNotUseForbiddenVersions"
+    },
+    {
+      "code": "ISSUE-405",
+      "severity": "high",
+      "title": "Missing required template",
+      "description": "A CI/CD template required by the configuration is not included in the pipeline. This means a mandatory workflow step is missing.",
+      "remediation": "Add the required template to your .gitlab-ci.yml using 'include:' with the template path specified in your .plumber.yaml under pipelineMustIncludeTemplate.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-405",
+      "controlName": "pipelineMustIncludeTemplate"
+    },
+    {
+      "code": "ISSUE-406",
+      "severity": "medium",
+      "title": "Forbidden override of required template",
+      "description": "A required CI/CD template is included but some of its job keys are overridden locally, which may alter the intended behavior.",
+      "remediation": "Remove the local overrides on the template's jobs. If customization is needed, check if the template provides variables for configuration instead of overriding job keys directly.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-406",
+      "controlName": "pipelineMustIncludeTemplate"
+    },
+    {
+      "code": "ISSUE-408",
+      "severity": "high",
+      "title": "Missing required component",
+      "description": "A CI/CD component required by the configuration is not included in the pipeline. This means a mandatory compliance check or security scan is missing.",
+      "remediation": "Add the required component to your .gitlab-ci.yml using 'include:' with the component path specified in your .plumber.yaml under pipelineMustIncludeComponent.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-408",
+      "controlName": "pipelineMustIncludeComponent"
+    },
+    {
+      "code": "ISSUE-409",
+      "severity": "medium",
+      "title": "Forbidden override of required component",
+      "description": "A required CI/CD component is included but some of its job keys are overridden locally, which may alter the intended behavior of the compliance check.",
+      "remediation": "Remove the local overrides on the component's jobs. If customization is needed, check if the component provides input variables for configuration instead of overriding job keys directly.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-409",
+      "controlName": "pipelineMustIncludeComponent"
+    },
+    {
+      "code": "ISSUE-410",
+      "severity": "critical",
+      "title": "Security job weakened",
+      "description": "A security job in the pipeline has been weakened by setting allow_failure to true, overriding rules with when: never or when: manual, or setting when to manual. This can cause critical security scans to be skipped or require manual intervention.",
+      "remediation": "Ensure security jobs run automatically and block the pipeline on failure. Remove allow_failure: true, do not override rules with when: never or when: manual, and do not set when: manual on security jobs.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-410",
+      "controlName": "securityJobsMustNotBeWeakened"
+    },
+    {
+      "code": "ISSUE-411",
+      "severity": "high",
+      "title": "Unverified script execution",
+      "description": "A CI/CD job executes a script without integrity verification: pipe-to-shell (curl | bash), download-then-exec, redirect-then-exec, base64-decode-to-shell (Megalodon-style), or any command piped into bash/sh. An attacker can exfiltrate CI secrets via a compromised URL or obfuscated inline payload.",
+      "remediation": "Download scripts to a file, verify checksum or signature on the same line, then execute. Avoid piping remote or encoded content directly into a shell. Vendor scripts in-repo or use trusted package managers.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-411",
+      "controlName": "pipelineMustNotExecuteUnverifiedScripts"
+    },
+    {
+      "code": "ISSUE-412",
+      "severity": "high",
+      "title": "Docker-in-Docker service detected",
+      "description": "A CI/CD job uses a Docker-in-Docker (dind) service. On shared runners running in privileged mode, this enables container escape, lateral movement, and access to secrets from other jobs on the same runner.",
+      "remediation": "Replace Docker-in-Docker with a safer alternative such as Kaniko or Buildah for building container images. These tools do not require privileged mode and avoid the security risks of running a Docker daemon inside a CI container.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-412",
+      "controlName": "pipelineMustNotUseDockerInDocker"
+    },
+    {
+      "code": "ISSUE-413",
+      "severity": "high",
+      "title": "Docker-in-Docker with insecure daemon configuration",
+      "description": "A CI/CD job uses Docker-in-Docker with an insecure daemon configuration. Setting DOCKER_TLS_CERTDIR to an empty string or using DOCKER_HOST with tcp://...:2375 disables TLS encryption between the CI job and the Docker daemon, allowing network-level eavesdropping and command injection.",
+      "remediation": "If Docker-in-Docker is required, ensure TLS is enabled: do not set DOCKER_TLS_CERTDIR to an empty string, and use tcp://docker:2376 (TLS) instead of tcp://docker:2375 (plaintext). Prefer Kaniko or Buildah to avoid this pattern entirely.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-413",
+      "controlName": "pipelineMustNotUseDockerInDocker"
+    },
+    {
+      "code": "ISSUE-417",
+      "severity": "high",
+      "title": "Required action or reusable workflow is missing",
+      "description": "A GitHub action or reusable workflow declared as required in `workflowMustIncludeRequiredActions.requiredGroups` is not referenced by any job or step in the project's `.github/workflows/` files. The missing reference means a mandatory security scan, compliance check, or organization-wide workflow is not actually running on this repository.",
+      "remediation": "Add a `uses: \u003cowner\u003e/\u003crepo\u003e[@\u003cref\u003e]` step that references the required action, or a `jobs.\u003cname\u003e.uses: \u003cowner\u003e/\u003crepo\u003e/.github/workflows/\u003cfile\u003e.yml@\u003cref\u003e` job that calls the required reusable workflow. The exact path declared in `.plumber.yaml` under `workflowMustIncludeRequiredActions` is matched ref-agnostically, so any pinned ref works.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-417",
+      "controlName": "workflowMustIncludeRequiredActions"
+    },
+    {
+      "code": "ISSUE-418",
+      "severity": "medium",
+      "title": "Workflow has no concurrency block",
+      "description": "A GitHub Actions workflow declares no `concurrency:` block at either the workflow or the job level. Without it, concurrent pushes to the same branch (common during rebases and force-pushes) start parallel runs that race on caches, artifact uploads, and external state — and burn runner minutes. When the workflow deploys, it can also land stale state by overtaking a newer run.",
+      "remediation": "Add a `concurrency` block that groups runs by ref: `concurrency: { group: ${{ github.workflow }}-${{ github.ref }}, cancel-in-progress: true }`. For deploy workflows, keep `cancel-in-progress: false` so an in-flight deploy finishes cleanly.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-418",
+      "controlName": "workflowsMustDeclareConcurrency"
+    },
+    {
+      "code": "ISSUE-419",
+      "severity": "medium",
+      "title": "Workflow uses a known misfeature pattern",
+      "description": "A GitHub Actions workflow uses a pattern that is supported but widely considered harmful: `shell: cmd` / `shell: powershell` on Windows runners (legacy shells, weak quoting, historical CVEs), an inline pip/gem/bundler install against a network URL, or an `actions/upload-artifact` of the checkout directory (leaks `.git` including tokens if ISSUE-307 artipacked also fires).",
+      "remediation": "Switch Windows jobs to `shell: pwsh`. Vendor dependencies or use a pinned install step with checksums. Never upload the checkout directory as an artefact — upload the build output only.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-419",
+      "controlName": "workflowMustNotUseKnownMisfeatures"
+    },
+    {
+      "code": "ISSUE-420",
+      "severity": "high",
+      "title": "Workflow script contains obfuscation (zero-width / bidi / non-ASCII homoglyphs)",
+      "description": "A GitHub Actions `run:` script or an expression carries invisible characters — zero-width spaces, bidirectional override codepoints (Trojan Source, CVE-2021-42574), or homoglyph identifiers mixing Cyrillic / Greek letters with Latin. The rendered source reads harmless on GitHub while the runner executes a different instruction. This was seen in the wild in backdoored npm / PyPI packages and has been documented as a supply-chain attack primitive since 2021.",
+      "remediation": "Strip non-ASCII characters from workflow scripts and expression references unless strictly necessary (localised strings, user-facing labels). Enable `.gitattributes` pre-commit checks that block zero-width and bidirectional Unicode in source files.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-420",
+      "controlName": "workflowMustNotContainObfuscation"
+    },
+    {
+      "code": "ISSUE-421",
+      "severity": "high",
+      "title": "Publish step relies on a static token instead of OIDC trusted publishing",
+      "description": "A GitHub Actions workflow publishes to PyPI, npm, or Maven Central using a long-lived `API_TOKEN` / `NPM_TOKEN` / `OSSRH_USERNAME` secret instead of OIDC-backed trusted publishing. Static publish tokens are reusable from anywhere they leak to — logs, build caches, malicious dependencies — whereas OIDC tokens are short-lived and bound to a specific repository / environment / workflow.",
+      "remediation": "Migrate to trusted publishing: for PyPI set a publisher in the project settings and drop the token; for npm use the `--provenance` flag with OIDC; for Maven Central use the Sonatype portal's trusted publishing. Delete the static token once OIDC is live.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-421",
+      "controlName": "publishWorkflowsMustUseOidcTrustedPublishing"
+    },
+    {
+      "code": "ISSUE-422",
+      "severity": "low",
+      "title": "Workflow has no explicit name",
+      "description": "A GitHub Actions workflow file omits the top-level `name:` field, so GitHub falls back to the file path in the Actions UI, pull-request checks, required-status-check rules, and audit logs. In a repository with many workflows this makes dashboards harder to read and — more importantly — causes the required-status-check settings to bind to file paths that change with renames, silently disabling a compliance gate.",
+      "remediation": "Add a human-readable `name: \u003cdescriptive-name\u003e` at the top of every workflow. Keep the name stable so branch protections and required status checks continue to match after renames.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-422",
+      "controlName": "workflowsMustHaveExplicitName"
+    },
+    {
+      "code": "ISSUE-501",
+      "severity": "critical",
+      "title": "Branch protection missing",
+      "description": "A branch that should be protected according to the configuration has no protection rules. Unprotected branches allow direct pushes and force pushes, bypassing code review.",
+      "remediation": "Enable branch protection in GitLab: Settings \u003e Repository \u003e Protected Branches. Add the branch with appropriate access levels for push and merge.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-501",
+      "controlName": "branchMustBeProtected"
+    },
+    {
+      "code": "ISSUE-502",
+      "severity": "high",
+      "title": "Merge request approval rule requires too few approvals",
+      "description": "A merge request approval rule that covers all protected branches requires fewer approvals than the configured minimum, so a protected branch can be merged with too little review.",
+      "remediation": "Raise the rule's required approvals in Settings \u003e Merge requests \u003e Approval rules to at least your configured minimum, or narrow the rule's scope if it is not meant to cover all protected branches.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-502",
+      "controlName": "mergeRequestApprovalRulesMustRequireMinimumApprovals"
+    },
+    {
+      "code": "ISSUE-503",
+      "severity": "high",
+      "title": "MR approval settings are not compliant",
+      "description": "The project's merge request approval settings fall short of the configured expectations (authors or committers can approve, rules can be overridden per MR, no re-authentication, or approvals survive new commits), so approvals can be weakened at the project level regardless of any approval rule.",
+      "remediation": "Tighten the project's approval settings in Settings \u003e Merge requests: prevent approval by the author and by committers, prevent editing approval rules in merge requests, require re-authentication to approve, and remove approvals when new commits are added, as your policy requires.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-503",
+      "controlName": "mergeRequestApprovalSettingsMustBeCompliant"
+    },
+    {
+      "code": "ISSUE-504",
+      "severity": "high",
+      "title": "No approval rule covers all protected branches",
+      "description": "No merge request approval rule applies to all protected branches, so a protected branch can exist with no required approval and be merged without review.",
+      "remediation": "Add a merge request approval rule that applies to all protected branches in Settings \u003e Merge requests \u003e Approval rules.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-504",
+      "controlName": "mergeRequestApprovalRulesMustCoverAllProtectedBranches"
+    },
+    {
+      "code": "ISSUE-505",
+      "severity": "high",
+      "title": "Branch protection configuration not compliant",
+      "description": "A protected branch does not meet the required protection settings (e.g., force push allowed, access levels too permissive, code owner approval not required).",
+      "remediation": "Update branch protection settings in GitLab: Settings \u003e Repository \u003e Protected Branches. Ensure force push is disabled, access levels meet the minimum, and code owner approval is required per your .plumber.yaml configuration.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-505",
+      "controlName": "branchMustBeProtected"
+    },
+    {
+      "code": "ISSUE-506",
+      "severity": "medium",
+      "title": "MR settings are not compliant",
+      "description": "The project's merge-request/merge settings (merge method, squash policy, merge trains, source-branch removal, and related options) do not match the configured expectations, so merges can happen in a way the policy does not allow.",
+      "remediation": "Align the project's merge-request settings in Settings \u003e Merge requests with your policy: set the required merge method and squash option, and toggle the merge-train, skipped-pipeline, discussion-resolution, and source-branch-removal options to the expected values.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-506",
+      "controlName": "mergeRequestSettingsMustBeCompliant"
+    },
+    {
+      "code": "ISSUE-601",
+      "severity": "critical",
+      "title": "Missing security policy source on project",
+      "description": "The project does not directly link the expected GitLab security policy project (none is linked, or a different one than the configured expectation). This checks the project's own link only, so a security policy source inherited from a parent group is not detected.",
+      "remediation": "Link the expected security policy project in Settings \u003e Security \u0026 Compliance \u003e Policies (or set it via the API). If your policies are enforced at a parent group and inherited, this project-scoped check will not see them, so link at the project level too or disable this control. Security policies require GitLab Ultimate.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-601",
+      "controlName": "projectMustHaveSecurityPolicySource"
+    },
+    {
+      "code": "ISSUE-701",
+      "severity": "high",
+      "title": "Third-party action reference is not pinned by commit SHA",
+      "description": "A GitHub Actions workflow references a third-party action with a mutable ref (tag or branch) instead of a 40-character commit SHA. Tag and branch refs can be reassigned by the action's maintainer — or by an attacker who compromises the action's repository — to point at arbitrary code, which then runs inside the caller workflow with its secrets. The March 2025 tj-actions/changed-files compromise (CVE-2025-30066) propagated this way to hundreds of repositories, including aquasecurity/trivy.",
+      "remediation": "Replace `uses: owner/action@v4` with `uses: owner/action@\u003c40-char-sha\u003e` and add a `# vX.Y.Z` comment to document the version. Tools like Dependabot's `version-update-strategy: sha-and-version` can automate the update flow. Official GitHub-owned actions (actions/*, github/*) can be excluded if they are in the workflow's trusted boundary.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-701",
+      "controlName": "actionsMustBePinnedByCommitSha"
+    },
+    {
+      "code": "ISSUE-702",
+      "severity": "high",
+      "title": "Action is hosted in an archived repository",
+      "description": "A GitHub Actions workflow references an action whose upstream repository is archived. Archived repos no longer receive maintenance — security fixes, dependency bumps, compatibility patches all stop — and any existing vulnerability stays open forever. A new SHA can still be pushed by the last maintainer, so even pinning by SHA does not make the reference safe against a future takeover.",
+      "remediation": "Replace the action with a maintained fork (audit the fork's owner first) or with an equivalent step implemented inline. If the behaviour is trivial, inlining the shell logic avoids the supply-chain dependency entirely.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-702",
+      "controlName": "actionsMustNotBeArchived"
+    },
+    {
+      "code": "ISSUE-703",
+      "severity": "critical",
+      "title": "Action version carries a published security advisory",
+      "description": "The pinned version of this action appears in the GitHub Advisory Database under the `actions` ecosystem. Running a workflow on a known-vulnerable action version inherits the published vulnerability class (RCE, secret exfiltration, privilege escalation, depending on the advisory). Examples from history: tj-actions/changed-files (CVE-2025-30066), reviewdog/action-setup with the March 2025 compromise, unpatched releases of `actions/artifact`. This check reports every advisory whose affected-version range covers the pinned ref.",
+      "remediation": "Upgrade the action to a version outside the advisory's affected range (the advisory page lists a fixed-in version). Pin by SHA once upgraded so future retags cannot silently revert the fix. Configure Dependabot with `package-ecosystem: github-actions` to receive PR alerts when new advisories land.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-703",
+      "controlName": "actionsMustNotCarryKnownCVEs"
+    },
+    {
+      "code": "ISSUE-704",
+      "severity": "critical",
+      "title": "Container registry password is hard-coded in the workflow",
+      "description": "A GitHub Actions workflow sets `jobs.\u003cname\u003e.container.credentials.password` to a literal string instead of a `${{ secrets.X }}` reference. The password is committed to the repository's history in plain text; anyone with read access — including the entire public on a public repo — can retrieve it, and rotating it requires rewriting history to purge the leak.",
+      "remediation": "Store the password in a repository, environment, or organization secret and reference it via `${{ secrets.\u003cNAME\u003e }}`. If the password is already exposed in git history, rotate it immediately and purge the literal with `git filter-repo` or a BFG run before re-publishing.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-704",
+      "controlName": "containerCredentialsMustComeFromSecrets"
+    },
+    {
+      "code": "ISSUE-705",
+      "severity": "high",
+      "title": "Release/publish workflow may consume a poisoned build cache",
+      "description": "A release, tag or publish workflow uses `actions/cache@*` (or an equivalent cache action) without scoping the cache key to the ref being released. Caches on GitHub Actions are shared across branches according to the fallback rules: a malicious PR run on a feature branch can populate the same cache key that the release job later restores, silently injecting compiled artefacts, dependencies, or build scripts into the published output. Past supply-chain incidents have abused exactly this fallback to publish compromised packages to PyPI and npm.",
+      "remediation": "Either disable the cache entirely on release/publish jobs, or scope the `key:` to the ref being released (e.g. `key: release-${{ github.ref_name }}-${{ hashFiles('**/go.sum') }}`) without a `restore-keys:` fallback that reaches into PR-populated entries. Verify artefacts against a checksum after restoring.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-705",
+      "controlName": "releaseWorkflowsMustNotRestoreUntrustedCache"
+    },
+    {
+      "code": "ISSUE-706",
+      "severity": "medium",
+      "title": "Dockerfile FROM reference is not pinned by digest",
+      "description": "A Dockerfile at the root of the repository (or under a known build directory) uses `FROM image:tag` without a `@sha256:…` digest. Tags are mutable at the registry level: an attacker who compromises the registry — or the image maintainer — can re-push the same tag to point at a different layer, silently injecting code into every later build that pulls the reference. The supply chain of the downstream artefact then inherits that substitution. Pinning by digest is the single control that neutralises this vector.",
+      "remediation": "Replace `FROM image:tag` with `FROM image:tag@sha256:…`. `docker inspect --format='{{index .RepoDigests 0}}' image:tag` prints the digest for the tag you just pulled. Automate refresh with Dependabot or Renovate (`package-ecosystem: docker`, `version-update-strategy: sha-and-version`) so the pin stays current.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-706",
+      "controlName": "dockerfilesMustPinBaseImageByDigest"
+    },
+    {
+      "code": "ISSUE-707",
+      "severity": "critical",
+      "title": "Pinned commit SHA does not belong to the action's repository",
+      "description": "A workflow pins an action to a commit SHA that does not resolve in the action's upstream repository. That means either the SHA was mistyped (the reference silently runs whatever tag/branch GitHub falls back to, typically the default branch) or — far worse — the author was tricked by a PR comment / stargazer dashboard showing a detached commit that was never merged upstream. The name-and-SHA combination is the precise form of the `impostor commit` attack documented in academic supply-chain literature.",
+      "remediation": "Replace the reference with a SHA that actually belongs to the action's repository. Use `gh api repos/\u003cowner\u003e/\u003crepo\u003e/commits/\u003csha\u003e` to verify before committing the change. That endpoint only accepts commit SHAs, so a pin naming an annotated tag object answers 422 there; check it with `gh api repos/\u003cowner\u003e/\u003crepo\u003e/git/tags/\u003csha\u003e` instead, which also reports the tag name and the commit it points at.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-707",
+      "controlName": "actionRefsMustExistUpstream"
+    },
+    {
+      "code": "ISSUE-708",
+      "severity": "medium",
+      "title": "`# vX.Y.Z` comment does not match the SHA",
+      "description": "A workflow pins an action by commit SHA and adds a trailing `# vX.Y.Z` comment to document the intended version, but the SHA does not correspond to the tag named in the comment. Reviewers scanning diffs trust that annotation and miss the discrepancy, so silent downgrades (or upgrades that claim to be a patch) slip through review unnoticed.",
+      "remediation": "Either update the SHA to the one the tag points at, or update the comment to the tag that actually corresponds to the SHA. `gh api repos/\u003cowner\u003e/\u003crepo\u003e/git/ref/tags/\u003ctag\u003e` returns the SHA the tag resolves to.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-708",
+      "controlName": "actionPinCommentsMustMatchSha"
+    },
+    {
+      "code": "ISSUE-709",
+      "severity": "low",
+      "title": "Action pin is behind the latest upstream release",
+      "description": "A workflow pins an action to a commit SHA that predates the repository's most recent release. The SHA may still work today, but it is missing security fixes, dependency updates, and runtime compatibility changes shipped in later releases. Dependabot's `version-update-strategy: sha-and-version` handles the upgrade loop once configured.",
+      "remediation": "Update the pin to the SHA of the latest release, and refresh the trailing `# vX.Y.Z` comment. Enable Dependabot with `package-ecosystem: github-actions` and `version-update-strategy: sha-and-version` to keep the pins fresh automatically.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-709",
+      "controlName": "actionPinsMustNotBeStale"
+    },
+    {
+      "code": "ISSUE-711",
+      "severity": "low",
+      "title": "Third-party action duplicates functionality already on the runner",
+      "description": "A workflow uses a third-party action to do something the GitHub-hosted runner already provides out of the box: `gh` CLI operations wrapped by `peter-evans/create-pull-request`, basic cache operations that `actions/cache` already covers, `nick-invision/retry` for a one-line `bash` retry loop. Each extra action is an extra supply-chain dependency for zero capability gain — the sort of reference where an `impostor-commit`, a tag retag, or a compromise of the upstream account buys the attacker a foothold with no functional reason to have taken that risk.",
+      "remediation": "Replace the action with the equivalent inline shell step using the runner's built-in tooling (`gh pr create`, `gh release`, simple `bash` retry loops). Keeps the workflow readable AND removes a supply-chain link. When the capability is non-trivial (artifact caching, matrix fan-out), prefer the official `actions/*` action over a third-party duplicate.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-711",
+      "controlName": "actionsMustNotDuplicateRunnerBuiltins"
+    },
+    {
+      "code": "ISSUE-712",
+      "severity": "medium",
+      "title": "Release / publish workflow produces unsigned artefacts",
+      "description": "A workflow runs a release or publish action (goreleaser, softprops/action-gh-release, pypa publish, npm-publish, docker build+push) without invoking any signing step. Consumers pulling the released artefact have no cryptographic handle to verify the artefact was built by the expected pipeline rather than tampered with along the way (cache poisoning, compromised runner, repository takeover). Signing (Sigstore cosign, GPG, SLSA provenance) turns 'I trust this came from that repo' into a falsifiable statement.",
+      "remediation": "Add a signing step to the release job: `sigstore/cosign-installer` followed by `cosign sign \u003cartefact\u003e` for container images, `sigstore/gh-action-sigstore-python` for Python wheels, `crazy-max/ghaction-import-gpg` + `gpg --detach-sign` for tarballs, or `--snapshot-github-actions` on goreleaser with the signing pipeline configured. Publish the `.sig` / `.asc` alongside the artefact in the release assets.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-712",
+      "controlName": "releaseWorkflowsMustSignArtefacts"
+    },
+    {
+      "code": "ISSUE-713",
+      "severity": "high",
+      "title": "Action comes from an unauthorized source",
+      "description": "A GitHub Actions workflow references an action whose source is not authorized. Every third-party action runs with the caller workflow's token and secrets, so an unvetted owner is a direct supply-chain entry point — the vector behind the tj-actions/changed-files compromise (CVE-2025-30066), where an attacker also exploited repository rename/re-creation to squat a once-trusted name. Restricting actions to GitHub-official owners, an explicit org allowlist, and a minimum-popularity floor shrinks that attack surface to vetted sources.",
+      "remediation": "Use an action from an authorized source. Configure the allowlist in .plumber.yaml under githubActionMustComeFromAuthorizedSources: keep trustGithubOfficialActions on for actions/* and github/*, add trusted owners or actions to trustedGithubActions (exact `owner/repo` or `owner/*`), and optionally set minimumStars to require a popularity threshold. Vendoring the action into a local `./.github/actions/…` directory removes the external dependency entirely.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-713",
+      "controlName": "githubActionMustComeFromAuthorizedSources"
+    },
+    {
+      "code": "ISSUE-714",
+      "severity": "high",
+      "title": "Action fetches and runs remote code from a mutable ref (in the open)",
+      "description": "A third-party action's own source fetches and executes a script from a MOVING ref (a branch such as main/master, not a tag or SHA) of another repository at runtime, and does not verify the download against a checksum. Pinning the action by commit SHA does not reach this: the fetched code can change with nothing committed where the pin can see it, so a compromise or retag of that upstream branch runs arbitrary code in the job with its token and secrets. The canonical example is anchore/scan-action, which fetches `raw.githubusercontent.com/anchore/grype/main/install.sh` and runs it. This is a static, text-level match on the action's source: it catches the in-the-open shape, not an author who deliberately hides the fetch (see ISSUE-715), so a clean result asserts 'no known pattern seen', not 'safe'.",
+      "remediation": "Prefer an action that pins its downloads to an immutable ref AND verifies a checksum. Otherwise install the tool yourself from a pinned release, verify it against a checksum committed to your repo, and run it directly; or vendor the action and pin its internal fetch. A fetch that already verifies a pinned checksum is content-pinned and is not flagged here.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-714",
+      "controlName": "actionsMustNotExecuteMutableRemoteCode"
+    },
+    {
+      "code": "ISSUE-715",
+      "severity": "critical",
+      "title": "Action obfuscates a remote code fetch/exec",
+      "description": "The action's own source decodes and then executes code: `base64 -d | sh`, `eval \"$(… | base64 -d)\"`, `eval(atob(…))`, `new Function(atob(x))`, a hex/xxd decode piped to a shell, and similar. No legitimate action needs to hide what it runs at runtime, so obfuscation-then-execute is treated as the strongest signal regardless of the host, ref, or encoding used. This deliberately does NOT chase every possible encoding (an unbounded space); it flags the act of hiding itself, which is what makes a clean result meaningful here.",
+      "remediation": "Remove the obfuscation. If the action is a dependency, drop or vendor it and replace the hidden fetch with an explicit, pinned, checksum-verified install. An action that must decode data at runtime should not feed that decoded value into a shell or eval.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-715",
+      "controlName": "actionsMustNotExecuteMutableRemoteCode"
+    },
+    {
+      "code": "ISSUE-716",
+      "severity": "low",
+      "title": "Action source could not be verified",
+      "description": "Plumber could not fetch the action's own source (a network error, API rate limit, GitHub Enterprise Server host, private repo, or a Docker-image action) so it could not confirm whether the action fetches mutable remote code at runtime. This is surfaced as an explicit could-not-verify finding rather than a silent pass, because a silent pass would let the same repository score differently across CI environments and would over-claim safety on an unchecked dependency.",
+      "remediation": "Re-run where the action source is reachable (authenticated token, network access) to get a definitive result, or vendor the action so its source is local and auditable. This finding is informational: it flags an unchecked dependency, not a confirmed problem.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-716",
+      "controlName": "actionsMustNotExecuteMutableRemoteCode"
+    },
+    {
+      "code": "ISSUE-801",
+      "severity": "medium",
+      "title": "Workflow has no explicit `permissions:` block",
+      "description": "A GitHub Actions workflow declares neither a workflow-level nor per-job `permissions:` block. The runner then falls back to the repository-wide default GITHUB_TOKEN permissions — often `contents: write` or `read-all` — giving every step more authority than it needs. Any compromise (unpinned action, template-injection, cache poisoning) inherits the full default scope.",
+      "remediation": "Declare the narrowest permissions explicitly: `permissions: { contents: read }` at the workflow level and widen per-job only when a step needs to push, comment on issues, etc. This enforces the principle of least privilege regardless of the repo default setting.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-801",
+      "controlName": "workflowsMustDeclarePermissions"
+    },
+    {
+      "code": "ISSUE-802",
+      "severity": "critical",
+      "title": "Dangerous workflow trigger",
+      "description": "A GitHub Actions job is reachable via a trigger that runs with the base repository's secrets while being influenceable by an unprivileged caller (`workflow_run`, `issue_comment`, `pull_request_review`, `pull_request_review_comment`, `discussion`, `discussion_comment`, `gollum`, `fork`) AND it checks out fork-controlled code. The `pull_request_target` case is owned by ISSUE-804 (pull-request-target-with-head-checkout). This is the same exploit class as the March 2025 tj-actions/changed-files supply-chain compromise (CVE-2025-30066).",
+      "remediation": "Prefer the standard `pull_request` trigger unless access to base-repo secrets is strictly required. If a secret-bearing trigger is necessary, never check out fork content and never render github.event.* / github.head_ref into shell commands. For `workflow_run`, keep the job restricted to non-secret-bearing steps.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-802",
+      "controlName": "workflowMustNotUseDangerousTriggers"
+    },
+    {
+      "code": "ISSUE-803",
+      "severity": "high",
+      "title": "Excessive workflow permissions",
+      "description": "A GitHub Actions job's effective permissions block grants `write-all`, giving its GITHUB_TOKEN write access to every API scope regardless of what the job actually needs. Paired with a compromise through injection, dangerous triggers or a malicious action, this amplifies impact to full repository control.",
+      "remediation": "Declare the narrowest permissions block that lets the job do its work. Prefer `permissions: { contents: read }` at the workflow level and grant additional scopes only on the jobs that truly need them.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-803",
+      "controlName": "workflowMustNotGrantPermissionsWriteAll"
+    },
+    {
+      "code": "ISSUE-804",
+      "severity": "critical",
+      "title": "pull_request_target workflow explicitly checks out the PR head",
+      "description": "A workflow triggered by `pull_request_target` calls `actions/checkout` with an explicit `ref:` pointing at the pull request's head (e.g. `github.event.pull_request.head.sha`, `github.head_ref`). This is the exact pattern behind the March 2025 tj-actions/changed-files compromise (CVE-2025-30066): the workflow has access to the base repository's secrets AND it executes code controlled by the PR author. Any shell step that runs after the checkout is a direct path to secret exfiltration. Unlike the broader dangerous-triggers check (ISSUE-802) which flags the trigger itself, this rule flags the actual exploitable combination.",
+      "remediation": "Either switch to the standard `pull_request` event (runs in the fork's context, no base-repo secrets), or remove the explicit `ref:` input so `actions/checkout` falls back to the base repository's SHA. If cross-context code must be examined, split the job: a small pull_request_target job gathers metadata, then hands off to a separate pull_request workflow that executes the fork code.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-804",
+      "controlName": "pullRequestTargetMustNotCheckoutHead"
+    },
+    {
+      "code": "ISSUE-901",
+      "severity": "critical",
+      "title": "Dependabot re-enables insecure external code execution",
+      "description": "The repository's `.github/dependabot.yml` sets `insecure-external-code-execution: allow` for one of its update ecosystems. Dependabot will then execute install / postinstall hooks from every candidate dependency version during its version-resolution passes, giving any compromised upstream package a path to run arbitrary code in the Dependabot runner — which holds privileged access to the repository via a non-auditable push token. This is the option Dependabot itself documents as dangerous and defaults to `deny`.",
+      "remediation": "Remove the `insecure-external-code-execution: allow` entry. If a specific ecosystem genuinely requires executing upstream scripts to resolve versions, scope the allowance narrowly with `enable-beta-ecosystems: false` and pair it with a dedicated runner isolation review — do not set it repository-wide.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-901",
+      "controlName": "dependabotMustNotAllowInsecureExternalCodeExecution"
+    },
+    {
+      "code": "ISSUE-902",
+      "severity": "low",
+      "title": "Dependabot ecosystem has no cooldown window",
+      "description": "An update ecosystem in `.github/dependabot.yml` declares no `cooldown:` block. Dependabot then opens a PR the instant a new upstream version is published — including when that version was uploaded minutes ago by a compromised maintainer account. A cooldown window (48–72 hours is common) gives the security-advisory pipeline time to flag a bad release before the automation merges it.",
+      "remediation": "Add a `cooldown:` block to each update ecosystem: for example `cooldown: { default-days: 3, semver-major-days: 7, include: [\"*\"] }`. Adjust the window to fit the project's patching tolerance but never skip it for ecosystems that auto-merge.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-902",
+      "controlName": "dependabotEcosystemsMustHaveCooldown"
+    },
+    {
+      "code": "ISSUE-903",
+      "severity": "medium",
+      "title": "Repository has workflows but no dependency update tool",
+      "description": "The repository ships CI/CD workflows but neither `.github/dependabot.yml` nor `renovate.json` / `.renovaterc` is configured. Dependencies then drift as upstream security patches land — nothing opens the PRs that would pull them in. On a project with any third-party action pinning (which every sane workflow does), this means SHA pins go stale and every unpatched CVE for the pinned versions stays unreachable until a human remembers to refresh the locks.",
+      "remediation": "Add `.github/dependabot.yml` with at minimum `package-ecosystem: github-actions` and your primary language ecosystem (npm, pip, gomod, etc.). For more configurable flows prefer Renovate: `npx -y renovate-config-validator` validates a `renovate.json` before commit.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-903",
+      "controlName": "repositoriesMustConfigureDependencyUpdates"
+    },
+    {
+      "code": "ISSUE-904",
+      "severity": "low",
+      "title": "No static analysis scanner runs in CI",
+      "description": "None of the repository's workflows invokes a recognised SAST scanner (CodeQL, Semgrep, SonarQube, Trivy config scan, Snyk, FOSSA, etc.). Static analysis catches whole vulnerability classes — injection, unsafe deserialisation, crypto misuse — before they reach production; leaving it out of CI means the only gate is manual review, which misses regressions exactly when the diff is large.",
+      "remediation": "Add a workflow that runs CodeQL (`github/codeql-action/init` + `analyze`, free for public repos), Semgrep, or an equivalent SAST scanner on pushes to the default branch and on pull requests. Enable GitHub's code-scanning alerts so findings open issues rather than sit in log output.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-904",
+      "controlName": "repositoriesMustRunSAST"
+    },
+    {
+      "code": "ISSUE-905",
+      "severity": "low",
+      "title": "Repository has no SECURITY.md policy file",
+      "description": "The repository has no `SECURITY.md` (nor `.github/SECURITY.md`, nor `docs/SECURITY.md`) documenting the vulnerability disclosure process. Researchers who find an issue have no public contact beyond opening a GitHub issue — which defeats coordinated disclosure and teaches them to dump vulnerabilities in the open. The file can be short: two lines naming the contact channel and the expected response window are enough to move reports off the public tracker.",
+      "remediation": "Add a `SECURITY.md` at the repo root or under `.github/`. GitHub ships a template (New file → security policy). Include: the supported versions, the reporting channel (email / security@ / private advisory), the expected first-response SLA, and any bounty / safe-harbour terms the project honours.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-905",
+      "controlName": "repositoriesMustPublishSecurityPolicy"
+    }
+  ]
+}
