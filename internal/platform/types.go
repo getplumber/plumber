@@ -148,6 +148,80 @@ func (a *ResolutionAnchor) Matches(digest, version string) bool {
 	return a.ConfigDigest == digest && a.DigestVersion == version
 }
 
+// ProjectDetails is the project's core facts from the same lookup that
+// resolves CiConfigPath (2026-08-27, #368 ask 4). Present whenever that
+// lookup succeeds, archived projects included: the archived flag is half
+// the point.
+//
+// The eight merge-settings fields below (MergeMethod through
+// RemoveSourceBranchAfterMerge) were added a day later (2026-08-28, #368
+// tier c) and are pointers ON PURPOSE: they are always present on a fresh
+// collection since that date but ABSENT on a snapshot stored before then
+// (it self-heals on the next refresh). A non-pointer decode would fabricate
+// a false or empty value for that stale blob, which is exactly the
+// "degraded stays honestly absent" rule SnapshotData exists to uphold.
+type ProjectDetails struct {
+	// DefaultBranch is the project's default branch at collection time.
+	DefaultBranch string `json:"default_branch"`
+	// Archived reports whether the project is archived. An archived
+	// project still gets this section; its merged_yaml is honest-empty
+	// with no degraded_fields entry.
+	Archived bool `json:"archived"`
+	// PathWithNamespace is the project's full path (group/project) as
+	// GitLab reports it.
+	PathWithNamespace string `json:"path_with_namespace"`
+
+	// MergeMethod is GitLab's merge_method setting ("merge", "rebase_merge"
+	// or "ff"). Nil on a pre-2026-08-28 snapshot.
+	MergeMethod *string `json:"merge_method,omitempty"`
+	// SquashOption is GitLab's squash_option setting. Nil on a
+	// pre-2026-08-28 snapshot.
+	SquashOption *string `json:"squash_option,omitempty"`
+	// MergePipelinesEnabled is GitLab's merge_pipelines_enabled setting.
+	// Nil on a pre-2026-08-28 snapshot.
+	MergePipelinesEnabled *bool `json:"merge_pipelines_enabled,omitempty"`
+	// MergeTrainsEnabled is GitLab's merge_trains_enabled setting. Nil on a
+	// pre-2026-08-28 snapshot.
+	MergeTrainsEnabled *bool `json:"merge_trains_enabled,omitempty"`
+	// AllowMergeOnSkippedPipeline is GitLab's
+	// allow_merge_on_skipped_pipeline setting. Nil on a pre-2026-08-28
+	// snapshot.
+	AllowMergeOnSkippedPipeline *bool `json:"allow_merge_on_skipped_pipeline,omitempty"`
+	// ResolveOutdatedDiffDiscussions is GitLab's
+	// resolve_outdated_diff_discussions setting. Nil on a pre-2026-08-28
+	// snapshot.
+	ResolveOutdatedDiffDiscussions *bool `json:"resolve_outdated_diff_discussions,omitempty"`
+	// PrintingMergeRequestLinkEnabled is GitLab's
+	// printing_merge_request_link_enabled setting. Nil on a pre-2026-08-28
+	// snapshot.
+	PrintingMergeRequestLinkEnabled *bool `json:"printing_merge_request_link_enabled,omitempty"`
+	// RemoveSourceBranchAfterMerge is GitLab's
+	// remove_source_branch_after_merge setting. Nil on a pre-2026-08-28
+	// snapshot.
+	RemoveSourceBranchAfterMerge *bool `json:"remove_source_branch_after_merge,omitempty"`
+}
+
+// SecurityPolicyProject is the GitLab security-policy-project linkage
+// (2026-08-27, #368 ask 6).
+//
+// Known true with ID and FullPath set means the project is linked. Known
+// true ALONE (both pointers nil) means the linkage was read
+// authoritatively and genuinely found nothing linked - the real Critical
+// for ISSUE-601, not an absence to be confused with "could not check".
+// Known false means the read was NOT authoritative (auth failure, a null
+// GraphQL project, or the field being unavailable on this instance),
+// always paired with the "security_policy_project" degraded_fields entry;
+// callers must treat that as not_evaluable, never as a pass or a fail.
+//
+// ID and FullPath are pointers because they are omitted, not zeroed, when
+// there is nothing to report: ID absent means either not linked or not
+// known, never a real id of 0.
+type SecurityPolicyProject struct {
+	Known    bool    `json:"known"`
+	ID       *int    `json:"id,omitempty"`
+	FullPath *string `json:"full_path,omitempty"`
+}
+
 // SnapshotData is the collected project settings the platform serves from
 // its own cache. Every field is optional: a collection that degraded stays
 // honestly absent rather than being fabricated as a zero value.
@@ -193,6 +267,40 @@ type SnapshotData struct {
 	// the CLI digests against it too.
 	CiConfigPath string `json:"ci_config_path,omitempty"`
 
+	// ProjectDetails carries the project's core facts and, when the
+	// collection ran on or after 2026-08-28, its eight merge settings - see
+	// the ProjectDetails type doc. Nil when the underlying lookup failed
+	// (paired with DegradedFieldProjectDetails) or (pre-2026-08-27) the
+	// platform had not started serving it yet.
+	ProjectDetails *ProjectDetails `json:"project_details,omitempty"`
+
+	// SecurityPolicyProject is the GitLab security-policy-project linkage -
+	// see the SecurityPolicyProject type doc for its three meaningful
+	// shapes. Nil when the linkage was never read (pre-2026-08-27
+	// platform, or the field simply was not served).
+	SecurityPolicyProject *SecurityPolicyProject `json:"security_policy_project,omitempty"`
+
+	// RawConfig is the RAW, un-merged root CI config file exactly as
+	// fetched, at CiConfigPath on the default branch. Present whenever the
+	// file fetch itself succeeded, including when the merge step failed or
+	// reported INVALID - so a reader can distinguish "no CI file" from
+	// "file exists but the merge is absent/broken". Absent past the
+	// platform's own size cap (paired with DegradedFieldRawConfig) or when
+	// the fetch genuinely failed.
+	RawConfig string `json:"raw_config,omitempty"`
+
+	// MergedYamlStatus is GitLab's own merge status for MergedYaml,
+	// verbatim ("VALID" or "INVALID"). Absent when the merge response
+	// itself is absent: an archived project (see ProjectDetails.Archived)
+	// or the merge fetch failed (then DegradedFieldMergedYaml is set).
+	// Deliberately not named "Status" bare (INVARIANTS rule A).
+	MergedYamlStatus string `json:"merged_yaml_status,omitempty"`
+
+	// CiErrors is GitLab's CI lint/merge errors for MergedYaml, verbatim.
+	// Omitted when empty; typically non-empty exactly when
+	// MergedYamlStatus is "INVALID".
+	CiErrors []string `json:"ci_errors,omitempty"`
+
 	// DegradedFields names the collection lanes that FAILED for this
 	// snapshot, from the closed set in DegradedField*. It is the distinction
 	// the CLI could not previously make: a lane that is absent AND unlisted
@@ -212,6 +320,26 @@ const (
 	DegradedFieldVariables        = "variables"
 	DegradedFieldMergedYaml       = "merged_yaml"
 	DegradedFieldProjectDetails   = "project_details"
+
+	// DegradedFieldRawConfig means the raw CI config fetch itself
+	// succeeded but exceeded the platform's size cap (maxRawConfigBytes,
+	// 1 MiB) at collection time - a genuine could-not-serve-faithfully,
+	// distinct from "could not be fetched" but the same not_evaluable
+	// treatment applies.
+	DegradedFieldRawConfig = "raw_config"
+	// DegradedFieldSourceCatalog means at least one component include's
+	// catalogue lookup genuinely failed. Never set when a lookup merely
+	// determined the target is not a catalogue resource - that is a
+	// present-but-empty answer, not a degradation.
+	DegradedFieldSourceCatalog = "source_catalog"
+	// DegradedFieldSecurityPolicyProject means the security-policy-project
+	// linkage read was not authoritative (SecurityPolicyProject.Known is
+	// false).
+	DegradedFieldSecurityPolicyProject = "security_policy_project"
+	// DegradedFieldIncludesJobs means at least one include's job
+	// attribution could not be established, or the derive call was capped
+	// or failed.
+	DegradedFieldIncludesJobs = "includes_jobs"
 )
 
 // SnapshotSchemaV2 is the first schema version whose DegradedFields absence
