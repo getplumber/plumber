@@ -237,11 +237,19 @@ it to decide what to collect and what to report:
   the resolved configuration from the platform instead of asking the git host
   itself.
 - **So do the project settings.** Branch protections, merge-request approval
-  rules and settings, and CI/CD variable metadata are read from the snapshot
+  rules and settings, the project's own merge settings, its security-policy
+  project linkage, and CI/CD variable metadata are read from the snapshot
   rather than collected per run. That is what stops a project scanned once
   per policy file from re-fetching the same settings once per policy file.
   Variable *values* are never served and never needed: the controls read the
   protected and masked flags, not the secrets.
+- **A job with no checkout still gets the pre-merge file.** When the working
+  tree is not the analysed project (`GIT_STRATEGY: none`, a sparse checkout,
+  a `ci_config_path` in another project), the snapshot's copy of the
+  project's own un-merged CI file stands in for the one that could not be
+  read, so the controls that compare it against the merged pipeline still
+  report. A copy the platform flags as incomplete is not used: those
+  controls report `not_evaluable` instead.
 - **A CI job needs no GitLab token.** Platform mode is built for CI, and a
   job already has what the rest would have been fetched for: its own
   identity in the predefined `CI_*` variables, its checkout, and its
