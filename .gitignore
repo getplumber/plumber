@@ -46,3 +46,6 @@ out.json
 output.json
 
 main
+
+# Superpowers process scratch (ledgers, briefs, reports) - never committed.
+.superpowers/

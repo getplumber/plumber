@@ -5,7 +5,7 @@ import "sort"
 // ControlMeta describes a control's static properties: which providers
 // it applies to and whether it is currently considered production-
 // ready (i.e. NOT benched). Toggle semantics for individual users
-// live in .plumber.yaml — this registry only describes the universe
+// live in .plumber.yaml: this registry only describes the universe
 // of controls the engine knows about.
 type ControlMeta struct {
 	// Providers lists the providers this control is applicable to.
@@ -546,7 +546,7 @@ var controlsMeta = map[string]ControlMeta{
 // accident of history.
 var removedControls = map[string]string{
 	// The gitleaks-based secret scanning integration was removed in
-	// https://github.com/getplumber/plumber/issues/310 — Plumber no
+	// https://github.com/getplumber/plumber/issues/310, Plumber no
 	// longer shells out to external binaries and secret detection is
 	// out of scope for the product. Its ISSUE-301 slot is retired and
 	// must never be reused (the downstream jobs platform has mapped
@@ -558,7 +558,7 @@ var removedControls = map[string]string{
 // benchedControls is the dev-side gate for controls that are NOT yet
 // production-ready, keyed by provider. Findings for any (provider,
 // control) pair listed here are dropped before reaching scoring,
-// output, or any other downstream consumer — regardless of what the
+// output, or any other downstream consumer, regardless of what the
 // user's .plumber.yaml says about them.
 //
 // Why this exists: GitHub Actions support has dozens of policies in
@@ -626,7 +626,7 @@ var benchedControls = map[string]map[string]struct{}{
 
 		// Cross-provider controls whose GitHub side needs collector
 		// or test work before it ships. They continue to fire
-		// findings on GitLab — they're only benched on GitHub.
+		// findings on GitLab: they're only benched on GitHub.
 		"includesMustBeUpToDate":                      {},
 		"includesMustNotUseForbiddenVersions":         {},
 		"pipelineMustIncludeComponent":                {},
@@ -643,7 +643,7 @@ var benchedControls = map[string]map[string]struct{}{
 // enrichment phase (archived state, latest tag, ref existence,
 // advisory database). When EVERY entry in this list is benched for
 // a given provider, the collector skips the API round-trips
-// entirely — turning a 30-60s scan into a sub-second one on a
+// entirely, turning a 30-60s scan into a sub-second one on a
 // large workflow set.
 //
 // Add to this list when introducing a new rule that reads from
