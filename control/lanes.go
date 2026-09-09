@@ -479,7 +479,8 @@ var snapshotLaneControls = map[string][]string{
 		"cicdVariablesMustBeProtected",
 		"cicdVariablesMustBeMasked",
 	},
-	platform.DegradedFieldProjectDetails: {"mergeRequestSettingsMustBeCompliant"},
+	platform.DegradedFieldProjectDetails:        {"mergeRequestSettingsMustBeCompliant"},
+	platform.DegradedFieldSecurityPolicyProject: {"projectMustHaveSecurityPolicySource"},
 }
 
 // lanesWhoseAbsenceIsAFailure names the snapshot lanes the platform writes
@@ -507,21 +508,22 @@ var lanesWhoseAbsenceIsAFailure = map[string]bool{
 // exist, so in platform mode there is nothing they could honestly evaluate
 // against and they must say so rather than pass.
 //
-// projectMustHaveSecurityPolicySource reads GitLab's GraphQL
-// securityPolicyProject, which the snapshot contract does not serve. A
-// CI_JOB_TOKEN cannot reach GraphQL either, so neither lane can feed it.
+// It is EMPTY today, and that is the point of keeping it. Its two entries
+// were projectMustHaveSecurityPolicySource and
+// mergeRequestSettingsMustBeCompliant, written off on the strength of a
+// contract that had moved on: the platform has served
+// security_policy_project and project_details since 2026-08-27, and the
+// eight merge settings inside project_details since 2026-08-28, while the
+// CLI kept reporting lane_not_served over data it was already being sent.
+// Both now read their lane through snapshotLaneControls above, which
+// degrades them when the platform reports the collection as FAILED instead
+// of writing them off unconditionally.
 //
-// mergeRequestSettingsMustBeCompliant reads the project payload's merge
-// settings (merge_method, squash_option, merge trains, …). The snapshot
-// carries no project_details lane, even though the platform's own
-// collector already fetches that payload and keeps one field from it, so
-// this is a gap in what is SERVED rather than in what is collected.
-// Reporting it here rather than letting the control quietly abstain is
-// what makes it visible as a platform ask instead of a mystery.
-var controlsWithNoPlatformLane = map[string]string{
-	"projectMustHaveSecurityPolicySource": ReasonLaneNotServed,
-	"mergeRequestSettingsMustBeCompliant": ReasonLaneNotServed,
-}
+// A control genuinely served by neither lane belongs here rather than being
+// left to abstain unexplained: that is what makes it visible as a platform
+// ask instead of a mystery. Whatever is added, check first that the
+// contract has not already grown the lane.
+var controlsWithNoPlatformLane = map[string]string{}
 
 // MarkDegradedSnapshotLanes flags the controls whose platform snapshot lane
 // failed collection, plus the controls the snapshot has no lane for at all.

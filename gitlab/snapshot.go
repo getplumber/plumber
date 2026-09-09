@@ -90,11 +90,11 @@ const snapshotScopeProject = "project"
 // always has. It is never false merely because a lane is empty: once the
 // platform has answered, its answer is the lane, including "nothing here".
 //
-// MRSettings is deliberately left nil. It is the project payload's merge
-// settings (mergeRequestSettingsMustBeCompliant / ISSUE-506) and the
-// snapshot contract carries no project_details lane, so there is nothing
-// honest to put there. control.controlsWithNoPlatformLane records that as
-// lane_not_served rather than letting the control abstain unexplained.
+// MRSettings comes from the project_details lane, which carries the
+// project payload's merge settings (mergeRequestSettingsMustBeCompliant /
+// ISSUE-506) since 2026-08-28. It stays nil when that lane is absent,
+// degraded, or predates the merge settings - see mrSettingsFromSnapshot for
+// why a partial lane is treated as no lane at all.
 func ProtectionFromSnapshot(run *platform.RunContext) (*GitlabProtectionAnalysisData, bool) {
 	if !run.Engaged() {
 		return nil, false
@@ -143,6 +143,116 @@ func ProtectionFromSnapshot(run *platform.RunContext) (*GitlabProtectionAnalysis
 	// failed one must not be scored at all.
 	data.MRApprovalRulesKnown = !run.LaneDegraded(platform.DegradedFieldMrApprovals)
 
+	// A degraded project_details lane could not be collected, so nothing
+	// about the project's merge settings is known and a nil MRSettings is
+	// the honest answer: StatusFor already reads it as not_evaluable, the
+	// same verdict a failed project fetch produces in standalone mode.
+	if !run.LaneDegraded(platform.DegradedFieldProjectDetails) {
+		data.MRSettings = mrSettingsFromSnapshot(snap.Data.ProjectDetails)
+	}
+
+	return data, true
+}
+
+// mrSettingsFromSnapshot projects the project_details lane's eight merge
+// settings onto the glab.Project members buildMRSettings reads, or nil when
+// the lane cannot supply all eight.
+//
+// All eight or none, deliberately. The platform's stored blob carries the
+// settings as plain booleans and strings written together (2026-08-28), so
+// a nil here means the snapshot predates them and self-heals on the next
+// refresh - never that one setting is genuinely absent. What makes the
+// all-or-nothing rule necessary rather than merely tidy is the shape of
+// what they feed: ir.MRSettings has no pointer members and no absence
+// marker, so a nil copied through arrives at the ISSUE-506 rule as a real
+// `false` or "" and is compared for exact equality against the operator's
+// expectation. That fabricates a deviation on a setting nobody read, which
+// is a finding the project cannot fix. A nil MRSettings instead makes the
+// control report not_evaluable, which is what an unread project payload has
+// always produced.
+func mrSettingsFromSnapshot(details *platform.ProjectDetails) *glab.Project {
+	if details == nil {
+		return nil
+	}
+	if details.MergeMethod == nil ||
+		details.SquashOption == nil ||
+		details.MergePipelinesEnabled == nil ||
+		details.MergeTrainsEnabled == nil ||
+		details.AllowMergeOnSkippedPipeline == nil ||
+		details.ResolveOutdatedDiffDiscussions == nil ||
+		details.PrintingMergeRequestLinkEnabled == nil ||
+		details.RemoveSourceBranchAfterMerge == nil {
+		logger.Debug("platform snapshot carried a project_details lane without the merge settings; ISSUE-506 stays not evaluable rather than reading an absent setting as false")
+		return nil
+	}
+	// Only the members buildMRSettings reads are set. The rest of
+	// glab.Project stays zero on purpose: nothing else reads this value in
+	// platform mode, and filling in a plausible id or name would put
+	// invented facts one refactor away from being believed.
+	return &glab.Project{
+		MergeMethod:                     glab.MergeMethodValue(*details.MergeMethod),
+		SquashOption:                    glab.SquashOptionValue(*details.SquashOption),
+		MergePipelinesEnabled:           *details.MergePipelinesEnabled,
+		MergeTrainsEnabled:              *details.MergeTrainsEnabled,
+		AllowMergeOnSkippedPipeline:     *details.AllowMergeOnSkippedPipeline,
+		ResolveOutdatedDiffDiscussions:  *details.ResolveOutdatedDiffDiscussions,
+		PrintingMergeRequestLinkEnabled: *details.PrintingMergeRequestLinkEnabled,
+		RemoveSourceBranchAfterMerge:    *details.RemoveSourceBranchAfterMerge,
+	}
+}
+
+// SecurityPolicyFromSnapshot builds the security-policy-project linkage
+// (projectMustHaveSecurityPolicySource / ISSUE-601) out of the platform's
+// snapshot, and reports whether the platform served that lane at all.
+//
+// A false second return means the run has NO linkage data: standalone mode
+// and a context that was never fetched (collect it locally, as always), and
+// - in platform mode - an absent or degraded lane, where the caller leaves
+// the collection nil and the control reports not_evaluable. The runner does
+// not fall back to GraphQL for it: a CI job token cannot read that field, so
+// the request could only spend a credential to fail.
+//
+// Known is carried VERBATIM, never upgraded. The platform's three shapes
+// each mean something different to the rule, and only one of them is a
+// verdict:
+//
+//   - Known with a linked project: the linkage exists, and the rule checks
+//     it against the configured expectation.
+//   - Known alone: the linkage was read authoritatively and nothing is
+//     linked. That is the real Critical ISSUE-601 exists to report, not an
+//     absence.
+//   - Known false: the read was not authoritative (an auth failure, a null
+//     GraphQL project, or the field being unavailable on this instance).
+//     The projection then abstains, so the control reports not_evaluable
+//     rather than certifying an unread project as linked or unlinked.
+//
+// Project is set only when Known AND an id was served. An id alongside
+// Known false is not a linkage the run may report on, and an absent id is
+// never a real project id of 0.
+func SecurityPolicyFromSnapshot(run *platform.RunContext) (*SecurityPolicyData, bool) {
+	if !run.Engaged() {
+		return nil, false
+	}
+	snap := run.Snapshot()
+	if snap.Data == nil || snap.Data.SecurityPolicyProject == nil {
+		return nil, false
+	}
+	if run.LaneDegraded(platform.DegradedFieldSecurityPolicyProject) {
+		// The platform said this collection failed. Serving Known=false
+		// would reach the same not_evaluable outcome, but saying the lane
+		// supplied nothing is the truthful one and keeps the caller's
+		// degraded handling in one place.
+		return nil, false
+	}
+	sp := snap.Data.SecurityPolicyProject
+	data := &SecurityPolicyData{Known: sp.Known}
+	if sp.Known && sp.ID != nil {
+		link := &SecurityPolicyProjectLink{ID: *sp.ID}
+		if sp.FullPath != nil {
+			link.FullPath = *sp.FullPath
+		}
+		data.Project = link
+	}
 	return data, true
 }
 

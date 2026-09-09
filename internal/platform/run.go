@@ -247,10 +247,9 @@ func (r *RunContext) LaneMissing(field string) bool {
 	case DegradedFieldMergedYaml:
 		return snap.Data.MergedYaml == ""
 	case DegradedFieldProjectDetails:
-		// No lane carries it, so it is missing from every snapshot ever
-		// collected. Saying so plainly beats answering false and leaving a
-		// caller to conclude the data was there.
-		return true
+		return snap.Data.ProjectDetails == nil
+	case DegradedFieldSecurityPolicyProject:
+		return snap.Data.SecurityPolicyProject == nil
 	}
 	return false
 }

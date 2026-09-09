@@ -370,9 +370,6 @@ func TestMarkDegradedSnapshotLanes(t *testing.T) {
 		r := &AnalysisResult{}
 		r.MarkDegradedSnapshotLanes(entries, runWithDegraded(t, "2"))
 		for _, e := range entries {
-			if e.ControlName == "projectMustHaveSecurityPolicySource" {
-				continue
-			}
 			if _, marked := r.NotEvaluable[e.ControlName]; marked {
 				t.Errorf("%s must evaluate normally when nothing is degraded", e.ControlName)
 			}
@@ -387,12 +384,47 @@ func TestMarkDegradedSnapshotLanes(t *testing.T) {
 		}
 	})
 
-	t.Run("a control with no platform lane is always marked", func(t *testing.T) {
+	// Both lanes are served today (project_details since 2026-08-27, its
+	// eight merge settings since 2026-08-28, security_policy_project since
+	// 2026-08-27), so neither control may be written off as unservable any
+	// more. Marking them lane_not_served made ISSUE-506 and ISSUE-601
+	// permanently not_evaluable in platform mode over data the platform was
+	// already sending.
+	t.Run("the two newly served controls are not written off", func(t *testing.T) {
 		r := &AnalysisResult{}
-		withSecurity := append(entries, ControlEntry{ControlName: "projectMustHaveSecurityPolicySource"})
-		r.MarkDegradedSnapshotLanes(withSecurity, runWithDegraded(t, "2"))
-		if r.NotEvaluable["projectMustHaveSecurityPolicySource"] != ReasonLaneNotServed {
-			t.Error("the snapshot carries no security-policy lane, so the control must report not_evaluable rather than pass")
+		served := append(entries,
+			ControlEntry{ControlName: "projectMustHaveSecurityPolicySource"},
+			ControlEntry{ControlName: "mergeRequestSettingsMustBeCompliant"},
+		)
+		r.MarkDegradedSnapshotLanes(served, runWithDegraded(t, "2"))
+		for _, name := range []string{"projectMustHaveSecurityPolicySource", "mergeRequestSettingsMustBeCompliant"} {
+			if reason, marked := r.NotEvaluable[name]; marked {
+				t.Errorf("%s reads a lane the snapshot serves, got marked %q", name, reason)
+			}
+		}
+	})
+
+	// The other half of serving a lane: when the platform reports that lane
+	// as a FAILED collection, its control must abstain rather than fail the
+	// project against settings nobody read.
+	t.Run("a degraded project_details lane degrades the merge-settings control", func(t *testing.T) {
+		r := &AnalysisResult{}
+		served := append(entries, ControlEntry{ControlName: "mergeRequestSettingsMustBeCompliant"})
+		r.MarkDegradedSnapshotLanes(served, runWithDegraded(t, "2", platform.DegradedFieldProjectDetails))
+		if r.NotEvaluable["mergeRequestSettingsMustBeCompliant"] != ReasonSnapshotLaneDegraded {
+			t.Errorf("a failed project_details collection must degrade ISSUE-506, got %v", r.NotEvaluable)
+		}
+		if _, marked := r.NotEvaluable["branchMustBeProtected"]; marked {
+			t.Error("an unrelated lane must not be marked")
+		}
+	})
+
+	t.Run("a degraded security_policy_project lane degrades its control", func(t *testing.T) {
+		r := &AnalysisResult{}
+		served := append(entries, ControlEntry{ControlName: "projectMustHaveSecurityPolicySource"})
+		r.MarkDegradedSnapshotLanes(served, runWithDegraded(t, "2", platform.DegradedFieldSecurityPolicyProject))
+		if r.NotEvaluable["projectMustHaveSecurityPolicySource"] != ReasonSnapshotLaneDegraded {
+			t.Errorf("an unread linkage must degrade ISSUE-601, got %v", r.NotEvaluable)
 		}
 	})
 

@@ -1039,22 +1039,27 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	// that cannot list branches aborts that collection before the read is ever
 	// reached, leaving the control not-evaluable on a linkage it could have read.
 	//
-	// In platform mode it is not read at all. The snapshot contract carries
-	// no lane for it and a CI job token cannot reach GraphQL, so the call
-	// could only ever fail; control/lanes.go already reports the control
-	// lane_not_served, and making the request anyway would spend a
-	// privileged credential on an answer the run has already decided it
-	// cannot use.
+	// In platform mode it comes from the snapshot's security_policy_project
+	// lane, which the platform has served since 2026-08-27. GraphQL is
+	// never queried there, in either direction: a served lane makes the
+	// request unnecessary, and an absent or degraded one makes it
+	// pointless, because a CI job token cannot read that field at all. The
+	// control then reports not_evaluable over a nil collection rather than
+	// spending a privileged credential on an answer the run cannot use.
 	var securityPolicyData *gitlab.SecurityPolicyData
-	if securityPolicyControlEnabled(conf) && !conf.PlatformRun.Engaged() {
-		var spErr error
-		securityPolicyData, spErr = gitlab.CollectSecurityPolicy(conf.ProjectPath, conf.GitlabToken, conf.GitlabURL, conf)
-		if spErr != nil && isNetworkError(spErr) {
-			// A transient network failure must not read as a clean pass: degrade
-			// the run (exit 3) the way the variables and branch collectors do. A
-			// permission failure is NOT network, so it stays a plain
-			// not-evaluable via Known=false without failing a complete run.
-			markDegraded(result, degradedReasonSecurityPolicyPrefix+" (network or timeout)")
+	if securityPolicyControlEnabled(conf) {
+		if fromSnapshot, served := gitlab.SecurityPolicyFromSnapshot(conf.PlatformRun); served {
+			securityPolicyData = fromSnapshot
+		} else if !conf.PlatformRun.Engaged() {
+			var spErr error
+			securityPolicyData, spErr = gitlab.CollectSecurityPolicy(conf.ProjectPath, conf.GitlabToken, conf.GitlabURL, conf)
+			if spErr != nil && isNetworkError(spErr) {
+				// A transient network failure must not read as a clean pass: degrade
+				// the run (exit 3) the way the variables and branch collectors do. A
+				// permission failure is NOT network, so it stays a plain
+				// not-evaluable via Known=false without failing a complete run.
+				markDegraded(result, degradedReasonSecurityPolicyPrefix+" (network or timeout)")
+			}
 		}
 	}
 

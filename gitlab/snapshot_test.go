@@ -634,3 +634,250 @@ func TestVariablesFromSnapshotCacheMissIsNotKnown(t *testing.T) {
 		t.Fatal("a cache miss must not be an authoritative empty listing: Known must be false so the controls report not_evaluable instead of passing over data never collected")
 	}
 }
+
+// The platform serves the project's eight merge settings inside
+// project_details (2026-08-28, #368 tier c) and ISSUE-506 compares each
+// configured expectation against them for EXACT equality. Every member
+// buildMRSettings reads must therefore arrive verbatim: a field left at its
+// zero value would be reported as a deviation the project does not have.
+//
+// The values alternate deliberately. A projection that defaulted everything
+// to false, or copied one field into all of them, passes a same-value
+// fixture and fails this one.
+func TestProtectionFromSnapshotPopulatesMRSettings(t *testing.T) {
+	run := engagedRun(&platform.SnapshotData{
+		SchemaVersion:  platform.SnapshotSchemaV2,
+		ProjectDetails: fullProjectDetails(),
+	})
+
+	data, served := ProtectionFromSnapshot(run)
+	if !served {
+		t.Fatal("an engaged run must be served from the snapshot")
+	}
+	if data.MRSettings == nil {
+		t.Fatal("project_details carries the merge settings, so the control has data to read")
+	}
+	s := data.MRSettings
+	if string(s.MergeMethod) != "ff" {
+		t.Errorf("merge method = %q, want ff", s.MergeMethod)
+	}
+	if string(s.SquashOption) != "always" {
+		t.Errorf("squash option = %q, want always", s.SquashOption)
+	}
+	if !s.MergePipelinesEnabled {
+		t.Error("merge_pipelines_enabled true must survive")
+	}
+	if s.MergeTrainsEnabled {
+		t.Error("merge_trains_enabled false must survive")
+	}
+	if !s.AllowMergeOnSkippedPipeline {
+		t.Error("allow_merge_on_skipped_pipeline true must survive")
+	}
+	if s.ResolveOutdatedDiffDiscussions {
+		t.Error("resolve_outdated_diff_discussions false must survive")
+	}
+	if !s.PrintingMergeRequestLinkEnabled {
+		t.Error("printing_merge_request_link_enabled true must survive")
+	}
+	if s.RemoveSourceBranchAfterMerge {
+		t.Error("remove_source_branch_after_merge false must survive")
+	}
+
+	// The projection the rule actually reads, so this covers the wiring and
+	// not merely the collection struct.
+	projected := buildMRSettings(data)
+	if projected == nil {
+		t.Fatal("the IR projection must carry the snapshot's settings to the rule")
+	}
+	if projected.MergeMethod != "ff" || projected.SquashOption != "always" {
+		t.Errorf("IR enums = %q/%q, want ff/always", projected.MergeMethod, projected.SquashOption)
+	}
+	if !projected.MergePipelinesEnabled || projected.MergeTrainsEnabled {
+		t.Errorf("IR booleans lost their polarity: %+v", projected)
+	}
+}
+
+// A degraded project_details lane could not be collected, so its absence is
+// evidence of nothing. Leaving MRSettings nil is what makes ISSUE-506 report
+// not_evaluable (StatusFor reads the nil) instead of failing the project
+// against settings nobody read.
+func TestProtectionFromSnapshotDegradedProjectDetailsLeavesMRSettingsNil(t *testing.T) {
+	run := engagedRun(&platform.SnapshotData{
+		SchemaVersion:  platform.SnapshotSchemaV2,
+		ProjectDetails: fullProjectDetails(),
+		DegradedFields: []string{platform.DegradedFieldProjectDetails},
+	})
+
+	data, served := ProtectionFromSnapshot(run)
+	if !served {
+		t.Fatal("a degraded lane is still a served run: the other lanes stand")
+	}
+	if data.MRSettings != nil {
+		t.Errorf("a degraded project_details lane must not feed the control, got %+v", data.MRSettings)
+	}
+}
+
+// The eight merge settings are pointers because a snapshot stored before
+// 2026-08-28 carries none of them, and ir.MRSettings cannot express "this
+// setting was not served": its members are plain bools and strings, so a nil
+// pointer copied through would reach the rule as a real false and be
+// reported as a deviation the project cannot fix. The honest answer is the
+// one the codebase already gives for an unread project payload - a nil
+// MRSettings, which StatusFor reports as not_evaluable.
+func TestProtectionFromSnapshotDoesNotFabricateAbsentMergeSettings(t *testing.T) {
+	t.Run("a pre-2026-08-28 snapshot carries no merge settings", func(t *testing.T) {
+		run := engagedRun(&platform.SnapshotData{
+			SchemaVersion: platform.SnapshotSchemaV2,
+			ProjectDetails: &platform.ProjectDetails{
+				DefaultBranch:     "main",
+				PathWithNamespace: "group/project",
+			},
+		})
+		data, _ := ProtectionFromSnapshot(run)
+		if data.MRSettings != nil {
+			t.Errorf("no merge settings were served; a projection here is fabricated: %+v", data.MRSettings)
+		}
+	})
+
+	t.Run("one absent setting withholds the whole projection", func(t *testing.T) {
+		details := fullProjectDetails()
+		details.RemoveSourceBranchAfterMerge = nil
+		run := engagedRun(&platform.SnapshotData{
+			SchemaVersion:  platform.SnapshotSchemaV2,
+			ProjectDetails: details,
+		})
+		data, _ := ProtectionFromSnapshot(run)
+		if data.MRSettings != nil {
+			t.Errorf("remove_source_branch_after_merge was not served, and false is not an honest stand-in: %+v", data.MRSettings)
+		}
+	})
+
+	t.Run("no project_details lane at all", func(t *testing.T) {
+		run := engagedRun(&platform.SnapshotData{SchemaVersion: platform.SnapshotSchemaV2})
+		data, _ := ProtectionFromSnapshot(run)
+		if data.MRSettings != nil {
+			t.Errorf("an absent lane is not an empty one: %+v", data.MRSettings)
+		}
+	})
+}
+
+// SecurityPolicyFromSnapshot carries the platform's three meaningful shapes
+// to ISSUE-601 unchanged. Known ALONE is the real Critical (the linkage was
+// read and nothing is linked); Known false, and a degraded lane, are both
+// "could not check" and must never reach the rule as either verdict.
+func TestSecurityPolicyFromSnapshot(t *testing.T) {
+	id := 42
+	path := "group/security-policies"
+
+	t.Run("standalone mode is not served", func(t *testing.T) {
+		if _, served := SecurityPolicyFromSnapshot(nil); served {
+			t.Error("without a platform the run must collect the linkage itself")
+		}
+		notFetched := &platform.RunContext{Endpoint: "https://platform.test"}
+		if _, served := SecurityPolicyFromSnapshot(notFetched); served {
+			t.Error("a context that was never fetched assigns no lane")
+		}
+	})
+
+	t.Run("known and linked", func(t *testing.T) {
+		run := engagedRun(&platform.SnapshotData{
+			SchemaVersion:         platform.SnapshotSchemaV2,
+			SecurityPolicyProject: &platform.SecurityPolicyProject{Known: true, ID: &id, FullPath: &path},
+		})
+		data, served := SecurityPolicyFromSnapshot(run)
+		if !served {
+			t.Fatal("a served lane must feed the control")
+		}
+		if !data.Known {
+			t.Error("the platform read the linkage authoritatively")
+		}
+		if data.Project == nil {
+			t.Fatal("a linked project must reach the rule")
+		}
+		if data.Project.ID != id || data.Project.FullPath != path {
+			t.Errorf("linked project = %+v, want id %d path %q", data.Project, id, path)
+		}
+	})
+
+	t.Run("known and nothing linked", func(t *testing.T) {
+		run := engagedRun(&platform.SnapshotData{
+			SchemaVersion:         platform.SnapshotSchemaV2,
+			SecurityPolicyProject: &platform.SecurityPolicyProject{Known: true},
+		})
+		data, served := SecurityPolicyFromSnapshot(run)
+		if !served {
+			t.Fatal("an authoritative 'nothing linked' is an answer, not an absence")
+		}
+		if !data.Known {
+			t.Error("known must be carried verbatim")
+		}
+		if data.Project != nil {
+			t.Errorf("nothing is linked; a project here is invented: %+v", data.Project)
+		}
+		// The distinction that matters: this is the state ISSUE-601 FAILS on.
+		if state := buildSecurityPolicyProject(data); state == nil || !state.Known || state.LinkedProjectID != 0 {
+			t.Errorf("the rule must see known=true with no linked id, got %+v", state)
+		}
+	})
+
+	t.Run("known false is not an answer", func(t *testing.T) {
+		run := engagedRun(&platform.SnapshotData{
+			SchemaVersion:         platform.SnapshotSchemaV2,
+			SecurityPolicyProject: &platform.SecurityPolicyProject{Known: false, ID: &id},
+		})
+		data, served := SecurityPolicyFromSnapshot(run)
+		if !served {
+			t.Fatal("the lane is present, so the platform owns it; what it says is that it could not read the linkage")
+		}
+		if data.Known {
+			t.Error("known must be carried verbatim, never upgraded")
+		}
+		if data.Project != nil {
+			t.Errorf("an id alongside known=false is not a linkage the run may report: %+v", data.Project)
+		}
+		if state := buildSecurityPolicyProject(data); state != nil {
+			t.Errorf("the rule must abstain on an unread linkage, got %+v", state)
+		}
+	})
+
+	t.Run("a degraded lane serves nothing", func(t *testing.T) {
+		run := engagedRun(&platform.SnapshotData{
+			SchemaVersion:         platform.SnapshotSchemaV2,
+			SecurityPolicyProject: &platform.SecurityPolicyProject{Known: true, ID: &id},
+			DegradedFields:        []string{platform.DegradedFieldSecurityPolicyProject},
+		})
+		if data, served := SecurityPolicyFromSnapshot(run); served {
+			t.Errorf("a failed collection must leave the control with no data, got %+v", data)
+		}
+	})
+
+	t.Run("an absent lane serves nothing", func(t *testing.T) {
+		run := engagedRun(&platform.SnapshotData{SchemaVersion: platform.SnapshotSchemaV2})
+		if _, served := SecurityPolicyFromSnapshot(run); served {
+			t.Error("no lane means no data, not an empty answer")
+		}
+		if _, served := SecurityPolicyFromSnapshot(engagedRun(nil)); served {
+			t.Error("a cache miss carries no linkage either")
+		}
+	})
+}
+
+// fullProjectDetails is the project_details lane exactly as the platform
+// serves it since 2026-08-28: the core facts plus all eight merge settings.
+func fullProjectDetails() *platform.ProjectDetails {
+	str := func(v string) *string { return &v }
+	b := func(v bool) *bool { return &v }
+	return &platform.ProjectDetails{
+		DefaultBranch:                   "main",
+		Archived:                        false,
+		PathWithNamespace:               "group/project",
+		MergeMethod:                     str("ff"),
+		SquashOption:                    str("always"),
+		MergePipelinesEnabled:           b(true),
+		MergeTrainsEnabled:              b(false),
+		AllowMergeOnSkippedPipeline:     b(true),
+		ResolveOutdatedDiffDiscussions:  b(false),
+		PrintingMergeRequestLinkEnabled: b(true),
+		RemoveSourceBranchAfterMerge:    b(false),
+	}
+}
