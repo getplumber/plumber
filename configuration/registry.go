@@ -36,6 +36,30 @@ type ControlMeta struct {
 	// control verifies: the CLI's own wording, served to the platform and
 	// docs so no consumer authors a divergent copy (#458).
 	Description string
+
+	// RequiresConfig is authored truth: true if and only if enabling this
+	// control with NO further configuration asserts nothing, i.e. the
+	// control is inert (the getplumber/plumber#459 shape): a bare
+	// `enabled: true` block produces zero findings until the operator also
+	// sets its substantive config fields. It is false both for controls
+	// that have no configurable surface beyond `enabled` (their logic is
+	// self-contained once enabled) and for controls whose substantive
+	// fields merely TUNE a check that already asserts something
+	// meaningful unconfigured (e.g. a built-in behavioral default, or an
+	// exemption/allowlist narrowing an otherwise-active rule).
+	//
+	// This is a semantic judgment call, not something reflection can
+	// derive: it is decided per control by reading the config struct's
+	// doc comment in plumberconfig.go and, where that is ambiguous or
+	// stale, the control's Rego evaluation code (#458 requiresConfig
+	// amendment). TestRequiresConfigImpliesConfigSchema guards that a
+	// RequiresConfig control actually has a config schema with a field
+	// beyond `enabled` to require.
+	//
+	// This flag is authoring-time signal only: the runtime scoring of an
+	// unconfigured control (not_evaluable vs. a vacuous pass) remains
+	// #459's own decision, not this field's.
+	RequiresConfig bool
 }
 
 // providerGitLab and providerGitHub are exported as constants so call
@@ -72,18 +96,20 @@ const (
 var controlsMeta = map[string]ControlMeta{
 	// Cross-provider (same control name + rego logic, provider-specific values).
 	"branchMustBeProtected": {
-		Providers:   []string{ProviderGitLab, ProviderGitHub},
-		DisplayName: "Branch must be protected",
-		Category:    CategoryAccessAndAuthorization,
-		ID:          "CTRL-501",
-		Description: "Verifies that the analyzed branch is protected and that the protection settings are compliant: direct pushes and force pushes blocked, access levels tight enough, and code owner approval enforced where required.",
+		Providers:      []string{ProviderGitLab, ProviderGitHub},
+		DisplayName:    "Branch must be protected",
+		Category:       CategoryAccessAndAuthorization,
+		ID:             "CTRL-501",
+		Description:    "Verifies that the analyzed branch is protected and that the protection settings are compliant: direct pushes and force pushes blocked, access levels tight enough, and code owner approval enforced where required.",
+		RequiresConfig: true,
 	},
 	"mergeRequestApprovalRulesMustRequireMinimumApprovals": {
-		Providers:   []string{ProviderGitLab},
-		DisplayName: "MR approval rules must require a minimum number of approvals",
-		Category:    CategoryAccessAndAuthorization,
-		ID:          "CTRL-502",
-		Description: "Verifies that every merge request approval rule covering all protected branches requires at least the configured minimum number of approvals.",
+		Providers:      []string{ProviderGitLab},
+		DisplayName:    "MR approval rules must require a minimum number of approvals",
+		Category:       CategoryAccessAndAuthorization,
+		ID:             "CTRL-502",
+		Description:    "Verifies that every merge request approval rule covering all protected branches requires at least the configured minimum number of approvals.",
+		RequiresConfig: true,
 	},
 	"mergeRequestApprovalRulesMustCoverAllProtectedBranches": {
 		Providers:   []string{ProviderGitLab},
@@ -93,18 +119,20 @@ var controlsMeta = map[string]ControlMeta{
 		Description: "Verifies that at least one merge request approval rule applies to every protected branch, so none can be merged without a required approval.",
 	},
 	"mergeRequestApprovalSettingsMustBeCompliant": {
-		Providers:   []string{ProviderGitLab},
-		DisplayName: "MR approval settings must be compliant",
-		Category:    CategoryAccessAndAuthorization,
-		ID:          "CTRL-503",
-		Description: "Verifies that the project's merge request approval settings (author and committer approval, rule overrides, re-authentication, approval reset on new commits) meet the configured policy.",
+		Providers:      []string{ProviderGitLab},
+		DisplayName:    "MR approval settings must be compliant",
+		Category:       CategoryAccessAndAuthorization,
+		ID:             "CTRL-503",
+		Description:    "Verifies that the project's merge request approval settings (author and committer approval, rule overrides, re-authentication, approval reset on new commits) meet the configured policy.",
+		RequiresConfig: true,
 	},
 	"mergeRequestSettingsMustBeCompliant": {
-		Providers:   []string{ProviderGitLab},
-		DisplayName: "MR settings must be compliant",
-		Category:    CategoryAccessAndAuthorization,
-		ID:          "CTRL-506",
-		Description: "Verifies that the project's merge request and merge settings (merge method, squash policy, merge trains, source-branch removal) match the configured policy.",
+		Providers:      []string{ProviderGitLab},
+		DisplayName:    "MR settings must be compliant",
+		Category:       CategoryAccessAndAuthorization,
+		ID:             "CTRL-506",
+		Description:    "Verifies that the project's merge request and merge settings (merge method, squash policy, merge trains, source-branch removal) match the configured policy.",
+		RequiresConfig: true,
 	},
 	"cicdVariablesMustBeProtected": {
 		Providers:   []string{ProviderGitLab},
@@ -135,11 +163,12 @@ var controlsMeta = map[string]ControlMeta{
 		Description: "Verifies that container images referenced in the pipeline are pulled only from an authorized registry.",
 	},
 	"containerImageMustNotUseForbiddenTags": {
-		Providers:   []string{ProviderGitLab, ProviderGitHub},
-		DisplayName: "Container images must not use forbidden tags",
-		Category:    CategoryContainerImages,
-		ID:          "CTRL-102",
-		Description: "Flags container images referenced by mutable or forbidden tags (such as latest) and, when configured, requires images to be pinned by digest.",
+		Providers:      []string{ProviderGitLab, ProviderGitHub},
+		DisplayName:    "Container images must not use forbidden tags",
+		Category:       CategoryContainerImages,
+		ID:             "CTRL-102",
+		Description:    "Flags container images referenced by mutable or forbidden tags (such as latest) and, when configured, requires images to be pinned by digest.",
+		RequiresConfig: true,
 	},
 	"externalRefsMustNotCollide": {
 		Providers:   []string{ProviderGitLab, ProviderGitHub},
@@ -156,32 +185,36 @@ var controlsMeta = map[string]ControlMeta{
 		Description: "Verifies that included CI/CD components and templates use the latest available version.",
 	},
 	"includesMustNotUseForbiddenVersions": {
-		Providers:   []string{ProviderGitLab, ProviderGitHub},
-		DisplayName: "Includes must not use forbidden versions",
-		Category:    CategoryPipelineComposition,
-		ID:          "CTRL-404",
-		Description: "Flags included CI/CD components and templates that use a version forbidden by the configuration, such as a mutable branch reference.",
+		Providers:      []string{ProviderGitLab, ProviderGitHub},
+		DisplayName:    "Includes must not use forbidden versions",
+		Category:       CategoryPipelineComposition,
+		ID:             "CTRL-404",
+		Description:    "Flags included CI/CD components and templates that use a version forbidden by the configuration, such as a mutable branch reference.",
+		RequiresConfig: true,
 	},
 	"pipelineMustIncludeComponent": {
-		Providers:   []string{ProviderGitLab, ProviderGitHub},
-		DisplayName: "Pipeline must include required components",
-		Category:    CategoryPipelineComposition,
-		ID:          "CTRL-408",
-		Description: "Verifies that every CI/CD component required by the configuration is included in the pipeline and that its job keys are not overridden.",
+		Providers:      []string{ProviderGitLab, ProviderGitHub},
+		DisplayName:    "Pipeline must include required components",
+		Category:       CategoryPipelineComposition,
+		ID:             "CTRL-408",
+		Description:    "Verifies that every CI/CD component required by the configuration is included in the pipeline and that its job keys are not overridden.",
+		RequiresConfig: true,
 	},
 	"pipelineMustIncludeTemplate": {
-		Providers:   []string{ProviderGitLab, ProviderGitHub},
-		DisplayName: "Pipeline must include required templates",
-		Category:    CategoryPipelineComposition,
-		ID:          "CTRL-405",
-		Description: "Verifies that every CI/CD template required by the configuration is included in the pipeline and that its job keys are not overridden.",
+		Providers:      []string{ProviderGitLab, ProviderGitHub},
+		DisplayName:    "Pipeline must include required templates",
+		Category:       CategoryPipelineComposition,
+		ID:             "CTRL-405",
+		Description:    "Verifies that every CI/CD template required by the configuration is included in the pipeline and that its job keys are not overridden.",
+		RequiresConfig: true,
 	},
 	"pipelineMustNotEnableDebugTrace": {
-		Providers:   []string{ProviderGitLab, ProviderGitHub},
-		DisplayName: "Pipeline must not enable debug trace",
-		Category:    CategoryCICDVariables,
-		ID:          "CTRL-203",
-		Description: "Detects pipelines that enable CI debug tracing, which prints masked variable values into job logs.",
+		Providers:      []string{ProviderGitLab, ProviderGitHub},
+		DisplayName:    "Pipeline must not enable debug trace",
+		Category:       CategoryCICDVariables,
+		ID:             "CTRL-203",
+		Description:    "Detects pipelines that enable CI debug tracing, which prints masked variable values into job logs.",
+		RequiresConfig: true,
 	},
 	"pipelineMustNotExecuteUnverifiedScripts": {
 		Providers:   []string{ProviderGitLab, ProviderGitHub},
@@ -198,11 +231,12 @@ var controlsMeta = map[string]ControlMeta{
 		Description: "Flags pipeline jobs defined directly in the CI configuration instead of sourced from an approved CI/CD component or include.",
 	},
 	"pipelineMustNotOverrideJobVariables": {
-		Providers:   []string{ProviderGitLab, ProviderGitHub},
-		DisplayName: "Pipeline must not override job variables",
-		Category:    CategoryCICDVariables,
-		ID:          "CTRL-205",
-		Description: "Detects pipeline configuration that redefines a CI/CD variable that should only be set in CI/CD Settings.",
+		Providers:      []string{ProviderGitLab, ProviderGitHub},
+		DisplayName:    "Pipeline must not override job variables",
+		Category:       CategoryCICDVariables,
+		ID:             "CTRL-205",
+		Description:    "Detects pipeline configuration that redefines a CI/CD variable that should only be set in CI/CD Settings.",
+		RequiresConfig: true,
 	},
 	"pipelineMustNotUseDockerInDocker": {
 		Providers:   []string{ProviderGitLab, ProviderGitHub},
@@ -212,18 +246,20 @@ var controlsMeta = map[string]ControlMeta{
 		Description: "Flags CI/CD jobs that use a Docker-in-Docker service, or that configure it with an insecure, TLS-disabled daemon.",
 	},
 	"pipelineMustNotUseUnsafeVariableExpansion": {
-		Providers:   []string{ProviderGitLab, ProviderGitHub},
-		DisplayName: "Pipeline must not use unsafe variable expansion",
-		Category:    CategoryCICDVariables,
-		ID:          "CTRL-204",
-		Description: "Detects CI variables expanded in a shell re-interpretation context such as eval or sh -c, where an attacker-controlled value could execute as code.",
+		Providers:      []string{ProviderGitLab, ProviderGitHub},
+		DisplayName:    "Pipeline must not use unsafe variable expansion",
+		Category:       CategoryCICDVariables,
+		ID:             "CTRL-204",
+		Description:    "Detects CI variables expanded in a shell re-interpretation context such as eval or sh -c, where an attacker-controlled value could execute as code.",
+		RequiresConfig: true,
 	},
 	"securityJobsMustNotBeWeakened": {
-		Providers:   []string{ProviderGitLab, ProviderGitHub},
-		DisplayName: "Security jobs must not be weakened",
-		Category:    CategoryPipelineComposition,
-		ID:          "CTRL-410",
-		Description: "Detects security jobs weakened by allow_failure, a rules override, or when: manual, any of which can let a critical scan be skipped.",
+		Providers:      []string{ProviderGitLab, ProviderGitHub},
+		DisplayName:    "Security jobs must not be weakened",
+		Category:       CategoryPipelineComposition,
+		ID:             "CTRL-410",
+		Description:    "Detects security jobs weakened by allow_failure, a rules override, or when: manual, any of which can let a critical scan be skipped.",
+		RequiresConfig: true,
 	},
 
 	// GitHub-only.
@@ -354,11 +390,12 @@ var controlsMeta = map[string]ControlMeta{
 		Description: "Detects pull_request_target workflows that explicitly check out the pull request head, combining access to base-repo secrets with PR-author-controlled code.",
 	},
 	"releaseWorkflowsMustNotRestoreUntrustedCache": {
-		Providers:   []string{ProviderGitHub},
-		DisplayName: "Release workflows must not restore an untrusted cache",
-		Category:    CategoryThirdPartyActions,
-		ID:          "CTRL-705",
-		Description: "Flags release and publish jobs that restore a build cache whose key is not scoped to the release ref, closing the cross-branch cache poisoning vector.",
+		Providers:      []string{ProviderGitHub},
+		DisplayName:    "Release workflows must not restore an untrusted cache",
+		Category:       CategoryThirdPartyActions,
+		ID:             "CTRL-705",
+		Description:    "Flags release and publish jobs that restore a build cache whose key is not scoped to the release ref, closing the cross-branch cache poisoning vector.",
+		RequiresConfig: true,
 	},
 	"releaseWorkflowsMustSignArtefacts": {
 		Providers:   []string{ProviderGitHub},
@@ -501,11 +538,12 @@ var controlsMeta = map[string]ControlMeta{
 		Description: "Detects workflows that write user-controlled content to GITHUB_ENV or GITHUB_PATH, letting an attacker override variables or hijack later steps.",
 	},
 	"workflowMustIncludeRequiredActions": {
-		Providers:   []string{ProviderGitHub},
-		DisplayName: "Workflows must include required actions",
-		Category:    CategoryPipelineComposition,
-		ID:          "CTRL-417",
-		Description: "Verifies that every action or reusable workflow declared as required in the configuration is actually referenced by the project's workflows.",
+		Providers:      []string{ProviderGitHub},
+		DisplayName:    "Workflows must include required actions",
+		Category:       CategoryPipelineComposition,
+		ID:             "CTRL-417",
+		Description:    "Verifies that every action or reusable workflow declared as required in the configuration is actually referenced by the project's workflows.",
+		RequiresConfig: true,
 	},
 	"workflowMustPinPackageInstalls": {
 		Providers:   []string{ProviderGitHub},

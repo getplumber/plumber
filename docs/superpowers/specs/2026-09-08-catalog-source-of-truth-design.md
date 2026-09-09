@@ -61,3 +61,22 @@ Audit whether rego-emitted ISSUE codes are forced into the `codes.go` registry (
 - Platform `GET /controls` wiring (monorepo task).
 - getplumber.io build integration (site repo task).
 - Any change to analysis or scoring behavior.
+
+## Amendment (2026-09-08, brainstorm with Thomas)
+
+**requiresConfig.** Each control carries an authored `RequiresConfig bool`
+(exported as `requiresConfig`): true when enabling the control with no further
+configuration asserts nothing (the inert shape behind getplumber/plumber#459).
+It is semantic truth judged per control, not derivable by reflection; a guard
+pins that `requiresConfig` implies the control has a config schema. This flag
+is the authoring-time signal only: the runtime scoring of unconfigured
+controls (`not_evaluable` vs a vacuous pass) remains #459's own decision.
+
+**Defaults ruling.** The catalog exports only BEHAVIORAL defaults: what the
+engine does when a field is unset (the per-field `Default` entries). The
+embedded `defaultConfig/.plumber.yaml` (`defaultconfig.Get()`) is explicitly
+OUT of the catalog contract: it is a broad, ready-to-use CLI-mode starter,
+which is the wrong context for platform policies. No whole-control
+`default_config` is exported, and nothing should wire `defaultconfig.Get()`
+into `Catalog()` later; platform starter policies are a platform product
+decision.
