@@ -112,6 +112,7 @@ func runGitHubAnalyze(info *utils.GitRemoteInfo, controlsFilterList, skipControl
 	}
 
 	conf := buildGitHubLocalConf(info, plumberConfig, configPath, controlsFilterList, skipControlsList)
+	platformModeNotices(conf)
 
 	printGitHubAuthBanner(conf.GithubAPIHost, false)
 
@@ -153,6 +154,7 @@ func runGitHubAnalyzeRemote(host, project, ref string, controlsFilterList, skipC
 	printGitHubAuthBanner(apiHost, true)
 
 	conf := buildGitHubRemoteConf(owner, repo, ref, apiHost, plumberConfig, configPath, controlsFilterList, skipControlsList)
+	platformModeNotices(conf)
 
 	p, ok := plumberprovider.Get("github")
 	if !ok {
