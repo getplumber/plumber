@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -243,6 +244,116 @@ func TestBuildPlatformPush_ScorePointsRoundToSignedInt(t *testing.T) {
 				t.Errorf("score = %+v, want letter=E points=%d", got, tc.want)
 			}
 		})
+	}
+}
+
+// End to end: score.final_points must survive the full build -> marshal ->
+// unmarshal round trip, and a zero final_points (the Critical malus floor)
+// must be present on the wire as "final_points": 0, not omitted, since a
+// present-but-zero and a genuinely-absent field mean different things to a
+// platform doing a recompute cross-check.
+func TestBuildPlatformPush_ScoreFinalPointsOnWire(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		score *control.PlumberScoreResult
+		want  int
+	}{
+		{"nonzero final_points", &control.PlumberScoreResult{Score: "C", RawPointsUnclamped: 55, FinalPoints: 55}, 55},
+		{"zero final_points (malus floor)", &control.PlumberScoreResult{Score: "E", RawPointsUnclamped: -5, FinalPoints: 0}, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body, err := buildPlatformPush(testProvider(t), nil, &control.AnalysisResult{}, tc.score, ".plumber.yaml")
+			if err != nil {
+				t.Fatalf("buildPlatformPush: %v", err)
+			}
+
+			var raw map[string]json.RawMessage
+			if err := json.Unmarshal(body, &raw); err != nil {
+				t.Fatal(err)
+			}
+			var rawResults []map[string]json.RawMessage
+			if err := json.Unmarshal(raw["results"], &rawResults); err != nil {
+				t.Fatal(err)
+			}
+			var rawScore map[string]json.RawMessage
+			if err := json.Unmarshal(rawResults[0]["score"], &rawScore); err != nil {
+				t.Fatal(err)
+			}
+			finalRaw, present := rawScore["final_points"]
+			if !present {
+				t.Fatalf("final_points key is absent from the wire body, want it present (even when the value is 0): %s", rawResults[0]["score"])
+			}
+			if string(finalRaw) != strconv.Itoa(tc.want) {
+				t.Errorf("wire final_points = %s, want %d", finalRaw, tc.want)
+			}
+
+			var push platformPush
+			if err := json.Unmarshal(body, &push); err != nil {
+				t.Fatal(err)
+			}
+			got := push.Results[0].Score.FinalPoints
+			if got == nil || *got != tc.want {
+				t.Errorf("push.Results[0].Score.FinalPoints = %v, want %d", got, tc.want)
+			}
+		})
+	}
+}
+
+// Row 40 (platform): the push carries final_points beside the existing signed
+// points, so the platform can cross-check its own recompute against the
+// CLI's exact formula (malus included).
+func TestPlatformScoreFrom_CarriesFinalPoints(t *testing.T) {
+	s := &control.PlumberScoreResult{Score: "E", RawPointsUnclamped: 75, FinalPoints: 30}
+	got := platformScoreFrom(s)
+	if got.Letter != "E" || got.Points != 75 || got.FinalPoints == nil || *got.FinalPoints != 30 {
+		t.Fatalf("want E, points 75 (raw), final_points 30, got %+v", got)
+	}
+}
+
+// The Critical malus floors FinalPoints at zero even when the raw deficit is
+// negative (RawPointsUnclamped survives unclamped, per its own doc comment);
+// FinalPoints must still be a present, non-nil zero, not treated as absent.
+func TestPlatformScoreFrom_FinalPointsFloorAtZero(t *testing.T) {
+	s := &control.PlumberScoreResult{Score: "E", RawPointsUnclamped: -5, FinalPoints: 0}
+	got := platformScoreFrom(s)
+	if got.FinalPoints == nil || *got.FinalPoints != 0 {
+		t.Fatalf("final_points = %v, want a non-nil 0 (the malus floor, not an absent field)", got.FinalPoints)
+	}
+	if got.Points != -5 {
+		t.Fatalf("points = %d, want -5 (RawPointsUnclamped stays signed and unclamped)", got.Points)
+	}
+}
+
+// FinalPoints rounds half away from zero (math.Round), matching Points'
+// rounding rule.
+func TestPlatformScoreFrom_FinalPointsRounds(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		final float64
+		want  int
+	}{
+		{"half rounds up away from zero", 30.5, 31},
+		{"below half rounds down", 29.4, 29},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s := &control.PlumberScoreResult{Score: "C", RawPointsUnclamped: tc.final, FinalPoints: tc.final}
+			got := platformScoreFrom(s)
+			if got.FinalPoints == nil || *got.FinalPoints != tc.want {
+				t.Fatalf("final_points = %v, want %d", got.FinalPoints, tc.want)
+			}
+		})
+	}
+}
+
+// A nil score must not panic and must leave FinalPoints nil (genuinely
+// absent), alongside the existing zero-value Letter/Points behaviour.
+func TestPlatformScoreFrom_NilScore(t *testing.T) {
+	got := platformScoreFrom(nil)
+	if got.FinalPoints != nil {
+		t.Fatalf("final_points = %v, want nil for a nil score", got.FinalPoints)
+	}
+	if got.Letter != "" || got.Points != 0 {
+		t.Fatalf("want zero-value Letter/Points for a nil score, got %+v", got)
 	}
 }
 
