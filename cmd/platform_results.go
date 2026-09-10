@@ -16,66 +16,44 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-// policyEvaluation is one distinct control configuration and the verdict it
-// produced. Several policies pointing at the same configuration share one
-// of these: the configuration is what decides the verdict, so evaluating it
-// twice could only ever produce the same answer at twice the cost.
-type policyEvaluation struct {
-	effectiveConfig []byte
-	findings        []platformFinding
-	score           platformScore
-}
-
-// buildPolicyResults produces one result entry per policy the platform
-// resolved for this project, which is what the push contract's results
-// array is: never a merged policy, always one entry each.
+// buildPolicyResults maps the evaluated policy runs onto the push contract's
+// results array: one entry per REAL policy of every applied run (policies
+// sharing a run share its findings and score), the derived placeholder under
+// its own name (R1), and nothing at all for a run that was not applied (R3,
+// R6): a policy the CLI could not evaluate is absent from the push, never a
+// clean entry.
 //
-// Policies are grouped by the FINGERPRINT of the control configuration they
-// evaluate under, and each distinct configuration is evaluated exactly once
-// (evaluationFor). Two policies configuring the same control differently
-// therefore get two independent verdicts, and two policies agreeing on it
-// share one evaluation. Today every policy resolves to this run's single
-// local configuration, so the grouping collapses to one evaluation feeding
-// every entry - which is the correct answer for identical configurations,
-// and leaves the structure right for when per-policy configuration starts
-// arriving.
-//
-// In standalone mode - and whenever the context fetch failed - there is no
-// policy set to key on, so this falls back to the single locally-named
-// entry the CLI has always pushed.
-func buildPolicyResults(
-	p providerPkg.Provider,
-	conf *configuration.Configuration,
-	result *control.AnalysisResult,
-	score *control.PlumberScoreResult,
-	configPath string,
-) []platformPolicyResult {
-	policies := platformRunOf(conf).Policies()
-	if len(policies) == 0 {
-		return []platformPolicyResult{localPolicyResult(p, conf, result, score, configPath, "")}
+// The runs are the product of evaluatePlatformPolicies, which is also what
+// the terminal render and the artifacts read - so an entry here can never
+// disagree with what the run reported.
+func buildPolicyResults(runs []policyRun, p providerPkg.Provider, conf *configuration.Configuration) []platformPolicyResult {
+	var includeOnly, skip []string
+	if conf != nil {
+		includeOnly, skip = conf.ControlsFilter, conf.SkipControlsFilter
 	}
 
-	cache := map[string]*policyEvaluation{}
-	out := make([]platformPolicyResult, 0, len(policies))
-	for _, pol := range policies {
-		cfg := configForPolicy(p.Name(), conf, pol)
-		key := configFingerprint(cfg)
-		eval, ok := cache[key]
-		if !ok {
-			eval = evaluationFor(p, conf, result, score, cfg)
-			cache[key] = eval
+	out := []platformPolicyResult{}
+	for _, run := range runs {
+		if !run.Applied {
+			continue
 		}
-		out = append(out, platformPolicyResult{
-			Policy: pol.Name,
-			// Only a real platform policy id is stamped. The derived
-			// fallback carries the nil uuid, which is not a policies row:
-			// keying a result on it would attach the run to a policy that
-			// does not exist, so it is pushed name-only instead.
-			PolicyID:        realPolicyID(pol),
-			EffectiveConfig: eval.effectiveConfig,
-			Findings:        eval.findings,
-			Score:           eval.score,
-		})
+		findings := platformFindingsFor(p, run.Result, run.Config, includeOnly, skip)
+		effective := platformEffectiveConfigRaw(run.Config, p.Name())
+		score := platformScoreFrom(run.Score)
+		for _, pol := range run.Policies {
+			out = append(out, platformPolicyResult{
+				Policy: pol.Name,
+				// Only a real platform policy id is stamped. The derived
+				// fallback carries the nil uuid, which is not a policies
+				// row: keying a result on it would attach the run to a
+				// policy that does not exist, so it is pushed name-only
+				// instead.
+				PolicyID:        realPolicyID(pol),
+				EffectiveConfig: effective,
+				Findings:        findings,
+				Score:           score,
+			})
+		}
 	}
 	return out
 }
@@ -102,42 +80,12 @@ func realPolicyID(pol platform.Policy) string {
 	return pol.ID
 }
 
-// configForPolicy resolves the control configuration a policy is evaluated
-// under. It is THE extension point for per-policy configuration, and a
-// variable so that is visible: everything downstream already keys on
-// whatever it returns, so when the platform starts serving each policy's
-// controls this is the only function that changes.
-//
-// A policy that declares its own control tree is evaluated under THAT tree
-// and nothing else. Two policies may declare the same control_type with
-// different parameters, which is the shape #368 needed: reading one
-// policy's config and reporting it under another's name is precisely the
-// bug this replaces.
-//
-// A policy that declares NO controls falls back to the local configuration.
-// That covers the derived "[Plumber default]" fallback, which is not a real
-// policies row and has no tree by definition, and any real policy an admin
-// has not configured yet. Evaluating those against an empty ruleset would
-// report a clean pass for a policy that simply has not been filled in.
-var configForPolicy = func(provider string, conf *configuration.Configuration, pol platform.Policy) *configuration.PlumberConfig {
-	if conf == nil {
-		return nil
-	}
-	if !pol.DeclaresAnyControl() {
-		return conf.PlumberConfig
-	}
-	cfg, err := policyConfigFromTree(provider, conf, pol)
-	if err != nil {
-		// Falling back to local config here would silently evaluate this
-		// policy under someone else's parameters and report it under this
-		// policy's name - the exact confusion the tree exists to end. The
-		// run continues; this policy's verdict is the local one and the
-		// operator is told the tree could not be applied.
-		fmt.Fprintf(os.Stderr, "  platform: policy %q control tree could not be applied (%v); evaluating it under the local configuration\n", pol.Name, err)
-		return conf.PlumberConfig
-	}
-	return cfg
-}
+// policyConfigVersion is the schema version every assembled policy
+// configuration declares. It is a constant on purpose (R4): the platform's
+// control tree is the whole configuration in platform mode, and reading the
+// version off the run's LOCAL file would let a file the policy has nothing to
+// do with decide how that policy's controls are parsed.
+const policyConfigVersion = "2.0"
 
 // policyConfigFromTree builds the effective PlumberConfig for one policy out
 // of the control tree the platform served for it.
@@ -148,11 +96,8 @@ var configForPolicy = func(provider string, conf *configuration.Configuration, p
 // a decode/re-encode round trip destroys: integer literals above 2^53, which
 // a generic map turns into a lossy float64. The platform went to the same
 // trouble to serve these bytes verbatim; discarding that here would waste it.
-func policyConfigFromTree(provider string, conf *configuration.Configuration, pol platform.Policy) (*configuration.PlumberConfig, error) {
-	version := "2.0"
-	if conf.PlumberConfig != nil && strings.TrimSpace(conf.PlumberConfig.Version) != "" {
-		version = conf.PlumberConfig.Version
-	}
+func policyConfigFromTree(provider string, pol platform.Policy) (*configuration.PlumberConfig, error) {
+	version := policyConfigVersion
 
 	// The provider section has to be the one being analysed. A v2 config
 	// keys controls under `gitlab:` or `github:`, and ControlsFor answers
@@ -178,11 +123,9 @@ func policyConfigFromTree(provider string, conf *configuration.Configuration, po
 			value, err := policyControlValue(c.Config)
 			if err != nil {
 				// One unreadable control must not cost the policy its other
-				// nine. Failing the whole tree over it would send the policy
-				// back to the LOCAL configuration, which is the "evaluate one
-				// policy under someone else's parameters" outcome this
-				// function exists to prevent - a far larger error than
-				// dropping the single control that could not be read.
+				// nine. Failing the whole tree over it would leave the policy
+				// unevaluated and absent from the push, a far larger error
+				// than dropping the single control that could not be read.
 				fmt.Fprintf(os.Stderr, "  platform: policy %q control %q could not be read (%v); it is not applied\n", pol.Name, name, err)
 				continue
 			}
@@ -194,9 +137,9 @@ func policyConfigFromTree(provider string, conf *configuration.Configuration, po
 	// A tree in which NOTHING could be read is not a policy that configures
 	// nothing: it is a tree that did not arrive. Evaluating against the
 	// empty ruleset it assembles to would report every control skipped and
-	// push a verdict in which the policy checked nothing at all, so this
-	// takes the same route a policy with no tree takes - the caller's
-	// fallback to the local configuration, with the reason on stderr.
+	// push a verdict in which the policy checked nothing at all, so the
+	// caller reports the policy as not applied instead and it is left out of
+	// the push entirely.
 	if applied == 0 {
 		return nil, fmt.Errorf("none of the policy's %d declared control(s) could be read", len(seen))
 	}
@@ -286,70 +229,33 @@ func configFingerprint(pc *configuration.PlumberConfig) string {
 	return hex.EncodeToString(sum[:])
 }
 
-// evaluationFor produces the verdict for one distinct control
-// configuration.
+// standalonePolicyResult is the standalone entry: one policy named after the
+// config file this run loaded, evaluated under that same local
+// configuration. Unchanged from what the CLI has always pushed (it is the
+// former localPolicyResult body), so a run without --platform context
+// behaves exactly as before.
 //
 // The findings come from control.StatusFor over the already-collected
-// result, exactly as the single-policy path has always built them, so a
-// policy's entry and the terminal output can never disagree about what this
+// result, exactly as the single-policy path has always built them, so the
+// pushed entry and the terminal output can never disagree about what this
 // run found.
-func evaluationFor(
+func standalonePolicyResult(
 	p providerPkg.Provider,
 	conf *configuration.Configuration,
 	result *control.AnalysisResult,
 	score *control.PlumberScoreResult,
-	pc *configuration.PlumberConfig,
-) *policyEvaluation {
-	var includeOnly, skip []string
-	if conf != nil {
-		includeOnly, skip = conf.ControlsFilter, conf.SkipControlsFilter
-	}
-
-	// When this policy carries its OWN config, the verdict must come from
-	// that config. Reusing the run's findings would report a finding computed
-	// under different parameters while claiming this policy's effective
-	// config - a false positive under a policy that never asked for the
-	// check. Re-evaluation reuses the collected IR, so it costs no git-host
-	// traffic.
-	scopedResult, scopedScore := result, score
-	if conf != nil && pc != nil && pc != conf.PlumberConfig {
-		if scoped, s, ok := control.ReEvaluateForConfig(result, conf, p.Name(), pc); ok {
-			// The whole scoped result, not a copy with only the findings
-			// swapped in: it carries this policy's own not_evaluable marks,
-			// and StatusFor reads them to report a control whose lane died
-			// as an error rather than a pass.
-			scopedResult = scoped
-			scopedScore = &s
-		}
-	}
-
-	return &policyEvaluation{
-		effectiveConfig: platformEffectiveConfigRaw(pc, p.Name()),
-		findings:        platformFindingsFor(p, scopedResult, pc, includeOnly, skip),
-		score:           platformScoreFrom(scopedScore),
-	}
-}
-
-// localPolicyResult is the standalone entry: one policy named after the
-// config file this run loaded. Unchanged from what the CLI has always
-// pushed, so a run without --platform context behaves exactly as before.
-func localPolicyResult(
-	p providerPkg.Provider,
-	conf *configuration.Configuration,
-	result *control.AnalysisResult,
-	score *control.PlumberScoreResult,
-	configPath, policyID string,
+	configPath string,
 ) platformPolicyResult {
 	var pc *configuration.PlumberConfig
+	var includeOnly, skip []string
 	if conf != nil {
 		pc = conf.PlumberConfig
+		includeOnly, skip = conf.ControlsFilter, conf.SkipControlsFilter
 	}
-	eval := evaluationFor(p, conf, result, score, pc)
 	return platformPolicyResult{
 		Policy:          platformPolicyNameFor(configPath),
-		PolicyID:        policyID,
-		EffectiveConfig: eval.effectiveConfig,
-		Findings:        eval.findings,
-		Score:           eval.score,
+		EffectiveConfig: platformEffectiveConfigRaw(pc, p.Name()),
+		Findings:        platformFindingsFor(p, result, pc, includeOnly, skip),
+		Score:           platformScoreFrom(score),
 	}
 }

@@ -46,7 +46,7 @@ func TestMaybePushPlatform_GateBlockingFailsWithPolicyDetail(t *testing.T) {
 
 	var err error
 	out := captureStderr(t, func() {
-		_, err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil)
+		_, err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil, nil)
 	})
 
 	var gateErr *PlatformGateError
@@ -82,7 +82,7 @@ func TestMaybePushPlatform_GateBlockingWithoutPolicyDetailStillNamesTheReason(t 
 
 	var err error
 	out := captureStderr(t, func() {
-		_, err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil)
+		_, err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil, nil)
 	})
 
 	var gateErr *PlatformGateError
@@ -138,7 +138,7 @@ func TestMaybePushPlatform_GateBlockingWithoutAnyDetailStaysHonest(t *testing.T)
 
 	var err error
 	out := captureStderr(t, func() {
-		_, err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil)
+		_, err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil, nil)
 	})
 	var gateErr *PlatformGateError
 	if !errors.As(err, &gateErr) {
@@ -156,7 +156,7 @@ func TestMaybePushPlatform_GatePassingDoesNotFail(t *testing.T) {
 	restore := withPlatformTestEnv(t, srv.URL, "tok-123")
 	defer restore()
 
-	if _, err := maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil); err != nil {
+	if _, err := maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil, nil); err != nil {
 		t.Fatalf("maybePushPlatform = %v, want nil: a non-blocking gate must not fail the run", err)
 	}
 }
@@ -172,7 +172,7 @@ func TestMaybePushPlatform_GateNotEvaluatedFailsOpenWithReason(t *testing.T) {
 
 	var err error
 	out := captureStderr(t, func() {
-		_, err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil)
+		_, err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil, nil)
 	})
 	if err != nil {
 		t.Fatalf("maybePushPlatform = %v, want nil: evaluated:false must fail open", err)
@@ -196,7 +196,7 @@ func TestMaybePushPlatform_MissingGateKeyFailsOpenAsNoVerdict(t *testing.T) {
 
 	var err error
 	out := captureStderr(t, func() {
-		_, err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil)
+		_, err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil, nil)
 	})
 	if err != nil {
 		t.Fatalf("maybePushPlatform = %v, want nil: a missing gate key must fail open", err)
@@ -219,7 +219,7 @@ func TestMaybePushPlatform_UnparseableBodyFailsOpenAsNoVerdict(t *testing.T) {
 
 	var err error
 	out := captureStderr(t, func() {
-		_, err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil)
+		_, err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil, nil)
 	})
 	if err != nil {
 		t.Fatalf("maybePushPlatform = %v, want nil: an unparseable body must fail open", err)
@@ -260,7 +260,7 @@ func TestMaybePushPlatform_ClassDistinguishedFailOpenSentences(t *testing.T) {
 
 			var err error
 			out := captureStderr(t, func() {
-				_, err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil)
+				_, err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil, nil)
 			})
 			if err != nil {
 				t.Fatalf("maybePushPlatform = %v, want nil: a remote push failure must never fail the run", err)
@@ -281,7 +281,7 @@ func TestMaybePushPlatform_ClassDistinguishedFailOpenSentences(t *testing.T) {
 
 		var err error
 		out := captureStderr(t, func() {
-			_, err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil)
+			_, err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil, nil)
 		})
 		if err != nil {
 			t.Fatalf("maybePushPlatform = %v, want nil: a transport failure must never fail the run", err)
@@ -321,7 +321,7 @@ func TestMaybePushPlatform_ClassDistinguishedFailOpenSentences(t *testing.T) {
 
 		var err error
 		out := captureStderr(t, func() {
-			_, err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil)
+			_, err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil, nil)
 		})
 		if err != nil {
 			t.Fatalf("maybePushPlatform = %v, want nil: a 2xx body-read failure must never fail the run", err)
@@ -347,7 +347,7 @@ func TestMaybePushPlatform_SuccessLineUnchangedOnPassingGate(t *testing.T) {
 	defer restore()
 
 	out := captureStderr(t, func() {
-		if _, err := maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil); err != nil {
+		if _, err := maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil, nil); err != nil {
 			t.Fatalf("maybePushPlatform: %v", err)
 		}
 	})
@@ -424,7 +424,7 @@ func TestFinalizeRun_LocalGateAndPlatformGateBothPresent(t *testing.T) {
 
 	var platformErr error
 	out := captureStderr(t, func() {
-		_, platformErr = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil)
+		_, platformErr = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil, nil)
 	})
 	var gotGateErr *PlatformGateError
 	if !errors.As(platformErr, &gotGateErr) {
