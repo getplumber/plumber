@@ -45,8 +45,19 @@ func runWithProvider(p provider.Provider, cmd *cobra.Command, conf *configuratio
 //
 // The non-platform branch is the sequence both callers ran inline before, in
 // the same order, so a standalone run is byte-for-byte what it was.
+//
+// --no-controls outranks the mode and takes that same branch. It is an
+// INVENTORY run: it evaluates nothing under any mode, so there are no
+// policies to report and nothing for the platform to gate, but there is still
+// an inventory to write and a collection to vouch for. The platform branch
+// would return early on a zero-policy run and skip both - a CI-less project
+// would exit 0 having written no artifact and said nothing about why, exactly
+// the empty-PBOM-as-a-result failure publishAndFinalize's no-controls guards
+// exist to prevent. Those guards live down here and still run; the same
+// branch's publish suppression already withholds the badge, the score push,
+// the MR comment and the platform push, so nothing is published either way.
 func continueRun(p provider.Provider, cmd *cobra.Command, conf *configuration.Configuration, result *control.AnalysisResult, summary complianceSummary, controlsFilterList, skipControlsList []string) error {
-	if summary.platformMode {
+	if summary.platformMode && !summary.noControls {
 		return runPlatformMode(p, cmd, conf, result, summary, controlsFilterList, skipControlsList)
 	}
 	if printOutput {

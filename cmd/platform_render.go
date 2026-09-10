@@ -59,6 +59,11 @@ func equalMinPoints(a, b *int) bool {
 // that outranks the policies, --no-controls, which is a request for no
 // verdict at all and must not be turned into a scored, published section
 // (see providerControlEntries).
+//
+// That guard is defence in depth rather than the live path: continueRun sends
+// a --no-controls run down the non-platform branch, which never renders a
+// policy section at all. It stays because "no verdict was requested" must not
+// depend on which caller happens to be in front of this function.
 func renderPolicySections(p providerPkg.Provider, conf *configuration.Configuration, runs []policyRun, controlsFilterList, skipControlsList []string) {
 	noControls := conf != nil && conf.NoControls
 	for _, r := range runs {
