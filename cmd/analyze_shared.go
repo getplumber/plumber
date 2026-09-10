@@ -34,11 +34,7 @@ func runWithProvider(p provider.Provider, cmd *cobra.Command, conf *configuratio
 		return err
 	}
 
-	newLocationLinker(conf, result, p.Name()).Annotate(result.Findings)
-	opaengine.StampFingerprints(result.Findings, conf.GitRepoRoot)
-	markPlatformDismissedFindings(conf, result)
-
-	summary := buildComplianceSummary(p, result, conf)
+	summary := finalizeFindings(p, conf, result)
 
 	if printOutput {
 		if err := outputTextWithProvider(p, result, conf, summary, controlsFilterList, skipControlsList); err != nil {
@@ -51,6 +47,25 @@ func runWithProvider(p provider.Provider, cmd *cobra.Command, conf *configuratio
 	}
 
 	return publishAndFinalize(p, cmd, result, conf, summary)
+}
+
+// finalizeFindings turns a raw analysis result into the summary the rest of the
+// pipeline reports on, and is deliberately the ONLY place that sequence lives:
+// annotate source locations, stamp fingerprints, mark what the platform served
+// as dismissed, then compute the summary.
+//
+// The order is load bearing twice over. The dismissed match hashes the fields
+// fingerprinting canonicalizes, so marking before the stamp would match
+// nothing; and the summary scores the run, so marking after it would push a
+// score that still counts a dismissed finding. Both entry points go through
+// here - runWithProvider for GitLab, presentResultWithProvider for the GitHub
+// paths - rather than repeating the sequence, because a copy is a copy that can
+// silently lose a step (the ONE thing #447's wiring is exposed to).
+func finalizeFindings(p provider.Provider, conf *configuration.Configuration, result *control.AnalysisResult) complianceSummary {
+	newLocationLinker(conf, result, p.Name()).Annotate(result.Findings)
+	opaengine.StampFingerprints(result.Findings, conf.GitRepoRoot)
+	markPlatformDismissedFindings(conf, result)
+	return buildComplianceSummary(p, result, conf)
 }
 
 // markPlatformDismissedFindings marks the findings the platform already
@@ -486,10 +501,7 @@ func presentResultWithProvider(p provider.Provider, cmd *cobra.Command, result *
 		reportPlatformMode(conf.PlatformRun)
 	}
 
-	newLocationLinker(conf, result, p.Name()).Annotate(result.Findings)
-	opaengine.StampFingerprints(result.Findings, conf.GitRepoRoot)
-	markPlatformDismissedFindings(conf, result)
-	summary := buildComplianceSummary(p, result, conf)
+	summary := finalizeFindings(p, conf, result)
 	if printOutput {
 		if err := outputTextWithProvider(p, result, conf, summary, conf.ControlsFilter, conf.SkipControlsFilter); err != nil {
 			return err

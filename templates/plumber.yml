@@ -217,10 +217,6 @@ spec:
     # a custom threshold reaches the CLI (and triggers the deprecation
     # warning there).
     - if [ "${PLUMBER_ANALYZE_THRESHOLD:-}" = "100" ]; then unset PLUMBER_ANALYZE_THRESHOLD; fi
-    # The docker executor clones $CI_PROJECT_DIR as root while this image runs as uid 65532;
-    # git refuses a repository owned by another uid unless it is declared safe (#464). The CLI
-    # also declares it per invocation; this line covers a custom image whose git predates that.
-    - if command -v git >/dev/null 2>&1 && [ -n "${CI_PROJECT_DIR:-}" ]; then git config --global --add safe.directory "$CI_PROJECT_DIR"; fi
     - plumber analyze
   artifacts:
     paths:

@@ -33,20 +33,26 @@ on the default executor, silently.
    On failure the helper captures stderr and logs at Warn: `git <args> failed in <dir>: <stderr
    first line>`, so "not a git repository" and "dubious ownership" stop being indistinguishable.
    The three callers keep their nil/"" contract.
-2. **Component template, belt and braces.** `templates/plumber.yml` gains, before `plumber
-   analyze`, `git config --global --add safe.directory "$CI_PROJECT_DIR"` guarded by `command -v
-   git` (the image has git; a custom image might not). The template's own header says it is the
-   source of truth for the component, so the change is documented there.
+2. **Component template, belt and braces. DROPPED** (whole-branch security review,
+   2026-09-10). The line `git config --global --add safe.directory "$CI_PROJECT_DIR"` was added
+   to `templates/plumber.yml` before `plumber analyze` and then removed again: lever 1 is the
+   complete fix (`-c` is protected configuration, so any git that enforces ownership honours it,
+   which makes the "custom image whose git predates that" case empty), while a global `--add`
+   costs real safety. It appends on every job, forever, on a shell executor with a persistent
+   HOME, and a project that shadows `CI_PROJECT_DIR` with `*` writes a permanent global wildcard
+   into the runner's git config, trusting every repository it will ever check out. Only lever 1
+   ships.
 
 **Out of scope.** `ResolvedConfig.Includes` (the resolve endpoint's `includes` are not decoded and
 `ConfigAndIncludesAgree` is snapshot-only): a separate ask, tracked on #464's last paragraph, not
 this batch.
 
-**Tests.** A unit test that the helper's argv is exactly `git -c safe.directory=<dir> <args>`; a
-unit test that a failing git (a fake `git` on PATH exiting 128 with stderr) logs the stderr line
-at Warn and the caller still returns nil; the existing `utils` detection tests unchanged; a
-template test if one exists (grep `plumber.yml` in `*_test.go`), else a yaml parse check that
-the script block still has `plumber analyze` last.
+**Tests.** A unit test that the helper's argv is exactly `git -c safe.directory=<dir> <args>`, and
+one that an EMPTY dir omits the argument entirely (an empty value resets git's safe list rather
+than adding to it); a unit test that a failing git (a fake `git` on PATH exiting 128 with stderr)
+logs the stderr line at Warn and the caller still returns nil; a unit test that a credential in a
+remote URL is redacted out of that log line; the existing `utils` detection tests unchanged. No
+template test: lever 2 is dropped, so the template is unchanged by this batch.
 
 ## s2. Unconfigured controls score honestly (#459)
 
@@ -165,3 +171,30 @@ Each fix is one conventional commit whose body says `Closes #<n>`; the CHANGELOG
 semantic-release. `docs/platform-push-testing.md` and `docs/scoring.md` updated where s2/s3 say.
 The platform's decision queue rows 17 and 19 flip to SHIPPED, and rows 2, 3, 12 to "resolved
 upstream (#458, 81322b0)", in the platform pin-bump PR that follows the release.
+
+## Shipped
+
+- `c3e3fba` - declare the checkout safe for git per invocation and log git failures.
+- `6a29251` - stop the safedir logrus leak and log "not a git repository" at Debug, other
+  failures at Warn.
+- `6db7d07` - report an enabled but unconfigured `RequiresConfig` control as `not_evaluable`
+  (`config_required`) instead of a vacuous pass.
+- `9653a9f` - correct the #459 score claim, recurse nested config blocks in `IsUnconfigured`,
+  and mark GitHub unconfigured controls before report assembly.
+- `8c40f16` - decode `dismissed_issues` from the platform context, add `identity.PlatformHash`,
+  and mark matching findings `Dismissed`.
+- `0ee25ac` - mirror the push-side raw-code fallback in the dismissed control key.
+- `4875154` - exclude dismissed findings from the score, push the `dismissed` marker, and show
+  it in the terminal renderer.
+- `0f650cc` - stamp per-policy findings before dismissed matching, add the CSV/OCSF dismissed
+  markers.
+
+Two follow-ups are open, not in this repo:
+
+1. **Platform fix for `dismissed_issues.recipe_version`.** The field is served from the
+   platform's `hash_version` today; the CLI matches served entries on the recipe version per the
+   contract (`identity.RecipeVersion`), so the platform side needs to serve the recipe version,
+   not the hash version, for the match to hold as the two evolve independently.
+2. **Whether a policy with no evaluable control should have its score withheld.** Open on the
+   platform's decision queue (also noted in `docs/scoring.md`): today such a policy can still
+   read 100 while every one of its controls is `not_evaluable`.

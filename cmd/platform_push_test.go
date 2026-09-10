@@ -17,7 +17,9 @@ import (
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
 	defaultconfig "github.com/getplumber/plumber/defaultConfig"
+	"github.com/getplumber/plumber/finding/identity"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
+	"github.com/getplumber/plumber/internal/platform"
 	providerPkg "github.com/getplumber/plumber/provider"
 )
 
@@ -684,6 +686,184 @@ func TestMaybePushPlatform_DismissedFindingWireShape(t *testing.T) {
 	}
 	if !sawEntryWithNoDismissedKey {
 		t.Fatal("fixture must include at least one non-dismissed control to prove the key is truly absent elsewhere")
+	}
+}
+
+// stubRunProvider is the real GitLab provider with Run replaced by a canned result, so a test can
+// drive runWithProvider - the GitLab entry point, and the only path where platform mode actually
+// operates - without a live collection. Every other method is the real provider's, so the catalog,
+// the compliance computation and the CI mapping behave exactly as they do in production.
+type stubRunProvider struct {
+	providerPkg.Provider
+	result *control.AnalysisResult
+}
+
+func (s stubRunProvider) Run(*configuration.Configuration) (*control.AnalysisResult, error) {
+	return s.result, nil
+}
+
+// TestSharedPipeline_ServedDismissalMarksThePushAndLeavesTheScore pins the run-level half of #447,
+// which the wire-shape test above does not reach: nothing on the shared pipeline marks a finding
+// except the single markPlatformDismissedFindings call inside finalizeFindings, between
+// StampFingerprints and buildComplianceSummary. Drop it and a run pushes a served dismissal as a
+// live finding and scores it, with every unit test still green.
+//
+// Both production entry points are driven, because platform mode is not symmetric between them:
+// presentResultWithProvider serves the GitHub paths, while runWithProvider is GitLab's and is the
+// one path where platform mode actually operates. They share finalizeFindings, and this test is
+// what says so - a copy of the sequence in either of them, minus a step, fails here.
+//
+// The served entry is built the way the platform builds it: the identity hash of the finding as it
+// exists AFTER fingerprint stamping, under the current recipe version, keyed by the finding's
+// control. Both halves of the claim are asserted on the SAME run: the captured push body carries
+// "dismissed":true on that entry, and the score the run computed is the score of a run with no
+// such finding at all.
+func TestSharedPipeline_ServedDismissalMarksThePushAndLeavesTheScore(t *testing.T) {
+	origPrint := printOutput
+	printOutput = false // the terminal report is not under test
+	defer func() { printOutput = origPrint }()
+	newGateFlagsCmd(t) // reset gate globals: default points gate (min-points 100)
+
+	// The same fixture the wire-shape test uses: ISSUE-101 belongs to
+	// containerImageMustComeFromAuthorizedSources, which the shipped default config enables, so
+	// this is a fail finding a real run of that config produces, and it costs the score real
+	// points.
+	failFinding := func() opaengine.Finding {
+		return opaengine.Finding{Code: "ISSUE-101", Severity: "high", Message: "untrusted registry", Job: "build", File: ".gitlab-ci.yml", Line: 4}
+	}
+
+	stamped := []opaengine.Finding{failFinding()}
+	opaengine.StampFingerprints(stamped, "")
+	hash, _, ok := identity.PlatformHash(stamped[0].IdentityInput())
+	if !ok {
+		t.Fatal("the fixture finding has no platform identity, so no served dismissal could ever match it")
+	}
+	served := platform.DismissedIssue{
+		IdentityHash:  hash,
+		RecipeVersion: identity.RecipeVersion,
+		ControlType:   control.ControlKeyFor(stamped[0].Code),
+	}
+
+	// dismissedKeyFor reads the marker off the raw wire bytes rather than through platformFinding,
+	// for the reason docs/platform-push-testing.md gives: decoding into the struct cannot tell an
+	// absent key from a false.
+	dismissedKeyFor := func(t *testing.T, body []byte, controlName string) (val any, present, found bool) {
+		t.Helper()
+		var raw map[string]any
+		if err := json.Unmarshal(body, &raw); err != nil {
+			t.Fatalf("body does not decode as JSON: %v", err)
+		}
+		results, _ := raw["results"].([]any)
+		if len(results) == 0 {
+			t.Fatal("results = empty")
+		}
+		entry, _ := results[0].(map[string]any)
+		rawFindings, _ := entry["findings"].([]any)
+		for _, rf := range rawFindings {
+			f, _ := rf.(map[string]any)
+			if name, _ := f["control"].(string); name != controlName {
+				continue
+			}
+			v, has := f["dismissed"]
+			return v, has, true
+		}
+		return nil, false, false
+	}
+
+	const dismissedControl = "containerImageMustComeFromAuthorizedSources"
+
+	entries := []struct {
+		name  string
+		drive func(t *testing.T, p providerPkg.Provider, conf *configuration.Configuration, result *control.AnalysisResult)
+	}{
+		{
+			// The GitHub paths: the result is already in hand.
+			name: "presentResultWithProvider",
+			drive: func(t *testing.T, p providerPkg.Provider, conf *configuration.Configuration, result *control.AnalysisResult) {
+				t.Helper()
+				_ = presentResultWithProvider(p, nil, result, conf)
+			},
+		},
+		{
+			// The GitLab entry point (cmd/analyze_gitlab.go), with p.Run stubbed out: everything
+			// after collection is the production path, spinner and publish included.
+			name: "runWithProvider",
+			drive: func(t *testing.T, p providerPkg.Provider, conf *configuration.Configuration, result *control.AnalysisResult) {
+				t.Helper()
+				_ = runWithProvider(stubRunProvider{Provider: p, result: result}, nil, conf, nil, nil)
+			},
+		},
+	}
+
+	for _, entry := range entries {
+		t.Run(entry.name, func(t *testing.T) {
+			// run drives the production pipeline once and returns the raw pushed body plus the
+			// score that same run computed. A context with no policies pushes the single
+			// locally-named entry, so the assertions read one result rather than one per policy;
+			// the served dismissed list is the only variable.
+			run := func(t *testing.T, findings []opaengine.Finding, dismissed []platform.DismissedIssue) ([]byte, int) {
+				t.Helper()
+				var gotBody []byte
+				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+					gotBody, _ = io.ReadAll(r.Body)
+					w.WriteHeader(http.StatusAccepted)
+				}))
+				defer srv.Close()
+				restore := withPlatformTestEnv(t, srv.URL, "tok-123")
+				defer restore()
+
+				conf := configuration.NewDefaultConfiguration()
+				conf.ConfigFilePath = ".plumber.yaml"
+				conf.PlumberConfig = testDefaultPlumberConfig(t)
+				conf.PlatformRun = &platform.RunContext{
+					Endpoint: srv.URL,
+					Context:  &platform.ProjectContext{DismissedIssues: dismissed},
+				}
+
+				// The returned error is the gate verdict, which is not what this test reads: a
+				// live high finding fails the default points gate and the same finding dismissed
+				// does not. That difference is asserted on the pushed score below, which is the
+				// score itself rather than a proxy for it.
+				_ = captureStderr(t, func() {
+					entry.drive(t, testProvider(t), conf, &control.AnalysisResult{CiValid: true, Findings: findings})
+				})
+
+				if len(gotBody) == 0 {
+					t.Fatal("nothing was POSTed: the run-level pipeline never reached the platform push")
+				}
+				var push platformPush
+				if err := json.Unmarshal(gotBody, &push); err != nil {
+					t.Fatalf("pushed body does not decode: %v", err)
+				}
+				if len(push.Results) != 1 {
+					t.Fatalf("results = %d, want exactly 1 entry", len(push.Results))
+				}
+				return gotBody, push.Results[0].Score.Points
+			}
+
+			servedBody, servedPoints := run(t, []opaengine.Finding{failFinding()}, []platform.DismissedIssue{served})
+			liveBody, livePoints := run(t, []opaengine.Finding{failFinding()}, nil)
+			_, cleanPoints := run(t, nil, nil)
+
+			val, present, found := dismissedKeyFor(t, servedBody, dismissedControl)
+			if !found {
+				t.Fatalf("control %q is absent from the pushed findings: the served dismissal must be pushed, not withheld", dismissedControl)
+			}
+			if b, ok := val.(bool); !present || !ok || !b {
+				t.Errorf("dismissed = %v (present=%v), want \"dismissed\":true: markPlatformDismissedFindings must run on this entry point's pipeline", val, present)
+			}
+
+			if _, present, found := dismissedKeyFor(t, liveBody, dismissedControl); !found || present {
+				t.Errorf("without a served entry, control %q carried dismissed=%v: the marker must come from the served list alone", dismissedControl, present)
+			}
+
+			if servedPoints <= livePoints {
+				t.Errorf("score points = %d dismissed vs %d live, want the dismissed finding to cost nothing (#447: out of the score like not_evaluable)", servedPoints, livePoints)
+			}
+			if servedPoints != cleanPoints {
+				t.Errorf("score points = %d with the finding dismissed, %d with no such finding at all: the two must agree, or the exclusion is partial", servedPoints, cleanPoints)
+			}
+		})
 	}
 }
 

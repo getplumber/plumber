@@ -273,6 +273,29 @@ it to decide what to collect and what to report:
   on. A run prints which configuration it used and why, with no `--verbose`
   needed.
 
+- **The checkout is trusted for git regardless of who cloned it.** Plumber
+  declares the analysed directory `safe.directory` for git before reading it,
+  so a runner clone owned by another uid (the default GitLab Docker executor
+  clones as root) is still read instead of failing detection silently. The
+  declaration is per invocation and names that one directory, never `*`: no
+  global git config is written, so nothing is trusted beyond the run.
+- **An enabled control with none of its configuration set reports
+  `not_evaluable`, never a silent pass.** A `RequiresConfig` control turned on
+  with none of its substantive fields set asserts nothing, so it is marked
+  `not_evaluable` with reason `config_required` and excluded from the score,
+  rather than counted as passing.
+- **Findings the platform has dismissed are marked and excluded from the
+  score.** A finding matching a dismissal served in the project context is
+  excluded from the score and still pushed to the platform with a
+  `dismissed: true` marker (a control never reports a pass just because its
+  findings were dismissed). It is marked in every output that has a place to
+  mark it: the terminal report tags it `[dismissed on the platform]`, the CSV
+  export carries a `dismissed` column and the OCSF export a `dismissed: true`
+  key. The `--output` JSON report carries no marker, deliberately: its finding
+  objects are the same bytes the platform hashes into a finding's identity, so
+  adding a field to them would change what the CLI and the platform agree a
+  finding is.
+
 Platform mode reports *less* when data is missing, never something different:
 a run that cannot evaluate a control says so.
 
@@ -456,6 +479,12 @@ More details:
 | `1` | The Plumber Score is below the gate (or the deprecated `--threshold` is not met) |
 | `2` | Invalid usage, configuration, or a runtime / provider / auth / network failure |
 | `3` | A check could not be verified and `--fail-warnings` is set (e.g. an action version that could not be resolved) |
+
+The deprecated `--threshold` gate is computed from each control's own
+pass/fail rather than the Plumber Score, so a control whose only findings are
+dismissed on the platform still counts as failing there, unlike the score
+gate (`--min-points` / `--min-score`), which excludes dismissed findings;
+prefer `--min-points`.
 
 ## Self-Hosted GitLab
 
