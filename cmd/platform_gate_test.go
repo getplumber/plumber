@@ -445,4 +445,14 @@ func TestFinalizeRun_LocalGateAndPlatformGateBothPresent(t *testing.T) {
 	// Both messages are present: the local gate's message via the returned
 	// error (the primary exit reason), and the platform gate's job-log line
 	// already on stderr from the maybePushPlatform call above.
+
+	// Spec s4: in platform mode the local gate is inert, so the platform gate
+	// error is what comes back instead of the local ScoreGateError above.
+	platformModeGate := failingGate
+	platformModeGate.platformMode = true
+	platformFinalErr := finalizeRun(result, platformModeGate, platformErr)
+	var gotPlatformGateErr *PlatformGateError
+	if !errors.As(platformFinalErr, &gotPlatformGateErr) {
+		t.Fatalf("finalizeRun (platform mode) = %v (%T), want the platform *PlatformGateError", platformFinalErr, platformFinalErr)
+	}
 }

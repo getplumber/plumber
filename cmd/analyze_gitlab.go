@@ -775,6 +775,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 
 	conf := buildGitLabConf(cleanGitlabURL, gitlabToken, flags, remote, plumberConfig, controlsFilterList, skipControlsList)
 	conf.ConfigFilePath = configPath
+	platformModeNotices(conf)
 
 	p, ok := plumberprovider.Get("gitlab")
 	if !ok {
@@ -1361,6 +1362,9 @@ type complianceSummary struct {
 	// which is what tells the gate and the renderer apart a deliberate
 	// zero-control run from a misconfiguration that evaluated nothing.
 	noControls bool
+	// platformMode: every local gate is inert, the platform's verdict is the
+	// exit code (spec s4).
+	platformMode bool
 }
 
 // pointsGateActive reports whether the points gate applies: either it was set
@@ -1383,6 +1387,9 @@ func (s complianceSummary) gateErr() error {
 	// fail-closed further down exists to catch a run that MEANT to check
 	// something and checked nothing, which is not this.
 	if s.noControls {
+		return nil
+	}
+	if s.platformMode {
 		return nil
 	}
 	if s.thresholdSet {
@@ -1429,6 +1436,9 @@ func (s complianceSummary) gateLine() string {
 	// renders "PASSED (0.0% of controls passing, deprecated threshold 100%)".
 	if s.noControls {
 		return "no controls requested, nothing to score"
+	}
+	if s.platformMode {
+		return "enforcement comes from the platform's policies"
 	}
 	if s.thresholdSet {
 		return fmt.Sprintf("%.1f%% of controls passing, deprecated threshold %.0f%%", s.compliance, s.threshold)

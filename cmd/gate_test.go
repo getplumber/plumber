@@ -641,3 +641,41 @@ func TestFinalizeRun_OrderingPriority(t *testing.T) {
 		}
 	})
 }
+
+// Spec s4: in platform mode the local score gate is inert, whatever the flags
+// say; the exit code is the platform's verdict (finalizeRun below).
+func TestGate_PlatformModeIgnoresLocalScoreGates(t *testing.T) {
+	s := complianceSummary{minPoints: 100, minPointsSet: true, minScore: "A", score: scoreWithPoints(0), controlCount: 1, platformMode: true}
+	if err := s.gateErr(); err != nil {
+		t.Fatalf("platform mode must not gate locally, got %v", err)
+	}
+	if !s.passed() {
+		t.Fatal("passed() must follow gateErr()")
+	}
+	if got := s.gateLine(); got != "enforcement comes from the platform's policies" {
+		t.Fatalf("gateLine: %q", got)
+	}
+}
+
+// Spec s4: the degraded exit 3 does not apply in platform mode; the platform's
+// gate decides. --fail-warnings still applies, and outranks the platform error.
+func TestFinalizeRun_PlatformModeOrdering(t *testing.T) {
+	gateErr := &PlatformGateError{Reason: "blocked", Policies: nil}
+	s := complianceSummary{platformMode: true, score: scoreWithPoints(0), controlCount: 1, minPoints: 100, minPointsSet: true}
+	degraded := &control.AnalysisResult{DataCollectionDegraded: true, DegradedReasons: []string{"x"}}
+
+	if err := finalizeRun(degraded, s, nil); err != nil {
+		t.Fatalf("degraded in platform mode must not exit 3, got %v", err)
+	}
+	if err := finalizeRun(degraded, s, gateErr); !errors.Is(err, gateErr) {
+		t.Fatalf("the platform gate error must be returned, got %v", err)
+	}
+	origFail := failWarnings
+	failWarnings = true
+	defer func() { failWarnings = origFail }()
+	warned := &control.AnalysisResult{Warnings: []string{"could not verify"}}
+	var degradedErr *DegradedError
+	if err := finalizeRun(warned, s, gateErr); !errors.As(err, &degradedErr) {
+		t.Fatalf("--fail-warnings outranks the platform gate, got %v", err)
+	}
+}

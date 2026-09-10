@@ -253,6 +253,7 @@ func buildComplianceSummary(p provider.Provider, result *control.AnalysisResult,
 		scoreMode:    scoreMode,
 		scorePoint:   showScorePoint,
 		noControls:   conf.NoControls,
+		platformMode: func() bool { on, _ := effectivePlatformPush(); return on }(),
 	}
 }
 
@@ -603,8 +604,13 @@ func buildPublishPayload(p provider.Provider, conf *configuration.Configuration,
 // the score gate (or the deprecated --threshold gate). A platform token failure
 // is evaluated LAST so a broken id-token grant can never mask a security
 // finding the scan just made.
+//
+// In platform mode (s.platformMode) the degraded exit 3 and the local score
+// gate do not apply: a degraded collection is pushed and the platform's
+// verdict decides (I3), and platformErr, a blocking gate or a token failure,
+// is the only score-related exit.
 func finalizeRun(result *control.AnalysisResult, s complianceSummary, platformErr error) error {
-	if result.DataCollectionDegraded {
+	if result.DataCollectionDegraded && !s.platformMode {
 		return &IncompleteDataError{Reasons: result.DegradedReasons}
 	}
 	if failWarnings && len(result.Warnings) > 0 {
