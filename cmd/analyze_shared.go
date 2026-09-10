@@ -276,7 +276,7 @@ func outputTextWithProvider(p provider.Provider, result *control.AnalysisResult,
 		renderDegradedCaveat(result.DegradedReasons)
 	}
 
-	controls, groups := buildProviderControlSummariesAndGroups(p, result, conf, controlsFilterList, skipControlsList)
+	controls, groups := buildProviderControlSummariesAndGroups(p, result, conf.PlumberConfig, controlsFilterList, skipControlsList)
 	// Nothing was selected, so listing every control as "skipped" is noise
 	// that reads like a misconfiguration.
 	if s.noControls {
@@ -357,9 +357,14 @@ func countNotEvaluated(groups []findingGroup) int {
 // buildProviderControlSummariesAndGroups builds the control summary and finding
 // group slices for any provider using the provider's catalog and registered
 // stats builder.
-func buildProviderControlSummariesAndGroups(p provider.Provider, result *control.AnalysisResult, conf *configuration.Configuration, controlsFilterList, skipControlsList []string) ([]controlSummary, []findingGroup) {
+//
+// pc is the configuration the result was evaluated under, and it is a
+// parameter rather than conf.PlumberConfig because in platform mode that is
+// the POLICY's configuration, not the run's: a section rendered from the
+// local config would enumerate controls the policy never declared.
+func buildProviderControlSummariesAndGroups(p provider.Provider, result *control.AnalysisResult, pc *configuration.PlumberConfig, controlsFilterList, skipControlsList []string) ([]controlSummary, []findingGroup) {
 	findingsByControl := control.FindingsByControl(result.Findings)
-	entries := p.Controls(conf.PlumberConfig)
+	entries := p.Controls(pc)
 	control.MarkSkippedByFilter(entries, controlsFilterList, skipControlsList)
 	dataCollectionFailed := !result.CiValid && !result.CiMissing
 
@@ -378,7 +383,7 @@ func buildProviderControlSummariesAndGroups(p provider.Provider, result *control
 			}
 		}
 		skipped := e.Skipped || dataCollectionFailed
-		stats := provider.BuildControlStats(p.Name(), e.ControlName, result, conf.PlumberConfig, findings)
+		stats := provider.BuildControlStats(p.Name(), e.ControlName, result, pc, findings)
 		// A control whose lane supplied nothing must not render as passed.
 		//
 		// Keyed on result.NotEvaluable rather than StatusFor: StatusFor also
