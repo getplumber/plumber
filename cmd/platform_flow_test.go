@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/getplumber/plumber/configuration"
+	"github.com/getplumber/plumber/control"
 	"github.com/getplumber/plumber/internal/platform"
 )
 
@@ -168,6 +169,82 @@ func TestPlatformFlow_RunWithProvider_TwoPolicies(t *testing.T) {
 	if !strings.Contains(string(pushed), `"policy":"Prod"`) {
 		t.Fatalf("push must carry the Prod entry: %s", pushed)
 	}
+}
+
+// --no-controls is inventory-only and evaluates nothing under ANY mode, so it
+// keeps today's sequence even under --platform: the artifacts are still
+// written and publishAndFinalize's no-controls guards still run. Routing it
+// down the platform branch instead would return from runPlatformMode on a
+// zero-policy run and skip both - a CI-less project would exit 0 with no
+// inventory and no diagnosis.
+func TestPlatformFlow_NoControlsKeepsTheInventoryGuardsUnderPlatform(t *testing.T) {
+	origPrint, origNoControls := printOutput, noControls
+	printOutput = true
+	defer func() { printOutput, noControls = origPrint, origNoControls }()
+
+	// conf.PlatformRun resolves nothing, which is what makes the bug
+	// reachable: with a policy the platform branch would push instead.
+	newConf := func(t *testing.T) *configuration.Configuration {
+		t.Helper()
+		conf := configuration.NewDefaultConfiguration()
+		conf.PlumberConfig = testDefaultPlumberConfig(t)
+		conf.NoControls = true
+		conf.PlatformRun = &platform.RunContext{Endpoint: "https://platform.example.com", ProjectPath: "g/p", ContextErr: errors.New("dial tcp: connection refused")}
+		return conf
+	}
+
+	t.Run("an unusable CI still fails with IncompleteDataError and pushes nothing", func(t *testing.T) {
+		newGateFlagsCmd(t)
+		noControls = true
+		pushed := false
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { pushed = true }))
+		defer srv.Close()
+		restore := withPlatformTestEnv(t, srv.URL, "tok")
+		defer restore()
+
+		var err error
+		_ = captureStdoutAll(t, func() {
+			_ = captureStderr(t, func() {
+				err = presentResultWithProvider(testProvider(t), nil, &control.AnalysisResult{CiMissing: true}, newConf(t))
+			})
+		})
+
+		var incomplete *IncompleteDataError
+		if !errors.As(err, &incomplete) {
+			t.Fatalf("err = %v, want *IncompleteDataError: a --no-controls run over a CI-less project must not exit 0 with an empty inventory", err)
+		}
+		if pushed {
+			t.Fatal("a --no-controls run publishes nothing, platform push included")
+		}
+	})
+
+	t.Run("a usable CI inventories, evaluates nothing and pushes nothing", func(t *testing.T) {
+		newGateFlagsCmd(t)
+		noControls = true
+		pushed := false
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { pushed = true }))
+		defer srv.Close()
+		restore := withPlatformTestEnv(t, srv.URL, "tok")
+		defer restore()
+
+		var err error
+		out := captureStdoutAll(t, func() {
+			_ = captureStderr(t, func() {
+				err = presentResultWithProvider(testProvider(t), nil, debugTraceResult(), newConf(t))
+			})
+		})
+
+		if err != nil {
+			t.Fatalf("err = %v, want nil: an inventory run over a valid CI succeeds", err)
+		}
+		if pushed {
+			t.Fatal("a --no-controls run publishes nothing, platform push included")
+		}
+		if strings.Contains(out, "== Policy") {
+			t.Fatalf("--no-controls evaluated nothing, so no policy section may be rendered:\n%s", out)
+		}
+		assertContains(t, out, "no controls requested, nothing to score")
+	})
 }
 
 // Spec s4 + ruling: a degraded collection is pushed and the verdict decides.
