@@ -530,20 +530,22 @@ func platformTokenFailure(reason string) error {
 	return &PlatformTokenError{Reason: reason}
 }
 
-// maybePushPlatform pushes the analysis result to the configured platform.
-// It returns non-nil ONLY for a token failure; see PlatformTokenError. conf
-// supplies the resolved config path/PlumberConfig/ProjectID/control filters
-// buildPlatformPush needs (falling back to the --config flag when conf is
-// nil or has no resolved path, e.g. in tests that call this directly);
-// result and score are threaded straight through so the platform, the
-// terminal banner and the JSON report can never disagree about a run's
-// findings or score. Project identity for the platform record is a separate
-// matter and still comes from the verified OIDC claims server-side, never
-// from operator-supplied config.
-func maybePushPlatform(p providerPkg.Provider, conf *configuration.Configuration, result *control.AnalysisResult, score *control.PlumberScoreResult) error {
+// maybePushPlatform pushes the analysis result to the configured platform. It
+// returns a *platformVerdict for every reached push (fail-open branches carry
+// Unavailable and a nil error; a blocking gate carries the decoded verdict
+// together with a *PlatformGateError) and (nil, error) ONLY for a token
+// failure; see PlatformTokenError. conf supplies the resolved config
+// path/PlumberConfig/ProjectID/control filters buildPlatformPush needs
+// (falling back to the --config flag when conf is nil or has no resolved
+// path, e.g. in tests that call this directly); result and score are
+// threaded straight through so the platform, the terminal banner and the
+// JSON report can never disagree about a run's findings or score. Project
+// identity for the platform record is a separate matter and still comes from
+// the verified OIDC claims server-side, never from operator-supplied config.
+func maybePushPlatform(p providerPkg.Provider, conf *configuration.Configuration, result *control.AnalysisResult, score *control.PlumberScoreResult) (*platformVerdict, error) {
 	push, endpoint := effectivePlatformPush()
 	if !push {
-		return nil
+		return nil, nil
 	}
 
 	// Every failure to obtain the token fails the run, INCLUDING a transport
@@ -557,14 +559,14 @@ func maybePushPlatform(p providerPkg.Provider, conf *configuration.Configuration
 	// the pipeline should not be coupled to; the CI's token endpoint is not.
 	token, err := scoreOIDCToken(p, endpoint)
 	if err != nil {
-		return platformTokenFailure(fmt.Sprintf("could not mint the CI OIDC id-token for %s: %v", endpoint, err))
+		return nil, platformTokenFailure(fmt.Sprintf("could not mint the CI OIDC id-token for %s: %v", endpoint, err))
 	}
 	if token == "" {
 		switch {
 		case p.Name() == "github":
-			return platformTokenFailure("the workflow must grant `permissions: id-token: write` to push to the platform")
+			return nil, platformTokenFailure("the workflow must grant `permissions: id-token: write` to push to the platform")
 		default:
-			return platformTokenFailure("no CI OIDC id-token available for the platform push; the pipeline must declare the component's `id_tokens:` block (" + gitlabPlatformTokenEnv + ")")
+			return nil, platformTokenFailure("no CI OIDC id-token available for the platform push; the pipeline must declare the component's `id_tokens:` block (" + gitlabPlatformTokenEnv + ")")
 		}
 	}
 
@@ -577,7 +579,7 @@ func maybePushPlatform(p providerPkg.Provider, conf *configuration.Configuration
 	body, err := buildPlatformPush(p, conf, result, score, configPath)
 	if err != nil {
 		scoreWarn(fmt.Sprintf("platform push skipped: %v", err))
-		return nil
+		return nil, nil
 	}
 
 	// Every remote condition lands here, including 413 for an oversized body:
@@ -589,8 +591,9 @@ func maybePushPlatform(p providerPkg.Provider, conf *configuration.Configuration
 	// gate timeout knob exists.
 	respBody, statusCode, err := postScoreReportForBody(endpoint+"/api/v1/pushes", token, body)
 	if err != nil {
-		scoreWarn(fmt.Sprintf("%s: %v", platformGateFailOpenLine(statusCode), err))
-		return nil
+		line := platformGateFailOpenLine(statusCode)
+		scoreWarn(fmt.Sprintf("%s: %v", line, err))
+		return &platformVerdict{Unavailable: line}, nil
 	}
 	fmt.Fprintf(os.Stderr, "✓ Results pushed to the platform: %s\n", endpoint)
 	return evaluatePlatformGate(respBody)

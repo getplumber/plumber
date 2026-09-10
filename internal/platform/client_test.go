@@ -53,7 +53,7 @@ func TestFetchContext_DecodesFullShape(t *testing.T) {
 	  "project": "e2e/rail-proj",
 	  "policies": [
 	    {"id":"33333333-3333-3333-3333-333333339501","name":"Baseline","enforcement":"report"},
-	    {"id":"44444444-4444-4444-4444-444444449501","name":"Blocking","enforcement":"block"}
+	    {"id":"44444444-4444-4444-4444-444444449501","name":"Blocking","enforcement":"block","min_points":80}
 	  ],
 	  "snapshot": {
 	    "collected_at": "2026-08-24T07:57:30.32668Z",
@@ -89,6 +89,12 @@ func TestFetchContext_DecodesFullShape(t *testing.T) {
 	}
 	if !ctx.Policies[1].Enforcement.Blocking() || ctx.Policies[0].Enforcement.Blocking() {
 		t.Fatalf("enforcement dials misread: %+v", ctx.Policies)
+	}
+	if ctx.Policies[0].MinPoints != nil {
+		t.Fatalf("policy without min_points must decode nil, got %d", *ctx.Policies[0].MinPoints)
+	}
+	if ctx.Policies[1].MinPoints == nil || *ctx.Policies[1].MinPoints != 80 {
+		t.Fatalf("policy min_points: want 80, got %v", ctx.Policies[1].MinPoints)
 	}
 	if ctx.Snapshot.CollectedAt == nil {
 		t.Fatal("collected_at must decode: it is what the run reports as the snapshot's age")
