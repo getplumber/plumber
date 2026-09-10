@@ -206,6 +206,27 @@ func TestRenderPlatformVerdict_NoBlockExitZero(t *testing.T) {
 	assertContains(t, out, "  Exit 0\n")
 }
 
+// A gate that blocks the run without marking any single policy blocking (a
+// run-level reason, or a shape this CLI predates) must still say WHY: the
+// exit line falls back to the gate's own reason rather than printing
+// "Exit 1:  blocks" with an empty name list. Same fallback chain the job-log
+// line uses (platformGateDetail).
+func TestRenderPlatformVerdict_BlockingWithNoBlockingPolicyFallsBackToTheReason(t *testing.T) {
+	v := &platformVerdict{Gate: &platformGate{
+		Evaluated: true,
+		Blocking:  true,
+		Reason:    "the project exceeded its live-failure budget",
+		Policies:  []platformGatePolicy{{ID: "p1", Name: "Only", Enforcement: "report"}},
+	}}
+
+	out := captureStdoutAll(t, func() { renderPlatformVerdict(nil, v, &PlatformGateError{Reason: v.Gate.Reason}) })
+
+	assertContains(t, out, "  Exit 1: the project exceeded its live-failure budget\n")
+	if strings.Contains(out, "Exit 1:  blocks") {
+		t.Fatal("an empty blocking-policy list must never render as a bare \"Exit 1:  blocks\"")
+	}
+}
+
 // Invariant 5: no usable gate is fail-open, said in plain words, never a
 // silent pass and never a fake verdict.
 func TestRenderPlatformVerdict_Unavailable(t *testing.T) {

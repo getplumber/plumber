@@ -136,6 +136,16 @@ func renderPlatformVerdict(runs []policyRun, v *platformVerdict, exitErr error) 
 		fmt.Printf("  Global score (platform): %s  %d / 100 pts\n", v.GlobalScore.Letter, v.GlobalScore.Points)
 	}
 	if exitErr != nil {
+		// The top-level Blocking flag is the platform's decision and does
+		// not structurally guarantee a non-empty per-policy subset (a
+		// run-level reason, or a shape this CLI predates). With no name to
+		// print, the line falls back to the gate's own reason through the
+		// same chain the job-log line uses, rather than rendering a bare
+		// "Exit 1:  blocks" that says nothing at all.
+		if len(blocking) == 0 {
+			fmt.Printf("  Exit 1: %s\n", platformGateDetail(nil, v.Gate.Reason))
+			return
+		}
 		fmt.Printf("  Exit 1: %s blocks\n", strings.Join(blocking, ", "))
 		return
 	}

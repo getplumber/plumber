@@ -19,6 +19,7 @@ import (
 	defaultconfig "github.com/getplumber/plumber/defaultConfig"
 	"github.com/getplumber/plumber/finding/identity"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
+	"github.com/getplumber/plumber/internal/ir"
 	"github.com/getplumber/plumber/internal/platform"
 	providerPkg "github.com/getplumber/plumber/provider"
 )
@@ -702,46 +703,85 @@ func (s stubRunProvider) Run(*configuration.Configuration) (*control.AnalysisRes
 	return s.result, nil
 }
 
+// dismissalPolicy is the resolved policy this test's runs are evaluated under: one real policy
+// declaring containerImageMustComeFromAuthorizedSources with a trusted list the fixture image
+// does not match, so the control produces exactly one live ISSUE-101.
+//
+// A resolved policy is required, not decoration: in platform mode a run that resolves NONE
+// evaluates nothing and never reaches the push (runPlatformMode), so a context carrying only a
+// dismissed list would assert against a push that was never sent.
+func dismissalPolicy() platform.Policy {
+	return policyWithTree("Images", "containerImageMustComeFromAuthorizedSources",
+		`{"enabled":true,"trustedUrls":["registry.example.com/*"],"includePlumberDefaults":false}`)
+}
+
+// imageResult is a collected GitLab run whose RETAINED IR carries one job pulling from the given
+// registry. Re-evaluated under dismissalPolicy it produces one ISSUE-101 for an untrusted
+// registry and none for the trusted one, which is what makes the dismissal's effect on the score
+// observable.
+func imageResult(registry string) *control.AnalysisResult {
+	return &control.AnalysisResult{
+		CiValid:     true,
+		ProjectPath: "grp/app",
+		Pipeline: &ir.NormalizedPipeline{
+			Provider:      ir.ProviderGitLab,
+			ProjectPath:   "grp/app",
+			DefaultBranch: "main",
+			Jobs: []ir.Job{{
+				Name:       "build",
+				OriginFile: ".gitlab-ci.yml",
+				Image:      &ir.Image{Registry: registry, Name: "app", Tag: "1"},
+			}},
+		},
+	}
+}
+
 // TestSharedPipeline_ServedDismissalMarksThePushAndLeavesTheScore pins the run-level half of #447,
-// which the wire-shape test above does not reach: nothing on the shared pipeline marks a finding
-// except the single markPlatformDismissedFindings call inside finalizeFindings, between
-// StampFingerprints and buildComplianceSummary. Drop it and a run pushes a served dismissal as a
-// live finding and scores it, with every unit test still green.
+// which the wire-shape test above does not reach: on the shared pipeline a served dismissal must
+// reach the pushed entry as "dismissed":true and cost the score nothing. Drop the marking on
+// either path and a run pushes a served dismissal as a live finding and scores it, with every
+// unit test still green.
 //
 // Both production entry points are driven, because platform mode is not symmetric between them:
 // presentResultWithProvider serves the GitHub paths, while runWithProvider is GitLab's and is the
-// one path where platform mode actually operates. They share finalizeFindings, and this test is
-// what says so - a copy of the sequence in either of them, minus a step, fails here.
+// one path where platform mode actually operates. They share finalizeFindings and the
+// platform-mode tail it hands to (continueRun), and this test is what says so - a copy of the
+// sequence in either of them, minus a step, fails here.
 //
 // The served entry is built the way the platform builds it: the identity hash of the finding as it
 // exists AFTER fingerprint stamping, under the current recipe version, keyed by the finding's
-// control. Both halves of the claim are asserted on the SAME run: the captured push body carries
-// "dismissed":true on that entry, and the score the run computed is the score of a run with no
-// such finding at all.
+// control. It is derived by a probe evaluation through the very helpers production uses
+// (policyConfigFromTree + control.ReEvaluateForConfig) rather than hand-written, so the fixture
+// cannot drift away from the identity the run actually computes. Both halves of the claim are
+// asserted on the SAME run: the captured push body carries "dismissed":true on that entry, and the
+// score the run computed is the score of a run with no such finding at all.
 func TestSharedPipeline_ServedDismissalMarksThePushAndLeavesTheScore(t *testing.T) {
 	origPrint := printOutput
 	printOutput = false // the terminal report is not under test
 	defer func() { printOutput = origPrint }()
 	newGateFlagsCmd(t) // reset gate globals: default points gate (min-points 100)
 
-	// The same fixture the wire-shape test uses: ISSUE-101 belongs to
-	// containerImageMustComeFromAuthorizedSources, which the shipped default config enables, so
-	// this is a fail finding a real run of that config produces, and it costs the score real
-	// points.
-	failFinding := func() opaengine.Finding {
-		return opaengine.Finding{Code: "ISSUE-101", Severity: "high", Message: "untrusted registry", Job: "build", File: ".gitlab-ci.yml", Line: 4}
+	// The probe: evaluate the fixture under the policy exactly as the run will, and read the
+	// identity of the finding it produces. That is the identity the platform would have hashed.
+	probeCfg, err := policyConfigFromTree("gitlab", dismissalPolicy())
+	if err != nil {
+		t.Fatalf("assembling the policy config: %v", err)
 	}
-
-	stamped := []opaengine.Finding{failFinding()}
-	opaengine.StampFingerprints(stamped, "")
-	hash, _, ok := identity.PlatformHash(stamped[0].IdentityInput())
+	probe, _, ok := control.ReEvaluateForConfig(imageResult("evil.registry.io"), confWithPolicies(t, dismissalPolicy()), "gitlab", probeCfg)
+	if !ok {
+		t.Fatal("the fixture has no retained IR: nothing could be re-evaluated per policy")
+	}
+	if len(probe.Findings) != 1 || probe.Findings[0].Code != "ISSUE-101" {
+		t.Fatalf("want exactly one ISSUE-101 from the untrusted image, got %+v", probe.Findings)
+	}
+	hash, _, ok := identity.PlatformHash(probe.Findings[0].IdentityInput())
 	if !ok {
 		t.Fatal("the fixture finding has no platform identity, so no served dismissal could ever match it")
 	}
 	served := platform.DismissedIssue{
 		IdentityHash:  hash,
 		RecipeVersion: identity.RecipeVersion,
-		ControlType:   control.ControlKeyFor(stamped[0].Code),
+		ControlType:   control.ControlKeyFor(probe.Findings[0].Code),
 	}
 
 	// dismissedKeyFor reads the marker off the raw wire bytes rather than through platformFinding,
@@ -801,7 +841,7 @@ func TestSharedPipeline_ServedDismissalMarksThePushAndLeavesTheScore(t *testing.
 			// score that same run computed. A context with no policies pushes the single
 			// locally-named entry, so the assertions read one result rather than one per policy;
 			// the served dismissed list is the only variable.
-			run := func(t *testing.T, findings []opaengine.Finding, dismissed []platform.DismissedIssue) ([]byte, int) {
+			run := func(t *testing.T, registry string, dismissed []platform.DismissedIssue) ([]byte, int) {
 				t.Helper()
 				var gotBody []byte
 				srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -815,17 +855,20 @@ func TestSharedPipeline_ServedDismissalMarksThePushAndLeavesTheScore(t *testing.
 				conf := configuration.NewDefaultConfiguration()
 				conf.ConfigFilePath = ".plumber.yaml"
 				conf.PlumberConfig = testDefaultPlumberConfig(t)
-				conf.PlatformRun = &platform.RunContext{
-					Endpoint: srv.URL,
-					Context:  &platform.ProjectContext{DismissedIssues: dismissed},
-				}
+				// runContextWith supplies the resolved-and-valid config resolution the
+				// probe used. It is load bearing: with no resolution the lane-gap rule
+				// marks every pipeline control not_evaluable and drops its findings, so
+				// the fixture violation would vanish and the test would compare two
+				// perfect scores (it did, before this line).
+				conf.PlatformRun = runContextWith(dismissalPolicy())
+				conf.PlatformRun.Endpoint = srv.URL
+				conf.PlatformRun.Context.DismissedIssues = dismissed
 
-				// The returned error is the gate verdict, which is not what this test reads: a
-				// live high finding fails the default points gate and the same finding dismissed
-				// does not. That difference is asserted on the pushed score below, which is the
-				// score itself rather than a proxy for it.
+				// The returned error is the gate verdict, which is not what this test reads: the
+				// difference the dismissal makes is asserted on the pushed score below, which is
+				// the score itself rather than a proxy for it.
 				_ = captureStderr(t, func() {
-					entry.drive(t, testProvider(t), conf, &control.AnalysisResult{CiValid: true, Findings: findings})
+					entry.drive(t, testProvider(t), conf, imageResult(registry))
 				})
 
 				if len(gotBody) == 0 {
@@ -841,16 +884,19 @@ func TestSharedPipeline_ServedDismissalMarksThePushAndLeavesTheScore(t *testing.
 				return gotBody, push.Results[0].Score.Points
 			}
 
-			servedBody, servedPoints := run(t, []opaengine.Finding{failFinding()}, []platform.DismissedIssue{served})
-			liveBody, livePoints := run(t, []opaengine.Finding{failFinding()}, nil)
-			_, cleanPoints := run(t, nil, nil)
+			// The clean run swaps the registry for the one the policy trusts, so the control
+			// produces no finding at all: the same policy, the same pipeline shape, and the
+			// only difference is whether the finding exists.
+			servedBody, servedPoints := run(t, "evil.registry.io", []platform.DismissedIssue{served})
+			liveBody, livePoints := run(t, "evil.registry.io", nil)
+			_, cleanPoints := run(t, "registry.example.com", nil)
 
 			val, present, found := dismissedKeyFor(t, servedBody, dismissedControl)
 			if !found {
 				t.Fatalf("control %q is absent from the pushed findings: the served dismissal must be pushed, not withheld", dismissedControl)
 			}
 			if b, ok := val.(bool); !present || !ok || !b {
-				t.Errorf("dismissed = %v (present=%v), want \"dismissed\":true: markPlatformDismissedFindings must run on this entry point's pipeline", val, present)
+				t.Errorf("dismissed = %v (present=%v), want \"dismissed\":true: the served dismissal must be marked on this entry point's pipeline", val, present)
 			}
 
 			if _, present, found := dismissedKeyFor(t, liveBody, dismissedControl); !found || present {
@@ -1257,9 +1303,13 @@ func TestPresentResultWithProvider_ThreadsPlatformErrIntoTheExitCode(t *testing.
 	defer func() { printOutput = origPrint }()
 	newGateFlagsCmd(t) // reset gate globals: default points gate (min-points 100)
 
-	// A clean result with one enabled control scores 100 and passes the gate,
-	// so the ONLY thing deciding the returned error is the platform push.
-	conf := confWithDebugTrace()
+	// Platform mode makes every local gate inert, so the ONLY thing deciding
+	// the returned error is the platform push. The context carries one
+	// resolved policy against a result with retained IR, because a run that
+	// resolves NO policy evaluates nothing and never reaches the push
+	// (runPlatformMode) - the token guarantee is about a run that had
+	// something to send.
+	conf := confWithPolicies(t, policyWithTree("A", "pipelineMustNotEnableDebugTrace", debugTraceControlConfig))
 
 	t.Run("missing id-token fails the run", func(t *testing.T) {
 		restore := withPlatformTestEnv(t, "https://app.example.com", "")
@@ -1267,7 +1317,7 @@ func TestPresentResultWithProvider_ThreadsPlatformErrIntoTheExitCode(t *testing.
 
 		var err error
 		_ = captureStderr(t, func() {
-			err = presentResultWithProvider(testProvider(t), nil, &control.AnalysisResult{CiValid: true}, conf)
+			err = presentResultWithProvider(testProvider(t), nil, debugTraceResult(), conf)
 		})
 
 		var tokenErr *PlatformTokenError
@@ -1285,7 +1335,7 @@ func TestPresentResultWithProvider_ThreadsPlatformErrIntoTheExitCode(t *testing.
 
 		var err error
 		_ = captureStderr(t, func() {
-			err = presentResultWithProvider(testProvider(t), nil, &control.AnalysisResult{CiValid: true}, conf)
+			err = presentResultWithProvider(testProvider(t), nil, debugTraceResult(), conf)
 		})
 
 		if err != nil {

@@ -271,10 +271,10 @@ func TestPlatformAnalyzedSha(t *testing.T) {
 	})
 }
 
-// TestReportPlatformOutcome covers the end-of-run line. A full report is over
-// a hundred lines, so the pre-collection warning scrolls off screen and what
-// remains is an ordinary-looking verdict produced without the project's
-// policies. Repeating it last is what stops someone acting on that.
+// TestReportPlatformOutcome covers the end-of-run line. It is the backstop
+// for a run that reaches the publish tail with no context: it must name the
+// cause and say what the run therefore evaluated - nothing - rather than
+// letting a reader assume a local fallback produced the report above it.
 func TestReportPlatformOutcome(t *testing.T) {
 	t.Run("standalone prints nothing", func(t *testing.T) {
 		if out := captureStderr(t, func() { reportPlatformOutcome(nil) }); strings.TrimSpace(out) != "" {
@@ -295,7 +295,7 @@ func TestReportPlatformOutcome(t *testing.T) {
 		for _, want := range []string{
 			"did NOT engage",             // that it happened
 			"not the attributed project", // the underlying cause, verbatim
-			"policies were applied",      // what it cost the run
+			"evaluated nothing",          // what it cost the run
 		} {
 			if !strings.Contains(out, want) {
 				t.Fatalf("output missing %q:\n%s", want, out)
