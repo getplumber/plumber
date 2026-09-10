@@ -1,3 +1,15 @@
+## [0.4.58](https://github.com/getplumber/plumber/compare/v0.4.57...v0.4.58) (2026-09-10)
+
+
+### ✨ Features
+
+* **platform:** export the score band and push final_points ([95216ef](https://github.com/getplumber/plumber/commit/95216ef76a24b1b6077bae8b2aa274f0d10d581c))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.57 refs [skip ci] ([d7bb560](https://github.com/getplumber/plumber/commit/d7bb560e3b0b582e07cc71972cc2114e285ce2f0))
+
 ## [0.4.57](https://github.com/getplumber/plumber/compare/v0.4.56...v0.4.57) (2026-09-09)
 
 
