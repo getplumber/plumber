@@ -171,7 +171,7 @@ func scoreSeveritySpecs() map[IssueSeverity]severitySpec {
 // Raw points are 100 minus the sum of capped per-code losses. When at least
 // one Critical issue is present, final points are capped at 30 (Critical
 // malus), forcing the letter score into the E band. The A–E letter is read
-// from final points using the thresholds in scoreLetterFromPoints.
+// from final points using the thresholds in ScoreLetterFromPoints.
 func ComputePlumberScore(codeCounts map[ErrorCode]int) PlumberScoreResult {
 	specs := scoreSeveritySpecs()
 
@@ -271,7 +271,7 @@ func ComputePlumberScore(codeCounts map[ErrorCode]int) PlumberScoreResult {
 		final = math.Min(raw, maxPointsWithCritical)
 	}
 	out.FinalPoints = final
-	out.Score = scoreLetterFromPoints(out.FinalPoints)
+	out.Score = ScoreLetterFromPoints(out.FinalPoints)
 
 	return out
 }
@@ -295,7 +295,8 @@ func ScoreLetterRank(letter string) int {
 	}
 }
 
-func scoreLetterFromPoints(finalPoints float64) string {
+// ScoreLetterFromPoints is the scoring-v3 letter band (A>=90, B>=71, C>=51, D>=31, else E) over FINAL points. Exported for the platform, which derives an aggregate's letter through this one table.
+func ScoreLetterFromPoints(finalPoints float64) string {
 	switch {
 	case finalPoints >= 90:
 		return "A"

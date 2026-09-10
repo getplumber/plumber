@@ -177,26 +177,32 @@ const (
 	platformStatusNotEvaluable = "not_evaluable"
 )
 
-// platformScore is the entry's Plumber Score. Points is
-// PlumberScoreResult.RawPointsUnclamped rounded to the nearest int — see
+// platformScore is the entry's Plumber Score. Points is RawPointsUnclamped
+// (signed, no floor); FinalPoints is the malus-capped final figure the
+// banner shows (platform contract 2026-09-10, additive). See
 // platformScoreFrom.
 type platformScore struct {
-	Letter string `json:"letter,omitempty"`
-	Points int    `json:"points"`
+	Letter      string `json:"letter,omitempty"`
+	Points      int    `json:"points"`
+	FinalPoints *int   `json:"final_points,omitempty"`
 }
 
 // platformScoreFrom converts the already-computed Plumber Score to the wire
 // shape. Points is RawPointsUnclamped — the SIGNED deficit with no floor at
 // zero (the contract stores it unclamped; the gate/badge's floored-at-zero
 // RawPoints is display-only) — rounded to the nearest int, matching what the
-// contract's Score.Points type actually is. Tolerates a nil score (no
-// production caller passes one today, but a best-effort push should never
-// panic a run over a nil pointer) by sending the zero value.
+// contract's Score.Points type actually is. FinalPoints carries the
+// malus-capped final figure (floored at 0, capped at 30 while any Critical
+// exists) so the platform can cross-check its own recompute against the
+// CLI's exact formula. Tolerates a nil score (no production caller passes
+// one today, but a best-effort push should never panic a run over a nil
+// pointer) by sending the zero value, with FinalPoints left nil.
 func platformScoreFrom(score *control.PlumberScoreResult) platformScore {
 	if score == nil {
 		return platformScore{}
 	}
-	return platformScore{Letter: score.Score, Points: int(math.Round(score.RawPointsUnclamped))}
+	final := int(math.Round(score.FinalPoints))
+	return platformScore{Letter: score.Score, Points: int(math.Round(score.RawPointsUnclamped)), FinalPoints: &final}
 }
 
 // policyNameFor derives a stable, human-meaningful policy name from the config

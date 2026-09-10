@@ -150,8 +150,18 @@ func TestScoreLetterFromPoints_boundaries(t *testing.T) {
 		{30.9, "E"},
 	}
 	for _, tc := range cases {
-		if g := scoreLetterFromPoints(tc.final); g != tc.want {
+		if g := ScoreLetterFromPoints(tc.final); g != tc.want {
 			t.Fatalf("points %f: want letter %s, got %s", tc.final, tc.want, g)
+		}
+	}
+}
+
+// Row 40 (platform): the band is the CLI's, exported so the platform derives an aggregate's
+// letter through this function instead of a local copy.
+func TestScoreLetterFromPoints_Bands(t *testing.T) {
+	for pts, want := range map[float64]string{100: "A", 90: "A", 89.9: "B", 71: "B", 70.9: "C", 51: "C", 50.9: "D", 31: "D", 30.9: "E", 0: "E"} {
+		if got := ScoreLetterFromPoints(pts); got != want {
+			t.Fatalf("ScoreLetterFromPoints(%v): want %s, got %s", pts, want, got)
 		}
 	}
 }
