@@ -1,12 +1,15 @@
 package utils
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strings"
+
+	"github.com/sirupsen/logrus"
 )
 
 // GitRemoteInfo contains parsed information from a git remote URL.
@@ -92,18 +95,56 @@ func hasGitHubWorkflows(repoRoot string) bool {
 	return false
 }
 
+// gitCommand builds a git invocation scoped to dir with dir declared as safe.directory (#464).
+// -c is protected configuration, so git honors safe.directory from it even when the repository
+// is owned by another uid (the GitLab docker executor clones $CI_PROJECT_DIR as root while the
+// image runs as uid 65532); git >= 2.35.2 otherwise refuses with "detected dubious ownership".
+// The single inspected directory is named, never '*': the trust decision stays as narrow as the
+// question being asked.
+func gitCommand(dir string, args ...string) *exec.Cmd {
+	full := append([]string{"-c", "safe.directory=" + dir}, args...)
+	cmd := exec.Command("git", full...)
+	cmd.Dir = dir
+	return cmd
+}
+
+// runGit runs a gitCommand and returns its trimmed stdout. On failure it logs the first stderr
+// line (#464): before this, a dubious-ownership refusal and "not a git repository" were
+// indistinguishable to every caller, and platform mode silently lost five controls on the
+// default executor with nothing in the job log to explain it.
+//
+// "not a git repository" is the routine, expected case for every plumber invocation outside a
+// git checkout (`plumber analyze` runs at Warn by default), so it logs at Debug; any other
+// failure, dubious ownership included, is unexpected in a real checkout and logs at Warn.
+func runGit(dir string, args ...string) (string, error) {
+	cmd := gitCommand(dir, args...)
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
+	if err != nil {
+		first := strings.SplitN(strings.TrimSpace(stderr.String()), "\n", 2)[0]
+		entry := logrus.WithFields(logrus.Fields{"dir": dir, "args": strings.Join(args, " ")})
+		if strings.Contains(first, "not a git repository") {
+			entry.Debugf("git %s failed: %s", strings.Join(args, " "), first)
+		} else {
+			entry.Warnf("git %s failed: %s", strings.Join(args, " "), first)
+		}
+		return "", err
+	}
+	return strings.TrimSpace(string(out)), nil
+}
+
 // DetectGitRemote attempts to detect GitLab URL and project path from git remote.
 // It tries the "origin" remote first.
 // Returns nil if detection fails (not a git repo, no remote, not a GitLab URL, etc.)
 func DetectGitRemote() *GitRemoteInfo {
 	// Try to get the origin remote URL
-	cmd := exec.Command("git", "remote", "get-url", "origin")
-	output, err := cmd.Output()
+	dir, _ := os.Getwd()
+	remoteURL, err := runGit(dir, "remote", "get-url", "origin")
 	if err != nil {
 		return nil
 	}
 
-	remoteURL := strings.TrimSpace(string(output))
 	if remoteURL == "" {
 		return nil
 	}
@@ -129,12 +170,12 @@ func DetectGitRemote() *GitRemoteInfo {
 // DetectGitRepoRoot returns the absolute path to the root of the current git repository.
 // Returns an empty string if not in a git repository.
 func DetectGitRepoRoot() string {
-	cmd := exec.Command("git", "rev-parse", "--show-toplevel")
-	output, err := cmd.Output()
+	dir, _ := os.Getwd()
+	out, err := runGit(dir, "rev-parse", "--show-toplevel")
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(output))
+	return out
 }
 
 // DetectGitHeadSHA returns the full commit SHA of HEAD at repoRoot.
@@ -146,12 +187,11 @@ func DetectGitHeadSHA(repoRoot string) string {
 	if repoRoot == "" {
 		return ""
 	}
-	cmd := exec.Command("git", "-C", repoRoot, "rev-parse", "HEAD")
-	output, err := cmd.Output()
+	out, err := runGit(repoRoot, "rev-parse", "HEAD")
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(string(output))
+	return out
 }
 
 // ParseGitRemoteURL parses a git remote URL and extracts host and project path.
