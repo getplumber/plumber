@@ -82,6 +82,14 @@ const (
 	// token without the scope for one endpoint is not a platform-mode
 	// condition.
 	ReasonCollectionFailed = "collection_failed"
+
+	// ReasonConfigRequired: the control is enabled but none of its
+	// substantive configuration fields is set, so it asserts nothing
+	// (getplumber/plumber#459, platform decision-queue row 19: honest
+	// not_evaluable, never a vacuous pass). Which controls can be in this
+	// state is authored truth (configuration.ControlMeta.RequiresConfig);
+	// which fields count is the catalog's own reflected schema.
+	ReasonConfigRequired = "config_required"
 )
 
 // controlsRequiringIncludeAttribution lists the GitLab controls whose
@@ -322,6 +330,24 @@ func MarkOwnCollectionGaps(result *AnalysisResult, entries []ControlEntry) {
 	if rawConfigUnavailable(result) {
 		markOne("pipelineMustNotOverrideJobVariables", ReasonRawConfigUnavailable)
 		markOne("pipelineMustNotIncludeHardcodedJobs", ReasonRawConfigUnavailable)
+	}
+	result.DropNotEvaluableFindings()
+}
+
+// MarkUnconfiguredControls flags every non-skipped RequiresConfig control whose enabled block sets
+// no substantive field (#459). Runs AFTER the lane-gap marks: a lane gap is the more specific
+// explanation and MarkNotEvaluable keeps the first reason.
+func MarkUnconfiguredControls(result *AnalysisResult, entries []ControlEntry, pc *configuration.PlumberConfig, provider string) {
+	if result == nil || pc == nil {
+		return
+	}
+	for _, e := range entries {
+		if e.Skipped {
+			continue
+		}
+		if configuration.IsUnconfigured(pc, provider, e.ControlName) {
+			result.MarkNotEvaluable(e.ControlName, ReasonConfigRequired)
+		}
 	}
 	result.DropNotEvaluableFindings()
 }
@@ -708,6 +734,18 @@ func ReEvaluateForConfig(
 	if provider == configuration.ProviderGitLab {
 		markPlatformLaneGapsFor(&scopedResult, &scopedConf, pc)
 	}
+	// An enabled-but-unconfigured control (#459) asserts nothing under ANY config, but which
+	// control that is depends on the policy's own tree just like the lane gaps above: the same
+	// re-marking is needed here, against the policy's own entries, or a control this policy
+	// leaves unconfigured would be scored as a vacuous pass instead of not_evaluable.
+	var entries []ControlEntry
+	switch provider {
+	case configuration.ProviderGitLab:
+		entries = GitLabControls(pc)
+	case configuration.ProviderGitHub:
+		entries = GitHubControls(pc)
+	}
+	MarkUnconfiguredControls(&scopedResult, entries, pc, provider)
 	scopedResult.DropNotEvaluableFindings()
 
 	counts := map[ErrorCode]int{}

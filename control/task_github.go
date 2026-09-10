@@ -269,6 +269,11 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 	if conf.IsLocalProject && conf.GitRepoRoot != "" {
 		result.HeadCommitSha = utils.DetectGitHeadSHA(conf.GitRepoRoot)
 	}
+	// An enabled control asserting nothing until its substantive fields are set is not a clean
+	// pass either (#459): it is not_evaluable, config_required, same as any other lane gap. Runs
+	// before the finding-count aggregation below so a dropped not_evaluable finding never inflates
+	// the report's stats, matching the GitLab task's mark-before-assembly ordering.
+	MarkUnconfiguredControls(result, GitHubControls(conf.PlumberConfig), conf.PlumberConfig, configuration.ProviderGitHub)
 	ApplyGitHubFindingCounts(result.GitHubStats, result.Findings)
 	if conf.ProgressFunc != nil {
 		total := githubpkg.TotalProgressStepsForPipeline(pipeline)
@@ -372,6 +377,11 @@ func RunGitHubAnalysisRemote(conf *configuration.Configuration, owner, repo, ref
 		Warnings:         pipeline.AdvisoryWarnings,
 	}
 	applyGitHubDegraded(result, len(partial), branchFetchFailed)
+	// An enabled control asserting nothing until its substantive fields are set is not a clean
+	// pass either (#459): it is not_evaluable, config_required, same as any other lane gap. Runs
+	// before the finding-count aggregation below so a dropped not_evaluable finding never inflates
+	// the report's stats, matching the GitLab task's mark-before-assembly ordering.
+	MarkUnconfiguredControls(result, GitHubControls(conf.PlumberConfig), conf.PlumberConfig, configuration.ProviderGitHub)
 	ApplyGitHubFindingCounts(result.GitHubStats, result.Findings)
 	if conf.ProgressFunc != nil {
 		total := githubpkg.TotalProgressStepsForPipeline(pipeline)

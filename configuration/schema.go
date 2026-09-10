@@ -149,3 +149,93 @@ func ConfigSchemas() []ControlConfigSchema {
 	sort.Slice(out, func(i, j int) bool { return out[i].Control < out[j].Control })
 	return out
 }
+
+// IsUnconfigured reports whether controlName is enabled in pc but asserts nothing because none of
+// its substantive fields is set (#459): the control is RequiresConfig in the catalog, applicable
+// to provider, its block is present and enabled, and every field other than `enabled` is at its
+// zero value (nil pointer, empty slice or map, "", 0, false; a nested struct is zero when all of
+// its fields are). The field enumeration is the SAME reflection the catalog exports
+// (reflectControlSchemas), so a field the schema shows is a field this check reads. False for a
+// control that is not RequiresConfig, does not apply to provider, is disabled, or has no block:
+// those are "asserts something" or "skipped", never "unconfigured".
+func IsUnconfigured(pc *PlumberConfig, provider, controlName string) bool {
+	if pc == nil {
+		return false
+	}
+	meta, ok := ControlMetaFor(controlName)
+	if !ok || !meta.RequiresConfig || !IsControlApplicableTo(controlName, provider) {
+		return false
+	}
+	block := controlBlock(pc, provider, controlName)
+	if !block.IsValid() || block.IsNil() {
+		return false
+	}
+	en, ok := block.Interface().(interface{ IsEnabled() bool })
+	if !ok || !en.IsEnabled() {
+		return false
+	}
+	return substantiveFieldsAreZero(block.Elem())
+}
+
+// controlBlock returns the reflect.Value of controlName's config-struct pointer field on
+// provider's ControlsConfig, or an invalid Value if the control is not one of ControlsConfig's
+// fields, or that field is not pointer-typed (every control block is a pointer today; the guard
+// is here so a future value-typed field returns "no block" instead of panicking the IsNil() check
+// IsUnconfigured makes on the result). Walks the same yamlName-keyed fields reflectControlSchemas
+// does, so the two can never disagree about which field is which control's.
+func controlBlock(pc *PlumberConfig, provider, controlName string) reflect.Value {
+	cc := pc.ControlsFor(provider)
+	v := reflect.ValueOf(cc)
+	if !v.IsValid() || v.IsNil() {
+		return reflect.Value{}
+	}
+	v = v.Elem()
+	t := v.Type()
+	for i := 0; i < t.NumField(); i++ {
+		if yamlName(t.Field(i)) != controlName {
+			continue
+		}
+		fv := v.Field(i)
+		if fv.Kind() != reflect.Ptr {
+			return reflect.Value{}
+		}
+		return fv
+	}
+	return reflect.Value{}
+}
+
+// substantiveFieldsAreZero reports whether every field of the config struct v, other than the one
+// yaml-named `enabled`, is at its zero value. A field that is itself a pointer-to-struct (a nested
+// config block, e.g. SecurityJobsSubControlToggle) is walked with the SAME rule rather than judged
+// by pointer-nilness alone: a non-nil pointer to a struct whose own fields are all zero once ITS
+// `enabled` is excluded is zero here too. That matters because a nested block that sets nothing but
+// its own `enabled` toggles nothing substantive: e.g.
+// securityJobsMustNotBeWeakened: {enabled: true, allowFailureMustBeFalse: {enabled: false}} sets no
+// SecurityJobPatterns and turns no sub-check on, so the control is still unconfigured, matching the
+// same reading `enabled: true` alone gets at the top level.
+func substantiveFieldsAreZero(v reflect.Value) bool {
+	t := v.Type()
+	for i := 0; i < t.NumField(); i++ {
+		f := t.Field(i)
+		name := yamlName(f)
+		if name == "" || name == "enabled" {
+			continue
+		}
+		fv := v.Field(i)
+		switch {
+		case fv.Kind() == reflect.Ptr && fv.Type().Elem().Kind() == reflect.Struct:
+			if !fv.IsNil() && !substantiveFieldsAreZero(fv.Elem()) {
+				return false
+			}
+		case fv.Kind() == reflect.Struct:
+			if !substantiveFieldsAreZero(fv) {
+				return false
+			}
+		default:
+			if !fv.IsZero() {
+				return false
+			}
+		}
+	}
+	return true
+}
