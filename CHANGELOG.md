@@ -1,3 +1,27 @@
+## [0.4.59](https://github.com/getplumber/plumber/compare/v0.4.58...v0.4.59) (2026-09-10)
+
+
+### ✨ Features
+
+* **platform:** propagate platform dismissals: match, mark, exclude from the score, push the marker ([ffe94ce](https://github.com/getplumber/plumber/commit/ffe94cef81ca55856e9a152de8e7317a30044a18)), closes [#447](https://github.com/getplumber/plumber/issues/447)
+* **scoring:** report an enabled but unconfigured control as not_evaluable (config_required) ([78ca84a](https://github.com/getplumber/plumber/commit/78ca84ac8773e25b0260669a3941ab6be13fae5c)), closes [#459](https://github.com/getplumber/plumber/issues/459)
+
+
+### 🐛 Bug Fixes
+
+* **platform:** declare the checkout safe for git and log why git failed ([31fa6e7](https://github.com/getplumber/plumber/commit/31fa6e714c0e26842094ee428ec522e898cc0b64)), closes [#464](https://github.com/getplumber/plumber/issues/464)
+* **platform:** review follow-ups: pin the run-level dismissal path, harden the git helper, docs ([d6e1b03](https://github.com/getplumber/plumber/commit/d6e1b03b9a58124ce0683cc0f9378f47a402bfb0))
+
+
+### 📚 Documentation
+
+* **platform:** design and plan for the safe checkout, unconfigured controls and dismissal propagation ([4ad52a0](https://github.com/getplumber/plumber/commit/4ad52a0c98af856807b8efb603021b7cace7fcd6))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.58 refs [skip ci] ([65610c8](https://github.com/getplumber/plumber/commit/65610c8332b1b9e155a043f4a5aa1e3577343c01))
+
 ## [0.4.58](https://github.com/getplumber/plumber/compare/v0.4.57...v0.4.58) (2026-09-10)
 
 
