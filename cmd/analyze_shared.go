@@ -65,15 +65,24 @@ func continueRun(p provider.Provider, cmd *cobra.Command, conf *configuration.Co
 			return err
 		}
 	}
-	if err := writeOutputsWithProvider(p, result, conf, summary); err != nil {
+	if err := writeOutputsWithProvider(p, result, conf, summary, nil, nil); err != nil {
 		return err
 	}
 	return publishAndFinalize(p, cmd, result, conf, summary, nil)
 }
 
 // runPlatformMode is the platform-mode tail: evaluate the resolved policies,
-// render one section per evaluated run, write the artifacts, push, render the
-// platform's verdict, finalize.
+// render one section per evaluated run, push, render the platform's verdict,
+// write the artifacts from it, run the post actions, finalize.
+//
+// The push comes BEFORE the artifacts here, the reverse of a standalone run,
+// and that order is the whole of spec s5: the single score an artifact may
+// carry is the platform's global one, which only exists once the push has
+// answered. Writing first (as this did) produced files and a badge with no
+// score at all, and the only way to fill them without waiting would be to
+// compute a local figure - the wrong-verdict failure the mode removes
+// (QUESTIONS row 44). The standalone order is untouched: publishAndFinalize
+// still runs after writeOutputsWithProvider on that path.
 //
 // A run that resolved no policy evaluates NOTHING (spec s4, invariant 5): it
 // prints the one-line notice, exits 0, pushes nothing and writes no artifact.
@@ -104,10 +113,14 @@ func runPlatformMode(p provider.Provider, cmd *cobra.Command, conf *configuratio
 		renderPolicySections(p, conf, runs, controlsFilterList, skipControlsList)
 		renderWarnings(result.Warnings)
 	}
-	if err := writeOutputsWithProvider(p, result, conf, summary); err != nil {
+	verdict, platformErr := publishRun(p, conf, result, summary, runs)
+	if err := writeOutputsWithProvider(p, result, conf, summary, runs, verdict); err != nil {
 		return err
 	}
-	return publishAndFinalize(p, cmd, result, conf, summary, runs)
+	if err := runPostActions(p, cmd, result, conf, summary, runs, verdict); err != nil {
+		return err
+	}
+	return finalizeRun(result, summary, platformErr)
 }
 
 // finalizeFindings turns a raw analysis result into the summary the rest of the
@@ -199,6 +212,20 @@ func publishAndFinalize(p provider.Provider, cmd *cobra.Command, result *control
 		return finalizeRun(result, summary, nil)
 	}
 
+	verdict, platformErr := publishRun(p, conf, result, summary, runs)
+	if err := runPostActions(p, cmd, result, conf, summary, runs, verdict); err != nil {
+		return err
+	}
+	return finalizeRun(result, summary, platformErr)
+}
+
+// publishRun is the publish leg: the hosted score badge, the platform push,
+// and the platform-mode verdict block the push produces. It is split out of
+// publishAndFinalize because platform mode has to run it BEFORE the artifacts
+// (the only score they may carry is the one the push returns) while a
+// standalone run keeps writing them first; both callers run the same steps in
+// the same order, so the two paths cannot drift.
+func publishRun(p provider.Provider, conf *configuration.Configuration, result *control.AnalysisResult, summary complianceSummary, runs []policyRun) (*platformVerdict, error) {
 	jsonPayload := buildPublishPayload(p, conf, result, summary)
 	handleScorePublishing(p, conf, result, summary, jsonPayload)
 	verdict, platformErr := maybePushPlatform(p, conf, result, summary.score, runs)
@@ -209,7 +236,21 @@ func publishAndFinalize(p provider.Provider, cmd *cobra.Command, result *control
 	if summary.platformMode && printOutput {
 		renderPlatformVerdict(runs, verdict, platformErr)
 	}
+	return verdict, platformErr
+}
 
+// runPostActions hands the provider its post-analysis side effects (the
+// GitLab badge and merge-request comment).
+//
+// In platform mode the summary they read is the platform's, not the run's:
+// the score is nil there by construction, and Passed is the platform's gate
+// answer rather than a local gate that did not run. Everything the badge and
+// the comment then say comes from Platform (spec s5), so neither can publish
+// a figure the platform did not produce.
+func runPostActions(p provider.Provider, cmd *cobra.Command, result *control.AnalysisResult, conf *configuration.Configuration, summary complianceSummary, runs []policyRun, verdict *platformVerdict) error {
+	if cmd == nil {
+		return nil
+	}
 	pas := provider.PostActionSummary{
 		Passed:     summary.passed(),
 		GateLine:   summary.gateLine(),
@@ -217,13 +258,11 @@ func publishAndFinalize(p provider.Provider, cmd *cobra.Command, result *control
 		ScoreMode:  summary.scoreMode,
 		ScorePoint: summary.scorePoint,
 	}
-	if cmd != nil {
-		if err := p.PostAnalysisActions(cmd, result, conf, pas); err != nil {
-			return err
-		}
+	if summary.platformMode {
+		pas.Passed = platformGatePassed(verdict)
+		pas.Platform = platformPostSummary(runs, verdict)
 	}
-
-	return finalizeRun(result, summary, platformErr)
+	return p.PostAnalysisActions(cmd, result, conf, pas)
 }
 
 // inertFlagsUnderNoControls lists the flags that read or publish a score and
@@ -511,7 +550,18 @@ func buildProviderControlSummariesAndGroups(p provider.Provider, result *control
 
 // writeOutputsWithProvider writes all requested artifact files (JSON, PBOM,
 // CycloneDX, SARIF, GitLab SAST, CSV, OCSF) using the provider's writers.
-func writeOutputsWithProvider(p provider.Provider, result *control.AnalysisResult, conf *configuration.Configuration, s complianceSummary) error {
+//
+// runs and verdict are the platform-mode inputs (spec s5), nil on every other
+// path: the evaluated policy runs are what the reports describe per policy,
+// and the push response's global score is the only run-level score they may
+// carry. Both nil, every writer produces exactly the bytes it always has.
+//
+// The security reports (SARIF, GitLab SAST) are written from the UNION of the
+// policy runs rather than from the collected result: their consumers key on
+// one alert per finding, and the collected result's findings are the LOCAL
+// configuration's, which platform mode does not publish. CSV and OCSF are
+// untouched by this task and still describe the collected run.
+func writeOutputsWithProvider(p provider.Provider, result *control.AnalysisResult, conf *configuration.Configuration, s complianceSummary, runs []policyRun, verdict *platformVerdict) error {
 	// Artifacts are still written on a degraded run (they are files the user
 	// asked for, and the exit-3 gate, not the file's absence, protects CI).
 	// Each format stamps itself degraded; warn so a partial report is not
@@ -523,21 +573,36 @@ func writeOutputsWithProvider(p provider.Provider, result *control.AnalysisResul
 	// artifact writer below reports the same commit the same way (#443).
 	result.ArtifactCommitSHA, result.ArtifactRef = resolveArtifactRef(p, result, conf)
 	result.ArtifactRepoURI = artifactRepoURI(conf, result, p.Name())
+	// Everything platform-mode below is nil or unchanged outside it, which is
+	// what makes every writer take exactly the path it always took.
+	platformPBOM := platformPBOMSummary(runs, verdict)
+	// The run-level score the PBOM writers stamp. buildComplianceSummary
+	// already leaves it nil in platform mode; nilling it again here is the
+	// same belt and braces the JSON report applies, because these two are the
+	// only writers that would carry a local grade if that ever changed.
+	score := s.score
+	if s.platformMode {
+		score = nil
+	}
+	reportResult := result
+	if len(runs) > 0 && (sarifFile != "" || glsastFile != "") {
+		reportResult = platformUnionResult(result, runs)
+	}
 	if outputFile != "" {
 		params := jsonOutputParams{filePath: outputFile, provider: p.Name(), includeOnly: conf.ControlsFilter, skip: conf.SkipControlsFilter, noControls: conf.NoControls}
-		if err := writeJSONToFile(result, conf.PlumberConfig, s, params); err != nil {
+		if err := writeJSONToFile(result, conf.PlumberConfig, s, params, runs, verdict); err != nil {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "Results written to: %s\n", outputFile)
 	}
 	if pbomFile != "" {
-		if err := p.WritePBOM(result, conf, pbomFile, s.score, s.scoreMode); err != nil {
+		if err := p.WritePBOM(result, conf, pbomFile, score, s.scoreMode, platformPBOM); err != nil {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "PBOM written to: %s\n", pbomFile)
 	}
 	if pbomCycloneDXFile != "" {
-		if err := p.WritePBOMCycloneDX(result, conf, pbomCycloneDXFile, s.score, s.scoreMode); err != nil {
+		if err := p.WritePBOMCycloneDX(result, conf, pbomCycloneDXFile, score, s.scoreMode, platformPBOM); err != nil {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "PBOM (CycloneDX) written to: %s\n", pbomCycloneDXFile)
@@ -550,13 +615,13 @@ func writeOutputsWithProvider(p provider.Provider, result *control.AnalysisResul
 	// nobody checked. There is no field that fixes that, so they are not
 	// written at all; warnInertFlagsUnderNoControls names them.
 	if sarifFile != "" && !conf.NoControls {
-		if err := writeSARIFToFile(result, sarifFile, p.Name()); err != nil {
+		if err := writeSARIFToFile(reportResult, sarifFile, p.Name()); err != nil {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "SARIF written to: %s\n", sarifFile)
 	}
 	if glsastFile != "" && !conf.NoControls {
-		if err := writeGLSASTToFile(result, glsastFile, p.Name()); err != nil {
+		if err := writeGLSASTToFile(reportResult, glsastFile, p.Name()); err != nil {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "GitLab SAST report written to: %s\n", glsastFile)
@@ -670,9 +735,12 @@ func buildPublishPayload(p provider.Provider, conf *configuration.Configuration,
 		pc = conf.PlumberConfig
 		includeOnly, skip = conf.ControlsFilter, conf.SkipControlsFilter
 	}
+	// nil runs / nil verdict: the hosted score service is never the platform
+	// (effectiveScorePush turns the badge push off whenever --platform is on),
+	// so this payload is always a standalone one.
 	payload, err := buildAnalysisJSONReport(result, pc, summary, jsonOutputParams{
 		provider: p.Name(), includeOnly: includeOnly, skip: skip, forScorePush: true,
-	})
+	}, nil, nil)
 	if err != nil {
 		scoreWarn(fmt.Sprintf("could not build the publish payload: %v", err))
 		return nil

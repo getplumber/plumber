@@ -201,6 +201,19 @@ func buildGLSAST(findings []opaengine.Finding, provider string) glsastReport {
 				Value: info.ControlName,
 			})
 		}
+		// The policies that reported this finding (platform mode, spec s5).
+		// The GitLab schema has no free-form per-vulnerability bag, but
+		// `identifiers` is an open list (it already carries the fingerprint
+		// and the control), so each policy rides there as its own entry. The
+		// PRIMARY identifier is the issue code and stays first: GitLab dedups
+		// vulnerabilities on it, so a policy must never displace it.
+		for _, name := range f.Policies {
+			v.Identifiers = append(v.Identifiers, glsastIdentifier{
+				Type:  "plumber_policy",
+				Name:  "Plumber policy " + name,
+				Value: name,
+			})
+		}
 		// GitLab's Vulnerability Report UI does not render the deprecated
 		// `message` field, so fold the per-finding detail into `description`
 		// where it actually shows up. Keep `message` populated too for

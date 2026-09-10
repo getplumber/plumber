@@ -19,14 +19,41 @@ func ManageProjectBadge(
 	if ps == nil {
 		return nil
 	}
+	return manageProjectBadgeLetter(projectID, conf, ps.Score)
+}
+
+// ManageProjectBadgePlatform is the platform-mode badge (spec s5): the letter
+// is the platform's own global score. When the push returned none
+// (HasGlobal false: an older platform, a fail-open gate) the badge is NOT
+// updated - it keeps its last good value rather than being overwritten with a
+// blank, or with a locally computed letter the platform never agreed to.
+func ManageProjectBadgePlatform(
+	projectID int,
+	conf *configuration.Configuration,
+	s *PlatformPostSummary,
+) error {
+	if s == nil || !s.HasGlobal || s.GlobalLetter == "" {
+		return nil
+	}
+	return manageProjectBadgeLetter(projectID, conf, s.GlobalLetter)
+}
+
+// manageProjectBadgeLetter is the shared badge write: both entry points
+// resolve to a letter and then run exactly the same create-or-update, so the
+// two modes cannot drift on how the badge is matched or named.
+func manageProjectBadgeLetter(
+	projectID int,
+	conf *configuration.Configuration,
+	letter string,
+) error {
 	l := logrus.WithFields(logrus.Fields{
 		"action":    "ManageProjectBadge",
 		"projectID": projectID,
-		"score":     ps.Score,
+		"score":     letter,
 	})
 
 	// Generate badge image URL
-	badgeImageURL := ScoreBadgeURL(ps.Score)
+	badgeImageURL := ScoreBadgeURL(letter)
 	badgeLinkURL := PlumberScoreDocURL
 
 	// List existing badges to find Plumber badge

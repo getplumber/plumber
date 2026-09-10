@@ -22,7 +22,7 @@ func TestReportCarriesCommitAndAnalyzedCIConfig(t *testing.T) {
 			Merged:  true,
 		},
 	}
-	payload, err := buildAnalysisJSONReport(result, testDefaultPlumberConfig(t), complianceSummary{}, jsonOutputParams{provider: "gitlab"})
+	payload, err := buildAnalysisJSONReport(result, testDefaultPlumberConfig(t), complianceSummary{}, jsonOutputParams{provider: "gitlab"}, nil, nil)
 	if err != nil {
 		t.Fatalf("build report: %v", err)
 	}
@@ -60,7 +60,7 @@ func TestReportAnalyzedCIConfigExcludedFromScorePush(t *testing.T) {
 	pc := testDefaultPlumberConfig(t)
 
 	// The local --output report keeps it.
-	local, err := buildAnalysisJSONReport(result, pc, complianceSummary{}, jsonOutputParams{provider: "gitlab"})
+	local, err := buildAnalysisJSONReport(result, pc, complianceSummary{}, jsonOutputParams{provider: "gitlab"}, nil, nil)
 	if err != nil {
 		t.Fatalf("build local report: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestReportAnalyzedCIConfigExcludedFromScorePush(t *testing.T) {
 	}
 
 	// The score-push payload drops it.
-	pushed, err := buildAnalysisJSONReport(result, pc, complianceSummary{}, jsonOutputParams{provider: "gitlab", forScorePush: true})
+	pushed, err := buildAnalysisJSONReport(result, pc, complianceSummary{}, jsonOutputParams{provider: "gitlab", forScorePush: true}, nil, nil)
 	if err != nil {
 		t.Fatalf("build score-push payload: %v", err)
 	}
@@ -94,7 +94,7 @@ func TestReportOmitsUnresolvedCommit(t *testing.T) {
 		ArtifactCommitSHA: "",
 		ArtifactRef:       "",
 	}
-	payload, err := buildAnalysisJSONReport(result, testDefaultPlumberConfig(t), complianceSummary{}, jsonOutputParams{provider: "gitlab"})
+	payload, err := buildAnalysisJSONReport(result, testDefaultPlumberConfig(t), complianceSummary{}, jsonOutputParams{provider: "gitlab"}, nil, nil)
 	if err != nil {
 		t.Fatalf("build report: %v", err)
 	}

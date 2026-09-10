@@ -115,6 +115,8 @@ func (p *PBOM) ToCycloneDX(plumberVersion string) *CycloneDX {
 		}
 	}
 
+	cdx.Metadata.Properties = append(cdx.Metadata.Properties, platformScoreProperties(p)...)
+
 	// Add container images as components
 	for i, img := range p.ContainerImages {
 		component := CycloneDXComponent{
@@ -307,6 +309,37 @@ func mapIncludeTypeToCycloneDX(includeType string) string {
 	default:
 		return "data"
 	}
+}
+
+// platformScoreProperties renders the platform-mode score block as CycloneDX
+// metadata properties (spec s5): one triple per policy, then the platform's
+// own global score. Returns nothing for a standalone run, so no existing
+// document gains a property.
+//
+// The per-policy letter and points are omitted for a policy the CLI could not
+// evaluate: CycloneDX property values are strings, and an empty or zero one
+// would read as a verdict rather than as the absence of one. The policy is
+// still listed by its enforcement, so a reader sees that it exists and was
+// not scored.
+func platformScoreProperties(p *PBOM) []CycloneDXProperty {
+	props := []CycloneDXProperty{}
+	for _, pol := range p.Policies {
+		prefix := "plumber:policy:" + pol.Name + ":"
+		props = append(props, CycloneDXProperty{Name: prefix + "enforcement", Value: pol.Enforcement})
+		if pol.Score != "" {
+			props = append(props, CycloneDXProperty{Name: prefix + "score", Value: pol.Score})
+		}
+		if pol.FinalPoints != nil {
+			props = append(props, CycloneDXProperty{Name: prefix + "points-final", Value: fmt.Sprintf("%d", *pol.FinalPoints)})
+		}
+	}
+	if g := p.PlatformGlobalScore; g != nil {
+		if g.Letter != "" {
+			props = append(props, CycloneDXProperty{Name: "plumber:platform-global-score", Value: g.Letter})
+		}
+		props = append(props, CycloneDXProperty{Name: "plumber:platform-global-points", Value: fmt.Sprintf("%d", g.Points)})
+	}
+	return props
 }
 
 // projectComponentProperties builds the project-level CycloneDX

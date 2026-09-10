@@ -52,7 +52,7 @@ func TestJSONReport_NoControlsDoesNotClaimControlsPassed(t *testing.T) {
 			conf := &configuration.Configuration{PlumberConfig: pc, NoControls: true}
 			s := buildComplianceSummary(&provider.GitLabProvider{}, result, conf)
 			params := jsonOutputParams{filePath: path, provider: prov, noControls: conf.NoControls}
-			if err := writeJSONToFile(result, pc, s, params); err != nil {
+			if err := writeJSONToFile(result, pc, s, params, nil, nil); err != nil {
 				t.Fatalf("write json: %v", err)
 			}
 
@@ -110,7 +110,7 @@ func TestJSONReport_ControlsStillReportedByDefault(t *testing.T) {
 
 			conf := &configuration.Configuration{PlumberConfig: pc}
 			s := buildComplianceSummary(&provider.GitLabProvider{}, result, conf)
-			if err := writeJSONToFile(result, pc, s, jsonOutputParams{filePath: path, provider: prov}); err != nil {
+			if err := writeJSONToFile(result, pc, s, jsonOutputParams{filePath: path, provider: prov}, nil, nil); err != nil {
 				t.Fatalf("write json: %v", err)
 			}
 			raw, _ := os.ReadFile(path)
@@ -287,9 +287,9 @@ func TestPBOM_NoControlsDoesNotAssertCompliance(t *testing.T) {
 			conf := &configuration.Configuration{PlumberConfig: pc, NoControls: true}
 			var err error
 			if tc.cycloneDX {
-				err = tc.provider.WritePBOMCycloneDX(tc.result, conf, path, nil, false)
+				err = tc.provider.WritePBOMCycloneDX(tc.result, conf, path, nil, false, nil)
 			} else {
-				err = tc.provider.WritePBOM(tc.result, conf, path, nil, false)
+				err = tc.provider.WritePBOM(tc.result, conf, path, nil, false, nil)
 			}
 			if err != nil {
 				t.Fatalf("write pbom: %v", err)
@@ -405,7 +405,7 @@ func TestPBOM_ComplianceStillAssertedByDefault(t *testing.T) {
 	pc := noControlsPC(t)
 	path := filepath.Join(t.TempDir(), "pbom.json")
 	conf := &configuration.Configuration{PlumberConfig: pc}
-	if err := (&provider.GitLabProvider{}).WritePBOM(gitLabPBOMFixture(), conf, path, nil, false); err != nil {
+	if err := (&provider.GitLabProvider{}).WritePBOM(gitLabPBOMFixture(), conf, path, nil, false, nil); err != nil {
 		t.Fatalf("write pbom: %v", err)
 	}
 	raw, _ := os.ReadFile(path)
@@ -439,7 +439,7 @@ func TestPBOM_ComplianceStillAssertedByDefault(t *testing.T) {
 	// separate builder. Without this the GitHub half of the suppression
 	// test above could pass by emitting nothing at all.
 	ghPath := filepath.Join(t.TempDir(), "gh-pbom.json")
-	if err := (&provider.GitHubProvider{}).WritePBOM(gitHubPBOMFixture(), &configuration.Configuration{PlumberConfig: pc}, ghPath, nil, false); err != nil {
+	if err := (&provider.GitHubProvider{}).WritePBOM(gitHubPBOMFixture(), &configuration.Configuration{PlumberConfig: pc}, ghPath, nil, false, nil); err != nil {
 		t.Fatalf("write github pbom: %v", err)
 	}
 	ghRaw, _ := os.ReadFile(ghPath)
@@ -724,7 +724,7 @@ func TestSecurityReports_NotWrittenUnderNoControls(t *testing.T) {
 	p := &provider.GitLabProvider{}
 	conf := &configuration.Configuration{PlumberConfig: pc, NoControls: true}
 
-	if err := writeOutputsWithProvider(p, result, conf, buildComplianceSummary(p, result, conf)); err != nil {
+	if err := writeOutputsWithProvider(p, result, conf, buildComplianceSummary(p, result, conf), nil, nil); err != nil {
 		t.Fatalf("write outputs: %v", err)
 	}
 	for _, f := range []string{sarifFile, glsastFile} {
@@ -742,7 +742,7 @@ func TestSecurityReports_NotWrittenUnderNoControls(t *testing.T) {
 
 	// Mirror: without the flag both are written as usual.
 	conf2 := &configuration.Configuration{PlumberConfig: pc}
-	if err := writeOutputsWithProvider(p, result, conf2, buildComplianceSummary(p, result, conf2)); err != nil {
+	if err := writeOutputsWithProvider(p, result, conf2, buildComplianceSummary(p, result, conf2), nil, nil); err != nil {
 		t.Fatalf("write outputs: %v", err)
 	}
 	for _, f := range []string{sarifFile, glsastFile} {

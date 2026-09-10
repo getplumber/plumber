@@ -858,7 +858,12 @@ func parseControlsFilter(raw string) ([]string, error) {
 // buildAnalysisJSONReport assembles the ordered analysis JSON payload. The
 // same bytes are written to --output and pushed to the score service, so the
 // stored badge record and the file on disk can never diverge.
-func buildAnalysisJSONReport(result *control.AnalysisResult, pc *configuration.PlumberConfig, s complianceSummary, p jsonOutputParams) ([]byte, error) {
+//
+// runs and verdict are the platform-mode inputs (spec s5), nil everywhere
+// else: the evaluated policy runs become the `policies` array, and the push
+// response's global score becomes the single top-level `plumberScore`. Passed
+// nil/nil a report is byte-for-byte what it has always been.
+func buildAnalysisJSONReport(result *control.AnalysisResult, pc *configuration.PlumberConfig, s complianceSummary, p jsonOutputParams, runs []policyRun, verdict *platformVerdict) ([]byte, error) {
 	score, scoreMode, provider, includeOnly, skip :=
 		s.score, s.scoreMode, p.provider, p.includeOnly, p.skip
 	// Marshal AnalysisResult into a generic map so the per-control
@@ -879,14 +884,20 @@ func buildAnalysisJSONReport(result *control.AnalysisResult, pc *configuration.P
 	// gate emits minPoints / minScore; the deprecated --threshold gate emits
 	// threshold for the pipelines still supplying it. The compliance
 	// percentage itself is gone (#320) — plumberScore is the grade.
-	if s.thresholdSet {
-		output["threshold"] = s.threshold
-	} else {
-		if s.pointsGateActive() {
-			output["minPoints"] = s.minPoints
-		}
-		if s.minScore != "" {
-			output["minScore"] = s.minScore
+	//
+	// In platform mode none of them ran (spec s4: every local gate is inert),
+	// so none of them is emitted: a minPoints key beside a verdict the
+	// platform produced would read as the gate that decided it.
+	if !s.platformMode {
+		if s.thresholdSet {
+			output["threshold"] = s.threshold
+		} else {
+			if s.pointsGateActive() {
+				output["minPoints"] = s.minPoints
+			}
+			if s.minScore != "" {
+				output["minScore"] = s.minScore
+			}
 		}
 	}
 	// The reported commit is the resolved one, never the "HEAD" placeholder a
@@ -919,8 +930,27 @@ func buildAnalysisJSONReport(result *control.AnalysisResult, pc *configuration.P
 	if p.noControls {
 		output["noControls"] = true
 	}
-	if scoreMode && score != nil {
+	// !s.platformMode is belt and braces: the summary already leaves score nil
+	// in platform mode (buildComplianceSummary), and this is the one place a
+	// local grade could still reach the file if that ever changed.
+	if scoreMode && score != nil && !s.platformMode {
 		output["plumberScore"] = score
+	}
+	// Platform mode replaces both of the above (spec s5). `passed` is the
+	// platform's gate verdict, the only gate there is; `plumberScore` is the
+	// platform's own global score and is ABSENT when the push returned none,
+	// because the alternative is a locally computed figure the platform never
+	// agreed to - exactly the wrong-verdict failure the mode exists to remove
+	// (QUESTIONS row 44).
+	if s.platformMode {
+		output["passed"] = platformGatePassed(verdict)
+		output["policies"] = platformPolicyReportEntries(runs)
+		if verdict != nil && verdict.GlobalScore != nil {
+			output["plumberScore"] = map[string]any{
+				"letter": verdict.GlobalScore.Letter,
+				"points": verdict.GlobalScore.Points,
+			}
+		}
 	}
 	// `partialControls` surfaces the postflight-skipped story so CI
 	// consumers can detect "we couldn't fully evaluate X" without
@@ -1049,9 +1079,54 @@ func normalizeYAMLValue(v any) any {
 	}
 }
 
+// platformPolicyReportEntries renders the report's `policies` array: one entry
+// per resolved policy of every run, in /context order, exactly as the push
+// reports them (buildPolicyResults) so the file and the record cannot
+// disagree about what a policy found.
+//
+// The finding objects inside an entry are the ones the report already emits
+// per control (projectFinding). They are FROZEN bytes: the platform hashes a
+// finding object into that finding's identity (#467), so the policy dimension
+// is carried by the array entry and nothing is added to a finding.
+//
+// A run that was not applied carries a null score and null findings rather
+// than a zero score and an empty list: it evaluated nothing, and an empty
+// verdict would read as a policy that found nothing wrong.
+func platformPolicyReportEntries(runs []policyRun) []map[string]any {
+	out := make([]map[string]any, 0, len(runs))
+	for _, run := range runs {
+		var score any
+		var findings any
+		if run.Applied {
+			score = platformScoreFrom(run.Score)
+			findings = projectFindings(run.Result.Findings, "job")
+		}
+		for _, pol := range run.Policies {
+			var minPoints any
+			if pol.MinPoints != nil {
+				minPoints = *pol.MinPoints
+			}
+			out = append(out, map[string]any{
+				"name": pol.Name,
+				// Only a real policy id is stamped, never the nil uuid the
+				// derived "[Plumber default]" placeholder carries: it is not
+				// a policies row (see realPolicyID).
+				"id":          realPolicyID(pol),
+				"enforcement": string(pol.Enforcement),
+				"min_points":  minPoints,
+				"applied":     run.Applied,
+				"reason":      run.Reason,
+				"score":       score,
+				"findings":    findings,
+			})
+		}
+	}
+	return out
+}
+
 // writeJSONToFile builds the analysis JSON report and writes it to p.filePath.
-func writeJSONToFile(result *control.AnalysisResult, pc *configuration.PlumberConfig, s complianceSummary, p jsonOutputParams) error {
-	payload, err := buildAnalysisJSONReport(result, pc, s, p)
+func writeJSONToFile(result *control.AnalysisResult, pc *configuration.PlumberConfig, s complianceSummary, p jsonOutputParams, runs []policyRun, verdict *platformVerdict) error {
+	payload, err := buildAnalysisJSONReport(result, pc, s, p, runs, verdict)
 	if err != nil {
 		return err
 	}
@@ -1090,6 +1165,9 @@ var analysisJSONLegacyKeyHead = []string{
 	"ciConfigSource", "ciValid", "ciMissing", "ciErrors",
 	"pipelineOriginMetrics", "pipelineImageMetrics",
 	"minPoints", "minScore", "threshold", "passed", "plumberScore",
+	// policies is the platform-mode per-policy array (spec s5); absent from
+	// every other run, so this entry changes no standalone report.
+	"policies",
 }
 
 // analysisJSONLegacyKeyTail lists keys pinned to the END of the object, after

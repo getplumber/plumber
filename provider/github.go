@@ -92,7 +92,7 @@ func noControlsAwareGitHubCompliance(result *control.AnalysisResult, conf *confi
 	return pbom.BuildGitHubPBOMCompliance(result)
 }
 
-func (p *GitHubProvider) WritePBOM(result *control.AnalysisResult, conf *configuration.Configuration, filePath string, score *control.PlumberScoreResult, scoreMode bool) error {
+func (p *GitHubProvider) WritePBOM(result *control.AnalysisResult, conf *configuration.Configuration, filePath string, score *control.PlumberScoreResult, scoreMode bool, platform *pbom.PlatformSummary) error {
 	host := conf.GithubAPIHost
 	if host == "" {
 		host = "github.com"
@@ -102,6 +102,7 @@ func (p *GitHubProvider) WritePBOM(result *control.AnalysisResult, conf *configu
 		WithCommit(result.ArtifactCommitSHA, result.ArtifactRef)
 	bom := gen.GenerateFromGitHubIR(result.GitHubPipeline)
 	bom.PlumberScore = pbom.BuildPlumberScoreSummary(score, scoreMode)
+	bom.ApplyPlatformSummary(platform)
 
 	f, err := os.Create(filePath)
 	if err != nil {
@@ -113,7 +114,7 @@ func (p *GitHubProvider) WritePBOM(result *control.AnalysisResult, conf *configu
 	return enc.Encode(bom)
 }
 
-func (p *GitHubProvider) WritePBOMCycloneDX(result *control.AnalysisResult, conf *configuration.Configuration, filePath string, score *control.PlumberScoreResult, scoreMode bool) error {
+func (p *GitHubProvider) WritePBOMCycloneDX(result *control.AnalysisResult, conf *configuration.Configuration, filePath string, score *control.PlumberScoreResult, scoreMode bool, platform *pbom.PlatformSummary) error {
 	host := conf.GithubAPIHost
 	if host == "" {
 		host = "github.com"
@@ -123,6 +124,7 @@ func (p *GitHubProvider) WritePBOMCycloneDX(result *control.AnalysisResult, conf
 		WithCommit(result.ArtifactCommitSHA, result.ArtifactRef)
 	bom := gen.GenerateFromGitHubIR(result.GitHubPipeline)
 	bom.PlumberScore = pbom.BuildPlumberScoreSummary(score, scoreMode)
+	bom.ApplyPlatformSummary(platform)
 	cdx := bom.ToCycloneDX("")
 
 	f, err := os.Create(filePath)

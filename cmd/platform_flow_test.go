@@ -6,6 +6,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -268,5 +270,65 @@ func TestPlatformFlow_DegradedIsPushedNotExit3(t *testing.T) {
 	}
 	if !strings.Contains(string(pushed), `"degraded":true`) {
 		t.Fatalf("the push must carry collection.degraded: %s", pushed)
+	}
+}
+
+// Spec s5 end to end: with --output set, the file a platform-mode run leaves
+// behind carries one entry per policy and the PLATFORM's global score. It is
+// the ordering that makes this reachable: the artifacts are written after the
+// push, because before it there is no score that may be written at all.
+func TestPlatformFlow_OutputFileCarriesThePoliciesAndTheGlobalScore(t *testing.T) {
+	newGateFlagsCmd(t)
+	origOutput := outputFile
+	defer func() { outputFile = origOutput }()
+	outputFile = filepath.Join(t.TempDir(), "analysis.json")
+
+	a := policyWithTree("A", "pipelineMustNotEnableDebugTrace", debugTraceControlConfig)
+	prod := policyWithTree("Prod", "pipelineMustNotUseDockerInDocker", `{"enabled":true}`)
+	prod.Enforcement = platform.EnforcementBlock
+	conf := confWithPolicies(t, a, prod)
+	var pushed []byte
+	srv := pushServer(t, 200, `{"gate":{"evaluated":true,"blocking":false,"policies":[{"id":"`+a.ID+`","name":"A","enforcement":"report","blocking":false,"live_fail_count":0}]},"global_score":{"letter":"B","points":83}}`, &pushed)
+	defer srv.Close()
+	restore := withPlatformTestEnv(t, srv.URL, "tok")
+	defer restore()
+
+	var err error
+	_ = captureStdoutAll(t, func() {
+		_ = captureStderr(t, func() { err = presentResultWithProvider(testProvider(t), nil, debugTraceResult(), conf) })
+	})
+	if err != nil {
+		t.Fatalf("want the platform's non-blocking verdict (exit 0), got %v", err)
+	}
+	if len(pushed) == 0 {
+		t.Fatal("the push must happen before the artifacts are written")
+	}
+
+	raw, readErr := os.ReadFile(outputFile)
+	if readErr != nil {
+		t.Fatalf("read the report: %v", readErr)
+	}
+	var report map[string]any
+	if err := json.Unmarshal(raw, &report); err != nil {
+		t.Fatalf("the report is not valid JSON: %v", err)
+	}
+	policies, ok := report["policies"].([]any)
+	if !ok || len(policies) != 2 {
+		t.Fatalf("policies: %#v", report["policies"])
+	}
+	names := []string{}
+	for _, p := range policies {
+		entry, _ := p.(map[string]any)
+		names = append(names, entry["name"].(string))
+	}
+	if names[0] != "A" || names[1] != "Prod" {
+		t.Fatalf("policy entries = %v, want [A Prod] in /context order", names)
+	}
+	score, ok := report["plumberScore"].(map[string]any)
+	if !ok || score["letter"] != "B" || score["points"] != 83.0 {
+		t.Fatalf("plumberScore must be the platform's global score, got %#v", report["plumberScore"])
+	}
+	if _, present := report["minPoints"]; present {
+		t.Error("no local gate ran, so no local gate key may be written")
 	}
 }

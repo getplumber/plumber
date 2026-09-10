@@ -29,6 +29,15 @@ type PBOM struct {
 
 	PlumberScore *PlumberScoreSummary `json:"plumberScore,omitempty"`
 
+	// Policies and PlatformGlobalScore are the platform-mode score block
+	// (spec 2026-09-10-cli-platform-mode-policies-only s5). In that mode
+	// there is no run-level score to put in PlumberScore: every verdict
+	// belongs to one of the platform's policies, and the single global
+	// figure is the platform's own, present only when the push returned one.
+	// Both are absent from a standalone PBOM.
+	Policies            []PolicyScore        `json:"policies,omitempty"`
+	PlatformGlobalScore *PlatformGlobalScore `json:"platformGlobalScore,omitempty"`
+
 	ContainerImages []ContainerImage `json:"containerImages"`
 	Includes        []Include        `json:"includes"`
 }
@@ -42,6 +51,34 @@ type PlumberScoreSummary struct {
 	CriticalMalusApplied bool               `json:"criticalMalusApplied,omitempty"`
 	CriticalMalusMax     float64            `json:"criticalMalusMax,omitempty"`
 	Counts               PlumberScoreCounts `json:"counts"`
+}
+
+// PolicyScore is one resolved platform policy's own verdict over its own
+// control set. Score and FinalPoints are omitted for a policy the CLI could
+// not evaluate (Applied false, Reason says why): a letter-less zero would
+// read as a policy that scored badly rather than one that ran nothing.
+type PolicyScore struct {
+	Name        string `json:"name"`
+	Enforcement string `json:"enforcement"`
+	Score       string `json:"score,omitempty"`
+	FinalPoints *int   `json:"finalPoints,omitempty"`
+	Applied     bool   `json:"applied"`
+	Reason      string `json:"reason,omitempty"`
+}
+
+// PlatformGlobalScore is the platform's own displayed score for the run, as
+// the push response returned it. It is never computed CLI-side.
+type PlatformGlobalScore struct {
+	Letter string `json:"letter,omitempty"`
+	Points int    `json:"points"`
+}
+
+// PlatformSummary is what a platform-mode run hands the PBOM writers: the
+// per-policy verdicts and the platform's global score (nil when the push
+// returned none). nil itself outside platform mode.
+type PlatformSummary struct {
+	Policies    []PolicyScore
+	GlobalScore *PlatformGlobalScore
 }
 
 // PlumberScoreCounts is the number of issues per severity bucket.

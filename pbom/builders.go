@@ -105,6 +105,22 @@ func BuildPlumberScoreSummary(score *control.PlumberScoreResult, scoreMode bool)
 	}
 }
 
+// ApplyPlatformSummary stamps the platform-mode score block onto a document:
+// the per-policy verdicts and the platform's own global score. A no-op for a
+// standalone run (nil summary), which is what keeps those documents
+// byte-identical.
+//
+// It is the counterpart of BuildPlumberScoreSummary and deliberately does not
+// touch PlumberScore: in platform mode there is no run-level score to write
+// there, and the caller has already passed a nil one.
+func (p *PBOM) ApplyPlatformSummary(s *PlatformSummary) {
+	if p == nil || s == nil {
+		return
+	}
+	p.Policies = s.Policies
+	p.PlatformGlobalScore = s.GlobalScore
+}
+
 // normalizeIRImageRef builds the canonical image reference string from an
 // ir.Image, matching the format pbom uses as map keys.
 func normalizeIRImageRef(img ir.Image) string {

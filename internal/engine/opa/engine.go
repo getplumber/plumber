@@ -57,8 +57,16 @@ type Finding struct {
 	// Dismissed is set by control.MarkDismissed when the platform served this finding's identity
 	// as dismissed (#447); never emitted by MarshalJSON (the platform hashes that object) and
 	// never a status: pass|fail|not_evaluable is frozen.
-	Dismissed bool           `json:"-"`
-	Data      map[string]any `json:"-"`
+	Dismissed bool `json:"-"`
+	// Policies names the platform policies that reported this finding, set
+	// only on the deduplicated union the security-report writers (SARIF, the
+	// GitLab SAST report) build for a platform-mode run: one alert per
+	// finding, tagged with every policy it belongs to. Empty on every
+	// evaluated finding, and never serialised - MarshalJSON below enumerates
+	// the fields it emits, so the finding object the platform hashes into an
+	// identity (#467) is untouched by this.
+	Policies []string       `json:"-"`
+	Data     map[string]any `json:"-"`
 }
 
 // MarshalJSON flattens the canonical fields and the Data payload into

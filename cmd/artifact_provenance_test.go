@@ -284,7 +284,7 @@ func TestWriteOutputsStampsProvenance(t *testing.T) {
 
 	result := &control.AnalysisResult{ProjectPath: "acme/target"}
 	conf := &configuration.Configuration{GitlabURL: "https://gitlab.example"}
-	if err := writeOutputsWithProvider(&providerPkg.GitLabProvider{}, result, conf, complianceSummary{}); err != nil {
+	if err := writeOutputsWithProvider(&providerPkg.GitLabProvider{}, result, conf, complianceSummary{}, nil, nil); err != nil {
 		t.Fatalf("writeOutputsWithProvider: %v", err)
 	}
 	if result.ArtifactCommitSHA != sha {
