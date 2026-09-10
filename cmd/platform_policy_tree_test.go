@@ -19,24 +19,12 @@ func treePolicy(name string, controls ...platform.PolicyControl) platform.Policy
 	}
 }
 
-func localConf(t *testing.T) *configuration.Configuration {
-	t.Helper()
-	enabled := true
-	return &configuration.Configuration{PlumberConfig: &configuration.PlumberConfig{
-		Version: "2.0",
-		GitLab: &configuration.ProviderConfig{Controls: configuration.ControlsConfig{
-			BranchMustBeProtected: &configuration.BranchProtectionControlConfig{Enabled: &enabled},
-		}},
-	}}
-}
-
 // The #368 shape: two policies declaring the SAME control_type with
 // DIFFERENT parameters must each evaluate under their own. Reading one
 // policy's config and reporting it under the other's name is the bug the
 // control tree exists to end, so this asserts the two configs differ AND
-// that each carries its own value rather than merely "not the local one".
+// that each carries its own value.
 func TestConfigForPolicyUsesEachPolicysOwnConfig(t *testing.T) {
-	conf := localConf(t)
 	strict := treePolicy("Strict", platform.PolicyControl{
 		ControlType: "branchMustBeProtected",
 		Config:      []byte(`{"enabled":true,"minMergeAccessLevel":40}`),
@@ -46,10 +34,10 @@ func TestConfigForPolicyUsesEachPolicysOwnConfig(t *testing.T) {
 		Config:      []byte(`{"enabled":true,"minMergeAccessLevel":30}`),
 	})
 
-	sc := configForPolicy("gitlab", conf, strict)
-	lc := configForPolicy("gitlab", conf, lenient)
+	sc, _, sr := configForPlatformPolicy("gitlab", strict)
+	lc, _, lr := configForPlatformPolicy("gitlab", lenient)
 	if sc == nil || lc == nil {
-		t.Fatal("both policies must resolve a config")
+		t.Fatalf("both policies must resolve a config, got reasons %q / %q", sr, lr)
 	}
 
 	got := func(c *configuration.PlumberConfig) int {
@@ -72,41 +60,49 @@ func TestConfigForPolicyUsesEachPolicysOwnConfig(t *testing.T) {
 	}
 }
 
-// A policy with no stored tree (the derived [Plumber default], or a real
-// policy an admin has not configured) must fall back to the local config.
-// Evaluating it against an empty ruleset would report a clean pass for a
-// policy that simply has not been filled in yet.
-func TestConfigForPolicyFallsBackWhenTreeIsEmpty(t *testing.T) {
-	conf := localConf(t)
+// R2: a REAL policy with no stored tree declares an empty set, and that is
+// what it is evaluated under. Falling back to the local configuration would
+// report a verdict the policy never asked for, under this policy's name -
+// the same confusion the control tree exists to end - so the honest answer
+// is an empty configuration plus the reason.
+func TestConfigForPlatformPolicy_NoTreeIsEmptySet(t *testing.T) {
 	for _, pol := range []platform.Policy{
-		{ID: platform.NilUUID, Name: "[Plumber default]", Enforcement: platform.EnforcementReport},
 		{ID: "abc", Name: "Unconfigured", Requirements: []platform.PolicyRequirement{}},
 		{ID: "def", Name: "EmptyRequirement", Requirements: []platform.PolicyRequirement{{Name: "R"}}},
 	} {
 		t.Run(pol.Name, func(t *testing.T) {
-			if got := configForPolicy("gitlab", conf, pol); got != conf.PlumberConfig {
-				t.Fatal("a policy declaring no controls must fall back to the local configuration")
+			cfg, derived, reason := configForPlatformPolicy("gitlab", pol)
+			if cfg == nil || derived {
+				t.Fatalf("a real policy declaring no controls must resolve an empty config, got cfg=%v derived=%v", cfg, derived)
+			}
+			if reason != reasonNoControls {
+				t.Fatalf("reason = %q, want %q", reason, reasonNoControls)
+			}
+			controls := cfg.ControlsFor("gitlab")
+			if controls == nil {
+				t.Fatal("an empty configuration must still answer with a controls block")
+			}
+			if controls.BranchMustBeProtected != nil || controls.CicdVariablesMustBeMasked != nil {
+				t.Fatalf("the empty set must enable no control at all: %+v", controls)
 			}
 		})
 	}
 }
 
-// Only the controls the policy declares are configured. A control it does
-// not mention must not leak in from the local config, or the policy's
-// verdict would include checks it never asked for.
+// Only the controls the policy declares are configured. Nothing else may
+// appear, or the policy's verdict would include checks it never asked for.
 func TestConfigForPolicyOmitsUndeclaredControls(t *testing.T) {
-	conf := localConf(t)
 	pol := treePolicy("OnlyVariables", platform.PolicyControl{
 		ControlType: "cicdVariablesMustBeMasked",
 		Config:      []byte(`{"enabled":true}`),
 	})
-	cfg := configForPolicy("gitlab", conf, pol)
+	cfg, _, _ := configForPlatformPolicy("gitlab", pol)
 	controls := cfg.ControlsFor("gitlab")
 	if controls.CicdVariablesMustBeMasked == nil || !controls.CicdVariablesMustBeMasked.IsEnabled() {
 		t.Fatal("the declared control must be configured")
 	}
 	if controls.BranchMustBeProtected != nil {
-		t.Fatal("a control the policy never declared must not be inherited from the local config")
+		t.Fatal("a control the policy never declared must not appear in its configuration")
 	}
 }
 
@@ -114,12 +110,11 @@ func TestConfigForPolicyOmitsUndeclaredControls(t *testing.T) {
 // rounded. The CLI splices those bytes into YAML rather than decoding and
 // re-encoding them, so the value has to survive to the typed config.
 func TestConfigForPolicyPreservesLargeIntegers(t *testing.T) {
-	conf := localConf(t)
 	pol := treePolicy("Big", platform.PolicyControl{
 		ControlType: "projectMustHaveSecurityPolicySource",
 		Config:      []byte(`{"enabled":true,"expectedProjectId":9007199254740993}`),
 	})
-	cfg := configForPolicy("gitlab", conf, pol)
+	cfg, _, _ := configForPlatformPolicy("gitlab", pol)
 	sp := cfg.ControlsFor("gitlab").ProjectMustHaveSecurityPolicySource
 	if sp == nil || sp.ExpectedProjectId == nil {
 		t.Fatal("the control must be configured with its expectedProjectId")
@@ -129,33 +124,45 @@ func TestConfigForPolicyPreservesLargeIntegers(t *testing.T) {
 	}
 }
 
-// Malformed config must not silently evaluate the policy under someone
-// else's parameters without saying so. The run continues on the local
-// config; the point here is that it does not panic and does not produce a
-// half-applied tree.
-func TestConfigForPolicyToleratesMalformedConfig(t *testing.T) {
-	conf := localConf(t)
-	pol := treePolicy("Broken", platform.PolicyControl{
-		ControlType: "branchMustBeProtected",
-		Config:      []byte(`{"enabled":`), // truncated
-	})
-	got := configForPolicy("gitlab", conf, pol)
-	if got != conf.PlumberConfig {
-		t.Fatal("a policy whose tree cannot be applied must fall back to the local configuration")
+// One malformed control costs the policy that control and nothing else: the
+// rest of the tree still applies. Dropping the whole policy over a single
+// unreadable entry would leave it unevaluated and absent from the push, and
+// falling back to the local configuration would evaluate it under parameters
+// it never asked for.
+func TestConfigForPlatformPolicy_MalformedControlIsDropped_OthersApply(t *testing.T) {
+	pol := treePolicy("Broken",
+		platform.PolicyControl{ControlType: "cicdVariablesMustBeMasked", Config: []byte(`{"enabled":`)}, // truncated
+		platform.PolicyControl{ControlType: "branchMustBeProtected", Config: []byte(`{"enabled":true,"minMergeAccessLevel":40}`)},
+	)
+
+	cfg, _, reason := configForPlatformPolicy("gitlab", pol)
+
+	if cfg == nil {
+		t.Fatalf("one bad control must not cost the policy its tree, got reason %q", reason)
+	}
+	if reason != "" {
+		t.Fatalf("reason = %q, want none: the tree WAS applied", reason)
+	}
+	controls := cfg.ControlsFor("gitlab")
+	if controls.BranchMustBeProtected == nil || controls.BranchMustBeProtected.MinMergeAccessLevel == nil ||
+		*controls.BranchMustBeProtected.MinMergeAccessLevel != 40 {
+		t.Fatal("the readable control must still take effect alongside the unreadable one")
+	}
+	if controls.CicdVariablesMustBeMasked != nil {
+		t.Fatal("the unreadable control must not be applied from guessed bytes")
 	}
 }
 
 // A control_type the CLI does not know must not break the whole tree: the
 // controls it DOES know still apply. Forward tolerance is the contract.
 func TestConfigForPolicyIgnoresUnknownControlType(t *testing.T) {
-	conf := localConf(t)
 	pol := treePolicy("Mixed",
 		platform.PolicyControl{ControlType: "someFutureControl", Config: []byte(`{"enabled":true}`)},
 		platform.PolicyControl{ControlType: "branchMustBeProtected", Config: []byte(`{"enabled":true,"minMergeAccessLevel":40}`)},
 	)
-	cfg := configForPolicy("gitlab", conf, pol)
-	if cfg == conf.PlumberConfig {
-		t.Fatal("a tree with one unknown control must still be applied, not abandoned")
+	cfg, _, reason := configForPlatformPolicy("gitlab", pol)
+	if cfg == nil {
+		t.Fatalf("a tree with one unknown control must still be applied, not abandoned: %q", reason)
 	}
 	b := cfg.ControlsFor("gitlab").BranchMustBeProtected
 	if b == nil || b.MinMergeAccessLevel == nil || *b.MinMergeAccessLevel != 40 {
@@ -164,14 +171,11 @@ func TestConfigForPolicyIgnoresUnknownControlType(t *testing.T) {
 }
 
 // One control the CLI cannot read must cost the policy that control, not
-// its whole tree. Falling back to the local configuration over a single bad
-// entry evaluates the policy under someone else's parameters and reports it
-// under this policy's name, which is the confusion the tree exists to end.
+// its whole tree. Dropping the whole tree over a single bad entry leaves the
+// policy unevaluated and absent from the push entirely.
 func TestPolicyConfigFromTreeSkipsUnusableControls(t *testing.T) {
-	conf := localConf(t)
-
 	// A blank name alongside a real control: the real one still applies.
-	cfg, err := policyConfigFromTree("gitlab", conf, treePolicy("Mixed",
+	cfg, err := policyConfigFromTree("gitlab", treePolicy("Mixed",
 		platform.PolicyControl{ControlType: "  ", Config: []byte(`{"enabled":true}`)},
 		platform.PolicyControl{ControlType: "branchMustBeProtected", Config: []byte(`{"enabled":true,"minMergeAccessLevel":40}`)},
 	))
@@ -186,7 +190,7 @@ func TestPolicyConfigFromTreeSkipsUnusableControls(t *testing.T) {
 	// A truncated config alongside a real control: same rule. Failing the
 	// whole tree over one control would send the policy back to the local
 	// configuration and report it under someone else's parameters.
-	cfg, err = policyConfigFromTree("gitlab", conf, treePolicy("Truncated",
+	cfg, err = policyConfigFromTree("gitlab", treePolicy("Truncated",
 		platform.PolicyControl{ControlType: "cicdVariablesMustBeMasked", Config: []byte(`{"enabled":`)},
 		platform.PolicyControl{ControlType: "branchMustBeProtected", Config: []byte(`{"enabled":true}`)},
 	))
@@ -207,8 +211,7 @@ func TestPolicyConfigFromTreeSkipsUnusableControls(t *testing.T) {
 // policy would fall back to the local configuration over a control the
 // platform served perfectly well.
 func TestPolicyConfigFromTreeTreatsAnAbsentConfigAsDefaults(t *testing.T) {
-	conf := localConf(t)
-	cfg, err := policyConfigFromTree("gitlab", conf, treePolicy("Bare",
+	cfg, err := policyConfigFromTree("gitlab", treePolicy("Bare",
 		platform.PolicyControl{ControlType: "branchMustBeProtected"},
 	))
 	if err != nil {
@@ -219,16 +222,23 @@ func TestPolicyConfigFromTreeTreatsAnAbsentConfigAsDefaults(t *testing.T) {
 	}
 }
 
-// A tree in which nothing at all could be read is a tree that did not
+// R3: a tree in which nothing at all could be read is a tree that did not
 // arrive. Assembling an empty ruleset from it would push a verdict in which
-// the policy checked nothing; the error routes the caller to the same
-// local-config fallback a policy with no tree takes.
+// the policy checked nothing, so the policy is NOT APPLIED: no configuration,
+// a reason, and (buildPolicyResults) no entry in the push at all.
 func TestPolicyConfigFromTreeRefusesAnEntirelyUnreadableTree(t *testing.T) {
-	conf := localConf(t)
-	if _, err := policyConfigFromTree("gitlab", conf, treePolicy("Empty",
-		platform.PolicyControl{ControlType: "  ", Config: []byte(`{"enabled":true}`)},
-	)); err == nil {
+	pol := treePolicy("Empty", platform.PolicyControl{ControlType: "  ", Config: []byte(`{"enabled":true}`)})
+
+	if _, err := policyConfigFromTree("gitlab", pol); err == nil {
 		t.Fatal("a tree with nothing usable in it must not assemble to an empty ruleset")
+	}
+
+	cfg, derived, reason := configForPlatformPolicy("gitlab", pol)
+	if cfg != nil || derived {
+		t.Fatalf("an unreadable tree must resolve no configuration, got cfg=%v derived=%v", cfg, derived)
+	}
+	if !strings.HasPrefix(reason, reasonTreeNotApplied) {
+		t.Fatalf("reason = %q, want the not-applied reason", reason)
 	}
 }
 
@@ -236,8 +246,7 @@ func TestPolicyConfigFromTreeRefusesAnEntirelyUnreadableTree(t *testing.T) {
 // GitHub policy under `gitlab:` marks every GitHub control skipped, and the
 // push then reports a run in which nothing was checked.
 func TestPolicyConfigFromTreeUsesTheAnalysedProviderSection(t *testing.T) {
-	conf := localConf(t)
-	cfg, err := policyConfigFromTree("github", conf, treePolicy("GH",
+	cfg, err := policyConfigFromTree("github", treePolicy("GH",
 		platform.PolicyControl{ControlType: "actionsMustBePinnedByCommitSha", Config: []byte(`{"enabled":true}`)},
 	))
 	if err != nil {
@@ -251,17 +260,19 @@ func TestPolicyConfigFromTreeUsesTheAnalysedProviderSection(t *testing.T) {
 	}
 }
 
+// R4: the assembled version is the schema constant, never read off the run's
+// local file. In platform mode the policy's tree IS the configuration, and a
+// file the policy has nothing to do with must not decide how its controls
+// parse - not even by supplying a version number.
 func TestPolicyConfigFromTreeKeepsConfigVersion(t *testing.T) {
-	conf := localConf(t)
-	conf.PlumberConfig.Version = "2.0"
-	cfg, err := policyConfigFromTree("gitlab", conf, treePolicy("V", platform.PolicyControl{
+	cfg, err := policyConfigFromTree("gitlab", treePolicy("V", platform.PolicyControl{
 		ControlType: "branchMustBeProtected", Config: []byte(`{"enabled":true}`),
 	}))
 	if err != nil {
 		t.Fatalf("assemble: %v", err)
 	}
-	if !strings.HasPrefix(cfg.Version, "2") {
-		t.Fatalf("assembled config version = %q, want the run's own 2.x", cfg.Version)
+	if cfg.Version != policyConfigVersion {
+		t.Fatalf("assembled config version = %q, want the schema constant %q", cfg.Version, policyConfigVersion)
 	}
 }
 

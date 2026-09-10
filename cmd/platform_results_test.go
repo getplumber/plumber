@@ -10,18 +10,6 @@ import (
 	"github.com/getplumber/plumber/internal/platform"
 )
 
-// strictConfigYAML enables one GitLab control, so a config using it
-// produces a different verdict from one that enables nothing.
-const strictConfigYAML = `version: "2.0"
-gitlab:
-  controls:
-    branchMustBeProtected:
-      enabled: true
-      defaultMustBeProtected: true
-      namePatterns:
-        - main
-`
-
 // runContextWith builds a platform run context carrying a resolved policy
 // set, as /context would have returned it.
 func runContextWith(policies ...platform.Policy) *platform.RunContext {
@@ -46,12 +34,15 @@ func confWithPolicies(t *testing.T, policies ...platform.Policy) *configuration.
 // TestBuildPolicyResults_OneEntryPerPolicy is the contract: the results
 // array carries one entry per resolved policy, never a merged one.
 func TestBuildPolicyResults_OneEntryPerPolicy(t *testing.T) {
-	conf := confWithPolicies(t,
-		platform.Policy{ID: "33333333-3333-3333-3333-333333330001", Name: "Baseline", Enforcement: platform.EnforcementReport},
-		platform.Policy{ID: "44444444-4444-4444-4444-444444440002", Name: "Blocking", Enforcement: platform.EnforcementBlock},
-	)
+	baseline := policyWithTree("Baseline", "pipelineMustNotEnableDebugTrace", debugTraceControlConfig)
+	baseline.ID = "33333333-3333-3333-3333-333333330001"
+	blocking := policyWithTree("Blocking", "pipelineMustNotUseDockerInDocker", `{"enabled":true}`)
+	blocking.ID = "44444444-4444-4444-4444-444444440002"
+	blocking.Enforcement = platform.EnforcementBlock
+	conf := confWithPolicies(t, baseline, blocking)
 
-	got := buildPolicyResults(testProvider(t), conf, &control.AnalysisResult{}, nil, ".plumber.yaml")
+	runs := evaluatePlatformPolicies(testProvider(t), conf, debugTraceResult())
+	got := buildPolicyResults(runs, testProvider(t), conf)
 
 	if len(got) != 2 {
 		t.Fatalf("want one entry per policy (2), got %d", len(got))
@@ -59,7 +50,7 @@ func TestBuildPolicyResults_OneEntryPerPolicy(t *testing.T) {
 	if got[0].Policy != "Baseline" || got[1].Policy != "Blocking" {
 		t.Fatalf("entries must be named after their policies: %q, %q", got[0].Policy, got[1].Policy)
 	}
-	if got[0].PolicyID != "33333333-3333-3333-3333-333333330001" || got[1].PolicyID != "44444444-4444-4444-4444-444444440002" {
+	if got[0].PolicyID != baseline.ID || got[1].PolicyID != blocking.ID {
 		t.Fatalf("each entry must carry its own policy id: %q, %q", got[0].PolicyID, got[1].PolicyID)
 	}
 }
@@ -68,22 +59,18 @@ func TestBuildPolicyResults_OneEntryPerPolicy(t *testing.T) {
 // control shared by several policies under the SAME configuration is
 // evaluated once, and the verdict feeds every policy requiring it.
 func TestBuildPolicyResults_SharedConfigIsEvaluatedOnce(t *testing.T) {
-	var evaluations int
-	restore := configForPolicy
-	t.Cleanup(func() { configForPolicy = restore })
-	configForPolicy = func(_ string, conf *configuration.Configuration, _ platform.Policy) *configuration.PlumberConfig {
-		evaluations++ // counts RESOLUTIONS; the cache below is what bounds EVALUATIONS
-		return conf.PlumberConfig
-	}
-
 	conf := confWithPolicies(t,
-		platform.Policy{ID: "1111", Name: "A", Enforcement: platform.EnforcementReport},
-		platform.Policy{ID: "2222", Name: "B", Enforcement: platform.EnforcementReport},
-		platform.Policy{ID: "3333", Name: "C", Enforcement: platform.EnforcementBlock},
+		policyWithTree("A", "pipelineMustNotEnableDebugTrace", debugTraceControlConfig),
+		policyWithTree("B", "pipelineMustNotEnableDebugTrace", debugTraceControlConfig),
+		policyWithTree("C", "pipelineMustNotEnableDebugTrace", debugTraceControlConfig),
 	)
 
-	got := buildPolicyResults(testProvider(t), conf, &control.AnalysisResult{}, nil, ".plumber.yaml")
+	runs := evaluatePlatformPolicies(testProvider(t), conf, debugTraceResult())
+	if len(runs) != 1 {
+		t.Fatalf("three policies on one configuration must share ONE evaluation, got %d runs", len(runs))
+	}
 
+	got := buildPolicyResults(runs, testProvider(t), conf)
 	if len(got) != 3 {
 		t.Fatalf("want 3 entries, got %d", len(got))
 	}
@@ -99,36 +86,19 @@ func TestBuildPolicyResults_SharedConfigIsEvaluatedOnce(t *testing.T) {
 
 // TestBuildPolicyResults_DifferentConfigsProduceIndependentVerdicts is the
 // stated acceptance criterion: two policies configuring a control
-// differently produce two artifacts whose verdicts are independent. It
-// drives the seam per-policy configuration will arrive through, which is
-// what makes the multi-policy machinery real rather than a shape.
+// differently produce two artifacts whose verdicts are independent. In
+// platform mode each policy's own control tree IS its configuration, so this
+// is the ordinary case rather than a seam.
 func TestBuildPolicyResults_DifferentConfigsProduceIndependentVerdicts(t *testing.T) {
-	// One config disables every control; the other enables branch
-	// protection. The verdicts must differ.
-	lax, _, _, err := configuration.LoadPlumberConfigFromBytes([]byte("version: \"2.0\"\n"), "lax")
-	if err != nil {
-		t.Fatalf("load lax: %v", err)
-	}
-	strict, _, _, err := configuration.LoadPlumberConfigFromBytes([]byte(strictConfigYAML), "strict")
-	if err != nil {
-		t.Fatalf("load strict: %v", err)
-	}
-
-	restore := configForPolicy
-	t.Cleanup(func() { configForPolicy = restore })
-	configForPolicy = func(_ string, _ *configuration.Configuration, pol platform.Policy) *configuration.PlumberConfig {
-		if pol.Name == "Strict" {
-			return strict
-		}
-		return lax
-	}
-
+	// One policy enables only docker-in-docker, which the fixture does not
+	// violate; the other enables the debug-trace control, which it does.
 	conf := confWithPolicies(t,
-		platform.Policy{ID: "1111", Name: "Lax", Enforcement: platform.EnforcementReport},
-		platform.Policy{ID: "2222", Name: "Strict", Enforcement: platform.EnforcementBlock},
+		policyWithTree("Lax", "pipelineMustNotUseDockerInDocker", `{"enabled":true}`),
+		policyWithTree("Strict", "pipelineMustNotEnableDebugTrace", debugTraceControlConfig),
 	)
 
-	got := buildPolicyResults(testProvider(t), conf, &control.AnalysisResult{}, nil, ".plumber.yaml")
+	runs := evaluatePlatformPolicies(testProvider(t), conf, debugTraceResult())
+	got := buildPolicyResults(runs, testProvider(t), conf)
 
 	if len(got) != 2 {
 		t.Fatalf("want 2 entries, got %d", len(got))
@@ -148,11 +118,10 @@ func TestBuildPolicyResults_DifferentConfigsProduceIndependentVerdicts(t *testin
 // fallback policy carries the nil uuid, which names no policies row.
 // Sending it would key the run to a policy that does not exist.
 func TestBuildPolicyResults_DerivedDefaultIsPushedNameOnly(t *testing.T) {
-	conf := confWithPolicies(t, platform.Policy{
-		ID: platform.NilUUID, Name: "[Plumber default]", Enforcement: platform.EnforcementReport,
-	})
+	conf := confWithPolicies(t, derivedDefaultPolicy())
 
-	got := buildPolicyResults(testProvider(t), conf, &control.AnalysisResult{}, nil, ".plumber.yaml")
+	runs := evaluatePlatformPolicies(testProvider(t), conf, debugTraceResult())
+	got := buildPolicyResults(runs, testProvider(t), conf)
 
 	if len(got) != 1 {
 		t.Fatalf("want 1 entry, got %d", len(got))
@@ -186,7 +155,8 @@ func TestBuildPolicyResults_DerivedDefaultIsPushedNameOnly(t *testing.T) {
 // TestBuildPolicyResults_StandaloneFallsBackToTheLocalPolicy: with no
 // platform context there is no policy set to key on, so the CLI pushes the
 // single locally-named entry it always has. This is the default path and
-// must not change.
+// must not change - the push is built with NO policy runs, which is exactly
+// what a standalone run produces.
 func TestBuildPolicyResults_StandaloneFallsBackToTheLocalPolicy(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -199,7 +169,19 @@ func TestBuildPolicyResults_StandaloneFallsBackToTheLocalPolicy(t *testing.T) {
 		}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			got := buildPolicyResults(testProvider(t), tc.conf, &control.AnalysisResult{}, nil, "team.plumber.yaml")
+			if runs := evaluatePlatformPolicies(testProvider(t), tc.conf, &control.AnalysisResult{}); len(runs) != 0 {
+				t.Fatalf("a standalone run resolves no policy to evaluate, got %d runs", len(runs))
+			}
+
+			body, err := buildPlatformPush(testProvider(t), tc.conf, &control.AnalysisResult{}, nil, "team.plumber.yaml", nil)
+			if err != nil {
+				t.Fatalf("buildPlatformPush: %v", err)
+			}
+			var push platformPush
+			if err := json.Unmarshal(body, &push); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			got := push.Results
 			if len(got) != 1 {
 				t.Fatalf("want the single local entry, got %d", len(got))
 			}

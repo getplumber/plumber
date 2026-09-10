@@ -255,11 +255,25 @@ func platformPolicyNameFor(configPath string) string {
 //
 // configPath is the resolved config path the caller computed
 // (conf.ConfigFilePath, falling back to the --config flag); it names the
-// single policy of a STANDALONE push. In platform mode the results array
-// instead carries one entry per policy the platform resolved - see
-// buildPolicyResults, which owns that decision.
-func buildPlatformPush(p providerPkg.Provider, conf *configuration.Configuration, result *control.AnalysisResult, score *control.PlumberScoreResult, configPath string) ([]byte, error) {
+// single policy of a STANDALONE push.
+//
+// runs are the evaluated platform policy runs (evaluatePlatformPolicies).
+// When there are any, the results array carries one entry per policy they
+// cover and nothing else - see buildPolicyResults, which owns that decision.
+// With none, this is a run that resolved no platform policy, and the push
+// keeps the single locally-named entry the CLI has always sent.
+func buildPlatformPush(p providerPkg.Provider, conf *configuration.Configuration, result *control.AnalysisResult, score *control.PlumberScoreResult, configPath string, runs []policyRun) ([]byte, error) {
 	forgeHost, projectPath, _ := resolveScoreTarget(p, conf)
+
+	// The two branches are exclusive on purpose: a push built from the policy
+	// runs never touches the local configuration, and a standalone push never
+	// builds a per-policy entry.
+	var results []platformPolicyResult
+	if len(runs) > 0 {
+		results = buildPolicyResults(runs, p, conf)
+	} else {
+		results = []platformPolicyResult{standalonePolicyResult(p, conf, result, score, configPath)}
+	}
 
 	push := platformPush{
 		SchemaVersion: 1,
@@ -270,7 +284,7 @@ func buildPlatformPush(p providerPkg.Provider, conf *configuration.Configuration
 		Pipeline:      platformPipelineFor(p),
 		CLI:           platformCLI{Version: strings.TrimPrefix(Version, "v")},
 		Collection:    platformCollectionFor(conf, result),
-		Results:       buildPolicyResults(p, conf, result, score, configPath),
+		Results:       results,
 	}
 
 	body, err := json.Marshal(push)
@@ -539,10 +553,13 @@ func platformTokenFailure(reason string) error {
 // (falling back to the --config flag when conf is nil or has no resolved
 // path, e.g. in tests that call this directly); result and score are
 // threaded straight through so the platform, the terminal banner and the
-// JSON report can never disagree about a run's findings or score. Project
-// identity for the platform record is a separate matter and still comes from
-// the verified OIDC claims server-side, never from operator-supplied config.
-func maybePushPlatform(p providerPkg.Provider, conf *configuration.Configuration, result *control.AnalysisResult, score *control.PlumberScoreResult) (*platformVerdict, error) {
+// JSON report can never disagree about a run's findings or score. runs are
+// the evaluated platform policy runs the push reports one entry per policy
+// for; none means a run with no resolved policy set, which pushes the single
+// locally-named entry. Project identity for the platform record is a separate
+// matter and still comes from the verified OIDC claims server-side, never
+// from operator-supplied config.
+func maybePushPlatform(p providerPkg.Provider, conf *configuration.Configuration, result *control.AnalysisResult, score *control.PlumberScoreResult, runs []policyRun) (*platformVerdict, error) {
 	push, endpoint := effectivePlatformPush()
 	if !push {
 		return nil, nil
@@ -576,7 +593,7 @@ func maybePushPlatform(p providerPkg.Provider, conf *configuration.Configuration
 			configPath = resolved
 		}
 	}
-	body, err := buildPlatformPush(p, conf, result, score, configPath)
+	body, err := buildPlatformPush(p, conf, result, score, configPath, runs)
 	if err != nil {
 		scoreWarn(fmt.Sprintf("platform push skipped: %v", err))
 		return nil, nil

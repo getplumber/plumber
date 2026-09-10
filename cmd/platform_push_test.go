@@ -177,7 +177,7 @@ func TestBuildPublishPayload_GateAndBytes(t *testing.T) {
 // only way these failure modes, being silent or type-safe-in-isolation, are
 // actually caught.
 func TestBuildPlatformPush_KeysAreSnakeCaseAndPolicyIsAString(t *testing.T) {
-	body, err := buildPlatformPush(testProvider(t), nil, nil, nil, ".plumber.yaml")
+	body, err := buildPlatformPush(testProvider(t), nil, nil, nil, ".plumber.yaml", nil)
 	if err != nil {
 		t.Fatalf("buildPlatformPush: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestBuildPlatformPush_ScorePointsRoundToSignedInt(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			score := &control.PlumberScoreResult{Score: "E", RawPointsUnclamped: tc.raw}
-			body, err := buildPlatformPush(testProvider(t), nil, &control.AnalysisResult{}, score, ".plumber.yaml")
+			body, err := buildPlatformPush(testProvider(t), nil, &control.AnalysisResult{}, score, ".plumber.yaml", nil)
 			if err != nil {
 				t.Fatalf("buildPlatformPush: %v", err)
 			}
@@ -264,7 +264,7 @@ func TestBuildPlatformPush_ScoreFinalPointsOnWire(t *testing.T) {
 		{"zero final_points (malus floor)", &control.PlumberScoreResult{Score: "E", RawPointsUnclamped: -5, FinalPoints: 0}, 0},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			body, err := buildPlatformPush(testProvider(t), nil, &control.AnalysisResult{}, tc.score, ".plumber.yaml")
+			body, err := buildPlatformPush(testProvider(t), nil, &control.AnalysisResult{}, tc.score, ".plumber.yaml", nil)
 			if err != nil {
 				t.Fatalf("buildPlatformPush: %v", err)
 			}
@@ -395,7 +395,7 @@ func TestMaybePushPlatform_PolicyNameUsesResolvedConfigPathFromConf(t *testing.T
 	defer func() { configFile = origConfigFile }()
 
 	conf := &configuration.Configuration{ConfigFilePath: builtinDefaultConfigSource}
-	if _, err := maybePushPlatform(testProvider(t), conf, &control.AnalysisResult{}, nil); err != nil {
+	if _, err := maybePushPlatform(testProvider(t), conf, &control.AnalysisResult{}, nil, nil); err != nil {
 		t.Fatalf("maybePushPlatform: %v", err)
 	}
 	var push platformPush
@@ -424,7 +424,7 @@ func TestMaybePushPlatform_PolicyNameFallsBackToConfigFlagWhenConfHasNoPath(t *t
 	configFile = "config/.plumber.strict.yaml"
 	defer func() { configFile = origConfigFile }()
 
-	if _, err := maybePushPlatform(testProvider(t), nil, &control.AnalysisResult{}, nil); err != nil {
+	if _, err := maybePushPlatform(testProvider(t), nil, &control.AnalysisResult{}, nil, nil); err != nil {
 		t.Fatalf("maybePushPlatform: %v", err)
 	}
 	var push platformPush
@@ -460,7 +460,7 @@ func TestMaybePushPlatform_PostsThePush(t *testing.T) {
 		Findings: []opaengine.Finding{{Code: "ISSUE-101", Severity: "high", Message: "untrusted registry"}},
 	}
 	score := &control.PlumberScoreResult{Score: "B", RawPointsUnclamped: 82.5}
-	_, err := maybePushPlatform(testProvider(t), conf, result, score)
+	_, err := maybePushPlatform(testProvider(t), conf, result, score, nil)
 	if err != nil {
 		t.Fatalf("maybePushPlatform returned %v, want nil on a 202", err)
 	}
@@ -525,7 +525,7 @@ func TestMaybePushPlatform_FindingsCoverPassFailAndNotEvaluable(t *testing.T) {
 		// truly evaluated on this fixture (control/status.go StatusFor),
 		// giving a real not_evaluable case alongside the pass/fail ones.
 	}
-	if _, err := maybePushPlatform(testProvider(t), conf, result, &control.PlumberScoreResult{Score: "C"}); err != nil {
+	if _, err := maybePushPlatform(testProvider(t), conf, result, &control.PlumberScoreResult{Score: "C"}, nil); err != nil {
 		t.Fatalf("maybePushPlatform: %v", err)
 	}
 
@@ -647,7 +647,7 @@ func TestMaybePushPlatform_DismissedFindingWireShape(t *testing.T) {
 			{Code: "ISSUE-101", Severity: "high", Message: "untrusted registry", Job: "build", File: ".gitlab-ci.yml", Line: 4, Dismissed: true},
 		},
 	}
-	if _, err := maybePushPlatform(testProvider(t), conf, result, &control.PlumberScoreResult{Score: "C"}); err != nil {
+	if _, err := maybePushPlatform(testProvider(t), conf, result, &control.PlumberScoreResult{Score: "C"}, nil); err != nil {
 		t.Fatalf("maybePushPlatform: %v", err)
 	}
 
@@ -888,7 +888,7 @@ func TestMaybePushPlatform_SkippedControlIsOmittedFromFindings(t *testing.T) {
 		SkipControlsFilter: []string{"pipelineMustNotEnableDebugTrace"},
 	}
 	result := &control.AnalysisResult{CiValid: true}
-	if _, err := maybePushPlatform(testProvider(t), conf, result, nil); err != nil {
+	if _, err := maybePushPlatform(testProvider(t), conf, result, nil, nil); err != nil {
 		t.Fatalf("maybePushPlatform: %v", err)
 	}
 	var push platformPush
@@ -926,7 +926,7 @@ func TestMaybePushPlatform_NegativeScorePointsReachTheWire(t *testing.T) {
 	// 199.5, so the true value was -99.5 where the clamped RawPoints read 0.
 	// math.Round rounds half away from zero, so -99.5 -> -100.
 	score := &control.PlumberScoreResult{Score: "E", RawPointsUnclamped: -99.5}
-	if _, err := maybePushPlatform(testProvider(t), nil, &control.AnalysisResult{}, score); err != nil {
+	if _, err := maybePushPlatform(testProvider(t), nil, &control.AnalysisResult{}, score, nil); err != nil {
 		t.Fatalf("maybePushPlatform: %v", err)
 	}
 	var push platformPush
@@ -950,7 +950,7 @@ func TestMaybePushPlatform_NilScoreDoesNotPanic(t *testing.T) {
 	restore := withPlatformTestEnv(t, srv.URL, "tok-123")
 	defer restore()
 
-	if _, err := maybePushPlatform(testProvider(t), nil, &control.AnalysisResult{}, nil); err != nil {
+	if _, err := maybePushPlatform(testProvider(t), nil, &control.AnalysisResult{}, nil, nil); err != nil {
 		t.Fatalf("maybePushPlatform: %v", err)
 	}
 }
@@ -974,7 +974,7 @@ func TestMaybePushPlatform_EffectiveConfigReflectsTheLoadedConfig(t *testing.T) 
 		ConfigFilePath: ".plumber.yaml",
 		PlumberConfig:  &configuration.PlumberConfig{Source: ".plumber.yaml", Raw: loaded},
 	}
-	if _, err := maybePushPlatform(testProvider(t), conf, &control.AnalysisResult{}, nil); err != nil {
+	if _, err := maybePushPlatform(testProvider(t), conf, &control.AnalysisResult{}, nil, nil); err != nil {
 		t.Fatalf("maybePushPlatform: %v", err)
 	}
 	var push platformPush
@@ -1021,7 +1021,7 @@ func TestMaybePushPlatform_RemoteFailuresOnlyWarn(t *testing.T) {
 
 			var err error
 			out := captureStderr(t, func() {
-				_, err = maybePushPlatform(testProvider(t), nil, &control.AnalysisResult{}, nil)
+				_, err = maybePushPlatform(testProvider(t), nil, &control.AnalysisResult{}, nil, nil)
 			})
 			if err != nil {
 				t.Errorf("status %d returned %v, want nil: a remote condition must not fail the run", status, err)
@@ -1046,7 +1046,7 @@ func TestMaybePushPlatform_UnreachableOnlyWarns(t *testing.T) {
 
 	var err error
 	out := captureStderr(t, func() {
-		_, err = maybePushPlatform(testProvider(t), nil, &control.AnalysisResult{}, nil)
+		_, err = maybePushPlatform(testProvider(t), nil, &control.AnalysisResult{}, nil, nil)
 	})
 	if err != nil {
 		t.Errorf("unreachable platform returned %v, want nil", err)
@@ -1062,7 +1062,7 @@ func TestMaybePushPlatform_MissingTokenFailsWithActionableMessage(t *testing.T) 
 	restore := withPlatformTestEnv(t, "https://app.example.com", "")
 	defer restore()
 
-	_, err := maybePushPlatform(testProvider(t), nil, &control.AnalysisResult{}, nil)
+	_, err := maybePushPlatform(testProvider(t), nil, &control.AnalysisResult{}, nil, nil)
 	if err == nil {
 		t.Fatal("missing id-token returned nil, want an error: a silently skipped push is the failure mode this prevents")
 	}
@@ -1094,7 +1094,7 @@ func TestMaybePushPlatform_GitHubMissingGrantFailsWithActionableMessage(t *testi
 	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "")
 	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
 
-	_, err := maybePushPlatform(p, nil, &control.AnalysisResult{}, nil)
+	_, err := maybePushPlatform(p, nil, &control.AnalysisResult{}, nil, nil)
 	if err == nil {
 		t.Fatal("missing GitHub id-token grant returned nil, want an error: a silently skipped push is the failure mode this prevents")
 	}
@@ -1131,7 +1131,7 @@ func TestMaybePushPlatform_GitHubTokenMintFailureReturnsPlatformTokenError(t *te
 	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", mint.URL)
 	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "req-token")
 
-	_, err := maybePushPlatform(p, nil, &control.AnalysisResult{}, nil)
+	_, err := maybePushPlatform(p, nil, &control.AnalysisResult{}, nil, nil)
 	if err == nil {
 		t.Fatal("a failed token mint returned nil, want a *PlatformTokenError: the run must not proceed as if the push were merely skipped")
 	}
@@ -1160,7 +1160,7 @@ func TestMaybePushPlatform_SendsCollectionDegradedMarker(t *testing.T) {
 		DataCollectionDegraded: true,
 		DegradedReasons:        []string{"pipeline configuration could not be fetched (network or timeout)"},
 	}
-	if _, err := maybePushPlatform(testProvider(t), nil, result, nil); err != nil {
+	if _, err := maybePushPlatform(testProvider(t), nil, result, nil, nil); err != nil {
 		t.Fatalf("maybePushPlatform: %v", err)
 	}
 	var push platformPush
@@ -1231,7 +1231,7 @@ func TestMaybePushPlatform_TokenFailureIsAnnouncedNotOnlyReturned(t *testing.T) 
 
 	var err error
 	out := captureStderr(t, func() {
-		_, err = maybePushPlatform(testProvider(t), nil, &control.AnalysisResult{}, nil)
+		_, err = maybePushPlatform(testProvider(t), nil, &control.AnalysisResult{}, nil, nil)
 	})
 
 	if err == nil {
@@ -1314,7 +1314,7 @@ func TestBuildPlatformPush_GitLabCIIdentityValuesReachTheWire(t *testing.T) {
 	t.Setenv("CI_JOB_ID", "job-gl-444")
 	t.Setenv("CI_PROJECT_ID", "proj-gl-555")
 
-	body, err := buildPlatformPush(p, nil, &control.AnalysisResult{}, nil, ".plumber.yaml")
+	body, err := buildPlatformPush(p, nil, &control.AnalysisResult{}, nil, ".plumber.yaml", nil)
 	if err != nil {
 		t.Fatalf("buildPlatformPush: %v", err)
 	}
@@ -1358,7 +1358,7 @@ func TestBuildPlatformPush_GitHubCIIdentityValuesReachTheWire(t *testing.T) {
 	t.Setenv("GITHUB_RUN_ID", "run-gh-333")
 	t.Setenv("GITHUB_JOB", "job-gh-444")
 
-	body, err := buildPlatformPush(p, nil, &control.AnalysisResult{}, nil, ".plumber.yaml")
+	body, err := buildPlatformPush(p, nil, &control.AnalysisResult{}, nil, ".plumber.yaml", nil)
 	if err != nil {
 		t.Fatalf("buildPlatformPush: %v", err)
 	}

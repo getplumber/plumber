@@ -135,7 +135,10 @@ func publishAndFinalize(p provider.Provider, cmd *cobra.Command, result *control
 
 	jsonPayload := buildPublishPayload(p, conf, result, summary)
 	handleScorePublishing(p, conf, result, summary, jsonPayload)
-	_, platformErr := maybePushPlatform(p, conf, result, summary.score)
+	// The per-policy runs are not wired through this tail yet: platform mode
+	// still pushes the single locally-named entry here until the shared
+	// pipeline evaluates them (next slice of the policies-only plan).
+	_, platformErr := maybePushPlatform(p, conf, result, summary.score, nil)
 	reportPlatformOutcome(conf.PlatformRun)
 
 	pas := provider.PostActionSummary{
