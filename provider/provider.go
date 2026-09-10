@@ -16,6 +16,7 @@ import (
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
+	"github.com/getplumber/plumber/pbom"
 	"github.com/spf13/cobra"
 )
 
@@ -69,13 +70,29 @@ type CIEnvMapping struct {
 // PostActionSummary bundles the gate outcome needed by PostAnalysisActions
 // to avoid exceeding the parameter count limit. Passed is the active gate's
 // verdict; GateLine is its human-readable rendering for the MR comment.
+//
+// Platform is set only in platform mode (spec
+// 2026-09-10-cli-platform-mode-policies-only s5) and is then what the badge
+// and the merge-request comment report: Score is nil there by construction,
+// because the run has no run-level grade and a locally computed one would be
+// the figure that contradicts the platform's.
 type PostActionSummary struct {
 	Passed     bool
 	GateLine   string
 	Score      *control.PlumberScoreResult
 	ScoreMode  bool
 	ScorePoint bool
+	Platform   *PlatformPostSummary
 }
+
+// PlatformPostSummary and PlatformPolicyLine are control's types, re-exported
+// under this package's names because the post actions are named from here.
+// They live in control/ because that is where the badge and the comment that
+// render them live, and control cannot import provider.
+type (
+	PlatformPostSummary = control.PlatformPostSummary
+	PlatformPolicyLine  = control.PlatformPolicyLine
+)
 
 // Provider is the contract every CI platform must satisfy. The analyze
 // command resolves the active provider via Get() and delegates all
@@ -104,11 +121,13 @@ type Provider interface {
 	RunRemote(conf *configuration.Configuration) (*control.AnalysisResult, error)
 
 	// WritePBOM writes a Pipeline Bill of Materials to filePath in the
-	// provider's native PBOM format.
-	WritePBOM(result *control.AnalysisResult, conf *configuration.Configuration, filePath string, score *control.PlumberScoreResult, scoreMode bool) error
+	// provider's native PBOM format. platform is the platform-mode score
+	// block (per-policy verdicts plus the platform's global score), nil on
+	// every other run.
+	WritePBOM(result *control.AnalysisResult, conf *configuration.Configuration, filePath string, score *control.PlumberScoreResult, scoreMode bool, platform *pbom.PlatformSummary) error
 
 	// WritePBOMCycloneDX writes the PBOM in CycloneDX format.
-	WritePBOMCycloneDX(result *control.AnalysisResult, conf *configuration.Configuration, filePath string, score *control.PlumberScoreResult, scoreMode bool) error
+	WritePBOMCycloneDX(result *control.AnalysisResult, conf *configuration.Configuration, filePath string, score *control.PlumberScoreResult, scoreMode bool, platform *pbom.PlatformSummary) error
 
 	// PostAnalysisActions runs provider-specific post-analysis side-effects
 	// such as posting MR comments or updating the project badge. Providers

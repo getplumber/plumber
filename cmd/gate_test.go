@@ -494,7 +494,7 @@ func TestBuildAnalysisJSONReport_GateContract(t *testing.T) {
 
 	decode := func(t *testing.T, s complianceSummary) map[string]any {
 		t.Helper()
-		payload, err := buildAnalysisJSONReport(result, pc, s, params)
+		payload, err := buildAnalysisJSONReport(result, pc, s, params, nil, nil)
 		if err != nil {
 			t.Fatalf("buildAnalysisJSONReport: %v", err)
 		}
@@ -559,7 +559,7 @@ func TestBuildAnalysisJSONReport_EmitsRawPointsUnclamped(t *testing.T) {
 	score := &control.PlumberScoreResult{RawPoints: 0, RawPointsUnclamped: -37.5, Score: "E"}
 	s := complianceSummary{minPoints: 100, score: score, scoreMode: true, controlCount: 1}
 
-	payload, err := buildAnalysisJSONReport(&control.AnalysisResult{CiValid: true}, confWithDebugTrace().PlumberConfig, s, jsonOutputParams{provider: "gitlab"})
+	payload, err := buildAnalysisJSONReport(&control.AnalysisResult{CiValid: true}, confWithDebugTrace().PlumberConfig, s, jsonOutputParams{provider: "gitlab"}, nil, nil)
 	if err != nil {
 		t.Fatalf("buildAnalysisJSONReport: %v", err)
 	}
@@ -677,5 +677,89 @@ func TestFinalizeRun_PlatformModeOrdering(t *testing.T) {
 	var degradedErr *DegradedError
 	if err := finalizeRun(warned, s, gateErr); !errors.As(err, &degradedErr) {
 		t.Fatalf("--fail-warnings outranks the platform gate, got %v", err)
+	}
+}
+
+// Spec s5: in platform mode the JSON report carries one entry per policy and
+// the platform's global score at the top level; never a local-config score.
+// The local gate keys are gone with the local gate they describe, and every
+// finding object inside a policy entry is the one the report already froze
+// (#467: the platform hashes it into a finding's identity), so the policy
+// dimension lives on the entry, never on a finding.
+func TestBuildAnalysisJSONReport_PlatformMode_PerPolicy(t *testing.T) {
+	a := policyWithTree("A", "pipelineMustNotEnableDebugTrace", debugTraceControlConfig)
+	conf := confWithPolicies(t, a)
+	runs := evaluatePlatformPolicies(testProvider(t), conf, debugTraceResult())
+	s := complianceSummary{platformMode: true, scoreMode: true}
+	params := jsonOutputParams{provider: "gitlab"}
+
+	decode := func(t *testing.T, v *platformVerdict) map[string]any {
+		t.Helper()
+		payload, err := buildAnalysisJSONReport(debugTraceResult(), conf.PlumberConfig, s, params, runs, v)
+		if err != nil {
+			t.Fatalf("buildAnalysisJSONReport: %v", err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(payload, &m); err != nil {
+			t.Fatalf("report is not valid JSON: %v", err)
+		}
+		return m
+	}
+
+	report := decode(t, &platformVerdict{GlobalScore: &platformScore{Letter: "C", Points: 66}})
+	pols, ok := report["policies"].([]any)
+	if !ok || len(pols) != 1 {
+		t.Fatalf("policies: %#v", report["policies"])
+	}
+	entry, _ := pols[0].(map[string]any)
+	if entry["name"] != "A" || entry["id"] != "policy-A" || entry["enforcement"] != "report" || entry["applied"] != true {
+		t.Fatalf("policy entry: %#v", entry)
+	}
+	if _, present := entry["min_points"]; !present {
+		t.Errorf("min_points must be present (null when the policy sets none): %#v", entry)
+	}
+	score, ok := entry["score"].(map[string]any)
+	if !ok || score["letter"] == "" || score["final_points"] == nil {
+		t.Fatalf("policy score: %#v", entry["score"])
+	}
+	findings, ok := entry["findings"].([]any)
+	if !ok || len(findings) != 1 {
+		t.Fatalf("the policy's own findings must be listed: %#v", entry["findings"])
+	}
+	f, _ := findings[0].(map[string]any)
+	if f["code"] != "ISSUE-203" {
+		t.Fatalf("finding: %#v", f)
+	}
+	// #467 froze the finding object: the policy dimension is carried by the
+	// array entry, so no finding may gain a key naming its policy.
+	for _, k := range []string{"policy", "policies", "policyId", "policy_id"} {
+		if _, present := f[k]; present {
+			t.Errorf("finding object gained the key %q: the pushed bytes are frozen", k)
+		}
+	}
+	global, ok := report["plumberScore"].(map[string]any)
+	if !ok || global["letter"] != "C" || global["points"] != 66.0 {
+		t.Fatalf("plumberScore must be the platform's global score, got %#v", report["plumberScore"])
+	}
+	if report["passed"] != true {
+		t.Errorf("passed = %v, want true: the platform's gate did not block", report["passed"])
+	}
+	for _, k := range []string{"minPoints", "minScore", "threshold"} {
+		if v, present := report[k]; present {
+			t.Errorf("local gate key %q must be absent in platform mode, got %v", k, v)
+		}
+	}
+
+	report2 := decode(t, &platformVerdict{Unavailable: "gate unavailable, letting through"})
+	if _, present := report2["plumberScore"]; present {
+		t.Fatal("no global score from the platform: plumberScore must be omitted, never a local figure")
+	}
+	if report2["passed"] != true {
+		t.Errorf("passed = %v, want true: an unavailable gate lets through", report2["passed"])
+	}
+
+	blocked := decode(t, &platformVerdict{Gate: &platformGate{Evaluated: true, Blocking: true}})
+	if blocked["passed"] != false {
+		t.Errorf("passed = %v, want false: the platform's gate blocked", blocked["passed"])
 	}
 }

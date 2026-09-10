@@ -382,6 +382,18 @@ func buildSARIF(findings []opaengine.Finding, fallbackURI, provider string) sari
 		if f.URL != "" {
 			res.Properties = map[string]any{"url": f.URL}
 		}
+		// The policies that reported this finding (platform mode, spec s5).
+		// SARIF has no first-class field for it and the results are the
+		// UNION of every policy run, so the property bag is where the policy
+		// dimension lives: one alert, tagged with every policy it belongs
+		// to. Absent on a standalone run, where an empty array would read as
+		// "no policy covers this".
+		if len(f.Policies) > 0 {
+			if res.Properties == nil {
+				res.Properties = map[string]any{}
+			}
+			res.Properties["policies"] = f.Policies
+		}
 		if uri := reportFilePath(f.File); uri != "" {
 			phys := sarifPhysical{ArtifactLocation: sarifArtifact{URI: uri}}
 			if f.Line > 0 {

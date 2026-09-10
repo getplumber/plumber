@@ -101,7 +101,7 @@ func noControlsAwareImageCompliance(result *control.AnalysisResult, conf *config
 	return pbom.BuildImageComplianceData(result)
 }
 
-func (p *GitLabProvider) WritePBOM(result *control.AnalysisResult, conf *configuration.Configuration, filePath string, score *control.PlumberScoreResult, scoreMode bool) error {
+func (p *GitLabProvider) WritePBOM(result *control.AnalysisResult, conf *configuration.Configuration, filePath string, score *control.PlumberScoreResult, scoreMode bool, platform *pbom.PlatformSummary) error {
 	complianceData := noControlsAwareImageCompliance(result, conf)
 	overrideData := pbom.BuildIncludeOverrideData(result)
 	gen := pbom.NewGenerator(result.ProjectPath, result.ProjectID, conf.GitlabURL, conf.Branch).
@@ -113,6 +113,7 @@ func (p *GitLabProvider) WritePBOM(result *control.AnalysisResult, conf *configu
 	}
 	bom := gen.Generate(result.PipelineImageData, result.PipelineOriginData)
 	bom.PlumberScore = pbom.BuildPlumberScoreSummary(score, scoreMode)
+	bom.ApplyPlatformSummary(platform)
 
 	f, err := os.Create(filePath)
 	if err != nil {
@@ -124,7 +125,7 @@ func (p *GitLabProvider) WritePBOM(result *control.AnalysisResult, conf *configu
 	return enc.Encode(bom)
 }
 
-func (p *GitLabProvider) WritePBOMCycloneDX(result *control.AnalysisResult, conf *configuration.Configuration, filePath string, score *control.PlumberScoreResult, scoreMode bool) error {
+func (p *GitLabProvider) WritePBOMCycloneDX(result *control.AnalysisResult, conf *configuration.Configuration, filePath string, score *control.PlumberScoreResult, scoreMode bool, platform *pbom.PlatformSummary) error {
 	complianceData := noControlsAwareImageCompliance(result, conf)
 	overrideData := pbom.BuildIncludeOverrideData(result)
 	gen := pbom.NewGenerator(result.ProjectPath, result.ProjectID, conf.GitlabURL, conf.Branch).
@@ -136,6 +137,7 @@ func (p *GitLabProvider) WritePBOMCycloneDX(result *control.AnalysisResult, conf
 	}
 	bom := gen.Generate(result.PipelineImageData, result.PipelineOriginData)
 	bom.PlumberScore = pbom.BuildPlumberScoreSummary(score, scoreMode)
+	bom.ApplyPlatformSummary(platform)
 	cdx := bom.ToCycloneDX("")
 
 	f, err := os.Create(filePath)
@@ -157,7 +159,7 @@ func (p *GitLabProvider) PostAnalysisActions(cmd *cobra.Command, result *control
 			fmt.Fprintf(os.Stderr, "Skipping merge request comment: data collection was incomplete; not overwriting with a partial result.\n")
 		} else if mrIID := glabCI.DetectMergeRequestIID(); mrIID != 0 {
 			fmt.Fprintf(os.Stderr, "Merge request pipeline detected (MR !%d), posting Plumber comment...\n", mrIID)
-			if err := control.ManageMergeRequestComment(result.ProjectID, mrIID, result, conf.PlumberConfig, s.Passed, s.GateLine, conf, s.Score, s.ScoreMode, s.ScorePoint); err != nil {
+			if err := control.ManageMergeRequestComment(result.ProjectID, mrIID, result, conf.PlumberConfig, s.Passed, s.GateLine, conf, s.Score, s.ScoreMode, s.ScorePoint, s.Platform); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to post merge request comment: %v\n", err)
 			} else {
 				fmt.Fprintf(os.Stderr, "Merge request comment posted successfully\n")
@@ -170,7 +172,14 @@ func (p *GitLabProvider) PostAnalysisActions(cmd *cobra.Command, result *control
 			fmt.Fprintf(os.Stderr, "Skipping badge update (%s)\n", skipReason)
 		} else {
 			fmt.Fprintf(os.Stderr, "Updating project badge...\n")
-			if err := control.ManageProjectBadge(result.ProjectID, conf, s.Score); err != nil {
+			// In platform mode the letter is the platform's global one, and
+			// there is no local score to fall back on when it is missing:
+			// the badge is then left on its last good value (spec s5).
+			update := func() error { return control.ManageProjectBadge(result.ProjectID, conf, s.Score) }
+			if s.Platform != nil {
+				update = func() error { return control.ManageProjectBadgePlatform(result.ProjectID, conf, s.Platform) }
+			}
+			if err := update(); err != nil {
 				fmt.Fprintf(os.Stderr, "Warning: failed to update project badge: %v\n", err)
 			} else {
 				fmt.Fprintf(os.Stderr, "Project badge updated successfully\n")

@@ -53,6 +53,16 @@ type platformVerdict struct {
 	Unavailable string
 }
 
+// platformGatePassed is the platform-mode answer to "did this run pass": the
+// gate did not block. Every fail-open case (no push, no verdict, an old
+// platform, an unevaluated gate) passes, which is invariant 5's let-through
+// stated once for every consumer that reports a verdict - the JSON report's
+// `passed`, the MR comment's status line - so none of them can invent a
+// stricter reading than the exit code's.
+func platformGatePassed(v *platformVerdict) bool {
+	return v == nil || v.Gate == nil || !v.Gate.Blocking
+}
+
 // PlatformGateError reports that the platform's post-push gate evaluation
 // blocked this run: one or more policies has live-monitoring failures the
 // operator configured as blocking. It is a verdict on the project, exactly

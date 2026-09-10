@@ -137,7 +137,7 @@ func TestBuildPublishPayload_GateAndBytes(t *testing.T) {
 		}
 		want, err := buildAnalysisJSONReport(result, conf.PlumberConfig, summary, jsonOutputParams{
 			provider: prov.Name(), includeOnly: conf.ControlsFilter, skip: conf.SkipControlsFilter,
-		})
+		}, nil, nil)
 		if err != nil {
 			t.Fatalf("buildAnalysisJSONReport: %v", err)
 		}

@@ -26,7 +26,7 @@ func TestGitLabWritePBOMCarriesCommit(t *testing.T) {
 
 	t.Run("native PBOM stamps project.commitSHA and project.ref", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "pbom.json")
-		if err := p.WritePBOM(result, conf, path, nil, false); err != nil {
+		if err := p.WritePBOM(result, conf, path, nil, false, nil); err != nil {
 			t.Fatalf("WritePBOM: %v", err)
 		}
 		raw, _ := os.ReadFile(path)
@@ -49,7 +49,7 @@ func TestGitLabWritePBOMCarriesCommit(t *testing.T) {
 
 	t.Run("CycloneDX stamps plumber:git:commit and plumber:git:ref", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "cdx.json")
-		if err := p.WritePBOMCycloneDX(result, conf, path, nil, false); err != nil {
+		if err := p.WritePBOMCycloneDX(result, conf, path, nil, false, nil); err != nil {
 			t.Fatalf("WritePBOMCycloneDX: %v", err)
 		}
 		raw, _ := os.ReadFile(path)
@@ -94,7 +94,7 @@ func TestGitHubWritePBOMCarriesCommit(t *testing.T) {
 
 	t.Run("native PBOM stamps project.commitSHA and project.ref", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "pbom.json")
-		if err := p.WritePBOM(result, conf, path, nil, false); err != nil {
+		if err := p.WritePBOM(result, conf, path, nil, false, nil); err != nil {
 			t.Fatalf("WritePBOM: %v", err)
 		}
 		raw, _ := os.ReadFile(path)
@@ -117,7 +117,7 @@ func TestGitHubWritePBOMCarriesCommit(t *testing.T) {
 
 	t.Run("CycloneDX stamps plumber:git:commit and plumber:git:ref", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "cdx.json")
-		if err := p.WritePBOMCycloneDX(result, conf, path, nil, false); err != nil {
+		if err := p.WritePBOMCycloneDX(result, conf, path, nil, false, nil); err != nil {
 			t.Fatalf("WritePBOMCycloneDX: %v", err)
 		}
 		raw, _ := os.ReadFile(path)

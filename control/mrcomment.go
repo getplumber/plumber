@@ -33,6 +33,7 @@ func ManageMergeRequestComment(
 	score *PlumberScoreResult,
 	scoreMode bool,
 	scorePointMode bool,
+	platform *PlatformPostSummary,
 ) error {
 	l := logrus.WithFields(logrus.Fields{
 		"action":          "ManageMergeRequestComment",
@@ -41,7 +42,7 @@ func ManageMergeRequestComment(
 	})
 
 	// Generate comment body
-	commentBody := generateMRComment(result, pc, passed, gateLine, score, scoreMode, scorePointMode, conf.ControlsFilter, conf.SkipControlsFilter)
+	commentBody := generateMRComment(result, pc, passed, gateLine, score, scoreMode, scorePointMode, conf.ControlsFilter, conf.SkipControlsFilter, platform)
 
 	// List existing notes to find our comment
 	notes, err := gitlab.ListMergeRequestNotes(
@@ -121,7 +122,14 @@ func ScoreBadgeURL(letter string) string {
 
 // generateMRComment builds the Markdown body for the merge request comment
 // based on the analysis result.
-func generateMRComment(result *AnalysisResult, pc *configuration.PlumberConfig, passed bool, gateLine string, score *PlumberScoreResult, scoreMode, scorePointMode bool, controlsFilterList, skipControlsList []string) string {
+//
+// platform is set only in platform mode and then owns the whole body (spec
+// s5): what a reviewer must see there is the platform's verdict per policy,
+// not the local configuration's evaluation of the same pipeline.
+func generateMRComment(result *AnalysisResult, pc *configuration.PlumberConfig, passed bool, gateLine string, score *PlumberScoreResult, scoreMode, scorePointMode bool, controlsFilterList, skipControlsList []string, platform *PlatformPostSummary) string {
+	if platform != nil {
+		return generatePlatformMRComment(platform, passed, gateLine)
+	}
 	var b strings.Builder
 
 	// Hidden identifier so we can find this comment later
@@ -206,11 +214,7 @@ func generateMRComment(result *AnalysisResult, pc *configuration.PlumberConfig, 
 	b.WriteString("\n")
 
 	// Status line after the table
-	if passed {
-		fmt.Fprintf(&b, ":white_check_mark: **Plumber check passed** (%s)\n\n", gateLine)
-	} else {
-		fmt.Fprintf(&b, ":warning: **Plumber check failed** — %s\n\n", gateLine)
-	}
+	writeMRStatusLine(&b, passed, gateLine)
 
 	// Issue details as a normal section
 	if totalIssues > 0 {
@@ -218,9 +222,81 @@ func generateMRComment(result *AnalysisResult, pc *configuration.PlumberConfig, 
 		writeIssueDetails(&b, result)
 	}
 
-	// Footer
+	writeMRFooter(&b)
+
+	return b.String()
+}
+
+// writeMRStatusLine and writeMRFooter are the two blocks every Plumber
+// comment ends with, standalone or platform mode. They are shared rather than
+// repeated so the two bodies cannot drift on the wording a reader uses to
+// recognise a Plumber comment; the strings are the existing ones, moved
+// verbatim, so a standalone comment is byte-for-byte what it was.
+func writeMRStatusLine(b *strings.Builder, passed bool, gateLine string) {
+	if passed {
+		fmt.Fprintf(b, ":white_check_mark: **Plumber check passed** (%s)\n\n", gateLine)
+	} else {
+		fmt.Fprintf(b, ":warning: **Plumber check failed** — %s\n\n", gateLine)
+	}
+}
+
+func writeMRFooter(b *strings.Builder) {
 	b.WriteString("---\n")
 	b.WriteString("*Automatically posted by [Plumber](https://getplumber.io) — do not edit manually.*\n")
+}
+
+// generatePlatformMRComment builds the merge-request comment of a
+// platform-mode run (spec s5): the platform's global score as the headline,
+// then one row per resolved policy.
+//
+// It deliberately does NOT carry the controls table or the issue details the
+// standalone comment ends with. Both are rendered from the run-level result,
+// which in platform mode is the LOCAL configuration's evaluation - the one
+// thing this mode exists to stop publishing (QUESTIONS row 44). The per-policy
+// findings live in the report artifacts and on the platform, where they carry
+// the policy they belong to.
+//
+// A missing global score is stated, never filled in: an unavailable verdict
+// and a bad one must not look the same to a reviewer.
+func generatePlatformMRComment(platform *PlatformPostSummary, passed bool, gateLine string) string {
+	var b strings.Builder
+
+	b.WriteString(MRCommentIdentifier + "\n")
+	if platform.HasGlobal && platform.GlobalLetter != "" {
+		fmt.Fprintf(&b, "[![Plumber](%s)](%s)\n\n", ScoreBadgeURL(platform.GlobalLetter), PlumberScoreDocURL)
+	}
+	b.WriteString("*Enforcement comes from the platform's policies; the scores below are this run's.*\n\n")
+
+	b.WriteString("### Plumber Score\n\n")
+	if platform.HasGlobal {
+		fmt.Fprintf(&b, "- **Global score (platform):** **%s** - %d / 100 pts\n\n",
+			sanitizeMarkdownInline(platform.GlobalLetter), platform.GlobalPoints)
+	} else {
+		b.WriteString("- **Global score (platform):** _score unavailable_ - the platform returned none for this run\n\n")
+	}
+
+	b.WriteString("### Policies\n\n")
+	b.WriteString("| Policy | Enforcement | Score | Blocking |\n")
+	b.WriteString("|--------|-------------|-------|----------|\n")
+	for _, p := range platform.Policies {
+		// A policy the CLI could not evaluate has no letter. Rendering the
+		// zero it carries would read as a policy that scored nothing rather
+		// than one that ran nothing.
+		scoreCell := "_not evaluated_"
+		if p.Letter != "" {
+			scoreCell = fmt.Sprintf("%s - %d / 100", sanitizeMarkdownInline(p.Letter), p.FinalPoints)
+		}
+		blocking := "no"
+		if p.Blocking {
+			blocking = "**yes**"
+		}
+		fmt.Fprintf(&b, "| %s | %s | %s | %s |\n",
+			sanitizeMarkdownInline(p.Name), sanitizeMarkdownInline(p.Enforcement), scoreCell, blocking)
+	}
+	b.WriteString("\n")
+
+	writeMRStatusLine(&b, passed, gateLine)
+	writeMRFooter(&b)
 
 	return b.String()
 }
