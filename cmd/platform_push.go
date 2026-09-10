@@ -148,6 +148,13 @@ type platformFinding struct {
 	Status      string          `json:"status"`
 	Data        json.RawMessage `json:"data,omitempty"`
 
+	// Dismissed carries the finding's own control.Finding.Dismissed bit
+	// (#447): a finding the platform already served back as dismissed via
+	// /context, matched by control.MarkDismissed before the push is built.
+	// Omitted (never sent as false) on every finding that is not: the
+	// platform reads its presence as the claim, not its value.
+	Dismissed bool `json:"dismissed,omitempty"`
+
 	// Name and Category are the control's display metadata (#440), the
 	// docs-catalog wording next to the stable technical id in Control.
 	// Additive: the platform ignores unknown fields, and consumers that
@@ -420,7 +427,9 @@ func platformFindingsFor(p providerPkg.Provider, result *control.AnalysisResult,
 			continue
 		case control.StatusFailed:
 			for _, f := range fs {
-				out = append(out, decoratedPlatformFinding(platformFindingControlName(f), platformStatusFail, platformFindingDataRaw(f)))
+				pf := decoratedPlatformFinding(platformFindingControlName(f), platformStatusFail, platformFindingDataRaw(f))
+				pf.Dismissed = f.Dismissed
+				out = append(out, pf)
 			}
 		case control.StatusError:
 			out = append(out, decoratedPlatformFinding(e.ControlName, platformStatusNotEvaluable, notEvaluableReasonData(result, e.ControlName)))
@@ -455,17 +464,21 @@ func notEvaluableReasonData(result *control.AnalysisResult, controlName string) 
 	return raw
 }
 
-// platformFindingControlName names a failed finding's control via the same
-// registry lookup FindingsByControl itself buckets by (control.LookupCode),
-// re-derived per finding rather than reused from the enclosing ControlEntry.
-// Falls back to the raw code string when the code has no registry entry —
-// never to the enclosing control's name, which would misattribute an
-// unclassified finding as belonging to it.
+// platformFindingControlName names a failed finding's control via
+// control.ControlKeyFor, the same registry lookup FindingsByControl itself
+// buckets by (control.LookupCode), falling back to the raw code string when
+// the code has no registry entry, never to the enclosing control's name,
+// which would misattribute an unclassified finding as belonging to it.
+//
+// This calls the EXACT SAME helper control.MarkDismissed uses to bucket a
+// served dismissed entry by control (#447): a second, independently
+// maintained copy of "look up the code, else use it raw" here could drift
+// from that one, and a finding whose code the registry cannot classify is
+// exactly the case where the two sides most need to agree: it is pushed
+// under its raw code, and the platform can only ever serve a dismissal for
+// it back under that same raw code.
 func platformFindingControlName(f opaengine.Finding) string {
-	if info := control.LookupCode(control.ErrorCode(f.Code)); info != nil {
-		return info.ControlName
-	}
-	return f.Code
+	return control.ControlKeyFor(f.Code)
 }
 
 // platformFindingDataRaw serializes f exactly as opaengine.Finding.MarshalJSON

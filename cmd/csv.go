@@ -43,7 +43,11 @@ import (
 // template, component or action). Those findings carry what they are about in
 // their structured payload and in the identity block of the JSON report.
 func buildCSV(entries []control.ControlEntry, result *control.AnalysisResult) [][]string {
-	header := []string{"code", "fingerprint", "controlName", "status", "severity", "message", "context", "file", "line", "url", "docUrl"}
+	// dismissed carries the platform's #447 marker: "true"/"false" on a
+	// finding row, empty on a non-failing control's summary row (there is
+	// no finding to have an opinion about), the same emptiness convention
+	// code and fingerprint already use on that row shape.
+	header := []string{"code", "fingerprint", "controlName", "status", "severity", "message", "context", "file", "line", "url", "docUrl", "dismissed"}
 	byControl := control.FindingsByControl(result.Findings)
 
 	var nonFailing [][]string // passed / error / skipped: one row per control, at the top
@@ -66,6 +70,7 @@ func buildCSV(entries []control.ControlEntry, result *control.AnalysisResult) []
 				"",                                 // line
 				"",                                 // url
 				"",                                 // docUrl
+				"",                                 // dismissed (no finding)
 			}))
 			continue
 		}
@@ -100,6 +105,7 @@ func buildCSV(entries []control.ControlEntry, result *control.AnalysisResult) []
 				line,
 				f.URL,
 				"https://getplumber.io/docs/cli/issues/" + f.Code,
+				strconv.FormatBool(f.Dismissed),
 			}))
 		}
 	}

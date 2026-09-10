@@ -8,6 +8,7 @@ import (
 	"github.com/getplumber/plumber/control"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	"github.com/getplumber/plumber/provider"
+	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -35,6 +36,7 @@ func runWithProvider(p provider.Provider, cmd *cobra.Command, conf *configuratio
 
 	newLocationLinker(conf, result, p.Name()).Annotate(result.Findings)
 	opaengine.StampFingerprints(result.Findings, conf.GitRepoRoot)
+	markPlatformDismissedFindings(conf, result)
 
 	summary := buildComplianceSummary(p, result, conf)
 
@@ -49,6 +51,23 @@ func runWithProvider(p provider.Provider, cmd *cobra.Command, conf *configuratio
 	}
 
 	return publishAndFinalize(p, cmd, result, conf, summary)
+}
+
+// markPlatformDismissedFindings marks the findings the platform already
+// served as dismissed (#447), right after fingerprints are stamped: the
+// platform identity a dismissed entry matches against depends on the same
+// canonical fields fingerprinting reads, so this must run after that stamp,
+// not before it. No-op outside platform mode, or when the /context fetch
+// itself never produced a context (a failed or skipped fetch leaves
+// conf.PlatformRun.Context nil, and there is nothing served to mark
+// against).
+func markPlatformDismissedFindings(conf *configuration.Configuration, result *control.AnalysisResult) {
+	if conf == nil || result == nil || conf.PlatformRun == nil || conf.PlatformRun.Context == nil {
+		return
+	}
+	if n := control.MarkDismissed(result.Findings, conf.PlatformRun.Context.DismissedIssues); n > 0 {
+		logrus.Debugf("dismissed_issues: marked %d finding(s) as platform-dismissed", n)
+	}
 }
 
 // publishAndFinalize is the tail both analyze entry points share: publish the
@@ -333,6 +352,12 @@ func buildProviderControlSummariesAndGroups(p provider.Provider, result *control
 			sortBranchProtectionFindingsForDisplay(findings)
 		}
 		codes, items := findingsToItems(findings)
+		dismissed := 0
+		for _, item := range items {
+			if item.Dismissed {
+				dismissed++
+			}
+		}
 		skipped := e.Skipped || dataCollectionFailed
 		stats := provider.BuildControlStats(p.Name(), e.ControlName, result, conf.PlumberConfig, findings)
 		// A control whose lane supplied nothing must not render as passed.
@@ -345,6 +370,15 @@ func buildProviderControlSummariesAndGroups(p provider.Provider, result *control
 		if !skipped && result != nil {
 			reason, notEvaluable = result.NotEvaluable[e.ControlName]
 		}
+		// #447: the Controls table's issue count and per-severity tally
+		// deliberately count EVERY finding, dismissed ones included. This is
+		// not an oversight next to renderFailedControl's "N issues, M
+		// dismissed" header: a dismissed finding still exists in this run's
+		// output (it is never dropped, only excluded from the score, per
+		// forEachIssueCode in control/scoring.go), and this table is a
+		// per-control inventory, not the live verdict. Collapsing the row
+		// count when every finding of a control happens to be dismissed
+		// would make the control's row look emptier than what actually ran.
 		controls = append(controls, controlSummary{
 			name:       e.DisplayName,
 			issues:     len(items),
@@ -360,6 +394,7 @@ func buildProviderControlSummariesAndGroups(p provider.Provider, result *control
 			NotEvaluableReason: reason,
 			Stats:              stats,
 			Findings:           items,
+			Dismissed:          dismissed,
 		})
 	}
 	return controls, groups
@@ -453,6 +488,7 @@ func presentResultWithProvider(p provider.Provider, cmd *cobra.Command, result *
 
 	newLocationLinker(conf, result, p.Name()).Annotate(result.Findings)
 	opaengine.StampFingerprints(result.Findings, conf.GitRepoRoot)
+	markPlatformDismissedFindings(conf, result)
 	summary := buildComplianceSummary(p, result, conf)
 	if printOutput {
 		if err := outputTextWithProvider(p, result, conf, summary, conf.ControlsFilter, conf.SkipControlsFilter); err != nil {

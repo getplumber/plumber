@@ -34,6 +34,44 @@ func TestBuildOCSF_FindingFingerprint(t *testing.T) {
 	}
 }
 
+// TestBuildOCSF_DismissedMarkerFollowsTheFinding pins #447's OCSF export,
+// mirroring how TestBuildOCSF_FindingFingerprint pins fingerprint: a
+// dismissed finding's record carries dismissed:true; an ordinary finding's
+// record carries no "dismissed" key at all (never a literal false).
+func TestBuildOCSF_DismissedMarkerFollowsTheFinding(t *testing.T) {
+	entries := []control.ControlEntry{{ControlName: "actionsMustBePinnedByCommitSha", DisplayName: "Pin"}}
+	result := &control.AnalysisResult{
+		CiValid: true,
+		Findings: []opaengine.Finding{
+			{Code: "ISSUE-701", Message: "live one", Dismissed: false},
+			{Code: "ISSUE-701", Message: "dismissed one", Dismissed: true},
+		},
+	}
+	events := buildOCSF(entries, result, "github", 1, "s")
+	recs, ok := events[0].Unmapped["plumber_findings"].([]map[string]any)
+	if !ok || len(recs) != 2 {
+		t.Fatalf("plumber_findings = %v, want 2 records", events[0].Unmapped["plumber_findings"])
+	}
+	var live, dismissed map[string]any
+	for _, r := range recs {
+		switch r["message"] {
+		case "live one":
+			live = r
+		case "dismissed one":
+			dismissed = r
+		}
+	}
+	if live == nil || dismissed == nil {
+		t.Fatalf("expected both records among %v", recs)
+	}
+	if _, has := live["dismissed"]; has {
+		t.Errorf("live finding record = %v, want no \"dismissed\" key at all", live)
+	}
+	if v, ok := dismissed["dismissed"].(bool); !ok || !v {
+		t.Errorf("dismissed finding record = %v, want dismissed:true", dismissed)
+	}
+}
+
 func TestBuildOCSF_FailingControl(t *testing.T) {
 	entries := []control.ControlEntry{
 		{ControlName: "actionsMustBePinnedByCommitSha", DisplayName: "Pin actions to SHA"},

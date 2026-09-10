@@ -338,6 +338,12 @@ func ocsfFailUnmapped(findings []opaengine.Finding) map[string]any {
 		if f.Fingerprint != "" {
 			rec["fingerprint"] = f.Fingerprint
 		}
+		if f.Dismissed {
+			// #447: same presence-is-the-claim convention as the platform
+			// push's own dismissed field (cmd/platform_push.go) - omitted
+			// entirely rather than sent as false for every ordinary finding.
+			rec["dismissed"] = true
+		}
 		if f.File != "" {
 			rec["file"] = reportFilePath(f.File)
 		}

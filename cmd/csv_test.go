@@ -9,7 +9,7 @@ import (
 )
 
 // Column layout: 0 code, 1 fingerprint, 2 controlName, 3 status, 4 severity,
-// 5 message, 6 context, 7 file, 8 line, 9 url, 10 docUrl.
+// 5 message, 6 context, 7 file, 8 line, 9 url, 10 docUrl, 11 dismissed.
 //
 // ISSUE-701 maps to actionsMustBePinnedByCommitSha in the codes registry, so a
 // finding with that code is associated with that control by FindingsByControl.
@@ -28,7 +28,7 @@ func TestBuildCSV_ShapeColumnsAndOrdering(t *testing.T) {
 
 	records := buildCSV(entries, result)
 
-	wantHeader := []string{"code", "fingerprint", "controlName", "status", "severity", "message", "context", "file", "line", "url", "docUrl"}
+	wantHeader := []string{"code", "fingerprint", "controlName", "status", "severity", "message", "context", "file", "line", "url", "docUrl", "dismissed"}
 	if len(records) != 4 { // header + cleanControl(passed) + disabledControl(skipped) + actions(failed)
 		t.Fatalf("records = %d, want 4", len(records))
 	}
@@ -48,6 +48,9 @@ func TestBuildCSV_ShapeColumnsAndOrdering(t *testing.T) {
 	}
 	if records[1][0] != "" || records[1][1] != "" {
 		t.Errorf("passed row code/fingerprint = %q/%q, want empty", records[1][0], records[1][1])
+	}
+	if records[1][11] != "" {
+		t.Errorf("passed row dismissed = %q, want empty (no finding to have an opinion about)", records[1][11])
 	}
 	if records[2][2] != "disabledControl" || records[2][3] != "skipped" {
 		t.Errorf("row2 = %v, want disabledControl/skipped", records[2][:4])
@@ -71,6 +74,7 @@ func TestBuildCSV_ShapeColumnsAndOrdering(t *testing.T) {
 		8:  "28",
 		9:  "https://example.com/blob/ci.yml#L28",
 		10: "https://getplumber.io/docs/cli/issues/ISSUE-701",
+		11: "false",
 	}
 	for i, w := range want {
 		if failRow[i] != w {
@@ -258,6 +262,43 @@ func TestCSVSafeCell_CoversEveryKnownVector(t *testing.T) {
 		if got := csvSafeCell(s); got != s {
 			t.Errorf("ordinary value was modified: %q -> %q", s, got)
 		}
+	}
+}
+
+// TestBuildCSV_DismissedColumnFollowsTheFinding pins #447's CSV export: the
+// dismissed column carries each failing finding's own marker independently,
+// "true" or "false" as a literal string (encoding/csv writes everything as
+// text; a reader must not have to parse a bool from an ambiguous empty cell).
+func TestBuildCSV_DismissedColumnFollowsTheFinding(t *testing.T) {
+	entries := []control.ControlEntry{{ControlName: "actionsMustBePinnedByCommitSha", DisplayName: "Pin"}}
+	result := &control.AnalysisResult{
+		CiValid: true,
+		Findings: []opaengine.Finding{
+			{Code: "ISSUE-701", Message: "live one", Dismissed: false},
+			{Code: "ISSUE-701", Message: "dismissed one", Dismissed: true},
+		},
+	}
+	records := buildCSV(entries, result)
+	if len(records) != 3 { // header + 2 finding rows
+		t.Fatalf("records = %d, want 3 (header + 2 finding rows)", len(records))
+	}
+	var live, dismissed []string
+	for _, row := range records[1:] {
+		switch row[5] { // message
+		case "live one":
+			live = row
+		case "dismissed one":
+			dismissed = row
+		}
+	}
+	if live == nil || dismissed == nil {
+		t.Fatalf("expected both rows among %v", records[1:])
+	}
+	if live[11] != "false" {
+		t.Errorf("live row dismissed = %q, want \"false\"", live[11])
+	}
+	if dismissed[11] != "true" {
+		t.Errorf("dismissed row dismissed = %q, want \"true\"", dismissed[11])
 	}
 }
 

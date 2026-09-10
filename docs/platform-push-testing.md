@@ -96,6 +96,31 @@ To check a change by hand against a live platform, POST a finding both ways
 and compare - without provenance it is a 422 naming the offending path, with
 `"valueProvenance": "ci_file"` it is a 201.
 
+## The dismissed marker
+
+A finding whose platform identity matches an entry in `/context`'s
+`dismissed_issues` (#447) is marked by `control.MarkDismissed` right after
+fingerprinting, and a failed control's pushed entries carry that as
+`"dismissed":true` (`platformFinding.Dismissed`, omitted entirely when
+false). The finding is still pushed, exactly like any other fail entry: the
+marker is a claim about what the platform already knows, not a reason to
+withhold data from it.
+
+To see it in a captured request, follow the same flow as above (an
+`httptest.Server` reading the push body), decode into `map[string]any`
+rather than `platformPush`, walk `results[0].findings`, and check each
+entry's `"dismissed"` key: present and `true` on a dismissed finding's
+entry, absent on every other one.
+`TestMaybePushPlatform_DismissedFindingWireShape` in
+`cmd/platform_push_test.go` is the pinned example.
+
+A dismissed finding is never dropped anywhere it would otherwise appear: the
+terminal's Controls summary table counts it in a control's issue total and
+per-severity tally (a per-control inventory of what ran, not the live
+verdict), while that same finding is excluded from the Plumber Score and
+called out separately, as "N issues, M dismissed", in the Failed Controls
+detail section right below it.
+
 ## Testing platform mode end to end
 
 Platform mode (`--platform`) reads `/context` and `/resolved-config` before

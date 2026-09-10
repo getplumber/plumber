@@ -406,14 +406,26 @@ func (s Snapshot) Anchor() *ResolutionAnchor {
 	return s.Data.ResolutionAnchor
 }
 
+// DismissedIssue is one entry of ProjectContext.DismissedIssues: the match key for a finding the
+// platform has in status Dismissed (#447). IdentityHash is the platform's full sha256 hex over
+// the shared recipe's Pairs() (identity.PlatformHash); RecipeVersion is the recipe the hash was
+// computed under and versions never mix; ControlType rides along as a cheap pre-filter, never
+// part of the key.
+type DismissedIssue struct {
+	IdentityHash  string `json:"identity_hash"`
+	RecipeVersion int    `json:"recipe_version"`
+	ControlType   string `json:"control_type"`
+}
+
 // ProjectContext is the GET .../context response: the resolved policy set
 // plus the cached data snapshot. Fetching it never triggers a collection on
 // the platform - it is always a cache read.
 type ProjectContext struct {
-	SchemaVersion int      `json:"schema_version"`
-	Project       string   `json:"project"`
-	Policies      []Policy `json:"policies"`
-	Snapshot      Snapshot `json:"snapshot"`
+	SchemaVersion   int              `json:"schema_version"`
+	Project         string           `json:"project"`
+	Policies        []Policy         `json:"policies"`
+	Snapshot        Snapshot         `json:"snapshot"`
+	DismissedIssues []DismissedIssue `json:"dismissed_issues"`
 }
 
 // ResolveRequest asks the platform to resolve the CI config at a specific
