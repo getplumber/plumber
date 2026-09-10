@@ -204,6 +204,13 @@ func reportPlatformMode(rc *platform.RunContext) {
 // left on screen is an ordinary-looking verdict produced WITHOUT the
 // project's policies — the one outcome someone must not walk away with by
 // accident. Repeating it last costs a line and removes that failure mode.
+//
+// It is a backstop rather than the primary notice now: a platform-mode run
+// whose context never arrived resolves no policy, and runPlatformMode reports
+// that run through renderNothingEvaluated - its whole report, one line - and
+// returns before this publish tail. The line stays because any future path
+// that DOES reach the tail without an engaged context must not do so
+// silently.
 func reportPlatformOutcome(rc *platform.RunContext) {
 	if !rc.Active() || rc.Engaged() {
 		return
@@ -214,6 +221,6 @@ func reportPlatformOutcome(rc *platform.RunContext) {
 	}
 	fmt.Fprintf(os.Stderr,
 		"⚠️  platform mode did NOT engage (%s).\n"+
-			"    This run used local collection and the local config only: none of the project's platform policies were applied.\n",
+			"    This run evaluated nothing: none of the project's platform policies could be resolved.\n",
 		reason)
 }

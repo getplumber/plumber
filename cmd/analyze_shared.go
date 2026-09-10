@@ -36,17 +36,67 @@ func runWithProvider(p provider.Provider, cmd *cobra.Command, conf *configuratio
 
 	summary := finalizeFindings(p, conf, result)
 
+	return continueRun(p, cmd, conf, result, summary, controlsFilterList, skipControlsList)
+}
+
+// continueRun is the tail both entry points share after finalizeFindings: in
+// platform mode the resolved policies are evaluated and drive everything
+// (spec s2); otherwise today's single local evaluation does.
+//
+// The non-platform branch is the sequence both callers ran inline before, in
+// the same order, so a standalone run is byte-for-byte what it was.
+func continueRun(p provider.Provider, cmd *cobra.Command, conf *configuration.Configuration, result *control.AnalysisResult, summary complianceSummary, controlsFilterList, skipControlsList []string) error {
+	if summary.platformMode {
+		return runPlatformMode(p, cmd, conf, result, summary, controlsFilterList, skipControlsList)
+	}
 	if printOutput {
 		if err := outputTextWithProvider(p, result, conf, summary, controlsFilterList, skipControlsList); err != nil {
 			return err
 		}
 	}
-
 	if err := writeOutputsWithProvider(p, result, conf, summary); err != nil {
 		return err
 	}
+	return publishAndFinalize(p, cmd, result, conf, summary, nil)
+}
 
-	return publishAndFinalize(p, cmd, result, conf, summary)
+// runPlatformMode is the platform-mode tail: evaluate the resolved policies,
+// render one section per evaluated run, write the artifacts, push, render the
+// platform's verdict, finalize.
+//
+// A run that resolved no policy evaluates NOTHING (spec s4, invariant 5): it
+// prints the one-line notice, exits 0, pushes nothing and writes no artifact.
+// There is no local fallback anywhere on this path - a report produced from
+// the local configuration under a platform link is exactly the wrong-verdict
+// failure the mode exists to remove (QUESTIONS row 44) - and an artifact
+// stamped with a verdict nobody computed would be worse than none.
+func runPlatformMode(p provider.Provider, cmd *cobra.Command, conf *configuration.Configuration, result *control.AnalysisResult, summary complianceSummary, controlsFilterList, skipControlsList []string) error {
+	runs := evaluatePlatformPolicies(p, conf, result)
+	if printOutput {
+		renderRunHeader(p, result, conf)
+		if result.DataCollectionDegraded {
+			renderDegradedCaveat(result.DegradedReasons)
+		}
+	}
+	// Zero runs covers both shapes of "no policy resolved": a context that
+	// could not be fetched or assigned nothing, and a nil PlatformRun (the
+	// platform URL is set but setupPlatformMode never ran, e.g. the project
+	// path could not be resolved). renderNothingEvaluated states the reason
+	// for either.
+	if len(runs) == 0 {
+		if printOutput {
+			renderNothingEvaluated(platformRunOf(conf))
+		}
+		return nil
+	}
+	if printOutput {
+		renderPolicySections(p, conf, runs, controlsFilterList, skipControlsList)
+		renderWarnings(result.Warnings)
+	}
+	if err := writeOutputsWithProvider(p, result, conf, summary); err != nil {
+		return err
+	}
+	return publishAndFinalize(p, cmd, result, conf, summary, runs)
 }
 
 // finalizeFindings turns a raw analysis result into the summary the rest of the
@@ -90,7 +140,12 @@ func markPlatformDismissedFindings(conf *configuration.Configuration, result *co
 // actions, then map the outcome onto the exit code. Keeping it in one place is
 // what stops the two paths from drifting on things like the --no-controls
 // guard below.
-func publishAndFinalize(p provider.Provider, cmd *cobra.Command, result *control.AnalysisResult, conf *configuration.Configuration, summary complianceSummary) error {
+//
+// runs are the evaluated platform policy runs (empty outside platform mode).
+// They are what the push reports one entry per policy for, and what the
+// "Platform verdict" block explains the platform's answer in - the same runs
+// the sections above printed, so the log and the record cannot disagree.
+func publishAndFinalize(p provider.Provider, cmd *cobra.Command, result *control.AnalysisResult, conf *configuration.Configuration, summary complianceSummary, runs []policyRun) error {
 	// Everything here publishes or comments on a verdict. Under
 	// --no-controls there is no verdict: a badge, a score push, a platform
 	// push or an MR comment built from a run that evaluated nothing would
@@ -135,11 +190,14 @@ func publishAndFinalize(p provider.Provider, cmd *cobra.Command, result *control
 
 	jsonPayload := buildPublishPayload(p, conf, result, summary)
 	handleScorePublishing(p, conf, result, summary, jsonPayload)
-	// The per-policy runs are not wired through this tail yet: platform mode
-	// still pushes the single locally-named entry here until the shared
-	// pipeline evaluates them (next slice of the policies-only plan).
-	_, platformErr := maybePushPlatform(p, conf, result, summary.score, nil)
+	verdict, platformErr := maybePushPlatform(p, conf, result, summary.score, runs)
 	reportPlatformOutcome(conf.PlatformRun)
+	// The verdict block closes the platform-mode report: it is the last
+	// thing printed because it is what the exit code is, and printing it
+	// before the push that produces it is not possible.
+	if summary.platformMode && printOutput {
+		renderPlatformVerdict(runs, verdict, platformErr)
+	}
 
 	pas := provider.PostActionSummary{
 		Passed:     summary.passed(),
@@ -241,6 +299,22 @@ func buildComplianceSummary(p provider.Provider, result *control.AnalysisResult,
 	// the existing withhold-the-score path (every consumer already guards
 	// on a nil score), so the outputs carry no score instead of a fake one.
 	scoreMode := !conf.NoControls
+	platformMode := func() bool { on, _ := effectivePlatformPush(); return on }()
+	// In platform mode there is no run-level score to compute: every verdict
+	// comes from the policies the platform resolved (spec s2), each with its
+	// own score over its own control set. A local figure computed here would
+	// be the one that contradicted the platform's (QUESTIONS row 44), so it
+	// is not computed at all rather than computed and hopefully ignored.
+	//
+	// scoreMode is deliberately left alone: it is the --no-controls withhold
+	// switch, and flipping it would change what an artifact says about WHY
+	// there is no score. Every consumer of the score already guards on nil
+	// (the JSON report, the PBOM writers, the banner, the badge, the MR
+	// comment, the gate), so a nil here withholds rather than crashes.
+	score := computeScoreResult(result, scoreMode)
+	if platformMode {
+		score = nil
+	}
 	return complianceSummary{
 		compliance:   compliance,
 		controlCount: controlCount,
@@ -249,11 +323,11 @@ func buildComplianceSummary(p provider.Provider, result *control.AnalysisResult,
 		minPoints:    minPoints,
 		minPointsSet: minPointsSet,
 		minScore:     minScore,
-		score:        computeScoreResult(result, scoreMode),
+		score:        score,
 		scoreMode:    scoreMode,
 		scorePoint:   showScorePoint,
 		noControls:   conf.NoControls,
-		platformMode: func() bool { on, _ := effectivePlatformPush(); return on }(),
+		platformMode: platformMode,
 	}
 }
 
@@ -511,15 +585,7 @@ func presentResultWithProvider(p provider.Provider, cmd *cobra.Command, result *
 	}
 
 	summary := finalizeFindings(p, conf, result)
-	if printOutput {
-		if err := outputTextWithProvider(p, result, conf, summary, conf.ControlsFilter, conf.SkipControlsFilter); err != nil {
-			return err
-		}
-	}
-	if err := writeOutputsWithProvider(p, result, conf, summary); err != nil {
-		return err
-	}
-	return publishAndFinalize(p, cmd, result, conf, summary)
+	return continueRun(p, cmd, conf, result, summary, conf.ControlsFilter, conf.SkipControlsFilter)
 }
 
 func joinStrings(ss []string) string {

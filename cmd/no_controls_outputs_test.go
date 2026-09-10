@@ -494,7 +494,7 @@ func TestPublishAndFinalize_NoControlsSkipsPublishing(t *testing.T) {
 	s := buildComplianceSummary(p, result, conf)
 	var err error
 	stderr := captureStderr(t, func() {
-		err = publishAndFinalize(p, &cobra.Command{}, result, conf, s)
+		err = publishAndFinalize(p, &cobra.Command{}, result, conf, s, nil)
 	})
 	if err != nil {
 		t.Fatalf("--no-controls run must not fail: %v", err)
@@ -533,7 +533,7 @@ func TestPublishAndFinalize_NoControlsSkipsPublishing(t *testing.T) {
 	p2 := &recordingProvider{GitLabProvider: &provider.GitLabProvider{}}
 	conf2 := &configuration.Configuration{PlumberConfig: pc}
 	s2 := buildComplianceSummary(p2, result, conf2)
-	_ = publishAndFinalize(p2, &cobra.Command{}, result, conf2, s2)
+	_ = publishAndFinalize(p2, &cobra.Command{}, result, conf2, s2, nil)
 	if !p2.postCalled {
 		t.Fatal("without --no-controls the post-analysis actions must still run")
 	}
@@ -686,7 +686,7 @@ func TestPublishAndFinalize_NoControlsStillFailsOnDegradedData(t *testing.T) {
 		DegradedReasons:        []string{"merged CI configuration could not be fetched"},
 	}
 
-	err := publishAndFinalize(p, &cobra.Command{}, degraded, conf, buildComplianceSummary(p, degraded, conf))
+	err := publishAndFinalize(p, &cobra.Command{}, degraded, conf, buildComplianceSummary(p, degraded, conf), nil)
 	var incomplete *IncompleteDataError
 	if !errors.As(err, &incomplete) {
 		t.Fatalf("--no-controls must not suppress the degraded-collection failure, got %v", err)
@@ -694,7 +694,7 @@ func TestPublishAndFinalize_NoControlsStillFailsOnDegradedData(t *testing.T) {
 
 	// Mirror: an intact collection exits 0.
 	intact := &control.AnalysisResult{CiValid: true, ProjectPath: "group/project"}
-	if err := publishAndFinalize(p, &cobra.Command{}, intact, conf, buildComplianceSummary(p, intact, conf)); err != nil {
+	if err := publishAndFinalize(p, &cobra.Command{}, intact, conf, buildComplianceSummary(p, intact, conf), nil); err != nil {
 		t.Fatalf("--no-controls on an intact collection must exit 0, got %v", err)
 	}
 }
@@ -846,7 +846,7 @@ func TestPublishAndFinalize_NoControlsFailsOnInvalidCIConfig(t *testing.T) {
 		CiErrors:    []string{"jobs config should contain at least one visible job"},
 	}
 
-	err := publishAndFinalize(p, &cobra.Command{}, invalid, conf, buildComplianceSummary(p, invalid, conf))
+	err := publishAndFinalize(p, &cobra.Command{}, invalid, conf, buildComplianceSummary(p, invalid, conf), nil)
 	var incomplete *IncompleteDataError
 	if !errors.As(err, &incomplete) {
 		t.Fatalf("--no-controls must not exit 0 on an unusable CI config, got %v", err)
@@ -904,7 +904,7 @@ func TestPublishAndFinalize_NoControlsAndMissingCIConfig(t *testing.T) {
 		p := &recordingProvider{GitLabProvider: &provider.GitLabProvider{}}
 		conf := &configuration.Configuration{PlumberConfig: pc, NoControls: true}
 		result := missing()
-		err := publishAndFinalize(p, &cobra.Command{}, result, conf, buildComplianceSummary(p, result, conf))
+		err := publishAndFinalize(p, &cobra.Command{}, result, conf, buildComplianceSummary(p, result, conf), nil)
 		var incomplete *IncompleteDataError
 		if !errors.As(err, &incomplete) {
 			t.Fatalf("a GitLab project with no CI config has no pipeline to inventory; want IncompleteDataError, got %v", err)
@@ -915,7 +915,7 @@ func TestPublishAndFinalize_NoControlsAndMissingCIConfig(t *testing.T) {
 		p := &provider.GitHubProvider{}
 		conf := &configuration.Configuration{PlumberConfig: pc, NoControls: true}
 		result := missing()
-		if err := publishAndFinalize(p, nil, result, conf, buildComplianceSummary(p, result, conf)); err != nil {
+		if err := publishAndFinalize(p, nil, result, conf, buildComplianceSummary(p, result, conf), nil); err != nil {
 			t.Fatalf("a CI-less GitHub repo must keep passing (fleet scans), got %v", err)
 		}
 	})
@@ -943,7 +943,7 @@ func TestPublishAndFinalize_NoControlsFailsOnInvalidCIWithoutErrors(t *testing.T
 		ProjectPath: "group/project",
 	}
 
-	err := publishAndFinalize(p, &cobra.Command{}, invalid, conf, buildComplianceSummary(p, invalid, conf))
+	err := publishAndFinalize(p, &cobra.Command{}, invalid, conf, buildComplianceSummary(p, invalid, conf), nil)
 	var incomplete *IncompleteDataError
 	if !errors.As(err, &incomplete) {
 		t.Fatalf("an invalid CI config with no error strings must still fail, got %v", err)
