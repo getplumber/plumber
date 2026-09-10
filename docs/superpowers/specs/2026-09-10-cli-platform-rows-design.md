@@ -95,9 +95,8 @@ this adopts the behavior (row 19's "ships with the CLI pin bump"). No contract c
 (true), the same with one substantive field set (false), a non-RequiresConfig control with
 `enabled: true` only (false), disabled (false), nil (false). An end-to-end analysis test where a
 RequiresConfig control is enabled bare: `StatusFor` is `StatusError`, the push finding is
-`not_evaluable` with reason `config_required`, and the score does not report 100 for a policy
-whose only control is unconfigured (assert the "Not evaluated" bucket carries it and no `pass`
-finding exists for it). `ReEvaluateForConfig` with two policies, one bare and one configured:
+`not_evaluable` with reason `config_required` (assert the "Not evaluated" bucket carries it and
+no `pass` finding exists for it). `ReEvaluateForConfig` with two policies, one bare and one configured:
 only the bare one is marked.
 
 ## s3. Dismissal propagation, the CLI half (#447)

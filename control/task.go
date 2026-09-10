@@ -1104,6 +1104,10 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 
 	markPlatformLaneGaps(result, conf)
 
+	// An enabled control asserting nothing until its substantive fields are set is not a clean
+	// pass either (#459): it is not_evaluable, config_required, same as any other lane gap.
+	MarkUnconfiguredControls(result, GitLabControls(conf.PlumberConfig), conf.PlumberConfig, configuration.ProviderGitLab)
+
 	reportProgress(conf, analysisStepCount, analysisStepCount, "Analysis complete")
 
 	l.WithFields(logrus.Fields{

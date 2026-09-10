@@ -274,6 +274,7 @@ gitlab:
       enabled: true
     pipelineMustNotOverrideJobVariables:
       enabled: true
+      variables: [CI_JOB_TOKEN]
 `
 
 // platformSnapshot builds the RunContext a fully-served platform run has:

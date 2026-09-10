@@ -43,6 +43,8 @@ Both views are reported:
 - `counts.{critical,high,medium,low}`: total findings per severity (banner, MR comment).
 - `codeLosses[]`: per-code rows that drive the score (full breakdown via `--score-point`).
 
+An enabled control none of whose substantive configuration fields is set is not evaluated (`not_evaluable`, reason `config_required`) and contributes no findings; the loss-based points above are unaffected, so such a policy can still read 100 while every one of its controls is marked not evaluated (#459). Whether a policy with no evaluable control should have its score withheld instead is an open platform question.
+
 ---
 
 ## Step 1: Loss per issue code
