@@ -73,3 +73,35 @@ func TestReflectControlSchemas(t *testing.T) {
 		}
 	})
 }
+
+// controlBlockGuardFixture stands in for a ControlsConfig that has drifted: every control block
+// is a pointer to a struct today, and the two other shapes below are what a future field could
+// look like. Reflection cannot be type-checked at compile time, so the guard needs a fixture
+// that actually has the wrong shapes.
+type controlBlockGuardFixture struct {
+	Block *struct {
+		Enabled *bool `yaml:"enabled"`
+	} `yaml:"blockControl"`
+	Count *int `yaml:"countControl"`
+	Plain int  `yaml:"plainControl"`
+}
+
+// TestStructPointerField_OnlyAcceptsAPointerToStruct pins the guard IsUnconfigured depends on:
+// the value it gets back is dereferenced and walked with NumField, which panics on a pointer to
+// anything that is not a struct. "No block" is the honest answer for a field of any other shape,
+// and it is the answer that makes the control fall through to "asserts something" rather than
+// taking the process down.
+func TestStructPointerField_OnlyAcceptsAPointerToStruct(t *testing.T) {
+	fixture := reflect.ValueOf(&controlBlockGuardFixture{}).Elem()
+
+	got := structPointerField(fixture, "blockControl")
+	if !got.IsValid() || got.Kind() != reflect.Ptr || got.Type().Elem().Kind() != reflect.Struct {
+		t.Fatalf("blockControl = %v, want the pointer-to-struct field itself", got)
+	}
+
+	for _, name := range []string{"countControl", "plainControl", "noSuchControl"} {
+		if got := structPointerField(fixture, name); got.IsValid() {
+			t.Errorf("%s = %v, want an invalid Value: only a pointer to a struct can be walked", name, got)
+		}
+	}
+}

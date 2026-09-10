@@ -14,6 +14,7 @@ import (
 	"github.com/getplumber/plumber/configuration"
 	defaultconfig "github.com/getplumber/plumber/defaultConfig"
 	"github.com/getplumber/plumber/internal/ir"
+	"github.com/getplumber/plumber/utils"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -758,9 +759,14 @@ func providersFromProviderChoice(choice string) []string {
 // preserves historical behaviour for the (still common) GitLab-only
 // case.
 func autoDetectProviderForInit() []string {
-	out, err := exec.Command("git", "config", "--get", "remote.origin.url").Output()
+	// Through utils.GitOutput, not exec.Command: the wizard runs in the same kind of checkout
+	// `plumber analyze` does, and a raw invocation is refused on one owned by another uid without
+	// saying why (#464). The helper declares the inspected directory safe and logs git's own
+	// first stderr line, so a wizard that silently falls back to GitLab is at least diagnosable.
+	dir, _ := os.Getwd()
+	out, err := utils.GitOutput(dir, "config", "--get", "remote.origin.url")
 	if err == nil {
-		url := strings.ToLower(strings.TrimSpace(string(out)))
+		url := strings.ToLower(out)
 		switch {
 		case strings.Contains(url, "github.com"):
 			return []string{provGitHub}

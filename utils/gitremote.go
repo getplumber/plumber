@@ -101,11 +101,33 @@ func hasGitHubWorkflows(repoRoot string) bool {
 // image runs as uid 65532); git >= 2.35.2 otherwise refuses with "detected dubious ownership".
 // The single inspected directory is named, never '*': the trust decision stays as narrow as the
 // question being asked.
+//
+// An empty dir means "run wherever the process already is" (a cwd caller whose os.Getwd failed),
+// and the -c argument is then omitted entirely rather than emitted empty: `safe.directory=` with
+// an empty value is git's documented way to RESET the list, so passing it would discard whatever
+// entries a real global config carries instead of adding one.
 func gitCommand(dir string, args ...string) *exec.Cmd {
-	full := append([]string{"-c", "safe.directory=" + dir}, args...)
+	full := args
+	if dir != "" {
+		full = append([]string{"-c", "safe.directory=" + dir}, args...)
+	}
 	cmd := exec.Command("git", full...)
 	cmd.Dir = dir
 	return cmd
+}
+
+// credentialInURL matches a URL's userinfo segment: everything between "://" and the "@" that
+// closes it. Deliberately greedy about what counts as userinfo (any run of characters that is
+// not a slash, another "@" or whitespace) and blind to what it means: a bare
+// `https://<token>@host` carries a secret in the position an ordinary user name occupies, so
+// telling the two apart is guesswork a log line does not need to attempt.
+var credentialInURL = regexp.MustCompile(`://[^/@\s]+@`)
+
+// redactCredentials rewrites every `://<userinfo>@` segment of s to `://***@`, so a remote URL
+// echoed back by git cannot carry a token into a log line. Everything else is left byte for
+// byte: the point of logging git's own message is that it is git's own message.
+func redactCredentials(s string) string {
+	return credentialInURL.ReplaceAllString(s, "://***@")
 }
 
 // runGit runs a gitCommand and returns its trimmed stdout. On failure it logs the first stderr
@@ -113,20 +135,34 @@ func gitCommand(dir string, args ...string) *exec.Cmd {
 // indistinguishable to every caller, and platform mode silently lost five controls on the
 // default executor with nothing in the job log to explain it.
 //
-// "not a git repository" is the routine, expected case for every plumber invocation outside a
-// git checkout (`plumber analyze` runs at Warn by default), so it logs at Debug; any other
-// failure, dubious ownership included, is unexpected in a real checkout and logs at Warn.
+// Two cases are routine, expected and log at Debug rather than Warn (`plumber analyze` runs at
+// Warn by default, and the wizard runs in front of a user): "not a git repository", which is every
+// plumber invocation outside a checkout, and a failure with NOTHING on stderr, which is how git
+// reports a question with no answer - `config --get remote.origin.url` in a repository that has no
+// origin exits 1 and says nothing. Warning about the latter printed an empty message mid-wizard.
+// Any other failure, dubious ownership included, is unexpected in a real checkout and logs at Warn.
+//
+// The logged stderr line goes through redactCredentials, which covers the credentials git echoes
+// back from a remote URL. That is the ONLY redaction here, so this helper must not be used for a
+// network-touching git command (fetch, ls-remote, clone, push) without extending it: those
+// commands report far more of their inputs on failure - proxy settings, request headers, an
+// askpass-supplied credential - and none of that is covered today. The local inspections it
+// serves (remote get-url, rev-parse) print the repository path and, at most, the configured
+// remote URL.
 func runGit(dir string, args ...string) (string, error) {
 	cmd := gitCommand(dir, args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	out, err := cmd.Output()
 	if err != nil {
-		first := strings.SplitN(strings.TrimSpace(stderr.String()), "\n", 2)[0]
+		first := redactCredentials(strings.SplitN(strings.TrimSpace(stderr.String()), "\n", 2)[0])
 		entry := logrus.WithFields(logrus.Fields{"dir": dir, "args": strings.Join(args, " ")})
-		if strings.Contains(first, "not a git repository") {
+		switch {
+		case first == "":
+			entry.Debugf("git %s failed with no output", strings.Join(args, " "))
+		case strings.Contains(first, "not a git repository"):
 			entry.Debugf("git %s failed: %s", strings.Join(args, " "), first)
-		} else {
+		default:
 			entry.Warnf("git %s failed: %s", strings.Join(args, " "), first)
 		}
 		return "", err
@@ -134,11 +170,29 @@ func runGit(dir string, args ...string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// GitOutput runs a read-only git command in dir and returns its trimmed stdout, with the same
+// safe.directory declaration and the same failure diagnostics every git shell-out in this package
+// gets. It exists so that a caller outside this package (`plumber init`, reading the origin
+// remote) does not reach for exec.Command directly and quietly reintroduce #464: a raw invocation
+// is refused on a checkout owned by another uid, and says nothing about why.
+//
+// The contract on runGit applies unchanged: local inspections only, never a network-touching git
+// command.
+func GitOutput(dir string, args ...string) (string, error) {
+	return runGit(dir, args...)
+}
+
 // DetectGitRemote attempts to detect GitLab URL and project path from git remote.
 // It tries the "origin" remote first.
 // Returns nil if detection fails (not a git repo, no remote, not a GitLab URL, etc.)
 func DetectGitRemote() *GitRemoteInfo {
-	// Try to get the origin remote URL
+	// Try to get the origin remote URL.
+	//
+	// The declared directory is the process cwd, and git matches safe.directory against the
+	// WORKTREE ROOT, not the directory it was started in: a run from a subdirectory of a
+	// foreign-owned clone is therefore still refused. That is not the #464 scenario (a CI job
+	// runs at the project root, which is exactly what gets declared here), and walking up to the
+	// root before declaring it is a possible follow-up rather than something this needs.
 	dir, _ := os.Getwd()
 	remoteURL, err := runGit(dir, "remote", "get-url", "origin")
 	if err != nil {
@@ -170,6 +224,8 @@ func DetectGitRemote() *GitRemoteInfo {
 // DetectGitRepoRoot returns the absolute path to the root of the current git repository.
 // Returns an empty string if not in a git repository.
 func DetectGitRepoRoot() string {
+	// Same cwd caveat as DetectGitRemote: safe.directory is matched on the worktree root, so this
+	// declaration only covers a run started at the root itself.
 	dir, _ := os.Getwd()
 	out, err := runGit(dir, "rev-parse", "--show-toplevel")
 	if err != nil {

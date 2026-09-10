@@ -114,6 +114,25 @@ entry, absent on every other one.
 `TestMaybePushPlatform_DismissedFindingWireShape` in
 `cmd/platform_push_test.go` is the pinned example.
 
+The wiring one level up - `markPlatformDismissedFindings` running between
+`StampFingerprints` and `buildComplianceSummary`, which is what makes the mark
+happen at all on a real run - lives in one place, `finalizeFindings`
+(`cmd/analyze_shared.go`), called by both entry points: `runWithProvider` for
+GitLab and `presentResultWithProvider` for the GitHub paths. It is pinned by
+`TestSharedPipeline_ServedDismissalMarksThePushAndLeavesTheScore` in the same
+file, which drives BOTH of them (the GitLab one with the provider's `Run`
+stubbed to a canned result). The test builds the served entry the way the
+platform does (`identity.PlatformHash` of the finding after stamping, at
+`identity.RecipeVersion`) and reads both the marker on the wire and the score
+that run computed, so dropping the call - or reintroducing a copy of the
+sequence without it - fails there instead of shipping.
+
+The `--output` JSON report is the one output with no marker on it, on purpose:
+its finding objects are the same bytes the identity recipe hashes, so a field
+added there would change the identity the platform and the CLI have to agree
+on. The CSV export (a `dismissed` column) and the OCSF export (a
+`dismissed: true` key) are free of that constraint and do carry it.
+
 A dismissed finding is never dropped anywhere it would otherwise appear: the
 terminal's Controls summary table counts it in a control's issue total and
 per-severity tally (a per-control inventory of what ran, not the live

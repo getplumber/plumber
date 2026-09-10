@@ -58,6 +58,21 @@ func TestIsUnconfigured_NestedToggleSettingOnlyItsOwnEnabledIsNotSubstantive(t *
 	}
 }
 
+// TestIsUnconfigured_ExplicitEmptySliceIsZero pins the "empty slice or map" half of the
+// IsUnconfigured doc comment: yaml.v2 decodes an explicit `namePatterns: []` into a non-nil,
+// zero-length slice, which reflect.Value.IsZero() would read as "set" (IsZero on a slice is
+// IsNil). branchMustBeProtected.namePatterns must still count as not substantive, so the control
+// is still unconfigured.
+func TestIsUnconfigured_ExplicitEmptySliceIsZero(t *testing.T) {
+	pc := plumberConfigWith(t, "gitlab", "branchMustBeProtected", map[string]interface{}{
+		"enabled":      true,
+		"namePatterns": []interface{}{},
+	})
+	if !IsUnconfigured(pc, "gitlab", "branchMustBeProtected") {
+		t.Error("#459: an explicit empty namePatterns list sets nothing substantive and must be unconfigured")
+	}
+}
+
 // requiresConfigControl is a (name, provider) pair picked out of ControlsCatalog() for the test
 // helpers below: enough to build a minimal .plumber.yaml fixture and call IsUnconfigured.
 type requiresConfigControl struct {

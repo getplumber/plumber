@@ -303,3 +303,92 @@ func TestRunGitHubAnalysis_NoWorkflows(t *testing.T) {
 		t.Errorf("expected no findings, got %d", len(result.Findings))
 	}
 }
+
+// TestRunGitHubAnalysis_MarksUnconfiguredControlNotEvaluable pins
+// MarkUnconfiguredControls' wiring into RunGitHubAnalysis (#459): a
+// RequiresConfig control enabled with no substantive field must surface
+// as config_required, not a silent pass, at the real entry point rather
+// than only in the unit-level configuration package tests.
+func TestRunGitHubAnalysis_MarksUnconfiguredControlNotEvaluable(t *testing.T) {
+	enabled := true
+	conf := &configuration.Configuration{
+		ProjectPath: "owner/repo",
+		GitRepoRoot: writeMinimalWorkflow(t),
+		PlumberConfig: &configuration.PlumberConfig{
+			GitHub: &configuration.ProviderConfig{
+				Controls: configuration.ControlsConfig{
+					WorkflowMustIncludeRequiredActions: &configuration.RequiredActionsControlConfig{
+						Enabled: &enabled,
+					},
+				},
+			},
+		},
+	}
+
+	result, err := RunGitHubAnalysis(conf)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	reason, ok := result.NotEvaluableReason("workflowMustIncludeRequiredActions")
+	if !ok || reason != ReasonConfigRequired {
+		t.Fatalf("expected workflowMustIncludeRequiredActions to be config_required, got reason=%q ok=%v", reason, ok)
+	}
+
+	entry := findControlEntry(t, GitHubControls(conf.PlumberConfig), "workflowMustIncludeRequiredActions")
+	findingCount := len(FindingsByControl(result.Findings)["workflowMustIncludeRequiredActions"])
+	if got := StatusFor(entry, result, findingCount); got != StatusError {
+		t.Errorf("expected StatusFor %q, got %q", StatusError, got)
+	}
+}
+
+// TestRunGitHubAnalysisRemote_MarksUnconfiguredControlNotEvaluable is the
+// remote-fetch mirror of the above: MarkUnconfiguredControls is called
+// separately in RunGitHubAnalysisRemote (control/task_github.go), so the
+// local-path test alone leaves this call site free to be deleted with the
+// suite still green.
+func TestRunGitHubAnalysisRemote_MarksUnconfiguredControlNotEvaluable(t *testing.T) {
+	swapRemoteScan(t, remoteScanStub)
+
+	enabled := true
+	conf := &configuration.Configuration{
+		PlumberConfig: &configuration.PlumberConfig{
+			GitHub: &configuration.ProviderConfig{
+				Controls: configuration.ControlsConfig{
+					WorkflowMustIncludeRequiredActions: &configuration.RequiredActionsControlConfig{
+						Enabled: &enabled,
+					},
+				},
+			},
+		},
+	}
+
+	result, err := RunGitHubAnalysisRemote(conf, "owner", "repo", "main")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	reason, ok := result.NotEvaluableReason("workflowMustIncludeRequiredActions")
+	if !ok || reason != ReasonConfigRequired {
+		t.Fatalf("expected workflowMustIncludeRequiredActions to be config_required, got reason=%q ok=%v", reason, ok)
+	}
+
+	entry := findControlEntry(t, GitHubControls(conf.PlumberConfig), "workflowMustIncludeRequiredActions")
+	findingCount := len(FindingsByControl(result.Findings)["workflowMustIncludeRequiredActions"])
+	if got := StatusFor(entry, result, findingCount); got != StatusError {
+		t.Errorf("expected StatusFor %q, got %q", StatusError, got)
+	}
+}
+
+// findControlEntry returns the ControlEntry named name out of entries, or
+// fails the test. Small helper shared by the two tests above.
+func findControlEntry(t *testing.T, entries []ControlEntry, name string) ControlEntry {
+	t.Helper()
+	for _, e := range entries {
+		if e.ControlName == name {
+			return e
+		}
+	}
+	t.Fatalf("no control entry named %s", name)
+	return ControlEntry{}
+}

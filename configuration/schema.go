@@ -178,25 +178,33 @@ func IsUnconfigured(pc *PlumberConfig, provider, controlName string) bool {
 }
 
 // controlBlock returns the reflect.Value of controlName's config-struct pointer field on
-// provider's ControlsConfig, or an invalid Value if the control is not one of ControlsConfig's
-// fields, or that field is not pointer-typed (every control block is a pointer today; the guard
-// is here so a future value-typed field returns "no block" instead of panicking the IsNil() check
-// IsUnconfigured makes on the result). Walks the same yamlName-keyed fields reflectControlSchemas
-// does, so the two can never disagree about which field is which control's.
+// provider's ControlsConfig, or an invalid Value if there is no such field or it does not have
+// the shape a control block has. Walks the same yamlName-keyed fields reflectControlSchemas does,
+// so the two can never disagree about which field is which control's.
 func controlBlock(pc *PlumberConfig, provider, controlName string) reflect.Value {
 	cc := pc.ControlsFor(provider)
 	v := reflect.ValueOf(cc)
 	if !v.IsValid() || v.IsNil() {
 		return reflect.Value{}
 	}
-	v = v.Elem()
+	return structPointerField(v.Elem(), controlName)
+}
+
+// structPointerField returns the field of struct value v whose yaml name is name, provided it is
+// a POINTER TO A STRUCT, and an invalid Value otherwise. Both halves of that condition are load
+// bearing: the caller dereferences the result and walks it with NumField (substantiveFieldsAreZero),
+// which panics on a pointer to anything else, and calls IsNil on it, which panics on a
+// non-pointer. Every control block is a pointer to a struct today, so this only ever fires on a
+// future field of a different shape - which then reads as "no block", the honest answer, instead
+// of taking the process down.
+func structPointerField(v reflect.Value, name string) reflect.Value {
 	t := v.Type()
 	for i := 0; i < t.NumField(); i++ {
-		if yamlName(t.Field(i)) != controlName {
+		if yamlName(t.Field(i)) != name {
 			continue
 		}
 		fv := v.Field(i)
-		if fv.Kind() != reflect.Ptr {
+		if fv.Kind() != reflect.Ptr || fv.Type().Elem().Kind() != reflect.Struct {
 			return reflect.Value{}
 		}
 		return fv
@@ -229,6 +237,13 @@ func substantiveFieldsAreZero(v reflect.Value) bool {
 			}
 		case fv.Kind() == reflect.Struct:
 			if !substantiveFieldsAreZero(fv) {
+				return false
+			}
+		case fv.Kind() == reflect.Slice || fv.Kind() == reflect.Map:
+			// reflect.Value.IsZero() on a Slice/Map is IsNil(): yaml.v2 decodes an explicit
+			// `[]` / `{}` into a non-nil, zero-length value, so IsZero() alone would read that
+			// as "set". Treat zero-length the same as nil here to match the doc comment above.
+			if fv.Len() != 0 {
 				return false
 			}
 		default:
