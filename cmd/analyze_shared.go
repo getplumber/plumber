@@ -135,7 +135,7 @@ func publishAndFinalize(p provider.Provider, cmd *cobra.Command, result *control
 
 	jsonPayload := buildPublishPayload(p, conf, result, summary)
 	handleScorePublishing(p, conf, result, summary, jsonPayload)
-	platformErr := maybePushPlatform(p, conf, result, summary.score)
+	_, platformErr := maybePushPlatform(p, conf, result, summary.score)
 	reportPlatformOutcome(conf.PlatformRun)
 
 	pas := provider.PostActionSummary{

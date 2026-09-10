@@ -61,6 +61,14 @@ type Policy struct {
 	Name         string              `json:"name"`
 	Enforcement  Enforcement         `json:"enforcement"`
 	Requirements []PolicyRequirement `json:"requirements,omitempty"`
+
+	// MinPoints is the policy's enforcement threshold as the platform serves it
+	// (Policy.min_points on /context, nullable): a block-mode policy blocks when
+	// its recomputed FINAL points fall strictly below it. nil = unset, the
+	// platform's any-fail rule applies. Read by the platform-verdict renderer
+	// only; never a gate the CLI evaluates itself (the exit code is the
+	// platform's verdict).
+	MinPoints *int `json:"min_points,omitempty"`
 }
 
 // PolicyRequirement is one requirement grouping inside a policy's tree.

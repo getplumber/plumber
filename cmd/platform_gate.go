@@ -32,11 +32,25 @@ type platformGate struct {
 }
 
 // platformPushResponse is the shape decoded from a 2xx push response body.
-// Gate is a pointer so a response with no "gate" key at all (an old
-// platform that predates gate evaluation) is distinguishable from one that
-// evaluated the gate - see evaluatePlatformGate.
+// Gate is a pointer so a response with no "gate" key (an old platform) is
+// distinguishable from an evaluated gate. GlobalScore is the platform's own
+// displayed score for the run (PushAccepted.global_score: the average of the
+// policies' FINAL points, letter from that average), nil when absent.
 type platformPushResponse struct {
-	Gate *platformGate `json:"gate"`
+	Gate        *platformGate  `json:"gate"`
+	GlobalScore *platformScore `json:"global_score"`
+}
+
+// platformVerdict is what a push produced, for every consumer after the push:
+// the renderer's "Platform verdict" block, the badge and MR comment headline,
+// the JSON top-level score, and finalizeRun's exit code (through the error
+// evaluatePlatformGate returns beside it). Unavailable is the fail-open
+// reason when no usable gate came back (old platform, unparseable body); Gate
+// is nil in that case.
+type platformVerdict struct {
+	Gate        *platformGate
+	GlobalScore *platformScore
+	Unavailable string
 }
 
 // PlatformGateError reports that the platform's post-push gate evaluation
@@ -91,27 +105,33 @@ func platformGatePolicyDescriptions(policies []platformGatePolicy) []string {
 }
 
 // evaluatePlatformGate parses a successful push response's gate block and
-// decides the platform-gate outcome for this run. Every fail-open path
-// prints exactly one line and returns nil - never an error - matching the
-// same "unavailable-class" sentence the transport/non-2xx failures use
+// decides the platform-gate outcome for this run, returning a *platformVerdict
+// alongside the error for every consumer downstream of the push (the
+// renderer's "Platform verdict" block, the badge, the MR comment, the JSON
+// top-level score). Every fail-open path prints exactly one line and returns
+// a non-nil verdict with a nil error - never an error - matching the same
+// "unavailable-class" sentence the transport/non-2xx failures use
 // (platformGateFailOpenLine), so an old platform that has never heard of
 // gates behaves identically to one that is temporarily down:
 //
 //   - a body that does not parse as JSON, or one that parses but carries no
 //     "gate" key at all: an old platform. Fail open with the unavailable
-//     line.
+//     line, the verdict's Gate nil and Unavailable set.
 //   - evaluated:false: the platform's own explicit fail-open (nothing
 //     configured to gate this project, a snapshot not yet collected,
-//     etc). Fail open, logging the platform's own reason.
-//   - blocking:false: nothing to do, the run proceeds.
+//     etc). Fail open, logging the platform's own reason; the verdict still
+//     carries the decoded Gate and GlobalScore, with Unavailable set to the
+//     same reason.
+//   - blocking:false: nothing to do, the run proceeds; the verdict carries
+//     the decoded Gate and GlobalScore, Unavailable empty.
 //   - blocking:true: a *PlatformGateError naming every blocking policy
-//     (gate.policies filtered to Blocking==true) is returned, and the
-//     same detail is printed to stderr here - the job-log line - so it
-//     reaches the operator regardless of what finalizeRun's precedence
-//     ultimately does with the returned error (a local score-gate failure
-//     outranks it and discards it as the *returned* error, but the line
-//     already reached the log).
-func evaluatePlatformGate(body []byte) error {
+//     (gate.policies filtered to Blocking==true) is returned alongside the
+//     same verdict (Gate and GlobalScore decoded), and the same detail is
+//     printed to stderr here - the job-log line - so it reaches the operator
+//     regardless of what finalizeRun's precedence ultimately does with the
+//     returned error (a local score-gate failure outranks it and discards it
+//     as the *returned* error, but the line already reached the log).
+func evaluatePlatformGate(body []byte) (*platformVerdict, error) {
 	var resp platformPushResponse
 	if err := json.Unmarshal(body, &resp); err != nil || resp.Gate == nil {
 		// A 2xx-accepted push whose body carries no usable gate verdict: an
@@ -120,7 +140,7 @@ func evaluatePlatformGate(body []byte) error {
 		// line, never the alertable "unavailable" sentence (see the
 		// constants' doc comment below).
 		scoreWarn(platformGateNoVerdictLine)
-		return nil
+		return &platformVerdict{Unavailable: platformGateNoVerdictLine}, nil
 	}
 	gate := resp.Gate
 
@@ -130,11 +150,11 @@ func evaluatePlatformGate(body []byte) error {
 			msg += ": " + gate.Reason
 		}
 		scoreWarn(msg)
-		return nil
+		return &platformVerdict{Gate: gate, GlobalScore: resp.GlobalScore, Unavailable: msg}, nil
 	}
 
 	if !gate.Blocking {
-		return nil
+		return &platformVerdict{Gate: gate, GlobalScore: resp.GlobalScore}, nil
 	}
 
 	blocking := make([]platformGatePolicy, 0, len(gate.Policies))
@@ -152,7 +172,7 @@ func evaluatePlatformGate(body []byte) error {
 	// placeholder - never a bare "BLOCKED: " with nothing after the colon
 	// (PR-review finding).
 	fmt.Fprintf(os.Stderr, "✗ platform gate BLOCKED: %s\n", platformGateDetail(blocking, gate.Reason))
-	return &PlatformGateError{Reason: gate.Reason, Policies: blocking}
+	return &platformVerdict{Gate: gate, GlobalScore: resp.GlobalScore}, &PlatformGateError{Reason: gate.Reason, Policies: blocking}
 }
 
 // The two EXACT fail-open sentences the spec requires (see

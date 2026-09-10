@@ -46,7 +46,7 @@ func TestMaybePushPlatform_GateBlockingFailsWithPolicyDetail(t *testing.T) {
 
 	var err error
 	out := captureStderr(t, func() {
-		err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil)
+		_, err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil)
 	})
 
 	var gateErr *PlatformGateError
@@ -82,7 +82,7 @@ func TestMaybePushPlatform_GateBlockingWithoutPolicyDetailStillNamesTheReason(t 
 
 	var err error
 	out := captureStderr(t, func() {
-		err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil)
+		_, err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil)
 	})
 
 	var gateErr *PlatformGateError
@@ -138,7 +138,7 @@ func TestMaybePushPlatform_GateBlockingWithoutAnyDetailStaysHonest(t *testing.T)
 
 	var err error
 	out := captureStderr(t, func() {
-		err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil)
+		_, err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil)
 	})
 	var gateErr *PlatformGateError
 	if !errors.As(err, &gateErr) {
@@ -156,7 +156,7 @@ func TestMaybePushPlatform_GatePassingDoesNotFail(t *testing.T) {
 	restore := withPlatformTestEnv(t, srv.URL, "tok-123")
 	defer restore()
 
-	if err := maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil); err != nil {
+	if _, err := maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil); err != nil {
 		t.Fatalf("maybePushPlatform = %v, want nil: a non-blocking gate must not fail the run", err)
 	}
 }
@@ -172,7 +172,7 @@ func TestMaybePushPlatform_GateNotEvaluatedFailsOpenWithReason(t *testing.T) {
 
 	var err error
 	out := captureStderr(t, func() {
-		err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil)
+		_, err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil)
 	})
 	if err != nil {
 		t.Fatalf("maybePushPlatform = %v, want nil: evaluated:false must fail open", err)
@@ -196,7 +196,7 @@ func TestMaybePushPlatform_MissingGateKeyFailsOpenAsNoVerdict(t *testing.T) {
 
 	var err error
 	out := captureStderr(t, func() {
-		err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil)
+		_, err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil)
 	})
 	if err != nil {
 		t.Fatalf("maybePushPlatform = %v, want nil: a missing gate key must fail open", err)
@@ -219,7 +219,7 @@ func TestMaybePushPlatform_UnparseableBodyFailsOpenAsNoVerdict(t *testing.T) {
 
 	var err error
 	out := captureStderr(t, func() {
-		err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil)
+		_, err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil)
 	})
 	if err != nil {
 		t.Fatalf("maybePushPlatform = %v, want nil: an unparseable body must fail open", err)
@@ -260,7 +260,7 @@ func TestMaybePushPlatform_ClassDistinguishedFailOpenSentences(t *testing.T) {
 
 			var err error
 			out := captureStderr(t, func() {
-				err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil)
+				_, err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil)
 			})
 			if err != nil {
 				t.Fatalf("maybePushPlatform = %v, want nil: a remote push failure must never fail the run", err)
@@ -281,7 +281,7 @@ func TestMaybePushPlatform_ClassDistinguishedFailOpenSentences(t *testing.T) {
 
 		var err error
 		out := captureStderr(t, func() {
-			err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil)
+			_, err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil)
 		})
 		if err != nil {
 			t.Fatalf("maybePushPlatform = %v, want nil: a transport failure must never fail the run", err)
@@ -321,7 +321,7 @@ func TestMaybePushPlatform_ClassDistinguishedFailOpenSentences(t *testing.T) {
 
 		var err error
 		out := captureStderr(t, func() {
-			err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil)
+			_, err = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil)
 		})
 		if err != nil {
 			t.Fatalf("maybePushPlatform = %v, want nil: a 2xx body-read failure must never fail the run", err)
@@ -347,12 +347,50 @@ func TestMaybePushPlatform_SuccessLineUnchangedOnPassingGate(t *testing.T) {
 	defer restore()
 
 	out := captureStderr(t, func() {
-		if err := maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil); err != nil {
+		if _, err := maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil); err != nil {
 			t.Fatalf("maybePushPlatform: %v", err)
 		}
 	})
 	if !strings.Contains(out, "✓ Results pushed to the platform:") {
 		t.Errorf("stderr = %q, want the unchanged push-success line", out)
+	}
+}
+
+// The push response carries the platform's global score beside the gate; the
+// renderer, the badge and the JSON top level read it, so it must be decoded
+// with the gate, and an absent key must stay nil (an older platform), never 0.
+func TestEvaluatePlatformGate_ReturnsVerdictWithGlobalScore(t *testing.T) {
+	body := `{"gate":{"evaluated":true,"blocking":false,"policies":[{"id":"p1","name":"Baseline","enforcement":"report","blocking":false,"live_fail_count":2}]},"global_score":{"letter":"B","points":83}}`
+	v, err := evaluatePlatformGate([]byte(body))
+	if err != nil {
+		t.Fatalf("non-blocking verdict must not error: %v", err)
+	}
+	if v == nil || v.Gate == nil || v.Gate.Evaluated != true || len(v.Gate.Policies) != 1 {
+		t.Fatalf("gate not decoded: %+v", v)
+	}
+	if v.GlobalScore == nil || v.GlobalScore.Letter != "B" || v.GlobalScore.Points != 83 {
+		t.Fatalf("global_score: want B/83, got %+v", v.GlobalScore)
+	}
+
+	noScore := `{"gate":{"evaluated":true,"blocking":false,"policies":[]}}`
+	v2, err := evaluatePlatformGate([]byte(noScore))
+	if err != nil || v2.GlobalScore != nil {
+		t.Fatalf("absent global_score must decode nil, got %+v err %v", v2.GlobalScore, err)
+	}
+
+	blocking := `{"gate":{"evaluated":true,"blocking":true,"policies":[{"id":"p2","name":"Prod","enforcement":"block","blocking":true,"live_fail_count":1}]},"global_score":{"letter":"C","points":60}}`
+	v3, err := evaluatePlatformGate([]byte(blocking))
+	var gateErr *PlatformGateError
+	if !errors.As(err, &gateErr) {
+		t.Fatalf("blocking verdict must return *PlatformGateError, got %v", err)
+	}
+	if v3 == nil || v3.GlobalScore == nil || v3.GlobalScore.Letter != "C" {
+		t.Fatalf("a blocking verdict still carries the decoded response: %+v", v3)
+	}
+
+	v4, err := evaluatePlatformGate([]byte("not json"))
+	if err != nil || v4 == nil || v4.Gate != nil || v4.Unavailable == "" {
+		t.Fatalf("unparseable body: want a verdict with Gate nil and an Unavailable reason, got %+v err %v", v4, err)
 	}
 }
 
@@ -386,7 +424,7 @@ func TestFinalizeRun_LocalGateAndPlatformGateBothPresent(t *testing.T) {
 
 	var platformErr error
 	out := captureStderr(t, func() {
-		platformErr = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil)
+		_, platformErr = maybePushPlatform(testProvider(t), gateConf(t), &control.AnalysisResult{}, nil)
 	})
 	var gotGateErr *PlatformGateError
 	if !errors.As(platformErr, &gotGateErr) {
