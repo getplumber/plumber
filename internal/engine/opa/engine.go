@@ -53,8 +53,12 @@ type Finding struct {
 	// stamped once by StampFingerprints so every output format carries the same
 	// value and a consumer can track the same finding across runs even as line
 	// numbers drift. Empty until stamped, and for codeless findings.
-	Fingerprint string         `json:"-"`
-	Data        map[string]any `json:"-"`
+	Fingerprint string `json:"-"`
+	// Dismissed is set by control.MarkDismissed when the platform served this finding's identity
+	// as dismissed (#447); never emitted by MarshalJSON (the platform hashes that object) and
+	// never a status: pass|fail|not_evaluable is frozen.
+	Dismissed bool           `json:"-"`
+	Data      map[string]any `json:"-"`
 }
 
 // MarshalJSON flattens the canonical fields and the Data payload into
@@ -115,6 +119,13 @@ func (f Finding) identityInput() identity.Finding {
 		Message: f.Message,
 		Data:    f.Data,
 	}
+}
+
+// IdentityInput is the exported form of identityInput, for a caller outside this package that
+// needs the identity recipe's own view of the finding: the control package hashes it against the
+// platform's served dismissed_issues (#447) without duplicating the field selection.
+func (f Finding) IdentityInput() identity.Finding {
+	return f.identityInput()
 }
 
 // computeFingerprint hashes the identity field set above into the short, stable

@@ -79,6 +79,13 @@ func forEachIssueCode(result *AnalysisResult, fn func(ErrorCode)) {
 		return
 	}
 	for _, f := range result.Findings {
+		if f.Dismissed {
+			// #447: out of the score like not_evaluable, never counted as a
+			// live occurrence. The single skip here is what keeps every
+			// reader of forEachIssueCode (AggregateIssueCodeCounts,
+			// CriticalIssueCodesSorted, and any future one) in agreement.
+			continue
+		}
 		fn(ErrorCode(f.Code))
 	}
 }

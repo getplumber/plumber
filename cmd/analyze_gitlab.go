@@ -1588,6 +1588,7 @@ func findingsToItems(findings []opaengine.Finding) ([]control.ErrorCode, []detai
 			DocURL:      code.DocURL(),
 			Location:    formatFindingLocation(f),
 			DetailLines: detailLinesFromFinding(f),
+			Dismissed:   f.Dismissed,
 		})
 	}
 	return codes, items

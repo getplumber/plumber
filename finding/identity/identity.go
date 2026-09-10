@@ -35,6 +35,7 @@ package identity
 import (
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"slices"
 	"strings"
 )
@@ -224,6 +225,25 @@ func Of(f Finding) (Fields, bool) {
 		out.Selected = append(out.Selected, Field{Key: key, Value: v})
 	}
 	return out, true
+}
+
+// PlatformHash returns the digest the platform stores as an issue's identity_hash (its own
+// issueident.Hash): sha256 hex over json.Marshal(Of(f).Pairs()), full length, plus the recipe
+// version the fields were selected under. ok is false for a codeless finding. Distinct from
+// Fingerprint (the truncated export identifier over canonical()): the two never had to agree
+// on a hash, only on the field selection, and this function exists so the CLI can match the
+// platform's served dismissed_issues (#447) without a second recipe.
+func PlatformHash(f Finding) (hash string, version int, ok bool) {
+	fields, ok := Of(f)
+	if !ok {
+		return "", 0, false
+	}
+	pairs, err := json.Marshal(fields.Pairs())
+	if err != nil {
+		return "", 0, false
+	}
+	sum := sha256.Sum256(pairs)
+	return hex.EncodeToString(sum[:]), fields.Version, true
 }
 
 // Fingerprint returns the short, line-independent identifier of a finding: the

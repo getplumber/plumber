@@ -579,6 +579,114 @@ func TestMaybePushPlatform_FindingsCoverPassFailAndNotEvaluable(t *testing.T) {
 	}
 }
 
+// TestPlatformFindingsFor_DismissedMarkerFollowsTheFinding pins #447 part 2
+// on the build side: platformFindingsFor's fail branch must carry each
+// finding's own Dismissed bit onto the pushed entry, not the same value for
+// every finding of a control. Two findings under the same failing control,
+// one dismissed and one not, must come out tagged independently.
+func TestPlatformFindingsFor_DismissedMarkerFollowsTheFinding(t *testing.T) {
+	pc := testDefaultPlumberConfig(t)
+	result := &control.AnalysisResult{
+		CiValid: true,
+		Findings: []opaengine.Finding{
+			{Code: "ISSUE-101", Severity: "high", Message: "live", Job: "build", File: ".gitlab-ci.yml", Line: 1},
+			{Code: "ISSUE-101", Severity: "high", Message: "dismissed one", Job: "deploy", File: ".gitlab-ci.yml", Line: 2, Dismissed: true},
+		},
+	}
+	findings := platformFindingsFor(testProvider(t), result, pc, nil, nil)
+
+	var live, dismissed *platformFinding
+	for i := range findings {
+		if findings[i].Control != "containerImageMustComeFromAuthorizedSources" {
+			continue
+		}
+		var data map[string]any
+		if err := json.Unmarshal(findings[i].Data, &data); err != nil {
+			t.Fatalf("finding data does not parse: %v", err)
+		}
+		switch data["message"] {
+		case "live":
+			live = &findings[i]
+		case "dismissed one":
+			dismissed = &findings[i]
+		}
+	}
+	if live == nil || dismissed == nil {
+		t.Fatalf("expected both the live and the dismissed finding among %+v", findings)
+	}
+	if live.Status != platformStatusFail || live.Dismissed {
+		t.Errorf("live finding = %+v, want status=fail, dismissed=false", live)
+	}
+	if dismissed.Status != platformStatusFail || !dismissed.Dismissed {
+		t.Errorf("dismissed finding = %+v, want status=fail, dismissed=true", dismissed)
+	}
+}
+
+// TestMaybePushPlatform_DismissedFindingWireShape checks the marker on the
+// raw wire bytes, the same way the rest of this file distrusts decoding
+// into platformFinding alone (see docs/platform-push-testing.md): a
+// dismissed finding's pushed entry must carry `"dismissed":true`, and an
+// ordinary finding's entry must carry no `dismissed` key at all
+// (omitempty), not a `false`.
+func TestMaybePushPlatform_DismissedFindingWireShape(t *testing.T) {
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+	restore := withPlatformTestEnv(t, srv.URL, "tok-123")
+	defer restore()
+
+	conf := &configuration.Configuration{ConfigFilePath: ".plumber.yaml", PlumberConfig: testDefaultPlumberConfig(t)}
+	result := &control.AnalysisResult{
+		CiValid: true,
+		Findings: []opaengine.Finding{
+			{Code: "ISSUE-101", Severity: "high", Message: "untrusted registry", Job: "build", File: ".gitlab-ci.yml", Line: 4, Dismissed: true},
+		},
+	}
+	if err := maybePushPlatform(testProvider(t), conf, result, &control.PlumberScoreResult{Score: "C"}); err != nil {
+		t.Fatalf("maybePushPlatform: %v", err)
+	}
+
+	var raw map[string]any
+	if err := json.Unmarshal(gotBody, &raw); err != nil {
+		t.Fatalf("body does not decode as JSON: %v", err)
+	}
+	results, _ := raw["results"].([]any)
+	if len(results) != 1 {
+		t.Fatalf("results = %v, want exactly 1 entry", results)
+	}
+	entry, _ := results[0].(map[string]any)
+	rawFindings, _ := entry["findings"].([]any)
+
+	var sawDismissedTrue, sawEntryWithNoDismissedKey bool
+	for _, rf := range rawFindings {
+		f, _ := rf.(map[string]any)
+		controlName, _ := f["control"].(string)
+		val, hasKey := f["dismissed"]
+		if controlName == "containerImageMustComeFromAuthorizedSources" {
+			b, ok := val.(bool)
+			if !hasKey || !ok || !b {
+				t.Errorf("dismissed finding's wire entry = %v, want \"dismissed\":true", f)
+			}
+			sawDismissedTrue = true
+			continue
+		}
+		if hasKey {
+			t.Errorf("control %q must carry no \"dismissed\" key at all (omitempty): %v", controlName, f)
+		} else {
+			sawEntryWithNoDismissedKey = true
+		}
+	}
+	if !sawDismissedTrue {
+		t.Fatal("the dismissed finding's control must appear in the pushed findings with dismissed:true")
+	}
+	if !sawEntryWithNoDismissedKey {
+		t.Fatal("fixture must include at least one non-dismissed control to prove the key is truly absent elsewhere")
+	}
+}
+
 // A control excluded via --skip-controls (the same e.Skipped flag a control
 // disabled in .plumber.yaml sets) is OMITTED from findings entirely: it is
 // still visible in effective_config, but "not evaluated by choice" is a

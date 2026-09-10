@@ -45,6 +45,11 @@ type detailedFinding struct {
 	Location string
 	// DetailLines is optional (e.g. ISSUE-505: one headline, several sub-reasons).
 	DetailLines []string
+	// Dismissed mirrors opaengine.Finding.Dismissed (#447): the platform
+	// already has this finding filed as dismissed. Still rendered, never
+	// dropped (see renderFailedControl for the tag and the count it
+	// changes).
+	Dismissed bool
 }
 
 // findingGroup collects everything needed to render one per-rule
@@ -67,6 +72,11 @@ type findingGroup struct {
 	NotEvaluableReason string
 	Stats              []statLine
 	Findings           []detailedFinding
+	// Dismissed is how many of Findings are platform-dismissed (#447):
+	// still present in Findings (never dropped), counted here so
+	// renderFailedControl can show the live count separately from the
+	// dismissed one.
+	Dismissed int
 }
 
 // renderWarnings prints the run's non-fatal "could not verify" messages,
@@ -380,10 +390,16 @@ func renderFailedControlsSection(groups []findingGroup) {
 // code, message and doc URL. All content is indented one level under the
 // control title.
 func renderFailedControl(g findingGroup) {
-	n := len(g.Findings)
+	// The count excludes dismissed findings: they are still listed below
+	// (never silently dropped), but they are not part of the live verdict,
+	// so "1 issue" must not read as two when one of the two is dismissed.
+	n := len(g.Findings) - g.Dismissed
 	count := fmt.Sprintf("%d issues", n)
 	if n == 1 {
 		count = "1 issue"
+	}
+	if g.Dismissed > 0 {
+		count = fmt.Sprintf("%s, %d dismissed", count, g.Dismissed)
 	}
 	fmt.Printf("  %s✗%s %s%s%s %s(%s)%s\n", colorRed, colorReset, colorBold, g.Title, colorReset, colorRed, count, colorReset)
 	for _, s := range g.Stats {
@@ -392,7 +408,11 @@ func renderFailedControl(g findingGroup) {
 	fmt.Printf("\n      %sIssues Found:%s\n", colorYellow, colorReset)
 	for _, f := range g.Findings {
 		tag := severityTag(f.Code)
-		fmt.Printf("        %s [%s] %s\n", tag, f.Code, sanitizeTerminal(f.Message))
+		message := sanitizeTerminal(f.Message)
+		if f.Dismissed {
+			message += " [dismissed on the platform]"
+		}
+		fmt.Printf("        %s [%s] %s\n", tag, f.Code, message)
 		for _, line := range f.DetailLines {
 			fmt.Printf("         └─ %s\n", sanitizeTerminal(line))
 		}

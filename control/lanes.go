@@ -2,6 +2,7 @@ package control
 
 import (
 	"github.com/getplumber/plumber/configuration"
+	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	"github.com/getplumber/plumber/internal/ir"
 	"github.com/getplumber/plumber/internal/platform"
 )
@@ -748,8 +749,25 @@ func ReEvaluateForConfig(
 	MarkUnconfiguredControls(&scopedResult, entries, pc, provider)
 	scopedResult.DropNotEvaluableFindings()
 
+	// #447: these findings are fresh out of evaluatePolicies and still carry
+	// whatever File the rule engine reported (a GitHub-style absolute path
+	// via job.OriginFile, say) - NOT yet the repo-relative form the run-level
+	// path produces via cmd/analyze_shared.go's own StampFingerprints call.
+	// The platform hashed the STAMPED (repo-relative) file of the finding it
+	// was pushed, so matching against these findings before stamping them
+	// the same way would compare against a different identity and never
+	// match. Stamping here also fills Fingerprint, which a per-policy push
+	// previously sent empty.
+	opaengine.StampFingerprints(scopedResult.Findings, conf.GitRepoRoot)
+	if conf.PlatformRun != nil && conf.PlatformRun.Context != nil {
+		MarkDismissed(scopedResult.Findings, conf.PlatformRun.Context.DismissedIssues)
+	}
+
 	counts := map[ErrorCode]int{}
 	for _, f := range scopedResult.Findings {
+		if f.Dismissed {
+			continue
+		}
 		counts[ErrorCode(f.Code)]++
 	}
 	// The whole scoped result is returned, not just its findings. The marks

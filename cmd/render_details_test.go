@@ -61,3 +61,40 @@ func TestRenderFindingGroups_NotEvaluableBeatsFindings(t *testing.T) {
 		t.Fatalf("stale findings from a dead lane must not render as a failure:\n%s", out)
 	}
 }
+
+// TestRenderFindingGroups_DismissedFindingTaggedAndExcludedFromCount pins
+// #447 part 2's terminal presentation: a finding the platform dismissed is
+// still shown (never silently dropped), tagged so the reader knows it is
+// not part of the live verdict, and left out of the issue count so "1
+// issue" does not read as two.
+func TestRenderFindingGroups_DismissedFindingTaggedAndExcludedFromCount(t *testing.T) {
+	out := captureStdout(t, func() {
+		renderFindingGroups([]findingGroup{
+			{
+				Title:     "Some Control",
+				Dismissed: 1,
+				Findings: []detailedFinding{
+					{Code: "ISSUE-101", Message: "live one"},
+					{Code: "ISSUE-101", Message: "dismissed one", Dismissed: true},
+				},
+			},
+		})
+	})
+	if !strings.Contains(out, "1 issue, 1 dismissed") {
+		t.Fatalf("want the header to read '1 issue, 1 dismissed', the live count excluding the dismissed finding:\n%s", out)
+	}
+	if !strings.Contains(out, "dismissed one") {
+		t.Fatalf("the dismissed finding must still be shown, never silently dropped:\n%s", out)
+	}
+	dismissedLine := out[strings.Index(out, "dismissed one"):]
+	if idx := strings.Index(dismissedLine, "\n"); idx >= 0 {
+		dismissedLine = dismissedLine[:idx]
+	}
+	if !strings.Contains(dismissedLine, "[dismissed on the platform]") {
+		t.Fatalf("the dismissed finding's own line must carry the platform tag:\n%s", out)
+	}
+	liveLine := out[strings.Index(out, "live one"):strings.Index(out, "dismissed one")]
+	if strings.Contains(liveLine, "[dismissed on the platform]") {
+		t.Fatalf("the live finding must not carry the dismissed tag:\n%s", out)
+	}
+}
