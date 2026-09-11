@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"reflect"
 	"testing"
 
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
@@ -135,5 +136,56 @@ func TestBuildGLSAST_StandaloneCarriesNoPolicyIdentifier(t *testing.T) {
 		if id.Type == "plumber_policy" {
 			t.Errorf("policy identifier present outside platform mode: %#v", id)
 		}
+	}
+}
+
+// Review comment 3985437498: outputControlEntries keys its per-control
+// policy map on e.ControlName and APPENDS every applied run's names to it, so
+// a control two DIFFERENT runs both enable must end up naming both, in
+// /context order, while a control only one of them enables names only that
+// one. Every other test reaching this function used a single run; this pins
+// the accumulation directly rather than through the OCSF/CSV writers.
+func TestOutputControlEntries_TwoRunsShareOneControl(t *testing.T) {
+	const debugTraceOnlyYAML = `version: "2.0"
+gitlab:
+  controls:
+    pipelineMustNotEnableDebugTrace:
+      enabled: true
+      forbiddenVariables: ["CI_DEBUG_TRACE"]
+`
+	const debugTraceAndDinDYAML = `version: "2.0"
+gitlab:
+  controls:
+    pipelineMustNotEnableDebugTrace:
+      enabled: true
+      forbiddenVariables: ["CI_DEBUG_TRACE"]
+    pipelineMustNotUseDockerInDocker:
+      enabled: true
+`
+	runA := handMadePolicyRun(t, "A", debugTraceOnlyYAML, nil)
+	runB := handMadePolicyRun(t, "B", debugTraceAndDinDYAML, nil)
+
+	_, policies := outputControlEntries(testProvider(t), nil, []policyRun{runA, runB})
+
+	if got := policies["pipelineMustNotEnableDebugTrace"]; len(got) != 2 || got[0] != "A" || got[1] != "B" {
+		t.Fatalf("a control both runs enable must name both policies in /context order, got %#v", got)
+	}
+	if got := policies["pipelineMustNotUseDockerInDocker"]; len(got) != 1 || got[0] != "B" {
+		t.Fatalf("a control only one run enables must name only that one, got %#v", got)
+	}
+}
+
+// appendMissing is the primitive outputControlEntries and platformUnionResult
+// both build their per-control/per-finding policy lists on: append the names
+// not already present, dedup, and keep order.
+func TestAppendMissing(t *testing.T) {
+	if got := appendMissing([]string{"A"}, []string{"B", "A", "C"}); !reflect.DeepEqual(got, []string{"A", "B", "C"}) {
+		t.Fatalf("appendMissing = %#v, want [A B C]", got)
+	}
+	if got := appendMissing(nil, []string{"X", "X"}); !reflect.DeepEqual(got, []string{"X"}) {
+		t.Fatalf("appendMissing must dedup within the incoming names too, got %#v", got)
+	}
+	if got := appendMissing(nil, nil); len(got) != 0 {
+		t.Fatalf("appendMissing(nil, nil) must stay empty, got %#v", got)
 	}
 }
