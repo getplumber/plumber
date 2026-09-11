@@ -1,3 +1,47 @@
+## [0.4.60](https://github.com/getplumber/plumber/compare/v0.4.59...v0.4.60) (2026-09-11)
+
+
+### ✨ Features
+
+* **platform:** decode policy min_points and the push response's global score into a verdict ([83dbfba](https://github.com/getplumber/plumber/commit/83dbfba4a29c12d3289fdfa399241dde3fed2a3c))
+* **platform:** evaluate resolved policies as first-class runs with no local fallback ([1fedc61](https://github.com/getplumber/plumber/commit/1fedc61831940190b8cdd34320fddc59ce1b1c0f))
+* **platform:** in platform mode the resolved policies drive the log, the push and the exit code ([8f4b6ba](https://github.com/getplumber/plumber/commit/8f4b6bac65126834551a4fb9224d1e2b54337a43))
+* **platform:** local gates, thresholds and the degraded exit are inert in platform mode ([551eac6](https://github.com/getplumber/plumber/commit/551eac6a1fa428b9207a14ef06523327803da856))
+* **platform:** per-policy artifacts, badge and MR comment from the platform verdict ([5ef59c2](https://github.com/getplumber/plumber/commit/5ef59c2099575a373b285b70f693f99bd2c66fad)), closes [#467](https://github.com/getplumber/plumber/issues/467)
+* **platform:** per-policy log sections and the platform verdict block ([13d0da9](https://github.com/getplumber/plumber/commit/13d0da926da10ac965caa4998ccbd0c03f6ab51c))
+
+
+### 🐛 Bug Fixes
+
+* **platform:** a --no-controls run is not platform mode in the summary ([65ae90c](https://github.com/getplumber/plumber/commit/65ae90cc6e57543755bee7b32d8abc71fda6b3b8))
+* **platform:** carry each run's not-evaluable marks in its policy report entry ([d16571b](https://github.com/getplumber/plumber/commit/d16571b9e262830af85cae67046981cafb5cd4a0))
+* **platform:** decode the gate strictly, only the global score tolerantly ([ef0733a](https://github.com/getplumber/plumber/commit/ef0733a5acd1cc5e07eb978ab6e691c06b5b3d59))
+* **platform:** honest verdict line, collection diagnostics and header in platform mode ([db8aedf](https://github.com/getplumber/plumber/commit/db8aedfae0ac5b0c129225d62b11445c823251ac))
+* **platform:** inventory runs keep their guards in platform mode, pin the run-level dismissal mark ([ee6de90](https://github.com/getplumber/plumber/commit/ee6de900cdc643a275e45f83b144f751b9941cf6))
+* **platform:** platform-mode artifacts carry only the policies' verdicts ([b8c3411](https://github.com/getplumber/plumber/commit/b8c3411398bd32b46f1c04be4befc404ec3ada9b))
+* **platform:** tolerant gate decode and validated global letter ([9c292fe](https://github.com/getplumber/plumber/commit/9c292fef1f924ed90fb181a9e43420edb4ec8fb4))
+* **platform:** track the two image controls independently in pbom verdicts ([2928548](https://github.com/getplumber/plumber/commit/2928548bbcea7e682d318ac1be548ae9b083253d))
+
+
+### 📚 Documentation
+
+* **platform:** platform mode evaluates only the platform's policies and takes its verdict ([8ff0c69](https://github.com/getplumber/plumber/commit/8ff0c6902240144bd4db5410b98838fa55a19b8f))
+* **platform:** replace em dashes and restore template backticks ([f73aa78](https://github.com/getplumber/plumber/commit/f73aa787ca47861265c4b59e256ec2718c72b5f8))
+
+
+### ✅ Tests
+
+* **platform:** cover outputControlEntries's multi-policy accumulation ([7e7fe68](https://github.com/getplumber/plumber/commit/7e7fe68076f34909d4318cd76d46f4cec1f0fe17))
+* **platform:** cover the post-action and pbom summaries through the cmd path ([7e334ba](https://github.com/getplumber/plumber/commit/7e334ba1056cefa1ec0398fa4af150f47eaf4821))
+* **platform:** cover the report's un-applied policy entry and min_points ([93b6185](https://github.com/getplumber/plumber/commit/93b6185a2fd51bbc07c353979309e2e0ae242a3e))
+* **platform:** cover the union's not-evaluable swap and the degraded sections ([e10cc50](https://github.com/getplumber/plumber/commit/e10cc5017512fd1fdac84c08a59c633de34a11d7)), closes [#220](https://github.com/getplumber/plumber/issues/220)
+* **platform:** pin the notEvaluable key removal in platform-mode json reports ([6cc5dd0](https://github.com/getplumber/plumber/commit/6cc5dd0621475c20c3a75c745d8ca7f85d72a9e0))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.59 refs [skip ci] ([8da00d4](https://github.com/getplumber/plumber/commit/8da00d42aee7c7a1b29526e3f7c2a32c69a06c5d))
+
 ## [0.4.59](https://github.com/getplumber/plumber/compare/v0.4.58...v0.4.59) (2026-09-10)
 
 
