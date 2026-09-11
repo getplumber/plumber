@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	"github.com/getplumber/plumber/internal/platform"
 )
 
@@ -147,6 +148,50 @@ func TestRenderPolicySections_DifferingEnforcementBracketsPerPolicy(t *testing.T
 	out := captureStdoutAll(t, func() { renderPolicySections(testProvider(t), conf, runs, nil, nil) })
 
 	assertContains(t, out, "== Policy: Soft [report], Hard [block, min_points 70]")
+}
+
+// A DEGRADED policy run with no findings: the section says controls could not
+// be evaluated and prints NO issues table. An empty table there would read as
+// a clean pipeline nobody actually evaluated (#220, the reason the guard on
+// the table exists), and the not-evaluated warning is the only disclosure that
+// the score below was computed over a subset of the controls.
+func TestRenderPolicySections_DegradedRunWarnsAndPrintsNoEmptyIssuesTable(t *testing.T) {
+	run := handMadePolicyRun(t, "A", debugTracePolicyYAML, nil)
+	run.Result.DataCollectionDegraded = true
+	run.Result.MarkNotEvaluable("pipelineMustNotEnableDebugTrace", "policy_lane_unavailable")
+
+	out := captureStdoutAll(t, func() { renderPolicySections(testProvider(t), nil, []policyRun{run}, nil, nil) })
+
+	assertContains(t, out, "control(s) could not be evaluated, the score below is computed over the rest")
+	if strings.Contains(out, "none with open issues") {
+		t.Fatalf("a degraded run with no findings must print no issues table at all:\n%s", out)
+	}
+	// The degraded filter drops every group with no findings, so the
+	// per-control sections a degraded run cannot vouch for are not rendered as
+	// verdicts: the warning above is what the reader gets instead.
+	if strings.Contains(out, "Not Evaluated (") {
+		t.Fatalf("a degraded run must not render per-control sections built on data it never collected:\n%s", out)
+	}
+	// #220: no letter grade over incomplete data.
+	assertContains(t, out, "Score withheld")
+}
+
+// A degraded run WITH findings keeps its issues table: the findings are real,
+// and suppressing them would hide what the run did see. Only the empty-table
+// case above is suppressed.
+func TestRenderPolicySections_DegradedRunWithFindingsKeepsTheIssuesTable(t *testing.T) {
+	run := handMadePolicyRun(t, "A", debugTracePolicyYAML, []opaengine.Finding{debugTraceFinding()})
+	run.Result.DataCollectionDegraded = true
+
+	out := captureStdoutAll(t, func() { renderPolicySections(testProvider(t), nil, []policyRun{run}, nil, nil) })
+
+	assertContains(t, out, "Failed Controls (1)")
+	// The issues table's own header row, printed only when the table is.
+	assertContains(t, out, "Codes")
+	if strings.Contains(out, "none with open issues") {
+		t.Fatalf("this run has findings, the table must list them:\n%s", out)
+	}
+	assertContains(t, out, "Score withheld")
 }
 
 // Spec s3: the verdict block is the platform's, one line per gated policy,
