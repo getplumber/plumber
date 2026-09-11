@@ -690,6 +690,11 @@ func TestBuildAnalysisJSONReport_PlatformMode_PerPolicy(t *testing.T) {
 	a := policyWithTree("A", "pipelineMustNotEnableDebugTrace", debugTraceControlConfig)
 	conf := confWithPolicies(t, a)
 	runs := evaluatePlatformPolicies(testProvider(t), conf, debugTraceResult())
+	// A control THIS run could not evaluate. In platform mode the top-level
+	// notEvaluable key is deleted (it is keyed on the local catalog), so the
+	// entry is the only place the mark can reach a machine consumer: without
+	// it a control nobody could check reads as clean.
+	runs[0].Result.MarkNotEvaluable("pipelineMustNotOverrideJobVariables", "raw_config_unavailable")
 	s := complianceSummary{platformMode: true, scoreMode: true}
 	params := jsonOutputParams{provider: "gitlab"}
 
@@ -736,6 +741,13 @@ func TestBuildAnalysisJSONReport_PlatformMode_PerPolicy(t *testing.T) {
 		if _, present := f[k]; present {
 			t.Errorf("finding object gained the key %q: the pushed bytes are frozen", k)
 		}
+	}
+	marks, ok := entry["notEvaluable"].(map[string]any)
+	if !ok || marks["pipelineMustNotOverrideJobVariables"] != "raw_config_unavailable" {
+		t.Fatalf("an applied entry carries its own run's not-evaluable marks: %#v", entry["notEvaluable"])
+	}
+	if _, present := report["notEvaluable"]; present {
+		t.Errorf("the top-level notEvaluable key is the local catalog's and stays absent, got %v", report["notEvaluable"])
 	}
 	global, ok := report["plumberScore"].(map[string]any)
 	if !ok || global["letter"] != "C" || global["points"] != 66.0 {

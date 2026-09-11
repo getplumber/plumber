@@ -154,8 +154,20 @@ func TestBuildAnalysisJSONReport_PlatformMode_NoLocalControlBlocks(t *testing.T)
 		t.Errorf("notEvaluable is a per-control verdict of the local evaluation and must be absent, got %v", report["notEvaluable"])
 	}
 	// The per-policy view is what replaces them.
-	if pols, ok := report["policies"].([]any); !ok || len(pols) != 1 {
+	pols, ok := report["policies"].([]any)
+	if !ok || len(pols) != 1 {
 		t.Fatalf("policies: %#v", report["policies"])
+	}
+	// The entry's notEvaluable is always an object (a stable shape for a
+	// parser), and it holds THIS run's marks: the local result's mark asserted
+	// absent above must not reach it through the back door either.
+	entry, _ := pols[0].(map[string]any)
+	entryMarks, isObject := entry["notEvaluable"].(map[string]any)
+	if !isObject {
+		t.Fatalf("an applied policy entry carries a notEvaluable object, empty when the run marked nothing: %#v", entry["notEvaluable"])
+	}
+	if _, leaked := entryMarks["pipelineMustNotOverrideJobVariables"]; leaked {
+		t.Errorf("the LOCAL evaluation's not-evaluable mark must not reach a policy entry: %#v", entryMarks)
 	}
 
 	// The SAME collected result, reported standalone, keeps the mark. That is
@@ -722,6 +734,14 @@ func TestBuildAnalysisJSONReport_PlatformMode_UnappliedPolicyCarriesNoVerdict(t 
 	conf := confWithPolicies(t, applied, broken)
 
 	runs := evaluatePlatformPolicies(testProvider(t), conf, debugTraceResult())
+	// The applied run could not evaluate one of its controls: its entry has to
+	// carry the mark, and the un-applied entry has to carry a null for it,
+	// exactly as it does for score and findings.
+	for i := range runs {
+		if runs[i].Applied {
+			runs[i].Result.MarkNotEvaluable("pipelineMustNotOverrideJobVariables", "raw_config_unavailable")
+		}
+	}
 
 	payload, err := buildAnalysisJSONReport(debugTraceResult(), conf.PlumberConfig,
 		complianceSummary{platformMode: true, scoreMode: true},
@@ -760,6 +780,10 @@ func TestBuildAnalysisJSONReport_PlatformMode_UnappliedPolicyCarriesNoVerdict(t 
 	if findings, isList := a["findings"].([]any); !isList || len(findings) == 0 {
 		t.Errorf("an applied policy carries its own findings: %#v", a["findings"])
 	}
+	marks, isObject := a["notEvaluable"].(map[string]any)
+	if !isObject || marks["pipelineMustNotOverrideJobVariables"] != "raw_config_unavailable" {
+		t.Errorf("an applied policy carries its own run's not-evaluable marks: %#v", a["notEvaluable"])
+	}
 	// The min_points value path: every other report test covers only the null
 	// case, so a mapping that dropped the value would stay green.
 	if a["min_points"] != float64(wantMinPoints) {
@@ -783,6 +807,10 @@ func TestBuildAnalysisJSONReport_PlatformMode_UnappliedPolicyCarriesNoVerdict(t 
 	}
 	if reason, _ := b["reason"].(string); reason == "" {
 		t.Errorf("an un-applied entry says why it was not evaluated: %#v", b["reason"])
+	}
+	notEvaluable, present := b["notEvaluable"]
+	if !present || notEvaluable != nil {
+		t.Errorf("an un-applied policy carries a null notEvaluable, like its score and findings: %#v", notEvaluable)
 	}
 	if b["min_points"] != nil {
 		t.Errorf("this policy sets no min_points, so the key is null: %#v", b["min_points"])

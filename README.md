@@ -310,12 +310,14 @@ it to decide what to collect and what to report:
   finding is.
 - The `--output` JSON report in platform mode carries `platformMode: true`, a
   `policies` array (one entry per policy: name, id, enforcement, min_points,
-  applied, reason, score, findings; the finding objects are byte-identical to
-  the standalone ones), and `plumberScore` = the platform's global score when
-  the push returned one; the legacy per-control `*Result` blocks,
-  `plumberConfig`, `minPoints`/`minScore`/`threshold` and `notEvaluable` are
-  omitted (they described the local configuration). Parsers of platform-mode
-  reports must read `policies`.
+  applied, reason, score, findings, notEvaluable; the finding objects are
+  byte-identical to the standalone ones), and `plumberScore` = the platform's
+  global score when the push returned one; the legacy per-control `*Result`
+  blocks, `plumberConfig`, `minPoints`/`minScore`/`threshold` and the
+  top-level `notEvaluable` are omitted (they described the local
+  configuration). An entry's `notEvaluable` is that policy run's own map of
+  control name to reason, an object even when empty, and null on a policy that
+  was not applied. Parsers of platform-mode reports must read `policies`.
 - PBOM and CycloneDX carry the same `policies` array and the global score as a
   property; per-image compliance verdicts come from the policies' findings and
   are omitted when no policy evaluates the image controls. SARIF and the
