@@ -195,19 +195,22 @@ type platformScore struct {
 }
 
 // UnmarshalJSON decodes a score the PLATFORM sent (the push response's
-// global_score) tolerantly. Outgoing, this type is what the CLI writes and
-// the fields are exact; incoming, the numbers are the platform's own and it
-// types points as a NUMBER, so 60.5 is a legal value and letter can be null.
-// Decoded strictly, either one produced an UnmarshalTypeError on a field the
-// gate does not even read, and evaluatePlatformGate threw the whole response
-// away with it: the platform's blocking verdict silently became a fail-open,
-// on the one path that is now the only source of a non-zero exit in platform
-// mode (spec s4).
+// global_score). Outgoing, this type is what the CLI writes and the fields
+// are exact; incoming, the numbers are the platform's own and its contract
+// types points as a NUMBER, so 60.5 is a legal value and letter may be null.
+// Decoded into the int and string this struct declares, either one produced
+// an UnmarshalTypeError, and the caller threw the whole response away with
+// it, gate included: a blocking verdict became a fail-open over a field the
+// gate never reads (the review finding).
 //
-// Points is rounded with math.Round, the same rounding platformScoreFrom
-// applies on the way out, so a figure that makes the round trip is unchanged.
-// A field of an unexpected type is dropped rather than failing the decode:
-// the platform's verdict beside it is what matters.
+// So the tolerance is exactly this: any JSON number for the points (rounded
+// with math.Round, the same rounding platformScoreFrom applies on the way
+// out, so a figure that makes the round trip is unchanged), and a null or
+// absent letter. It is NOT "accept anything": a points value that is not a
+// number, or a letter that is not a string, fails the decode, and the caller
+// drops the score entirely rather than publishing a zero the platform never
+// sent. The gate beside it is decoded separately and strictly, so nothing
+// here can ever soften a verdict.
 func (s *platformScore) UnmarshalJSON(data []byte) error {
 	var raw struct {
 		Letter      any `json:"letter"`
@@ -217,33 +220,47 @@ func (s *platformScore) UnmarshalJSON(data []byte) error {
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
 	}
-	if letter, ok := raw.Letter.(string); ok {
+	switch letter := raw.Letter.(type) {
+	case nil:
+	case string:
 		s.Letter = letter
+	default:
+		return fmt.Errorf("letter: want a string, got %T", raw.Letter)
 	}
-	s.Points = roundJSONScorePoints(raw.Points)
+	points, err := roundJSONScorePoints(raw.Points)
+	if err != nil {
+		return fmt.Errorf("points: %w", err)
+	}
+	s.Points = points
 	if raw.FinalPoints != nil {
-		final := roundJSONScorePoints(raw.FinalPoints)
+		final, err := roundJSONScorePoints(raw.FinalPoints)
+		if err != nil {
+			return fmt.Errorf("final_points: %w", err)
+		}
 		s.FinalPoints = &final
 	}
 	return nil
 }
 
 // roundJSONScorePoints reads a points figure out of a decoded JSON value in
-// whichever numeric shape it arrived in, and rounds it to the nearest
-// integer. Anything that is not a number is not a points figure and reads as
-// zero, which is what an absent field already meant.
-func roundJSONScorePoints(v any) int {
+// whichever numeric shape it arrived in and rounds it to the nearest integer.
+// An absent or null figure is zero, which is what the field's zero value
+// already meant; anything else is not a points figure at all and is an error,
+// because reporting it as zero would publish a score the platform never sent.
+func roundJSONScorePoints(v any) (int, error) {
 	switch n := v.(type) {
+	case nil:
+		return 0, nil
 	case float64:
-		return int(math.Round(n))
+		return int(math.Round(n)), nil
 	case json.Number:
 		f, err := n.Float64()
 		if err != nil {
-			return 0
+			return 0, err
 		}
-		return int(math.Round(f))
+		return int(math.Round(f)), nil
 	}
-	return 0
+	return 0, fmt.Errorf("want a number, got %T", v)
 }
 
 // platformScoreFrom converts the already-computed Plumber Score to the wire

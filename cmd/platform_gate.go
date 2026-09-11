@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -31,14 +32,16 @@ type platformGate struct {
 	Policies  []platformGatePolicy `json:"policies"`
 }
 
-// platformPushResponse is the shape decoded from a 2xx push response body.
-// Gate is a pointer so a response with no "gate" key (an old platform) is
-// distinguishable from an evaluated gate. GlobalScore is the platform's own
-// displayed score for the run (PushAccepted.global_score: the average of the
-// policies' FINAL points, letter from that average), nil when absent.
-type platformPushResponse struct {
-	Gate        *platformGate  `json:"gate"`
-	GlobalScore *platformScore `json:"global_score"`
+// platformPushResponseEnvelope is the first stage of decoding a 2xx push
+// response body: both blocks are held as raw JSON so each can be decoded on
+// its own terms. The gate decides the exit code and is decoded strictly right
+// after; the global score (PushAccepted.global_score: the average of the
+// policies' FINAL points, letter from that average) is display data and is
+// decoded tolerantly. An absent key and a null one are both "the platform
+// sent nothing here" - see isAbsentJSON.
+type platformPushResponseEnvelope struct {
+	Gate        json.RawMessage `json:"gate"`
+	GlobalScore json.RawMessage `json:"global_score"`
 }
 
 // platformVerdict is what a push produced, for every consumer after the push:
@@ -114,6 +117,47 @@ func platformGatePolicyDescriptions(policies []platformGatePolicy) []string {
 	return out
 }
 
+// platformGateNoVerdict is the single no-verdict fail-open: a 2xx push whose
+// body carried no usable gate (an old platform, a body that is not JSON, a
+// gate that did not decode). It prints one line, carries whatever global
+// score the body did yield, and returns a nil error - the let-through
+// invariant 5 requires, stated in plain words rather than passed silently.
+// detail, when present, names which part failed; the alertable sentence is
+// deliberately NOT used here (see the constants below).
+func platformGateNoVerdict(detail string, score *platformScore) (*platformVerdict, error) {
+	line := platformGateNoVerdictLine
+	if detail != "" {
+		line += " (" + detail + ")"
+	}
+	scoreWarn(line)
+	return &platformVerdict{GlobalScore: score, Unavailable: line}, nil
+}
+
+// decodePlatformGlobalScore decodes the response's global_score with
+// platformScore's tolerant unmarshaller. This is display data - the badge
+// letter, the comment headline, the JSON top-level score - never a verdict,
+// so a shape it cannot read costs the score alone: nil, one line, and the
+// gate beside it is untouched. Absent and null are simply "no score", which
+// is a routine state and says nothing.
+func decodePlatformGlobalScore(raw json.RawMessage) *platformScore {
+	if isAbsentJSON(raw) {
+		return nil
+	}
+	var score platformScore
+	if err := json.Unmarshal(raw, &score); err != nil {
+		scoreWarn(fmt.Sprintf("the platform's global score could not be decoded (%v); this run reports no global score", err))
+		return nil
+	}
+	return &score
+}
+
+// isAbsentJSON reports whether a raw field is missing or JSON null, the two
+// spellings of "the platform sent nothing here".
+func isAbsentJSON(raw json.RawMessage) bool {
+	trimmed := bytes.TrimSpace(raw)
+	return len(trimmed) == 0 || bytes.Equal(trimmed, []byte("null"))
+}
+
 // evaluatePlatformGate parses a successful push response's gate block and
 // decides the platform-gate outcome for this run, returning a *platformVerdict
 // alongside the error for every consumer downstream of the push (the
@@ -124,11 +168,13 @@ func platformGatePolicyDescriptions(policies []platformGatePolicy) []string {
 // (platformGateFailOpenLine), so an old platform that has never heard of
 // gates behaves identically to one that is temporarily down:
 //
-//   - a body that does not parse as JSON, or one that parses but carries no
-//     "gate" key at all: an old platform. Fail open with the unavailable
-//     line, the verdict's Gate nil and Unavailable set. A body that DID parse
-//     still hands back the global score it carried: the gate is missing, the
-//     score the badge and the comment publish is not.
+//   - a body that does not parse as JSON, one that carries no "gate" key at
+//     all (an old platform), or one whose gate block does not decode: no
+//     verdict. Fail open with the no-verdict line, the verdict's Gate nil and
+//     Unavailable set (naming the decode failure when there was one). A body
+//     that DID parse still hands back the global score it carried: the gate
+//     is missing, the score the badge and the comment publish is not. A gate
+//     is never PARTIALLY decoded - see the two-stage decode below.
 //   - evaluated:false: the platform's own explicit fail-open (nothing
 //     configured to gate this project, a snapshot not yet collected,
 //     etc). Fail open, logging the platform's own reason; the verdict still
@@ -144,38 +190,42 @@ func platformGatePolicyDescriptions(policies []platformGatePolicy) []string {
 //     returned error (a local score-gate failure outranks it and discards it
 //     as the *returned* error, but the line already reached the log).
 func evaluatePlatformGate(body []byte) (*platformVerdict, error) {
-	var resp platformPushResponse
-	err := json.Unmarshal(body, &resp)
-	if err != nil && resp.Gate != nil {
-		// encoding/json fills every field it CAN decode and reports the one
-		// it could not, so a gate that decoded cleanly beside an unreadable
-		// sibling is still the platform's verdict. Discarding it turned a
-		// block into a fail-open over a field the gate never reads (the
-		// review finding; platformScore.UnmarshalJSON removes the common
-		// cause, this keeps the rest from costing the verdict). The partial
-		// decode is said out loud rather than swallowed.
-		scoreWarn(fmt.Sprintf("the platform's push response was only partially decoded (%v); using the gate verdict it did carry", err))
-		err = nil
+	// Two stages, and the split is the whole point. The gate is the run's
+	// exit code and is decoded STRICTLY; the global score is display data and
+	// is decoded tolerantly. Doing both in one pass is what broke: encoding/
+	// json leaves a mistyped field at its zero value and keeps going, so
+	// "blocking":"true" handed back a fully-formed gate with Blocking false
+	// and a blocking verdict silently became exit 0. No amount of tolerance
+	// may ever be able to soften a verdict, so tolerance is not applied to
+	// the gate at all.
+	var envelope platformPushResponseEnvelope
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		// The body is not JSON at all: nothing in it can be trusted, so
+		// nothing is carried out of it.
+		return platformGateNoVerdict("", nil)
 	}
-	if err != nil || resp.Gate == nil {
-		// A 2xx-accepted push whose body carries no usable gate verdict: an
-		// older platform that predates the gate, or a mangled body. The
-		// platform is UP and the push LANDED, so this is the no-verdict
-		// line, never the alertable "unavailable" sentence (see the
-		// constants' doc comment below).
-		scoreWarn(platformGateNoVerdictLine)
-		v := &platformVerdict{Unavailable: platformGateNoVerdictLine}
-		if err == nil {
-			// The body parsed, it just carried no gate. Whatever else it did
-			// send is still the platform's own: the global score is what the
-			// badge, the merge-request comment and the JSON top level
-			// publish, and dropping it made them say "score unavailable" for
-			// a platform that had just sent one.
-			v.GlobalScore = resp.GlobalScore
-		}
-		return v, nil
+
+	// Decoded first so every fail-open path below can still carry it: the
+	// gate is missing, the score the badge and the comment publish is not.
+	score := decodePlatformGlobalScore(envelope.GlobalScore)
+
+	if isAbsentJSON(envelope.Gate) {
+		// A 2xx-accepted push whose body carries no gate at all: an older
+		// platform that predates it. The platform is UP and the push LANDED,
+		// so this is the no-verdict line, never the alertable "unavailable"
+		// sentence (see the constants' doc comment below).
+		return platformGateNoVerdict("", score)
 	}
-	gate := resp.Gate
+
+	var decoded platformGate
+	if err := json.Unmarshal(envelope.Gate, &decoded); err != nil {
+		// A gate whose own fields did not decode is NOT a verdict. It is not
+		// partially one either: a half-decoded gate reads as "evaluated,
+		// not blocking", which is the one answer this CLI must never invent.
+		// Drop it and fail open honestly, saying which half failed.
+		return platformGateNoVerdict(fmt.Sprintf("the gate block did not decode: %v", err), score)
+	}
+	gate := &decoded
 
 	if !gate.Evaluated {
 		msg := "platform gate not evaluated"
@@ -183,11 +233,11 @@ func evaluatePlatformGate(body []byte) (*platformVerdict, error) {
 			msg += ": " + gate.Reason
 		}
 		scoreWarn(msg)
-		return &platformVerdict{Gate: gate, GlobalScore: resp.GlobalScore, Unavailable: msg}, nil
+		return &platformVerdict{Gate: gate, GlobalScore: score, Unavailable: msg}, nil
 	}
 
 	if !gate.Blocking {
-		return &platformVerdict{Gate: gate, GlobalScore: resp.GlobalScore}, nil
+		return &platformVerdict{Gate: gate, GlobalScore: score}, nil
 	}
 
 	blocking := make([]platformGatePolicy, 0, len(gate.Policies))
@@ -205,7 +255,7 @@ func evaluatePlatformGate(body []byte) (*platformVerdict, error) {
 	// placeholder - never a bare "BLOCKED: " with nothing after the colon
 	// (PR-review finding).
 	fmt.Fprintf(os.Stderr, "✗ platform gate BLOCKED: %s\n", platformGateDetail(blocking, gate.Reason))
-	return &platformVerdict{Gate: gate, GlobalScore: resp.GlobalScore}, &PlatformGateError{Reason: gate.Reason, Policies: blocking}
+	return &platformVerdict{Gate: gate, GlobalScore: score}, &PlatformGateError{Reason: gate.Reason, Policies: blocking}
 }
 
 // The two EXACT fail-open sentences the spec requires (see
