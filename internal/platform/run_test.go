@@ -43,6 +43,12 @@ func TestNilRunContextIsStandalone(t *testing.T) {
 	if got := r.MissingSnapshotFields(); got != nil {
 		t.Fatalf("MissingSnapshotFields: %v", got)
 	}
+	if inc, ok := r.Includes(); ok || inc != nil {
+		t.Fatalf("Includes: (%v, %v)", inc, ok)
+	}
+	if r.ConfigIsSnapshot() {
+		t.Fatal("ConfigIsSnapshot: a nil RunContext evaluates no document at all")
+	}
 	if got := r.Describe(); got != nil {
 		t.Fatalf("Describe: %v", got)
 	}
@@ -165,6 +171,18 @@ func TestDescribe_ReportsTheFactsTheRunObserved(t *testing.T) {
 				LocalDigest: "aaaaaaaaaaaabbbb", DigestVersion: "1", AnchorDigest: "ccccccccccccdddd", ResolvedSha: "1234567890abcdef",
 			},
 			contains: []string{"diverges from the snapshot anchor", "local:  aaaaaaaaaaaabbbb", "anchor: ccccccccccccdddd", "platform resolve endpoint, resolved at"},
+		},
+		{
+			// The operator reading this line is deciding whether the three
+			// include controls should have run. "resolve endpoint" alone
+			// used to mean they could not; it no longer does.
+			name: "a resolved config that carried attribution says so",
+			cfg: &ConfigResolution{
+				Source: SourceResolved, Digest: DigestDiverged, Valid: true,
+				LocalDigest: "a", DigestVersion: "1", AnchorDigest: "b", ResolvedSha: "s",
+				Includes: []json.RawMessage{json.RawMessage(`{"location":"gitlab.com/c/x@1.0.0","type":"component"}`)},
+			},
+			contains: []string{"platform resolve endpoint", "includes served"},
 		},
 		{
 			name: "a cache hit says so",

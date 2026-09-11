@@ -112,25 +112,65 @@ func (r *RunContext) ConfigInvalid() bool {
 	return r.Config != nil && r.Config.Available() && !r.Config.Valid
 }
 
-// ConfigAndIncludesAgree reports whether the merged configuration in use and
-// the snapshot's include attribution describe the SAME configuration.
+// Includes returns the per-include attribution for the configuration this
+// run actually evaluates, and whether any is available.
 //
-// They come from two independent lanes and only agree in one case. When the
-// checkout's digest equals the anchor, MergedYAML is the snapshot's own
-// merged_yaml and the snapshot's includes attribute exactly it
-// (SourceSnapshot). When the digests diverge, MergedYAML is the config the
-// platform resolved for THIS branch, while SnapshotIncludes still holds
-// attribution resolved against the anchor - the default branch. The resolve
-// endpoint returns no includes at all (see ResolvedConfig), so on a
-// divergent branch there is no branch-accurate attribution to be had.
+// Attribution and merged document come from two lanes, and each document
+// has exactly one list that describes it:
 //
-// Pairing them anyway is worse than having neither. A branch that adds,
-// removes or re-pins an include gets every job from that include classified
-// against the OLD attribution, so upstream jobs read as project-authored and
+//   - SourceSnapshot: MergedYAML is the snapshot's own merged_yaml, so the
+//     snapshot's includes attribute exactly it.
+//   - SourceResolved: MergedYAML is what the platform resolved for THIS
+//     branch, so only the includes the resolve response carried describe
+//     it. The endpoint serves them when it can; when it does not, there is
+//     no branch-accurate attribution to be had and this returns false.
+//
+// The snapshot's list is never lent to a resolved config. It was resolved
+// against the anchor, the default branch, and a branch that adds, removes
+// or re-pins an include would get every job from that include classified
+// against the OLD attribution: upstream jobs read as project-authored and
 // vice versa. That is the fabricated-finding mode attribution exists to
 // prevent, landing on precisely the divergent branch the digest exists to
-// detect. Callers must treat attribution as unavailable when this is false.
+// detect. Callers must treat attribution as unavailable when ok is false.
+func (r *RunContext) Includes() ([]json.RawMessage, bool) {
+	if r == nil {
+		return nil, false
+	}
+	r.Config.join()
+	if r.Config == nil {
+		return nil, false
+	}
+	switch r.Config.Source {
+	case SourceSnapshot:
+		return r.SnapshotIncludes()
+	case SourceResolved:
+		if len(r.Config.Includes) == 0 {
+			return nil, false
+		}
+		return r.Config.Includes, true
+	}
+	return nil, false
+}
+
+// ConfigAndIncludesAgree reports whether the configuration in use has
+// attribution that describes IT. It is the question the include-reasoning
+// controls ask, and it is answered by Includes alone: the two are served
+// together or not at all.
 func (r *RunContext) ConfigAndIncludesAgree() bool {
+	_, ok := r.Includes()
+	return ok
+}
+
+// ConfigIsSnapshot reports whether the document this run evaluates IS the
+// snapshot's own merged_yaml.
+//
+// It is a narrower question than ConfigAndIncludesAgree and must not be
+// collapsed into it. Everything else the snapshot says ABOUT its document -
+// the git host's merge verdict above all - applies only to that document. A
+// resolve-sourced config can now arrive with attribution of its own, which
+// makes attribution available without making the snapshot's other verdicts
+// apply; it has its own, through ConfigInvalid.
+func (r *RunContext) ConfigIsSnapshot() bool {
 	if r == nil {
 		return false
 	}
@@ -255,10 +295,11 @@ func (r *RunContext) LaneMissing(field string) bool {
 }
 
 // SnapshotIncludes returns the snapshot's per-include attribution, and
-// whether the platform supplied any. A false second return is the state
-// that forces the include-reasoning controls to not_evaluable: without
-// attribution a component's job is indistinguishable from one the project
-// wrote, which fabricates findings rather than merely hiding them.
+// whether the platform supplied any. It describes the SNAPSHOT's document,
+// so callers evaluating a configuration want Includes, which pairs each
+// source with the attribution that belongs to it. Without attribution a
+// component's job is indistinguishable from one the project wrote, which
+// fabricates findings rather than merely hiding them.
 func (r *RunContext) SnapshotIncludes() ([]json.RawMessage, bool) {
 	snap := r.Snapshot()
 	if snap.Data == nil || len(snap.Data.Includes) == 0 {
@@ -292,9 +333,8 @@ func (r *RunContext) SnapshotCIConfigPath() string {
 //
 // The verdict describes the SNAPSHOT's document. A caller evaluating a
 // different one (a digest-divergent branch, resolved by the platform for
-// this run) must not attach it - see RunContext.ConfigAndIncludesAgree,
-// which decides exactly that question for the include attribution served
-// beside it.
+// this run) must not attach it - see RunContext.ConfigIsSnapshot, which
+// decides exactly that question.
 //
 // The error slice is copied: the snapshot is shared for the whole run and
 // a caller that appends to what it is handed would edit it.
@@ -541,6 +581,12 @@ func (r *RunContext) describeConfig() []string {
 			how = "served from the platform cache"
 		}
 		line := fmt.Sprintf("ci config source: platform resolve endpoint, %s at %s", how, shortDigest(c.ResolvedSha))
+		// Whether attribution came with it decides whether the include
+		// controls could run, which is the next thing the reader of this
+		// line wants to know.
+		if len(c.Includes) > 0 {
+			line += ", includes served"
+		}
 		if !c.Valid {
 			line += " - the git host reports this config as INVALID"
 		}

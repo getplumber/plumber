@@ -1,6 +1,7 @@
 package platform
 
 import (
+	"encoding/json"
 	"strings"
 	"time"
 )
@@ -117,6 +118,12 @@ type ConfigResolution struct {
 	// FromCache reports whether a SourceResolved result was served from the
 	// platform's cache rather than freshly resolved.
 	FromCache bool
+
+	// Includes is the per-include attribution the resolve endpoint served
+	// for MergedYAML, empty when it served none or when the config came
+	// from the snapshot (whose own list the snapshot carries). Read through
+	// RunContext.Includes, which pairs each source with its attribution.
+	Includes []json.RawMessage
 
 	// Valid is false when the git host reported the CI config merge as
 	// INVALID. That is a user error in their own config, not a resolution
@@ -308,6 +315,9 @@ func completeFromResolve(out *ConfigResolution, c resolver, projectPath, sha str
 	out.ResolvedSha = resolved.ResolvedSha
 	out.FromCache = resolved.Source == "cache"
 	out.Valid = resolved.Valid
+	// Attribution for the document just returned, when the platform served
+	// it. It describes THIS merged_yaml, so it travels with it.
+	out.Includes = resolved.Includes
 	// An INVALID merge is a real answer about the user's own config, not an
 	// unavailable resolution: keep Source as resolved so the run reports
 	// "your CI config does not merge", which is actionable, rather than

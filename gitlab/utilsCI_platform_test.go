@@ -111,11 +111,26 @@ func TestPlatformMergedConfigReportsEmptyAsValidNotInvalid(t *testing.T) {
 
 // Attribution is only usable when it describes the configuration actually
 // being evaluated. On a digest-divergent branch the config comes from the
-// resolve endpoint (which serves no includes) while the snapshot's includes
-// still describe the anchor, so pairing them would mis-classify every job an
-// include the branch touched contributed.
+// resolve endpoint while the snapshot's includes still describe the anchor,
+// so pairing those two would mis-classify every job an include the branch
+// touched contributed. The endpoint's OWN list is a different matter: it
+// describes the document it came with, and is used.
 func TestPlatformIncludesOnlyServeTheirOwnConfig(t *testing.T) {
 	const inc = `{"location":"gitlab.com/c/x@1.0.0","type":"component"}`
+	const served = `{"location":"gitlab.com/c/branch@2.0.0","type":"component"}`
+
+	t.Run("a resolved config gets the includes the endpoint served for it", func(t *testing.T) {
+		conf := platformConf(platform.SourceResolved, "stages: [build]", inc)
+		conf.PlatformRun.Config.Includes = []json.RawMessage{json.RawMessage(served)}
+
+		got := platformIncludes(conf)
+		if len(got) != 1 {
+			t.Fatalf("want the served include, got %d", len(got))
+		}
+		if got[0].Location != "gitlab.com/c/branch@2.0.0" {
+			t.Fatalf("include location = %q, want the resolve response's own, not the anchor's", got[0].Location)
+		}
+	})
 
 	t.Run("snapshot config gets the snapshot's includes", func(t *testing.T) {
 		got := platformIncludes(platformConf(platform.SourceSnapshot, "stages: [build]", inc))
@@ -283,6 +298,33 @@ func TestPlatformMergedConfigUsesTheServedMergeVerdict(t *testing.T) {
 		resp, _ := platformMergedConfig(conf)
 		if resp.CiConfig.Status != "VALID" {
 			t.Errorf("status = %q: the resolve endpoint judged THIS branch's config valid", resp.CiConfig.Status)
+		}
+		if len(resp.CiConfig.Errors) != 0 {
+			t.Errorf("errors = %v, want none: these describe the anchor's configuration", resp.CiConfig.Errors)
+		}
+	})
+
+	// Served attribution does not drag the anchor's verdict along with it.
+	// The two questions were once answered by the same predicate, because
+	// only a snapshot-sourced config could have attribution at all. Now
+	// that the resolve endpoint serves its own includes, the predicates
+	// have to be separate: "this config has attribution" is not "this
+	// config IS the snapshot's document", and only the second licenses
+	// merged_yaml_status. A resolve-sourced config has its own verdict,
+	// through ConfigInvalid.
+	t.Run("served includes do not license the anchor's verdict", func(t *testing.T) {
+		conf := snapshotMergeVerdict(
+			platformConf(platform.SourceResolved, "job:\n  script: echo\n"),
+			"INVALID",
+			"the anchor's own merge error",
+		)
+		conf.PlatformRun.Config.Includes = []json.RawMessage{
+			json.RawMessage(`{"location":"gitlab.com/c/branch@2.0.0","type":"component"}`),
+		}
+
+		resp, _ := platformMergedConfig(conf)
+		if resp.CiConfig.Status != "VALID" {
+			t.Errorf("status = %q: attribution for this branch says nothing about the anchor's merge", resp.CiConfig.Status)
 		}
 		if len(resp.CiConfig.Errors) != 0 {
 			t.Errorf("errors = %v, want none: these describe the anchor's configuration", resp.CiConfig.Errors)
