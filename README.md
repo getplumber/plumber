@@ -229,9 +229,22 @@ With `--platform`, Plumber first reads the project's context from the
 platform - the resolved policy set and a cached settings snapshot - and uses
 it to decide what to collect and what to report:
 
-- **One result per policy.** The platform's policy set decides how many
-  results the run produces, each keyed to its own policy and carrying its own
-  score. Policies that share a control configuration are evaluated once.
+- **Only the platform's policies are evaluated.** A linked run reads the
+  resolved policy set and evaluates each policy under its own control
+  configuration; policies sharing a configuration are evaluated once. The
+  local `.plumber.yaml` (or the built-in default) is not evaluated at all: if
+  one is present the log says it was ignored. The job log prints one section
+  per policy (its controls, findings and score), then a `Platform verdict`
+  block with the platform's decision per policy, the platform's global score
+  and the exit code.
+- **The platform decides the exit code.** `--min-points`, `--min-score` and
+  the deprecated `--threshold` are ignored in platform mode (one notice each):
+  each policy's own `enforcement` and `min_points`, as configured on the
+  platform, decide whether the job fails. A degraded collection is pushed and
+  gated by the platform, never failed locally.
+- **No policy, nothing evaluated.** If the platform is unreachable or resolves
+  no policy for the project, the run evaluates nothing, prints one line saying
+  so, pushes nothing and exits 0.
 - **The CI configuration comes from the platform.** Resolving `include:`
   directives needs an API a CI job token cannot reach, so platform mode reads
   the resolved configuration from the platform instead of asking the git host
@@ -295,6 +308,22 @@ it to decide what to collect and what to report:
   objects are the same bytes the platform hashes into a finding's identity, so
   adding a field to them would change what the CLI and the platform agree a
   finding is.
+- The `--output` JSON report in platform mode carries `platformMode: true`, a
+  `policies` array (one entry per policy: name, id, enforcement, min_points,
+  applied, reason, score, findings; the finding objects are byte-identical to
+  the standalone ones), and `plumberScore` = the platform's global score when
+  the push returned one; the legacy per-control `*Result` blocks,
+  `plumberConfig`, `minPoints`/`minScore`/`threshold` and `notEvaluable` are
+  omitted (they described the local configuration). Parsers of platform-mode
+  reports must read `policies`.
+- PBOM and CycloneDX carry the same `policies` array and the global score as a
+  property; per-image compliance verdicts come from the policies' findings and
+  are omitted when no policy evaluates the image controls. SARIF and the
+  GitLab SAST report carry the union of the policies' findings tagged with the
+  policy names. CSV gains a trailing `policies` column and OCSF a `policies`
+  key in platform mode only.
+- In platform mode the push happens before the artifacts are written, so the
+  artifact notices print after the platform verdict block.
 
 Platform mode reports *less* when data is missing, never something different:
 a run that cannot evaluate a control says so.
@@ -475,16 +504,17 @@ More details:
 
 | Code | Meaning |
 |---|---|
-| `0` | The Plumber Score meets the gate (`--min-points` / `--min-score`), or `--no-controls` was used and data collection succeeded |
-| `1` | The Plumber Score is below the gate (or the deprecated `--threshold` is not met) |
+| `0` | The Plumber Score meets the gate (`--min-points` / `--min-score`), or `--no-controls` was used and data collection succeeded, or platform mode and the platform's gate did not block (or could not be reached) |
+| `1` | The Plumber Score is below the gate (or the deprecated `--threshold` is not met), or the platform's gate blocked the run (platform mode) |
 | `2` | Invalid usage, configuration, or a runtime / provider / auth / network failure |
-| `3` | A check could not be verified and `--fail-warnings` is set (e.g. an action version that could not be resolved) |
+| `3` | A check could not be verified and `--fail-warnings` is set (e.g. an action version that could not be resolved) (not in platform mode: a degraded collection is pushed and gated by the platform) |
 
 The deprecated `--threshold` gate is computed from each control's own
 pass/fail rather than the Plumber Score, so a control whose only findings are
 dismissed on the platform still counts as failing there, unlike the score
 gate (`--min-points` / `--min-score`), which excludes dismissed findings;
-prefer `--min-points`.
+prefer `--min-points`. In platform mode neither gate runs: the platform's
+per-policy verdict decides.
 
 ## Self-Hosted GitLab
 
