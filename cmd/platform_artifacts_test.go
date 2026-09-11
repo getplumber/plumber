@@ -618,3 +618,88 @@ func contains(haystack []string, needle string) bool {
 	}
 	return false
 }
+
+// The JSON report lists EVERY resolved policy, unlike the push, and an
+// un-applied one is listed with a null score and null findings. A zero score
+// or an empty findings array there would render a policy the CLI could not
+// evaluate as a clean verdict, and dropping the entry (which is what
+// buildPolicyResults does, deliberately) would make an assigned policy vanish
+// from the run's own account. The PBOM has this covered by
+// TestPlatformFlow_PBOMCarriesThePolicyScoresAndGlobalScore; this is the
+// report's own.
+func TestBuildAnalysisJSONReport_PlatformMode_UnappliedPolicyCarriesNoVerdict(t *testing.T) {
+	applied := policyWithTree("A", "pipelineMustNotEnableDebugTrace", debugTraceControlConfig)
+	wantMinPoints := 80
+	applied.MinPoints = &wantMinPoints
+	// A tree the CLI cannot apply: evaluatePlatformPolicies produces the real
+	// un-applied run shape rather than a hand-built one.
+	broken := policyWithTree("Broken", "pipelineMustNotEnableDebugTrace", `{"enabled":true,"forbiddenVariables":"not-a-list"}`)
+	conf := confWithPolicies(t, applied, broken)
+
+	runs := evaluatePlatformPolicies(testProvider(t), conf, debugTraceResult())
+
+	payload, err := buildAnalysisJSONReport(debugTraceResult(), conf.PlumberConfig,
+		complianceSummary{platformMode: true, scoreMode: true},
+		jsonOutputParams{provider: "gitlab"}, runs, nil)
+	if err != nil {
+		t.Fatalf("buildAnalysisJSONReport: %v", err)
+	}
+	var report map[string]any
+	if err := json.Unmarshal(payload, &report); err != nil {
+		t.Fatalf("the report is not valid JSON: %v", err)
+	}
+	list, ok := report["policies"].([]any)
+	if !ok || len(list) != 2 {
+		t.Fatalf("one entry per resolved policy, applied or not: %#v", report["policies"])
+	}
+	byName := map[string]map[string]any{}
+	for _, e := range list {
+		entry, ok := e.(map[string]any)
+		if !ok {
+			t.Fatalf("a policy entry is an object: %#v", e)
+		}
+		name, _ := entry["name"].(string)
+		byName[name] = entry
+	}
+
+	a, ok := byName["A"]
+	if !ok {
+		t.Fatalf("the applied policy is missing: %#v", byName)
+	}
+	if a["applied"] != true {
+		t.Errorf("policy A was evaluated: %#v", a)
+	}
+	if _, isScore := a["score"].(map[string]any); !isScore {
+		t.Errorf("an applied policy carries the score its own run produced: %#v", a["score"])
+	}
+	if findings, isList := a["findings"].([]any); !isList || len(findings) == 0 {
+		t.Errorf("an applied policy carries its own findings: %#v", a["findings"])
+	}
+	// The min_points value path: every other report test covers only the null
+	// case, so a mapping that dropped the value would stay green.
+	if a["min_points"] != float64(wantMinPoints) {
+		t.Errorf("min_points is the policy's own threshold, want %d, got %#v", wantMinPoints, a["min_points"])
+	}
+
+	b, ok := byName["Broken"]
+	if !ok {
+		t.Fatalf("an un-applied policy is still listed, the push is what omits it: %#v", byName)
+	}
+	if b["applied"] != false {
+		t.Errorf("the broken tree could not be applied: %#v", b)
+	}
+	score, present := b["score"]
+	if !present || score != nil {
+		t.Errorf("an un-applied policy carries a null score, never a zero one: %#v", score)
+	}
+	findings, present := b["findings"]
+	if !present || findings != nil {
+		t.Errorf("an un-applied policy carries null findings, never an empty list: %#v", findings)
+	}
+	if reason, _ := b["reason"].(string); reason == "" {
+		t.Errorf("an un-applied entry says why it was not evaluated: %#v", b["reason"])
+	}
+	if b["min_points"] != nil {
+		t.Errorf("this policy sets no min_points, so the key is null: %#v", b["min_points"])
+	}
+}
