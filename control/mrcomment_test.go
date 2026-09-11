@@ -173,3 +173,21 @@ func TestGenerateMRComment_NotEvaluableRow(t *testing.T) {
 		t.Fatalf("a not_evaluable control must never render as a green check:\n%s", body)
 	}
 }
+
+// House style (CLAUDE.md): no em dash in anything Plumber writes, and a
+// comment posted on a merge request is the most public of those. The
+// failed-status line is shared by the standalone and the platform-mode
+// comment, so pinning it once covers both.
+func TestWriteMRStatusLine_FailedLineCarriesNoEmDash(t *testing.T) {
+	var b strings.Builder
+
+	writeMRStatusLine(&b, false, "score C - 66/100 pts")
+
+	got := b.String()
+	if !strings.Contains(got, ":warning: **Plumber check failed** - score C - 66/100 pts") {
+		t.Errorf("status line = %q, want the gate line after a spaced hyphen", got)
+	}
+	if strings.Contains(got, "\u2014") {
+		t.Errorf("status line = %q, want no em dash", got)
+	}
+}
