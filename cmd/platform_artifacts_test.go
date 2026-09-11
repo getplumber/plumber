@@ -12,6 +12,7 @@ import (
 	"github.com/getplumber/plumber/control"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	"github.com/getplumber/plumber/internal/platform"
+	"github.com/getplumber/plumber/pbom"
 	providerPkg "github.com/getplumber/plumber/provider"
 )
 
@@ -95,9 +96,13 @@ func debugTraceFinding() opaengine.Finding {
 func withArtifactFiles(t *testing.T) (dir string) {
 	t.Helper()
 	dir = t.TempDir()
-	origOutput, origCSV, origOCSF, origPBOM := outputFile, csvFile, ocsfFile, pbomFile
-	t.Cleanup(func() { outputFile, csvFile, ocsfFile, pbomFile = origOutput, origCSV, origOCSF, origPBOM })
-	outputFile, csvFile, ocsfFile, pbomFile = "", "", "", ""
+	origOutput, origCSV, origOCSF := outputFile, csvFile, ocsfFile
+	origPBOM, origCycloneDX := pbomFile, pbomCycloneDXFile
+	t.Cleanup(func() {
+		outputFile, csvFile, ocsfFile = origOutput, origCSV, origOCSF
+		pbomFile, pbomCycloneDXFile = origPBOM, origCycloneDX
+	})
+	outputFile, csvFile, ocsfFile, pbomFile, pbomCycloneDXFile = "", "", "", "", ""
 	return dir
 }
 
@@ -394,6 +399,180 @@ func TestWritePBOM_PlatformMode_ImageVerdictFollowsThePolicies(t *testing.T) {
 	t.Run("no policy enabling them means no claim at all", func(t *testing.T) {
 		assertKeys(t, onlyImage(t, debugTracePolicyYAML, nil), nil, nil)
 	})
+}
+
+// Spec s5: the PBOM and CycloneDX platform block is one entry per resolved
+// policy plus the platform's own global score. This is the MAPPING (the pbom
+// package tests build pb.Policies by hand and only assert the rendering), so
+// a swap here - the raw points instead of the rounded final ones, a score on
+// a run that evaluated nothing, the wrong enforcement - would ship a wrong
+// per-policy verdict inside the artifact with every other test green.
+func TestPlatformPBOMSummary_MapsEachRunAndTheGlobalScore(t *testing.T) {
+	// 66.6 ROUNDS to 67, the same rounding the push and the badge apply.
+	applied := scoredRun("Prod", "id-prod", "block", "C", 66.6)
+	unapplied := unappliedRun("Later", "id-later", reasonTreeNotApplied)
+
+	t.Run("an applied run carries its score, an un-applied one carries none", func(t *testing.T) {
+		got := platformPBOMSummary([]policyRun{applied, unapplied},
+			&platformVerdict{GlobalScore: &platformScore{Letter: "B", Points: 83}})
+
+		if got == nil || len(got.Policies) != 2 {
+			t.Fatalf("one entry per resolved policy: %#v", got)
+		}
+		first := got.Policies[0]
+		if first.Name != "Prod" || first.Enforcement != "block" || first.Score != "C" || !first.Applied || first.Reason != "" {
+			t.Errorf("the applied policy's entry is its own verdict: %#v", first)
+		}
+		if first.FinalPoints == nil || *first.FinalPoints != 67 {
+			t.Errorf("finalPoints are the run's ROUNDED final points: %#v", first.FinalPoints)
+		}
+		second := got.Policies[1]
+		if second.Name != "Later" || second.Enforcement != "report" || second.Applied || second.Reason != reasonTreeNotApplied {
+			t.Errorf("an un-applied policy is listed with its reason: %#v", second)
+		}
+		if second.Score != "" || second.FinalPoints != nil {
+			t.Errorf("a run that evaluated nothing has no score, not a zero one: %#v", second)
+		}
+		if got.GlobalScore == nil || *got.GlobalScore != (pbom.PlatformGlobalScore{Letter: "B", Points: 83}) {
+			t.Errorf("the global score is the platform's own: %#v", got.GlobalScore)
+		}
+	})
+
+	t.Run("no global score in the push response is no global score in the document", func(t *testing.T) {
+		for _, tc := range []struct {
+			name string
+			v    *platformVerdict
+		}{
+			{"a nil verdict", nil},
+			{"a verdict that carried none", &platformVerdict{Gate: &platformGate{Evaluated: true}}},
+		} {
+			got := platformPBOMSummary([]policyRun{applied}, tc.v)
+			if got == nil || got.GlobalScore != nil {
+				t.Errorf("%s must leave platformGlobalScore out rather than publish a zero: %#v", tc.name, got)
+			}
+		}
+	})
+
+	// Outside platform mode there are no runs, and the summary is nil so the
+	// standalone document is byte-identical to what it always was.
+	t.Run("no runs is no platform block at all", func(t *testing.T) {
+		if got := platformPBOMSummary(nil, &platformVerdict{GlobalScore: &platformScore{Letter: "B", Points: 83}}); got != nil {
+			t.Errorf("a standalone document gains nothing: %#v", got)
+		}
+	})
+}
+
+// The same mapping through the WRITERS: what a --pbom / --pbom-cyclonedx run
+// actually puts on disk after a push, rather than what the builder returns.
+func TestPlatformFlow_PBOMCarriesThePolicyScoresAndGlobalScore(t *testing.T) {
+	newGateFlagsCmd(t)
+	origPrint := printOutput
+	printOutput = false
+	defer func() { printOutput = origPrint }()
+
+	dir := withArtifactFiles(t)
+	pbomFile = filepath.Join(dir, "pbom.json")
+	pbomCycloneDXFile = filepath.Join(dir, "pbom.cdx.json")
+
+	a := policyWithTree("A", "pipelineMustNotEnableDebugTrace", debugTraceControlConfig)
+	// A tree the CLI cannot apply: the run is NOT applied, which is the entry
+	// shape a hand-built fixture never produces on this path.
+	broken := policyWithTree("Broken", "pipelineMustNotEnableDebugTrace", `{"enabled":true,"forbiddenVariables":"not-a-list"}`)
+	conf := confWithPolicies(t, a, broken)
+
+	var pushed []byte
+	srv := pushServer(t, 200, `{"gate":{"evaluated":true,"blocking":false,"policies":[]},"global_score":{"letter":"B","points":83}}`, &pushed)
+	defer srv.Close()
+	restore := withPlatformTestEnv(t, srv.URL, "tok")
+	defer restore()
+
+	var err error
+	_ = captureStderr(t, func() {
+		err = presentResultWithProvider(testProvider(t), nil, debugTraceResult(), conf)
+	})
+	if err != nil {
+		t.Fatalf("the gate does not block: want exit 0, got %v", err)
+	}
+
+	raw, readErr := os.ReadFile(pbomFile)
+	if readErr != nil {
+		t.Fatalf("read the pbom: %v", readErr)
+	}
+	var bom struct {
+		Policies []struct {
+			Name        string `json:"name"`
+			Enforcement string `json:"enforcement"`
+			Score       string `json:"score"`
+			FinalPoints *int   `json:"finalPoints"`
+			Applied     bool   `json:"applied"`
+			Reason      string `json:"reason"`
+		} `json:"policies"`
+		PlatformGlobalScore *struct {
+			Letter string `json:"letter"`
+			Points int    `json:"points"`
+		} `json:"platformGlobalScore"`
+		PlumberScore any `json:"plumberScore"`
+	}
+	if err := json.Unmarshal(raw, &bom); err != nil {
+		t.Fatalf("the pbom is not valid JSON: %v", err)
+	}
+	if len(bom.Policies) != 2 {
+		t.Fatalf("one entry per resolved policy: %#v", bom.Policies)
+	}
+	applied := bom.Policies[0]
+	if applied.Name != "A" || applied.Enforcement != "report" || !applied.Applied {
+		t.Errorf("the applied policy's entry: %#v", applied)
+	}
+	if applied.Score == "" || applied.FinalPoints == nil {
+		t.Errorf("an applied policy carries the score its own run produced: %#v", applied)
+	}
+	unapplied := bom.Policies[1]
+	if unapplied.Name != "Broken" || unapplied.Applied {
+		t.Fatalf("the second policy must be the un-applied one: %#v", unapplied)
+	}
+	if unapplied.Score != "" || unapplied.FinalPoints != nil || unapplied.Reason == "" {
+		t.Errorf("an un-applied policy carries its reason and no score: %#v", unapplied)
+	}
+	if bom.PlatformGlobalScore == nil || bom.PlatformGlobalScore.Letter != "B" || bom.PlatformGlobalScore.Points != 83 {
+		t.Errorf("platformGlobalScore is the push response's own: %#v", bom.PlatformGlobalScore)
+	}
+	if bom.PlumberScore != nil {
+		t.Errorf("there is no run-level score in platform mode: %#v", bom.PlumberScore)
+	}
+
+	// The CycloneDX writer renders the same block as metadata properties, and
+	// nothing else on this path exercises it in platform mode.
+	cdxRaw, readErr := os.ReadFile(pbomCycloneDXFile)
+	if readErr != nil {
+		t.Fatalf("read the cyclonedx pbom: %v", readErr)
+	}
+	var cdx struct {
+		Metadata struct {
+			Properties []struct {
+				Name  string `json:"name"`
+				Value string `json:"value"`
+			} `json:"properties"`
+		} `json:"metadata"`
+	}
+	if err := json.Unmarshal(cdxRaw, &cdx); err != nil {
+		t.Fatalf("the cyclonedx pbom is not valid JSON: %v", err)
+	}
+	props := map[string]string{}
+	for _, p := range cdx.Metadata.Properties {
+		props[p.Name] = p.Value
+	}
+	if props["plumber:platform-global-score"] != "B" || props["plumber:platform-global-points"] != "83" {
+		t.Errorf("the platform's global score must reach CycloneDX: %#v", props)
+	}
+	if props["plumber:policy:A:enforcement"] != "report" || props["plumber:policy:A:score"] == "" {
+		t.Errorf("the applied policy's properties: %#v", props)
+	}
+	if _, present := props["plumber:policy:Broken:score"]; present {
+		t.Errorf("an un-applied policy has no score property, only its enforcement: %#v", props)
+	}
+	if props["plumber:policy:Broken:enforcement"] != "report" {
+		t.Errorf("an un-applied policy is still listed: %#v", props)
+	}
 }
 
 func pbomImages(t *testing.T, path string) []map[string]any {
