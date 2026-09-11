@@ -288,6 +288,38 @@ func TestResolveRunConfig_ServedIncludesTravelWithTheirConfig(t *testing.T) {
 		}
 	})
 
+	// A served EMPTY list is a real, complete answer (this branch's config
+	// has zero includes) and must not read the same as "nothing served".
+	// Before this fix, RunContext.Includes and ConfigAndIncludesAgree keyed
+	// on len(...) == 0, which collapsed "served empty" into "not served"
+	// and left this branch's include controls abstaining forever.
+	t.Run("a served EMPTY list is complete attribution, not unavailable", func(t *testing.T) {
+		f := &fakeResolver{result: &ResolvedConfig{
+			MergedYaml: "a: 1\n", ResolvedSha: "s", Valid: true, Source: "resolved",
+			Includes: []json.RawMessage{},
+		}}
+
+		got := resolveRunConfigSync(f, snap, "grp/proj", "s", "bbb", "")
+		if got.Includes == nil {
+			t.Fatal("ConfigResolution.Includes must stay non-nil for a served-empty response")
+		}
+
+		rc := &RunContext{Context: &ProjectContext{Snapshot: snap}, Config: got}
+		inc, ok := rc.Includes()
+		if !ok {
+			t.Fatalf("Includes() ok = false, want true: the resolve endpoint served the key, zero entries included")
+		}
+		if inc == nil {
+			t.Fatal("Includes() returned a nil list for a served-empty response, want non-nil empty")
+		}
+		if len(inc) != 0 {
+			t.Fatalf("want zero entries, got %d", len(inc))
+		}
+		if !rc.ConfigAndIncludesAgree() {
+			t.Error("a served empty list agrees with the config in use: zero includes is a complete answer")
+		}
+	})
+
 	t.Run("no served list leaves attribution unavailable", func(t *testing.T) {
 		f := &fakeResolver{result: &ResolvedConfig{MergedYaml: "a: 1\n", ResolvedSha: "s", Valid: true, Source: "resolved"}}
 
@@ -314,6 +346,26 @@ func TestResolveRunConfig_ServedIncludesTravelWithTheirConfig(t *testing.T) {
 		}
 		if !rc.ConfigIsSnapshot() {
 			t.Error("a digest match evaluates the snapshot's own document")
+		}
+	})
+
+	t.Run("a snapshot served an empty list is complete attribution too", func(t *testing.T) {
+		emptySnap := snapWith(t, "b: 2\n", "aaa", "1", "s0", "main")
+		emptySnap.Data.Includes = []json.RawMessage{}
+		f := &fakeResolver{}
+
+		got := resolveRunConfigSync(f, emptySnap, "grp/proj", "s0", "aaa", "")
+
+		rc := &RunContext{Context: &ProjectContext{Snapshot: emptySnap}, Config: got}
+		inc, ok := rc.Includes()
+		if !ok {
+			t.Fatal("Includes() ok = false, want true: the snapshot served the key, zero entries included")
+		}
+		if inc == nil || len(inc) != 0 {
+			t.Fatalf("want a non-nil empty list, got %#v", inc)
+		}
+		if !rc.ConfigAndIncludesAgree() {
+			t.Error("a served empty list agrees with the snapshot's own document: zero includes is a complete answer")
 		}
 	})
 }

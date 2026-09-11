@@ -125,6 +125,14 @@ func (r *RunContext) ConfigInvalid() bool {
 //     it. The endpoint serves them when it can; when it does not, there is
 //     no branch-accurate attribution to be had and this returns false.
 //
+// ok is keyed on PRESENCE, not on how many entries came back. A source that
+// served the key with zero entries is a complete answer - every job in the
+// merged document is project-authored, nothing to attribute upstream - and
+// returns ok=true with a non-nil, empty list. Only an ABSENT key (the
+// source never served attribution at all) returns ok=false. Collapsing
+// "served empty" into "not served" would abstain the include-reasoning
+// controls on a project that legitimately has no includes.
+//
 // The snapshot's list is never lent to a resolved config. It was resolved
 // against the anchor, the default branch, and a branch that adds, removes
 // or re-pins an include would get every job from that include classified
@@ -144,7 +152,7 @@ func (r *RunContext) Includes() ([]json.RawMessage, bool) {
 	case SourceSnapshot:
 		return r.SnapshotIncludes()
 	case SourceResolved:
-		if len(r.Config.Includes) == 0 {
+		if r.Config.Includes == nil {
 			return nil, false
 		}
 		return r.Config.Includes, true
@@ -300,9 +308,15 @@ func (r *RunContext) LaneMissing(field string) bool {
 // source with the attribution that belongs to it. Without attribution a
 // component's job is indistinguishable from one the project wrote, which
 // fabricates findings rather than merely hiding them.
+//
+// ok answers whether the snapshot carries the key at all, not whether it
+// carries any entries: a snapshot served with includes: [] is a complete,
+// known-empty answer and returns ok=true with a non-nil empty list. Only a
+// snapshot with no Data, or one whose Includes key was never served
+// (nil), returns ok=false.
 func (r *RunContext) SnapshotIncludes() ([]json.RawMessage, bool) {
 	snap := r.Snapshot()
-	if snap.Data == nil || len(snap.Data.Includes) == 0 {
+	if snap.Data == nil || snap.Data.Includes == nil {
 		return nil, false
 	}
 	return snap.Data.Includes, true
@@ -583,8 +597,9 @@ func (r *RunContext) describeConfig() []string {
 		line := fmt.Sprintf("ci config source: platform resolve endpoint, %s at %s", how, shortDigest(c.ResolvedSha))
 		// Whether attribution came with it decides whether the include
 		// controls could run, which is the next thing the reader of this
-		// line wants to know.
-		if len(c.Includes) > 0 {
+		// line wants to know. A non-nil Includes means the endpoint served
+		// the key, zero entries included; a nil one means it did not.
+		if c.Includes != nil {
 			line += ", includes served"
 		}
 		if !c.Valid {

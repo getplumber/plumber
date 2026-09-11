@@ -151,6 +151,25 @@ func TestPlatformIncludesOnlyServeTheirOwnConfig(t *testing.T) {
 	}
 }
 
+// TestPlatformIncludesServedEmptyIsNonNilAndUsed pins that a served EMPTY
+// includes list is used, not treated as missing attribution: it returns a
+// non-nil, zero-length slice, and the origin loop that ranges over it then
+// correctly attributes every job in the merged config to the project
+// (dataCollectionGitlabPipelineOrigin.go), which is the right answer when
+// there are genuinely zero includes.
+func TestPlatformIncludesServedEmptyIsNonNilAndUsed(t *testing.T) {
+	conf := platformConf(platform.SourceResolved, "stages: [build]")
+	conf.PlatformRun.Config.Includes = []json.RawMessage{}
+
+	got := platformIncludes(conf)
+	if got == nil {
+		t.Fatal("want a non-nil empty slice for a served-empty list, got nil")
+	}
+	if len(got) != 0 {
+		t.Fatalf("want zero entries, got %d", len(got))
+	}
+}
+
 // A malformed include is DROPPED, not partially applied. A half-decoded
 // include gives a confidently wrong origin; a short list is detected
 // upstream as missing attribution and degrades honestly.

@@ -120,9 +120,14 @@ type ConfigResolution struct {
 	FromCache bool
 
 	// Includes is the per-include attribution the resolve endpoint served
-	// for MergedYAML, empty when it served none or when the config came
-	// from the snapshot (whose own list the snapshot carries). Read through
-	// RunContext.Includes, which pairs each source with its attribution.
+	// for MergedYAML. It is nil when the config came from the snapshot
+	// (whose own list the snapshot carries) or when the resolve endpoint
+	// served no "includes" key at all (an older platform). It is non-nil,
+	// possibly empty, when the endpoint DID serve the key: a served empty
+	// list is a complete answer (this merged_yaml has zero includes), not
+	// an unknown one, and must not be collapsed into the nil case. Read
+	// through RunContext.Includes, which pairs each source with its
+	// attribution and preserves this nil/non-nil distinction.
 	Includes []json.RawMessage
 
 	// Valid is false when the git host reported the CI config merge as
@@ -315,8 +320,10 @@ func completeFromResolve(out *ConfigResolution, c resolver, projectPath, sha str
 	out.ResolvedSha = resolved.ResolvedSha
 	out.FromCache = resolved.Source == "cache"
 	out.Valid = resolved.Valid
-	// Attribution for the document just returned, when the platform served
-	// it. It describes THIS merged_yaml, so it travels with it.
+	// Attribution for the document just returned. It describes THIS
+	// merged_yaml, so it travels with it, and the assignment carries the
+	// wire decode's nil (key absent) vs non-nil (key served, zero entries
+	// included) distinction straight through - see ResolvedConfig.Includes.
 	out.Includes = resolved.Includes
 	// An INVALID merge is a real answer about the user's own config, not an
 	// unavailable resolution: keep Source as resolved so the run reports

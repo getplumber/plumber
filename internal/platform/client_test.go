@@ -322,6 +322,62 @@ func TestResolveConfig_DecodesIncludesFromTheWire(t *testing.T) {
 	}
 }
 
+// TestResolveConfig_IncludesPresenceSurvivesTheWire pins the decode this
+// fix depends on: ResolvedConfig.Includes must tell "the key was absent"
+// apart from "the key was served empty", because the platform is moving to
+// serve an explicit includes: [] for a configuration with zero includes,
+// and that is a complete, known answer rather than an unknown one.
+//
+// encoding/json already draws this line on a plain slice field (nil when
+// the key never appeared, a non-nil zero-length slice when it appeared as
+// []), so this test pins that wire-level behaviour rather than a type
+// change: present/empty/populated, by nil-ness and length together.
+func TestResolveConfig_IncludesPresenceSurvivesTheWire(t *testing.T) {
+	const merged = `"merged_yaml":"x\n","resolved_sha":"cafe","valid":true,"source":"resolved"`
+
+	t.Run("includes key absent decodes nil: unknown", func(t *testing.T) {
+		c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{`+merged+`}`)
+		})
+		got, err := c.ResolveConfig("a/b", "cafe", "", "")
+		if err != nil {
+			t.Fatalf("ResolveConfig: %v", err)
+		}
+		if got.Includes != nil {
+			t.Fatalf("want nil (absent), got %#v", got.Includes)
+		}
+	})
+
+	t.Run("includes key served empty decodes non-nil, zero-length: known empty", func(t *testing.T) {
+		c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{`+merged+`,"includes":[]}`)
+		})
+		got, err := c.ResolveConfig("a/b", "cafe", "", "")
+		if err != nil {
+			t.Fatalf("ResolveConfig: %v", err)
+		}
+		if got.Includes == nil {
+			t.Fatal("want a non-nil empty slice (known: zero includes), got nil (unknown)")
+		}
+		if len(got.Includes) != 0 {
+			t.Fatalf("want zero entries, got %d", len(got.Includes))
+		}
+	})
+
+	t.Run("includes key served populated decodes non-nil, non-empty", func(t *testing.T) {
+		c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+			_, _ = io.WriteString(w, `{`+merged+`,"includes":[{"location":"gitlab.com/c/x@1.0.0","type":"component"}]}`)
+		})
+		got, err := c.ResolveConfig("a/b", "cafe", "", "")
+		if err != nil {
+			t.Fatalf("ResolveConfig: %v", err)
+		}
+		if len(got.Includes) != 1 {
+			t.Fatalf("want 1 entry, got %d", len(got.Includes))
+		}
+	})
+}
+
 func TestResolveConfig_503IsTypedAndNeverFatal(t *testing.T) {
 	for _, tc := range []struct {
 		name, body, wantReason string

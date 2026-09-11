@@ -267,6 +267,14 @@ type SnapshotData struct {
 	// guessing the project wrote it; see control.controlsRequiringIncludeAttribution
 	// for what depends on it. Present only alongside a resolved MergedYaml,
 	// the same presence rule as ResolutionAnchor. Raw: decoded by gitlab.
+	//
+	// Carries the same nil-vs-non-nil presence distinction as
+	// ResolvedConfig.Includes, for the same reason: a snapshot collected
+	// with the key absent decodes nil (unknown), one collected with
+	// "includes": [] decodes to a non-nil, zero-length slice (known, zero
+	// includes - a complete answer, not an unknown one). Callers must read
+	// nil-ness, never length, to tell the two apart - see
+	// RunContext.SnapshotIncludes.
 	Includes []json.RawMessage `json:"includes,omitempty"`
 
 	// CiConfigPath is the project's OWN configured CI config path, defaulting
@@ -478,8 +486,23 @@ type ResolvedConfig struct {
 	// reason the snapshot's list is: the provider package owns that type,
 	// and a field added upstream must travel through untouched.
 	//
-	// It is absent on an older platform, and absence is not emptiness: a
-	// run with no attribution reports the include controls not_evaluable
-	// rather than reading the config as having no includes.
+	// PRESENCE is the fact that matters, not just content, and the plain
+	// slice already carries it through encoding/json's own decode rules: a
+	// body with no "includes" key leaves this nil (Go never touches a
+	// field it did not find), while a body with "includes": [] decodes to
+	// a non-nil, zero-length slice (encoding/json replaces the field with
+	// a fresh empty slice for an empty JSON array). So:
+	//
+	//   - nil: absent on an older platform, or the endpoint genuinely has
+	//     nothing to say about this document. Not emptiness - a run with no
+	//     attribution reports the include controls not_evaluable rather
+	//     than reading the config as having no includes.
+	//   - non-nil, len 0: served and complete - the platform positively
+	//     knows this merged_yaml has zero includes, which is a real answer
+	//     ("every job here is project-authored"), not an unknown one.
+	//   - non-nil, len > 0: served attribution for each include.
+	//
+	// Callers must read this field's nil-ness, never its length, to tell
+	// "unknown" apart from "known empty" - see RunContext.Includes.
 	Includes []json.RawMessage `json:"includes,omitempty"`
 }
