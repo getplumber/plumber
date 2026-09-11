@@ -236,7 +236,7 @@ func writeMRStatusLine(b *strings.Builder, passed bool, gateLine string) {
 	if passed {
 		fmt.Fprintf(b, ":white_check_mark: **Plumber check passed** (%s)\n\n", gateLine)
 	} else {
-		fmt.Fprintf(b, ":warning: **Plumber check failed** — %s\n\n", gateLine)
+		fmt.Fprintf(b, ":warning: **Plumber check failed** - %s\n\n", gateLine)
 	}
 }
 

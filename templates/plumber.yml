@@ -32,13 +32,13 @@ spec:
 
     # Gate configuration
     min_points:
-      description: "Minimum Plumber Score points required to pass (0-100). Default: 100 — any finding fails, same as the previous default behavior. Leave empty to keep the default. Ignored when platform is set: enforcement then comes from the platform's policies."
+      description: "Minimum Plumber Score points required to pass (0-100). Default: 100 - any finding fails, same as the previous default behavior. Leave empty to keep the default. Ignored when `platform` is set: enforcement then comes from the platform's policies."
       default: ""
     min_score:
-      description: "Minimum Plumber Score letter required to pass (A-E), e.g. B fails on C, D, E. When set without min_points, the letter alone gates. Ignored when platform is set: enforcement then comes from the platform's policies."
+      description: "Minimum Plumber Score letter required to pass (A-E), e.g. B fails on C, D, E. When set without min_points, the letter alone gates. Ignored when `platform` is set: enforcement then comes from the platform's policies."
       default: ""
     threshold:
-      description: "Deprecated: minimum percentage of passing controls (0-100). Use min_points / min_score to gate on the Plumber Score instead. The default (100) is equivalent to the default score gate and is treated as unset. Ignored when platform is set: enforcement then comes from the platform's policies."
+      description: "Deprecated: minimum percentage of passing controls (0-100). Use min_points / min_score to gate on the Plumber Score instead. The default (100) is equivalent to the default score gate and is treated as unset. Ignored when `platform` is set: enforcement then comes from the platform's policies."
       type: number
       default: 100
 
@@ -99,7 +99,7 @@ spec:
       description: "Score service base URL. Override only for a self-hosted score service; the OIDC audience follows this value so it always matches the target."
       default: "https://score.getplumber.io"
     platform:
-      description: "Plumber platform base URL. Setting it pushes this run's full results there over CI OIDC, and takes precedence over score_push. The default is a placeholder (RFC 2606 .invalid) that never enables a push — GitLab requires the id_tokens audience to be non-empty, so this input cannot default to empty. In platform mode only the platform's policies are evaluated and the platform's gate decides the exit code."
+      description: "Plumber platform base URL. Setting it pushes this run's full results there over CI OIDC, and takes precedence over score_push. The default is a placeholder (RFC 2606 .invalid) that never enables a push - GitLab requires the id_tokens audience to be non-empty, so this input cannot default to empty. In platform mode only the platform's policies are evaluated and the platform's gate decides the exit code."
       default: "https://platform.invalid"
     controls:
       description: Run only listed controls (comma-separated control names). Cannot be used with skip_controls.

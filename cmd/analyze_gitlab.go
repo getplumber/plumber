@@ -1112,9 +1112,15 @@ func normalizeYAMLValue(v any) any {
 }
 
 // platformPolicyReportEntries renders the report's `policies` array: one entry
-// per resolved policy of every run, in /context order, exactly as the push
-// reports them (buildPolicyResults) so the file and the record cannot
-// disagree about what a policy found.
+// per resolved policy of every run, in /context order, carrying the same
+// findings and the same score the push reports for it (buildPolicyResults),
+// so the file and the record cannot disagree about what a policy found.
+//
+// The two sets are not identical, on purpose: the report lists EVERY resolved
+// policy, marking the ones that were not evaluated `applied:false` with a null
+// score, while the push omits those entirely (it records results, and there is
+// no result to record). The file is the run's own account, and a policy that
+// silently vanished from it would read as one that was never assigned.
 //
 // The finding objects inside an entry are the ones the report already emits
 // per control (projectFinding). They are FROZEN bytes: the platform hashes a
