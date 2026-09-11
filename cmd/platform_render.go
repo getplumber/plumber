@@ -112,6 +112,16 @@ func renderPolicySections(p providerPkg.Provider, conf *configuration.Configurat
 func renderPlatformVerdict(runs []policyRun, v *platformVerdict, exitErr error) {
 	fmt.Println()
 	if v == nil || v.Gate == nil {
+		// A verdict that is missing BECAUSE something failed is not a
+		// fail-open: maybePushPlatform returns a *PlatformTokenError when the
+		// CI OIDC grant is broken, classifyExecError exits 2 on it, and a
+		// line promising "fail-open, exit 0" would contradict the process's
+		// own exit code in the log the operator reads to diagnose it. State
+		// that no verdict was obtained, and let the error say why.
+		if exitErr != nil {
+			fmt.Printf("Platform verdict: not obtained (%v)\n", exitErr)
+			return
+		}
 		// Invariant 5: no usable gate lets the run through, and says so
 		// in plain words rather than passing silently.
 		reason := "no push"

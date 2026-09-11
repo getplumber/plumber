@@ -266,3 +266,32 @@ func TestRenderNothingEvaluated_NoAssignment(t *testing.T) {
 
 	assertContains(t, out, "no policy resolved for g/p (no policy assigned), nothing evaluated, exit 0")
 }
+
+// A verdict that never arrived because the token failed is NOT a fail-open.
+// maybePushPlatform returns a *PlatformTokenError there, classifyExecError
+// exits 2 on it, and a line claiming "fail-open, exit 0" would contradict the
+// process's own exit code in the very log the operator reads to diagnose it.
+func TestRenderPlatformVerdict_TokenFailureIsNotFailOpen(t *testing.T) {
+	out := captureStdoutAll(t, func() {
+		renderPlatformVerdict(nil, nil, &PlatformTokenError{Reason: "no CI OIDC id-token available"})
+	})
+
+	assertContains(t, out, "Platform verdict: not obtained (platform push: no CI OIDC id-token available)")
+	if strings.Contains(out, "fail-open") || strings.Contains(out, "exit 0") {
+		t.Fatalf("a run that exits 2 on a token failure must not claim a fail-open exit 0:\n%s", out)
+	}
+}
+
+// The fail-open line stays exactly as it was whenever nothing failed: an
+// unreachable platform, or a 2xx that carried no gate, is the let-through
+// invariant 5 requires, in the words the README tells operators to alert on.
+func TestRenderPlatformVerdict_UnavailableWithoutAnErrorIsStillFailOpen(t *testing.T) {
+	out := captureStdoutAll(t, func() {
+		renderPlatformVerdict(nil, &platformVerdict{Unavailable: "gate unavailable, letting through"}, nil)
+	})
+
+	assertContains(t, out, "Platform verdict: unavailable (gate unavailable, letting through), fail-open, exit 0")
+	if strings.Contains(out, "not obtained") {
+		t.Fatalf("nothing failed here, the line must stay the fail-open one:\n%s", out)
+	}
+}

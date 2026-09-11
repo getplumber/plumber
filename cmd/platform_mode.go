@@ -11,6 +11,28 @@ import (
 	providerPkg "github.com/getplumber/plumber/provider"
 )
 
+// platformPolicyMode reports whether this run's verdict comes from the
+// platform's policies rather than from a local configuration. It is
+// continueRun's own routing condition, stated once: --platform configured AND
+// --no-controls not asked for.
+//
+// The --no-controls half matters. That run evaluates nothing under any mode
+// and takes the standalone branch, so its output must keep saying which local
+// configuration was loaded; only a run that actually goes down the platform
+// branch may claim the platform's policies produced it.
+//
+// It exists for the surfaces that render BEFORE the mode is engaged (the run
+// header, the config loader's zero-config notice), which have no policy runs
+// to inspect and would otherwise describe a configuration the verdict never
+// used.
+func platformPolicyMode(noControlsRun bool) bool {
+	if noControlsRun {
+		return false
+	}
+	push, _ := effectivePlatformPush()
+	return push
+}
+
 // setupPlatformMode resolves everything platform mode needs BEFORE
 // collection begins, and returns the run context to hang on conf. It
 // returns nil when --platform is not set, which is the CLI's default and

@@ -332,3 +332,107 @@ func TestPlatformFlow_OutputFileCarriesThePoliciesAndTheGlobalScore(t *testing.T
 		t.Error("no local gate ran, so no local gate key may be written")
 	}
 }
+
+// The collection-truth diagnostics are facts about what was collected, not a
+// verdict, so platform mode keeps every one of them: CI configuration errors
+// explain why an inventory is thin, and the tier caveats explain why a
+// control could not be checked on this GitLab plan. Dropping them turned a
+// diagnosable run into a silent one (spec s3 renders today's control blocks;
+// these are part of that report).
+func TestPlatformFlow_CollectionDiagnosticsAreStillPrinted(t *testing.T) {
+	newGateFlagsCmd(t)
+	origPrint := printOutput
+	printOutput = true
+	defer func() { printOutput = origPrint }()
+	a := policyWithTree("A", "pipelineMustNotEnableDebugTrace", debugTraceControlConfig)
+	conf := confWithPolicies(t, a)
+	result := debugTraceResult()
+	result.CiErrors = []string{"boom"}
+	result.ApprovalRulesTierCaveat = true
+	result.MRApprovalSettingsTierCaveat = true
+	result.MRSettingsPremiumCaveatFields = []string{"mergeTrainsEnabled"}
+	result.SecurityPolicyTierCaveat = true
+	var pushed []byte
+	srv := pushServer(t, 200, `{"gate":{"evaluated":true,"blocking":false,"policies":[]}}`, &pushed)
+	defer srv.Close()
+	restore := withPlatformTestEnv(t, srv.URL, "tok")
+	defer restore()
+
+	var err error
+	out := captureStdoutAll(t, func() {
+		_ = captureStderr(t, func() { err = presentResultWithProvider(testProvider(t), nil, result, conf) })
+	})
+
+	if err != nil {
+		t.Fatalf("the gate did not block: want exit 0, got %v", err)
+	}
+	assertContains(t, out, "CI configuration errors:")
+	assertContains(t, out, "boom")
+	assertContains(t, out, "MR approval rules are a GitLab Premium/Ultimate feature.")
+	assertContains(t, out, "MR approval settings are a GitLab Premium/Ultimate feature.")
+	assertContains(t, out, "mergeTrainsEnabled")
+	assertContains(t, out, "Security policies are a GitLab Ultimate feature")
+}
+
+// Spec s4: --fail-warnings is one of the two exit sources platform mode
+// keeps, and a run that resolved no policy is no exception. Returning a bare
+// nil there made the opt-in silently inert on exactly the runs (an
+// unreachable platform, an unassigned project) where the warnings are the
+// only thing the operator has left.
+func TestPlatformFlow_NoPolicies_FailWarningsStillDecidesTheExit(t *testing.T) {
+	newGateFlagsCmd(t)
+	origPrint, origFail := printOutput, failWarnings
+	printOutput = true
+	defer func() { printOutput, failWarnings = origPrint, origFail }()
+
+	newConf := func(t *testing.T) *configuration.Configuration {
+		t.Helper()
+		conf := configuration.NewDefaultConfiguration()
+		conf.PlumberConfig = testDefaultPlumberConfig(t)
+		conf.PlatformRun = &platform.RunContext{
+			Endpoint:    "https://platform.example.com",
+			ProjectPath: "g/p",
+			ContextErr:  errors.New("dial tcp: connection refused"),
+		}
+		return conf
+	}
+	run := func(t *testing.T, warnings []string) error {
+		t.Helper()
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			t.Error("a run that resolved no policy must never push")
+		}))
+		defer srv.Close()
+		restore := withPlatformTestEnv(t, srv.URL, "tok")
+		defer restore()
+		result := debugTraceResult()
+		result.Warnings = warnings
+		var err error
+		_ = captureStdoutAll(t, func() {
+			_ = captureStderr(t, func() { err = presentResultWithProvider(testProvider(t), nil, result, newConf(t)) })
+		})
+		return err
+	}
+
+	t.Run("warnings exist", func(t *testing.T) {
+		failWarnings = true
+		err := run(t, []string{"could not verify the default branch"})
+		var degraded *DegradedError
+		if !errors.As(err, &degraded) {
+			t.Fatalf("err = %v, want a *DegradedError: --fail-warnings is a data-quality opt-in, not a score gate", err)
+		}
+	})
+
+	t.Run("no warnings still exits 0", func(t *testing.T) {
+		failWarnings = true
+		if err := run(t, nil); err != nil {
+			t.Fatalf("err = %v, want nil: nothing was evaluated and there is nothing to warn about", err)
+		}
+	})
+
+	t.Run("without the opt-in nothing fails", func(t *testing.T) {
+		failWarnings = false
+		if err := run(t, []string{"could not verify the default branch"}); err != nil {
+			t.Fatalf("err = %v, want nil: warnings alone never fail a run", err)
+		}
+	})
+}
