@@ -216,6 +216,80 @@ func TestParseGitRemoteURL(t *testing.T) {
 	}
 }
 
+// TestParseGitRemoteURLStripsCredentialsUpToTheLastAt pins the parse of the remote a CI
+// runner actually leaves behind. GitLab's runner rewrites origin to
+// CI_REPOSITORY_URL, which embeds the job token as userinfo
+// (https://gitlab-ci-token:<token>@host/path.git). Keeping that userinfo in
+// Host made every derived value wrong: URL became
+// https://gitlab-ci-token:<token>@gitlab.com, which can never equal the
+// instance URL, so the checkout was never recognised as the analyzed
+// project and the CI config digest was never computed. Every component job
+// then ran as digest-divergent and lost its include attribution. Provider
+// detection saw the same mangled host and fell through to its default.
+//
+// Credentials are transport, not identity: they are stripped, and the host
+// keeps its port.
+func TestParseGitRemoteURLStripsCredentialsUpToTheLastAt(t *testing.T) {
+	cases := []struct {
+		name         string
+		remoteURL    string
+		wantHost     string
+		wantProject  string
+		wantURL      string
+		wantProvider string
+	}{
+		{
+			// An unencoded "@" inside the password is invalid per the URL
+			// spec but is exactly what a hand-typed or generated token can
+			// contain. The userinfo group must still eat everything up to
+			// the LAST "@" before the first "/", not stop at the first one
+			// it sees, or "ss" would be misread as the host.
+			name:         "HTTPS with an unencoded @ inside the password",
+			remoteURL:    "https://user:p@ss@gitlab.example.com/group/proj.git",
+			wantHost:     "gitlab.example.com",
+			wantProject:  "group/proj",
+			wantURL:      "https://gitlab.example.com",
+			wantProvider: "gitlab",
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got := ParseGitRemoteURL(c.remoteURL)
+			if got == nil {
+				t.Fatalf("ParseGitRemoteURL(%q) = nil, want a parsed remote", c.remoteURL)
+			}
+			if got.Host != c.wantHost {
+				t.Errorf("Host = %q, want %q", got.Host, c.wantHost)
+			}
+			if got.ProjectPath != c.wantProject {
+				t.Errorf("ProjectPath = %q, want %q", got.ProjectPath, c.wantProject)
+			}
+			if got.URL != c.wantURL {
+				t.Errorf("URL = %q, want %q", got.URL, c.wantURL)
+			}
+			if got.Provider != c.wantProvider {
+				t.Errorf("Provider = %q, want %q", got.Provider, c.wantProvider)
+			}
+		})
+	}
+}
+
+// An @ inside the path is not userinfo. Stripping it would eat the first
+// path segment of a legitimate project.
+func TestParseGitRemoteURLKeepsAnAtInThePath(t *testing.T) {
+	got := ParseGitRemoteURL("https://gitlab.com/group/proj@1.0.0.git")
+	if got == nil {
+		t.Fatal("ParseGitRemoteURL = nil, want a parsed remote")
+	}
+	if got.Host != "gitlab.com" {
+		t.Errorf("Host = %q, want %q", got.Host, "gitlab.com")
+	}
+	if got.ProjectPath != "group/proj@1.0.0" {
+		t.Errorf("ProjectPath = %q, want %q", got.ProjectPath, "group/proj@1.0.0")
+	}
+}
+
 func TestDetectProvider(t *testing.T) {
 	// Build a repo root that contains a GitHub Actions workflow file, so the
 	// .github/workflows positive signal is exercised against the real FS.

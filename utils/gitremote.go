@@ -276,14 +276,16 @@ func ParseGitRemoteURL(remoteURL string) *GitRemoteInfo {
 	//
 	// A CI runner clones with the job token embedded as userinfo
 	// (gitlab-ci-token:<token>@host on GitLab, x-access-token:<token>@host
-	// on GitHub), and the optional `(?:[^@/]+@)?` drops it before the host
+	// on GitHub), and the optional `(?:[^/]*@)?` drops it before the host
 	// is captured (platform row 51): a host that kept it would never equal
 	// the plain server URL the pipeline is configured with, so the checkout
 	// would never be recognized as the analyzed project and the include
 	// controls that depend on that match would never evaluate. Every field
 	// this constructs (Host, URL) flows through newGitRemoteInfo, so every
-	// consumer inherits the fix.
-	httpsRegex := regexp.MustCompile(`^https?://(?:[^@/]+@)?([^/]+)/(.+?)(?:\.git)?$`)
+	// consumer inherits the fix. The group is greedy up to the LAST "@" before
+	// the first "/", so an unencoded "@" inside the password still leaves the
+	// bare host behind instead of splitting the password off as a bogus host.
+	httpsRegex := regexp.MustCompile(`^https?://(?:[^/]*@)?([^/]+)/(.+?)(?:\.git)?$`)
 	if matches := httpsRegex.FindStringSubmatch(remoteURL); matches != nil {
 		return newGitRemoteInfo(matches[1], matches[2])
 	}
@@ -293,8 +295,8 @@ func ParseGitRemoteURL(remoteURL string) *GitRemoteInfo {
 	// The git:// protocol carries no authentication of its own, so userinfo
 	// here is not a known real-world case, but stripping it defensively
 	// keeps this branch consistent with the HTTPS one instead of relying on
-	// that absence.
-	gitRegex := regexp.MustCompile(`^git://(?:[^@/]+@)?([^/:]+)(?::\d+)?/(.+?)(?:\.git)?$`)
+	// that absence. Same last-"@" greediness as the HTTPS branch above.
+	gitRegex := regexp.MustCompile(`^git://(?:[^/]*@)?([^/:]+)(?::\d+)?/(.+?)(?:\.git)?$`)
 	if matches := gitRegex.FindStringSubmatch(remoteURL); matches != nil {
 		return newGitRemoteInfo(matches[1], matches[2])
 	}
