@@ -159,17 +159,12 @@ func outputControlEntries(p providerPkg.Provider, conf *configuration.Configurat
 	return entries, policies
 }
 
-// imageComplianceControls are the controls whose findings drive the PBOM's
-// per-image booleans (forbiddenTag / authorized). They are derived from the
-// codes BuildImageComplianceData consumes, through the codes registry, so a
-// code moving to another control cannot leave this list stale.
-func imageComplianceControls() map[string]bool {
+// controlsBehindCodes are the controls the given codes belong to, read from
+// the codes registry so a code moving to another control cannot leave a list
+// here stale.
+func controlsBehindCodes(codes ...control.ErrorCode) map[string]bool {
 	out := map[string]bool{}
-	for _, code := range []control.ErrorCode{
-		control.CodeImageForbiddenTag,
-		control.CodeImageNotPinnedByDigest,
-		control.CodeImageUnauthorizedSource,
-	} {
+	for _, code := range codes {
 		if info := control.LookupCode(code); info != nil && info.ControlName != "" {
 			out[info.ControlName] = true
 		}
@@ -177,27 +172,50 @@ func imageComplianceControls() map[string]bool {
 	return out
 }
 
-// platformImageControlsEvaluated reports whether any applied policy actually
-// enables the image controls.
+// forbiddenTagControls and authorizedSourceControls are the controls behind
+// each of the PBOM's two per-image booleans, split by the codes
+// BuildImageComplianceData feeds into each one. Two sets, because the two
+// booleans are two separate claims.
+func forbiddenTagControls() map[string]bool {
+	return controlsBehindCodes(control.CodeImageForbiddenTag, control.CodeImageNotPinnedByDigest)
+}
+
+func authorizedSourceControls() map[string]bool {
+	return controlsBehindCodes(control.CodeImageUnauthorizedSource)
+}
+
+// platformImageControlsEvaluated reports, for EACH of the PBOM's per-image
+// booleans, whether any applied policy actually enables the control behind it.
 //
-// The PBOM's per-image booleans are a POSITIVE claim: an image absent from
-// every finding is published as authorized with no forbidden tag. That is only
-// true of an image a control judged, so in platform mode it may be said only
-// when a policy asked for those controls; otherwise the writers omit the
-// booleans and the image is reported as inventory alone.
-func platformImageControlsEvaluated(p providerPkg.Provider, runs []policyRun) bool {
-	wanted := imageComplianceControls()
+// The booleans are a POSITIVE claim: an image absent from every finding is
+// published as authorized with no forbidden tag. That is only true of an image
+// a control judged, so in platform mode each may be said only when a policy
+// asked for THAT control; otherwise the writers omit that boolean and the
+// image is reported as inventory alone on that axis.
+//
+// One answer per control, never one for the pair: enforcing tag pinning
+// without a registry allowlist is a routine policy, and a single flag
+// published the other control's verdict for every image on the strength of
+// the first having run.
+func platformImageControlsEvaluated(p providerPkg.Provider, runs []policyRun) (forbiddenTag, authorizedSource bool) {
+	tagControls, sourceControls := forbiddenTagControls(), authorizedSourceControls()
 	for _, run := range runs {
 		if !run.Applied || run.Config == nil {
 			continue
 		}
 		for _, e := range p.Controls(run.Config) {
-			if !e.Skipped && wanted[e.ControlName] {
-				return true
+			if e.Skipped {
+				continue
+			}
+			if tagControls[e.ControlName] {
+				forbiddenTag = true
+			}
+			if sourceControls[e.ControlName] {
+				authorizedSource = true
 			}
 		}
 	}
-	return false
+	return forbiddenTag, authorizedSource
 }
 
 // platformUnionResult returns the result the security-report writers (SARIF,
