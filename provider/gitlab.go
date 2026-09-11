@@ -94,10 +94,17 @@ func (p *GitLabProvider) RunRemote(_ *configuration.Configuration) (*control.Ana
 // PBOM records the inventory and claims nothing.
 //
 // Two runs may not claim them. --no-controls evaluated nothing at all. And a
-// platform-mode run whose resolved policies do not enable the image controls
-// (platform.ImageControlsEvaluated) evaluated them for no policy, which is
-// the same absence of a verdict; the findings it does have come from the
-// policy runs' union, so the flags it CAN claim are the policies' own.
+// platform-mode run whose resolved policies do not enable an image control
+// evaluated it for no policy, which is the same absence of a verdict; the
+// findings it does have come from the policy runs' union, so the flags it
+// CAN claim are the policies' own.
+//
+// The answer is per control, not per pair: the forbidden-tag and the
+// authorized-source controls are independent, and a policy that pins tags
+// without restricting registries would otherwise publish "authorized" for
+// every image on the strength of the OTHER control having run. Dropping the
+// map of a control nobody enabled leaves that field out of every image (the
+// generator's existing tri-state), while the other one is still published.
 //
 // conf is required, as everywhere else on this path (the writers read
 // conf.GitlabURL unconditionally).
@@ -105,10 +112,22 @@ func imageComplianceFor(result *control.AnalysisResult, conf *configuration.Conf
 	if conf.NoControls {
 		return nil
 	}
-	if platform != nil && !platform.ImageControlsEvaluated {
+	data := pbom.BuildImageComplianceData(result)
+	if platform == nil {
+		return data
+	}
+	if !platform.ForbiddenTagEvaluated {
+		data.ForbiddenTagImages = nil
+	}
+	if !platform.AuthorizedSourceEvaluated {
+		data.UnauthorizedImages = nil
+	}
+	if data.ForbiddenTagImages == nil && data.UnauthorizedImages == nil {
+		// No image control at all: nil, exactly as before, so the generator
+		// takes its no-compliance-data path rather than an empty one.
 		return nil
 	}
-	return pbom.BuildImageComplianceData(result)
+	return data
 }
 
 func (p *GitLabProvider) WritePBOM(result *control.AnalysisResult, conf *configuration.Configuration, filePath string, score *control.PlumberScoreResult, scoreMode bool, platform *pbom.PlatformSummary) error {

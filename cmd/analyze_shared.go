@@ -596,7 +596,7 @@ func writeOutputsWithProvider(p provider.Provider, result *control.AnalysisResul
 	// what makes every writer take exactly the path it always took.
 	platformPBOM := platformPBOMSummary(runs, verdict)
 	if platformPBOM != nil {
-		platformPBOM.ImageControlsEvaluated = platformImageControlsEvaluated(p, runs)
+		platformPBOM.ForbiddenTagEvaluated, platformPBOM.AuthorizedSourceEvaluated = platformImageControlsEvaluated(p, runs)
 	}
 	// The run-level score the PBOM writers stamp. buildComplianceSummary
 	// already leaves it nil in platform mode; nilling it again here is the

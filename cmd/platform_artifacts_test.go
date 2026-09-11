@@ -56,6 +56,23 @@ gitlab:
       enabled: true
 `
 
+// The two image controls are INDEPENDENT, and enforcing tag pinning without a
+// registry allowlist (or the reverse) is the common split. These two policies
+// declare exactly one of them each.
+const forbiddenTagOnlyPolicyYAML = `version: "2.0"
+gitlab:
+  controls:
+    containerImageMustNotUseForbiddenTags:
+      enabled: true
+`
+
+const authorizedSourceOnlyPolicyYAML = `version: "2.0"
+gitlab:
+  controls:
+    containerImageMustComeFromAuthorizedSources:
+      enabled: true
+`
+
 // localOnlyFinding is a finding the LOCAL configuration produced and no policy
 // reported: it must not reach any platform-mode artifact.
 func localOnlyFinding() opaengine.Finding {
@@ -317,29 +334,13 @@ func TestWritePBOM_PlatformMode_ImageVerdictFollowsThePolicies(t *testing.T) {
 		Code: string(control.CodeImageForbiddenTag), Message: "latest tag", Job: "build", Fingerprint: "img",
 	}
 
-	t.Run("a policy that enables the image controls carries the union's verdict", func(t *testing.T) {
+	// onlyImage writes the platform-mode PBOM for one policy declaring the
+	// given configuration and returns the single inventory image's entry.
+	onlyImage := func(t *testing.T, policyYAML string, findings []opaengine.Finding) map[string]any {
+		t.Helper()
 		dir := withArtifactFiles(t)
 		pbomFile = filepath.Join(dir, "pbom.json")
-		runs := []policyRun{handMadePolicyRun(t, "Images", imagePolicyYAML, []opaengine.Finding{imageFinding})}
-		conf := &configuration.Configuration{PlumberConfig: testDefaultPlumberConfig(t)}
-
-		if err := writeOutputsWithProvider(&providerPkg.GitLabProvider{}, gitLabPBOMFixture(), conf,
-			complianceSummary{platformMode: true, scoreMode: true}, runs, nil); err != nil {
-			t.Fatalf("write outputs: %v", err)
-		}
-		images := pbomImages(t, pbomFile)
-		if len(images) != 1 {
-			t.Fatalf("images: %#v", images)
-		}
-		if images[0]["forbiddenTag"] != true {
-			t.Errorf("the policy reported a forbidden tag on this image: %#v", images[0])
-		}
-	})
-
-	t.Run("no policy enabling them means no claim at all", func(t *testing.T) {
-		dir := withArtifactFiles(t)
-		pbomFile = filepath.Join(dir, "pbom.json")
-		runs := []policyRun{handMadePolicyRun(t, "A", debugTracePolicyYAML, nil)}
+		runs := []policyRun{handMadePolicyRun(t, "Images", policyYAML, findings)}
 		conf := &configuration.Configuration{PlumberConfig: testDefaultPlumberConfig(t)}
 
 		if err := writeOutputsWithProvider(&providerPkg.GitLabProvider{}, gitLabPBOMFixture(), conf,
@@ -350,11 +351,48 @@ func TestWritePBOM_PlatformMode_ImageVerdictFollowsThePolicies(t *testing.T) {
 		if len(images) != 1 {
 			t.Fatalf("the inventory itself must survive: %#v", images)
 		}
-		for _, k := range []string{"forbiddenTag", "authorized"} {
-			if v, present := images[0][k]; present {
-				t.Errorf("no policy evaluated the image controls, so %q must be absent, got %v", k, v)
+		return images[0]
+	}
+
+	// assertKeys checks each per-image boolean against what the policy asked
+	// for: want is the expected value, and a nil want means the key must be
+	// absent entirely (the tri-state "not assessed").
+	assertKeys := func(t *testing.T, img map[string]any, forbiddenTag, authorized any) {
+		t.Helper()
+		for _, k := range []struct {
+			name string
+			want any
+		}{{"forbiddenTag", forbiddenTag}, {"authorized", authorized}} {
+			got, present := img[k.name]
+			if k.want == nil {
+				if present {
+					t.Errorf("no policy evaluated the control behind %q, so it must be absent, got %v", k.name, got)
+				}
+				continue
+			}
+			if !present || got != k.want {
+				t.Errorf("%q = %v (present %v), want %v: %#v", k.name, got, present, k.want, img)
 			}
 		}
+	}
+
+	t.Run("a policy that enables both image controls carries the union's verdict", func(t *testing.T) {
+		assertKeys(t, onlyImage(t, imagePolicyYAML, []opaengine.Finding{imageFinding}), true, true)
+	})
+
+	// The two controls are independent claims. A policy pinning tags says
+	// nothing about the registry an image comes from, so "authorized" is a
+	// verdict nobody produced and must not be published.
+	t.Run("only the forbidden-tag control claims only the forbidden tag", func(t *testing.T) {
+		assertKeys(t, onlyImage(t, forbiddenTagOnlyPolicyYAML, []opaengine.Finding{imageFinding}), true, nil)
+	})
+
+	t.Run("only the authorized-source control claims only the source", func(t *testing.T) {
+		assertKeys(t, onlyImage(t, authorizedSourceOnlyPolicyYAML, nil), nil, true)
+	})
+
+	t.Run("no policy enabling them means no claim at all", func(t *testing.T) {
+		assertKeys(t, onlyImage(t, debugTracePolicyYAML, nil), nil, nil)
 	})
 }
 

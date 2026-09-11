@@ -77,16 +77,24 @@ type PlatformGlobalScore struct {
 // per-policy verdicts and the platform's global score (nil when the push
 // returned none). nil itself outside platform mode.
 //
-// ImageControlsEvaluated is false when no resolved policy enables the image
-// controls. The per-image ForbiddenTag / Authorized booleans are a POSITIVE
-// claim - an image no finding names is published as authorized - so with no
-// policy asking for those controls the writers drop them entirely and the
-// image is reported as inventory alone. Both fields are already *bool, so
-// dropping them is the existing tri-state, not a schema change.
+// ForbiddenTagEvaluated and AuthorizedSourceEvaluated are false when no
+// resolved policy enables the control behind that per-image boolean. The
+// booleans are a POSITIVE claim - an image no finding names is published as
+// authorized, with no forbidden tag - so with no policy asking for a control
+// the writers drop ITS boolean and the image is reported as inventory alone
+// on that axis. Both fields are already *bool, so dropping one is the
+// existing tri-state, not a schema change.
+//
+// They are two flags rather than one because the two controls are
+// independent: a policy commonly pins tags without also restricting
+// registries. Answering for both at once published the other control's
+// positive verdict, which is exactly the claim-nobody-evaluated failure
+// these flags exist to prevent.
 type PlatformSummary struct {
-	Policies               []PolicyScore
-	GlobalScore            *PlatformGlobalScore
-	ImageControlsEvaluated bool
+	Policies                  []PolicyScore
+	GlobalScore               *PlatformGlobalScore
+	ForbiddenTagEvaluated     bool
+	AuthorizedSourceEvaluated bool
 }
 
 // PlumberScoreCounts is the number of issues per severity bucket.
