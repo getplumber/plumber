@@ -993,8 +993,10 @@ func buildAnalysisJSONReport(result *control.AnalysisResult, pc *configuration.P
 	if s.platformMode {
 		output["platformMode"] = true
 		// notEvaluable is the same thing in miniature: a per-control claim
-		// keyed on the local catalog. Each run's own marks reach the reader
-		// through its policy entry.
+		// keyed on the local catalog, so the top-level key goes with them.
+		// The marks themselves are not lost: every applied policy entry
+		// carries its own run's marks in its own notEvaluable object
+		// (platformPolicyReportEntries).
 		delete(output, "notEvaluable")
 	} else {
 		output["plumberConfig"] = buildPlumberConfigBlock(pc)
@@ -1127,17 +1129,31 @@ func normalizeYAMLValue(v any) any {
 // finding object into that finding's identity (#467), so the policy dimension
 // is carried by the array entry and nothing is added to a finding.
 //
-// A run that was not applied carries a null score and null findings rather
-// than a zero score and an empty list: it evaluated nothing, and an empty
-// verdict would read as a policy that found nothing wrong.
+// A run that was not applied carries a null score, null findings and a null
+// notEvaluable rather than a zero score and empty collections: it evaluated
+// nothing, and an empty verdict would read as a policy that found nothing
+// wrong.
+//
+// notEvaluable is the entry's own copy of the run's marks (control name ->
+// reason). It is the only place they reach a machine consumer in platform
+// mode: the report's top-level notEvaluable key is deleted there because it
+// is keyed on the LOCAL catalog, and a control a policy could not evaluate
+// must never read as an evaluated, clean one. It is emitted as an object even
+// when the run marked nothing, so a parser reads one shape.
 func platformPolicyReportEntries(runs []policyRun) []map[string]any {
 	out := make([]map[string]any, 0, len(runs))
 	for _, run := range runs {
 		var score any
 		var findings any
+		var notEvaluable any
 		if run.Applied {
 			score = platformScoreFrom(run.Score)
 			findings = projectFindings(run.Result.Findings, "job")
+			marks := make(map[string]string, len(run.Result.NotEvaluable))
+			for controlName, reason := range run.Result.NotEvaluable {
+				marks[controlName] = reason
+			}
+			notEvaluable = marks
 		}
 		for _, pol := range run.Policies {
 			var minPoints any
@@ -1149,13 +1165,14 @@ func platformPolicyReportEntries(runs []policyRun) []map[string]any {
 				// Only a real policy id is stamped, never the nil uuid the
 				// derived "[Plumber default]" placeholder carries: it is not
 				// a policies row (see realPolicyID).
-				"id":          realPolicyID(pol),
-				"enforcement": string(pol.Enforcement),
-				"min_points":  minPoints,
-				"applied":     run.Applied,
-				"reason":      run.Reason,
-				"score":       score,
-				"findings":    findings,
+				"id":           realPolicyID(pol),
+				"enforcement":  string(pol.Enforcement),
+				"min_points":   minPoints,
+				"applied":      run.Applied,
+				"reason":       run.Reason,
+				"score":        score,
+				"findings":     findings,
+				"notEvaluable": notEvaluable,
 			})
 		}
 	}
