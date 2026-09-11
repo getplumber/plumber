@@ -126,7 +126,9 @@ func platformGatePolicyDescriptions(policies []platformGatePolicy) []string {
 //
 //   - a body that does not parse as JSON, or one that parses but carries no
 //     "gate" key at all: an old platform. Fail open with the unavailable
-//     line, the verdict's Gate nil and Unavailable set.
+//     line, the verdict's Gate nil and Unavailable set. A body that DID parse
+//     still hands back the global score it carried: the gate is missing, the
+//     score the badge and the comment publish is not.
 //   - evaluated:false: the platform's own explicit fail-open (nothing
 //     configured to gate this project, a snapshot not yet collected,
 //     etc). Fail open, logging the platform's own reason; the verdict still
@@ -143,14 +145,35 @@ func platformGatePolicyDescriptions(policies []platformGatePolicy) []string {
 //     as the *returned* error, but the line already reached the log).
 func evaluatePlatformGate(body []byte) (*platformVerdict, error) {
 	var resp platformPushResponse
-	if err := json.Unmarshal(body, &resp); err != nil || resp.Gate == nil {
+	err := json.Unmarshal(body, &resp)
+	if err != nil && resp.Gate != nil {
+		// encoding/json fills every field it CAN decode and reports the one
+		// it could not, so a gate that decoded cleanly beside an unreadable
+		// sibling is still the platform's verdict. Discarding it turned a
+		// block into a fail-open over a field the gate never reads (the
+		// review finding; platformScore.UnmarshalJSON removes the common
+		// cause, this keeps the rest from costing the verdict). The partial
+		// decode is said out loud rather than swallowed.
+		scoreWarn(fmt.Sprintf("the platform's push response was only partially decoded (%v); using the gate verdict it did carry", err))
+		err = nil
+	}
+	if err != nil || resp.Gate == nil {
 		// A 2xx-accepted push whose body carries no usable gate verdict: an
 		// older platform that predates the gate, or a mangled body. The
 		// platform is UP and the push LANDED, so this is the no-verdict
 		// line, never the alertable "unavailable" sentence (see the
 		// constants' doc comment below).
 		scoreWarn(platformGateNoVerdictLine)
-		return &platformVerdict{Unavailable: platformGateNoVerdictLine}, nil
+		v := &platformVerdict{Unavailable: platformGateNoVerdictLine}
+		if err == nil {
+			// The body parsed, it just carried no gate. Whatever else it did
+			// send is still the platform's own: the global score is what the
+			// badge, the merge-request comment and the JSON top level
+			// publish, and dropping it made them say "score unavailable" for
+			// a platform that had just sent one.
+			v.GlobalScore = resp.GlobalScore
+		}
+		return v, nil
 	}
 	gate := resp.Gate
 

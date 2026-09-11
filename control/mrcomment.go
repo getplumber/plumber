@@ -261,14 +261,16 @@ func writeMRFooter(b *strings.Builder) {
 func generatePlatformMRComment(platform *PlatformPostSummary, passed bool, gateLine string) string {
 	var b strings.Builder
 
+	hasGlobal := platform.hasPublishableGlobal()
+
 	b.WriteString(MRCommentIdentifier + "\n")
-	if platform.HasGlobal && platform.GlobalLetter != "" {
+	if hasGlobal {
 		fmt.Fprintf(&b, "[![Plumber](%s)](%s)\n\n", ScoreBadgeURL(platform.GlobalLetter), PlumberScoreDocURL)
 	}
 	b.WriteString("*Enforcement comes from the platform's policies; the scores below are this run's.*\n\n")
 
 	b.WriteString("### Plumber Score\n\n")
-	if platform.HasGlobal {
+	if hasGlobal {
 		fmt.Fprintf(&b, "- **Global score (platform):** **%s** - %d / 100 pts\n\n",
 			sanitizeMarkdownInline(platform.GlobalLetter), platform.GlobalPoints)
 	} else {
