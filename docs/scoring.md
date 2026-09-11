@@ -143,6 +143,12 @@ The score is also the pass/fail gate for `plumber analyze` (exit code 1 on failu
 - `--min-score <A-E>`: fail when the letter is below the given one (e.g. `--min-score B` fails on C, D, E). When set without `--min-points`, the letter alone gates.
 - Both set: both must pass.
 
+**In platform mode (`--platform`) these flags are inert:** the exit code is the
+platform's gate verdict, computed per policy from each policy's `enforcement`
+and `min_points`; a locally supplied threshold prints an "ignored" notice. The
+JSON report then carries a `policies` array (one score per policy) and, at the
+top level, the platform's global score.
+
 A run where **zero controls were evaluated** fails the score gate rather than passing as an empty 100-point pipeline: a `.plumber.yaml` that enables no controls for the scanned provider (e.g. a `github:`-only config on a GitLab project), a filter that skips them all, and — on GitLab, where a missing or unparseable CI configuration leaves no control evaluated — a project with no usable CI. On GitLab this matches the historical default (compliance was 0 in those cases).
 
 **On GitHub, a repository with no workflows (or workflows Plumber cannot parse) passes the default gate** when its enabled controls report no findings — the pre-0.4.0 behavior, deliberately restored so fleet scanners can sweep repositories that have no CI without failing on them. Note the score is then computed over what could be checked; gate on findings, not on CI presence.

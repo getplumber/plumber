@@ -156,12 +156,12 @@ snapshot goes in `project_snapshots.data` using the shapes
 `platform/backend/snapshot/collector.go` writes (`branch_protection` is
 `{"protections": [...]}`, not a map of branch names).
 
-The one check worth doing on every change to the collection lanes: run the
-same commit with and without `--platform` and diff the per-control statuses.
-Every difference must be a control moving to `not_evaluable`. A control that
-gains findings under `--platform` is a false positive from a data lane that
-went missing, not a real detection - see `control/lanes.go` for why job
-attribution in particular fails that way.
+Since platform mode evaluates only the resolved policies, a run with and
+without `--platform` no longer evaluates the same control set, so diffing the
+two is not a lane check any more. To check a collection lane, compare a
+platform-mode run against the SAME policy evaluated locally by writing that
+policy's control tree into a `.plumber.yaml` and running without `--platform`:
+every difference must be a control moving to `not_evaluable`.
 
 `internal/platform/live_test.go` exercises the client against a running
 platform and skips unless `PLUMBER_E2E_PLATFORM`, `PLUMBER_E2E_TOKEN` and
