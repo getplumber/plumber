@@ -23,16 +23,17 @@ func ManageProjectBadge(
 }
 
 // ManageProjectBadgePlatform is the platform-mode badge (spec s5): the letter
-// is the platform's own global score. When the push returned none
-// (HasGlobal false: an older platform, a fail-open gate) the badge is NOT
-// updated - it keeps its last good value rather than being overwritten with a
-// blank, or with a locally computed letter the platform never agreed to.
+// is the platform's own global score. When the push returned none, or one
+// that is not a Plumber Score letter (see hasPublishableGlobal), the badge is
+// NOT updated - it keeps its last good value rather than being overwritten
+// with a blank, with something that is not a grade, or with a locally
+// computed letter the platform never agreed to.
 func ManageProjectBadgePlatform(
 	projectID int,
 	conf *configuration.Configuration,
 	s *PlatformPostSummary,
 ) error {
-	if s == nil || !s.HasGlobal || s.GlobalLetter == "" {
+	if !s.hasPublishableGlobal() {
 		return nil
 	}
 	return manageProjectBadgeLetter(projectID, conf, s.GlobalLetter)

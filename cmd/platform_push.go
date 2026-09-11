@@ -194,6 +194,58 @@ type platformScore struct {
 	FinalPoints *int   `json:"final_points,omitempty"`
 }
 
+// UnmarshalJSON decodes a score the PLATFORM sent (the push response's
+// global_score) tolerantly. Outgoing, this type is what the CLI writes and
+// the fields are exact; incoming, the numbers are the platform's own and it
+// types points as a NUMBER, so 60.5 is a legal value and letter can be null.
+// Decoded strictly, either one produced an UnmarshalTypeError on a field the
+// gate does not even read, and evaluatePlatformGate threw the whole response
+// away with it: the platform's blocking verdict silently became a fail-open,
+// on the one path that is now the only source of a non-zero exit in platform
+// mode (spec s4).
+//
+// Points is rounded with math.Round, the same rounding platformScoreFrom
+// applies on the way out, so a figure that makes the round trip is unchanged.
+// A field of an unexpected type is dropped rather than failing the decode:
+// the platform's verdict beside it is what matters.
+func (s *platformScore) UnmarshalJSON(data []byte) error {
+	var raw struct {
+		Letter      any `json:"letter"`
+		Points      any `json:"points"`
+		FinalPoints any `json:"final_points"`
+	}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	if letter, ok := raw.Letter.(string); ok {
+		s.Letter = letter
+	}
+	s.Points = roundJSONScorePoints(raw.Points)
+	if raw.FinalPoints != nil {
+		final := roundJSONScorePoints(raw.FinalPoints)
+		s.FinalPoints = &final
+	}
+	return nil
+}
+
+// roundJSONScorePoints reads a points figure out of a decoded JSON value in
+// whichever numeric shape it arrived in, and rounds it to the nearest
+// integer. Anything that is not a number is not a points figure and reads as
+// zero, which is what an absent field already meant.
+func roundJSONScorePoints(v any) int {
+	switch n := v.(type) {
+	case float64:
+		return int(math.Round(n))
+	case json.Number:
+		f, err := n.Float64()
+		if err != nil {
+			return 0
+		}
+		return int(math.Round(f))
+	}
+	return 0
+}
+
 // platformScoreFrom converts the already-computed Plumber Score to the wire
 // shape. Points is RawPointsUnclamped — the SIGNED deficit with no floor at
 // zero (the contract stores it unclamped; the gate/badge's floored-at-zero

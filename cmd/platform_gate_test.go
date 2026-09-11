@@ -456,3 +456,114 @@ func TestFinalizeRun_LocalGateAndPlatformGateBothPresent(t *testing.T) {
 		t.Fatalf("finalizeRun (platform mode) = %v (%T), want the platform *PlatformGateError", platformFinalErr, platformFinalErr)
 	}
 }
+
+// The platform's own score is a number, not an integer: global_score.points
+// comes back as 60.5 and letter can be null. Decoding it into an int made
+// encoding/json return an UnmarshalTypeError for a field the gate does not
+// need, and the whole verdict was thrown away with it - a blocking gate
+// silently became a fail-open, on the one path that is now the ONLY source
+// of a non-zero exit in platform mode (spec s4).
+func TestEvaluatePlatformGate_TolerantGlobalScoreKeepsTheGate(t *testing.T) {
+	body := `{"gate":{"evaluated":true,"blocking":true,"policies":[{"id":"p1","name":"Prod","enforcement":"block","blocking":true,"live_fail_count":2}]},"global_score":{"letter":null,"points":60.5}}`
+
+	var v *platformVerdict
+	var err error
+	_ = captureStderr(t, func() { v, err = evaluatePlatformGate([]byte(body)) })
+
+	var gateErr *PlatformGateError
+	if !errors.As(err, &gateErr) {
+		t.Fatalf("evaluatePlatformGate = %v, want the blocking *PlatformGateError: a field the gate does not read must not discard the verdict", err)
+	}
+	if v == nil || v.Gate == nil || !v.Gate.Blocking {
+		t.Fatalf("the gate must survive a fractional global score: %+v", v)
+	}
+	// math.Round, the same rounding platformScoreFrom applies on the way out:
+	// 60.5 rounds up to 61.
+	if v.GlobalScore == nil || v.GlobalScore.Points != 61 || v.GlobalScore.Letter != "" {
+		t.Fatalf("global_score = %+v, want points 61 (math.Round of 60.5) and no letter", v.GlobalScore)
+	}
+}
+
+// A null global_score beside a gate is a routine state (the platform has no
+// score for this run yet): the gate is the verdict and stays.
+func TestEvaluatePlatformGate_NullGlobalScoreKeepsTheGate(t *testing.T) {
+	body := `{"gate":{"evaluated":true,"blocking":false,"policies":[]},"global_score":null}`
+
+	v, err := evaluatePlatformGate([]byte(body))
+
+	if err != nil {
+		t.Fatalf("a non-blocking gate must not error: %v", err)
+	}
+	if v == nil || v.Gate == nil || v.Gate.Evaluated != true {
+		t.Fatalf("the gate must survive a null global score: %+v", v)
+	}
+	if v.GlobalScore != nil {
+		t.Fatalf("global_score = %+v, want nil: null is not a score", v.GlobalScore)
+	}
+}
+
+// A body that parsed but carries no gate (an older platform) still carries
+// whatever else it did send. The score is what the badge, the merge-request
+// comment and the JSON top level publish, and throwing it away made them say
+// "score unavailable" for a platform that had just sent one.
+func TestEvaluatePlatformGate_NoGateStillCarriesTheGlobalScore(t *testing.T) {
+	body := `{"global_score":{"letter":"C","points":66}}`
+
+	var v *platformVerdict
+	var err error
+	out := captureStderr(t, func() { v, err = evaluatePlatformGate([]byte(body)) })
+
+	if err != nil {
+		t.Fatalf("no gate must fail open: %v", err)
+	}
+	if v == nil || v.Gate != nil {
+		t.Fatalf("Gate must be nil when the body carries none: %+v", v)
+	}
+	if v.Unavailable != platformGateNoVerdictLine {
+		t.Fatalf("Unavailable = %q, want the no-verdict line", v.Unavailable)
+	}
+	if v.GlobalScore == nil || v.GlobalScore.Letter != "C" || v.GlobalScore.Points != 66 {
+		t.Fatalf("global_score = %+v, want the decoded C/66", v.GlobalScore)
+	}
+	if !strings.Contains(out, platformGateNoVerdictLine) {
+		t.Errorf("stderr = %q, want the no-verdict line", out)
+	}
+}
+
+// A body that does not parse at all carries nothing: no gate, no score, and
+// no invented one.
+func TestEvaluatePlatformGate_UnparseableBodyCarriesNoScore(t *testing.T) {
+	var v *platformVerdict
+	var err error
+	_ = captureStderr(t, func() { v, err = evaluatePlatformGate([]byte("not json")) })
+
+	if err != nil {
+		t.Fatalf("an unparseable body must fail open: %v", err)
+	}
+	if v == nil || v.Gate != nil || v.GlobalScore != nil || v.Unavailable == "" {
+		t.Fatalf("want Gate nil, GlobalScore nil and a reason, got %+v", v)
+	}
+}
+
+// The belt-and-braces half of the same finding: whatever future field shape
+// makes encoding/json return an error, a gate that DID decode beside it is
+// still the platform's verdict, and the partial decode is reported rather
+// than swallowed.
+func TestEvaluatePlatformGate_PartialDecodeKeepsADecodedGate(t *testing.T) {
+	body := `{"gate":{"evaluated":true,"blocking":true,"reason":"live failures","policies":[]},"global_score":"not-an-object"}`
+
+	var v *platformVerdict
+	var err error
+	out := captureStderr(t, func() { v, err = evaluatePlatformGate([]byte(body)) })
+
+	var gateErr *PlatformGateError
+	if !errors.As(err, &gateErr) {
+		t.Fatalf("evaluatePlatformGate = %v, want the blocking *PlatformGateError", err)
+	}
+	if v == nil || v.Gate == nil || !v.Gate.Blocking {
+		t.Fatalf("a decoded gate must survive an undecodable sibling field: %+v", v)
+	}
+	if !strings.Contains(out, "partially decoded") {
+		t.Errorf("stderr = %q, want the partial-decode line: a body this CLI could only half read is worth saying out loud", out)
+	}
+}

@@ -154,3 +154,69 @@ func TestManageProjectBadgePlatform_NoGlobalScoreLeavesTheBadgeAlone(t *testing.
 		}
 	}
 }
+
+// The global letter is platform-controlled text that reaches a Markdown
+// image AND link target ("[![Plumber](<url>)](<url>)") and the shields.io
+// badge URL, both built by string interpolation. Anything outside the closed
+// A-E set the score has is not a score: the comment says "score unavailable"
+// and the badge is left alone, rather than publishing a forged link with
+// Plumber's identity on it.
+func TestPlatformGlobalLetter_OutsideTheClosedSetIsNotAScore(t *testing.T) {
+	hostile := "A)](https://evil.example.com)"
+
+	t.Run("the merge-request comment refuses it", func(t *testing.T) {
+		s := platformSummaryFixture()
+		s.GlobalLetter = hostile
+
+		body := generateMRComment(&AnalysisResult{CiValid: true}, mrCommentPC(), true, "gate", nil, false, false, nil, nil, s)
+
+		if !strings.Contains(body, "score unavailable") {
+			t.Errorf("want the score-unavailable headline for a letter that is not one:\n%s", body)
+		}
+		if strings.Contains(body, "evil.example.com") {
+			t.Errorf("the hostile letter reached the comment:\n%s", body)
+		}
+		if strings.Contains(body, "img.shields.io") {
+			t.Errorf("no badge may be rendered from a letter that is not a score:\n%s", body)
+		}
+		// The per-policy table is the run's own answer and is unaffected.
+		if !strings.Contains(body, "| Baseline | report | C - 66 / 100 | no |") {
+			t.Errorf("the policy rows survive an unusable global letter:\n%s", body)
+		}
+	})
+
+	t.Run("the badge is not written", func(t *testing.T) {
+		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			t.Errorf("the badge API was called with a letter outside A-E: %s %s", r.Method, r.URL.Path)
+		}))
+		defer srv.Close()
+		conf := configuration.NewDefaultConfiguration()
+		conf.GitlabURL, conf.GitlabToken = srv.URL, "glpat-test"
+
+		s := platformSummaryFixture()
+		s.GlobalLetter = hostile
+
+		if err := ManageProjectBadgePlatform(42, conf, s); err != nil {
+			t.Fatalf("ManageProjectBadgePlatform: %v", err)
+		}
+	})
+
+	t.Run("every letter the score actually has is still published", func(t *testing.T) {
+		for _, letter := range []string{"A", "B", "C", "D", "E"} {
+			var published string
+			srv := badgeServer(t, &published)
+			conf := configuration.NewDefaultConfiguration()
+			conf.GitlabURL, conf.GitlabToken = srv.URL, "glpat-test"
+
+			s := platformSummaryFixture()
+			s.GlobalLetter = letter
+			if err := ManageProjectBadgePlatform(42, conf, s); err != nil {
+				t.Fatalf("%s: %v", letter, err)
+			}
+			if published != ScoreBadgeURL(letter) {
+				t.Errorf("letter %s published %q, want the badge for that letter", letter, published)
+			}
+			srv.Close()
+		}
+	})
+}
