@@ -42,12 +42,29 @@ import (
 // when the finding is not about a job (a branch, an include, a required
 // template, component or action). Those findings carry what they are about in
 // their structured payload and in the identity block of the JSON report.
-func buildCSV(entries []control.ControlEntry, result *control.AnalysisResult) [][]string {
+// withPolicies adds the trailing `policies` column: the platform policies that
+// reported a finding, semicolon-joined, empty on a non-failing control's
+// summary row (the same emptiness convention `dismissed` uses on that row
+// shape). It is added only in platform mode, where there are policies to name;
+// adding it unconditionally would change every standalone CSV's header and
+// every row, which is exactly what a report consumer parses positionally.
+func buildCSV(entries []control.ControlEntry, result *control.AnalysisResult, withPolicies bool) [][]string {
 	// dismissed carries the platform's #447 marker: "true"/"false" on a
 	// finding row, empty on a non-failing control's summary row (there is
 	// no finding to have an opinion about), the same emptiness convention
 	// code and fingerprint already use on that row shape.
 	header := []string{"code", "fingerprint", "controlName", "status", "severity", "message", "context", "file", "line", "url", "docUrl", "dismissed"}
+	if withPolicies {
+		header = append(header, "policies")
+	}
+	// row appends the policies cell when the column exists, so every row is
+	// built through one place and cannot drift in width from the header.
+	row := func(cells []string, policies string) []string {
+		if withPolicies {
+			cells = append(cells, policies)
+		}
+		return csvSafeRow(cells)
+	}
 	byControl := control.FindingsByControl(result.Findings)
 
 	var nonFailing [][]string // passed / error / skipped: one row per control, at the top
@@ -58,7 +75,7 @@ func buildCSV(entries []control.ControlEntry, result *control.AnalysisResult) []
 		status := control.StatusFor(e, result, len(findings))
 
 		if status != control.StatusFailed {
-			nonFailing = append(nonFailing, csvSafeRow([]string{
+			nonFailing = append(nonFailing, row([]string{
 				"",                                 // code
 				"",                                 // fingerprint (no finding)
 				e.ControlName,                      // controlName
@@ -71,7 +88,7 @@ func buildCSV(entries []control.ControlEntry, result *control.AnalysisResult) []
 				"",                                 // url
 				"",                                 // docUrl
 				"",                                 // dismissed (no finding)
-			}))
+			}, ""))
 			continue
 		}
 
@@ -93,7 +110,7 @@ func buildCSV(entries []control.ControlEntry, result *control.AnalysisResult) []
 				line = strconv.Itoa(f.Line)
 			}
 
-			failing = append(failing, csvSafeRow([]string{
+			failing = append(failing, row([]string{
 				f.Code,
 				f.Fingerprint,
 				e.ControlName,
@@ -106,7 +123,7 @@ func buildCSV(entries []control.ControlEntry, result *control.AnalysisResult) []
 				f.URL,
 				"https://getplumber.io/docs/cli/issues/" + f.Code,
 				strconv.FormatBool(f.Dismissed),
-			}))
+			}, strings.Join(f.Policies, ";")))
 		}
 	}
 
@@ -189,9 +206,14 @@ func csvStatusReason(status string, e control.ControlEntry, result *control.Anal
 
 // writeCSVToFile walks the provider's control catalog and writes the per-control
 // CSV posture to filePath.
-func writeCSVToFile(p provider.Provider, result *control.AnalysisResult, conf *configuration.Configuration, filePath string) error {
-	entries := providerControlEntries(p, conf)
-	records := buildCSV(entries, result)
+//
+// runs is non-empty in platform mode, and the catalog is then the resolved
+// policies' own (outputControlEntries), over the policy runs' findings the
+// caller passes in: a control no policy enables has no row, and a local-only
+// finding has none either (spec s5).
+func writeCSVToFile(p provider.Provider, result *control.AnalysisResult, conf *configuration.Configuration, filePath string, runs []policyRun) error {
+	entries, _ := outputControlEntries(p, conf, runs)
+	records := buildCSV(entries, result, len(runs) > 0)
 
 	var buf bytes.Buffer
 	w := csv.NewWriter(&buf)

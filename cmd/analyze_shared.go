@@ -576,6 +576,9 @@ func writeOutputsWithProvider(p provider.Provider, result *control.AnalysisResul
 	// Everything platform-mode below is nil or unchanged outside it, which is
 	// what makes every writer take exactly the path it always took.
 	platformPBOM := platformPBOMSummary(runs, verdict)
+	if platformPBOM != nil {
+		platformPBOM.ImageControlsEvaluated = platformImageControlsEvaluated(p, runs)
+	}
 	// The run-level score the PBOM writers stamp. buildComplianceSummary
 	// already leaves it nil in platform mode; nilling it again here is the
 	// same belt and braces the JSON report applies, because these two are the
@@ -584,8 +587,18 @@ func writeOutputsWithProvider(p provider.Provider, result *control.AnalysisResul
 	if s.platformMode {
 		score = nil
 	}
+	// reportResult is what every FINDING-DERIVED artifact is written from. In
+	// platform mode that is the policy runs' union, never the collected run's
+	// own findings, which are the local configuration's (spec s5 + the review
+	// ruling: every output derives from the policies). It carries the same
+	// collected inventory and run-level facts, so the PBOM's images and
+	// includes are unchanged; only what a finding asserts about them moves.
+	//
+	// The JSON report is the exception: it reads `result` because its policy
+	// entries carry each run's findings separately, which is a strictly richer
+	// view than the union.
 	reportResult := result
-	if len(runs) > 0 && (sarifFile != "" || glsastFile != "") {
+	if len(runs) > 0 {
 		reportResult = platformUnionResult(result, runs)
 	}
 	if outputFile != "" {
@@ -596,13 +609,13 @@ func writeOutputsWithProvider(p provider.Provider, result *control.AnalysisResul
 		fmt.Fprintf(os.Stderr, "Results written to: %s\n", outputFile)
 	}
 	if pbomFile != "" {
-		if err := p.WritePBOM(result, conf, pbomFile, score, s.scoreMode, platformPBOM); err != nil {
+		if err := p.WritePBOM(reportResult, conf, pbomFile, score, s.scoreMode, platformPBOM); err != nil {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "PBOM written to: %s\n", pbomFile)
 	}
 	if pbomCycloneDXFile != "" {
-		if err := p.WritePBOMCycloneDX(result, conf, pbomCycloneDXFile, score, s.scoreMode, platformPBOM); err != nil {
+		if err := p.WritePBOMCycloneDX(reportResult, conf, pbomCycloneDXFile, score, s.scoreMode, platformPBOM); err != nil {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "PBOM (CycloneDX) written to: %s\n", pbomCycloneDXFile)
@@ -627,13 +640,13 @@ func writeOutputsWithProvider(p provider.Provider, result *control.AnalysisResul
 		fmt.Fprintf(os.Stderr, "GitLab SAST report written to: %s\n", glsastFile)
 	}
 	if csvFile != "" {
-		if err := writeCSVToFile(p, result, conf, csvFile); err != nil {
+		if err := writeCSVToFile(p, reportResult, conf, csvFile, runs); err != nil {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "CSV written to: %s\n", csvFile)
 	}
 	if ocsfFile != "" {
-		if err := writeOCSFToFile(p, result, conf, ocsfFile); err != nil {
+		if err := writeOCSFToFile(p, reportResult, conf, ocsfFile, runs); err != nil {
 			return err
 		}
 		fmt.Fprintf(os.Stderr, "OCSF report written to: %s\n", ocsfFile)

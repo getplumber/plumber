@@ -49,6 +49,11 @@ type ocsfComplianceFinding struct {
 	Remediation *ocsfRemediation `json:"remediation,omitempty"`
 	Resources   []ocsfResource   `json:"resources,omitempty"`
 	Unmapped    map[string]any   `json:"unmapped,omitempty"`
+	// Policies names the platform policies this control was evaluated under
+	// (spec s5). Emitted only in platform mode, where a record has no meaning
+	// without it: the same control can be evaluated by several policies, each
+	// under its own configuration. Absent from every standalone record.
+	Policies []string `json:"policies,omitempty"`
 }
 
 // ocsfResource is an OCSF Resource Details object naming the analyzed code
@@ -151,7 +156,10 @@ func ocsfProductVersion() string {
 // stamps), so an empty findings list is never silently a pass: a control that
 // could not be verified is Warning, an intentionally skipped one is Other. now
 // and correlationUID are injected so tests are deterministic.
-func buildOCSF(entries []control.ControlEntry, result *control.AnalysisResult, providerName string, now int64, correlationUID string) []ocsfComplianceFinding {
+// policiesByControl is nil outside platform mode; in it, it maps a control
+// name to the policies that had it evaluated, and every record carries its
+// own entry.
+func buildOCSF(entries []control.ControlEntry, result *control.AnalysisResult, providerName string, now int64, correlationUID string, policiesByControl map[string][]string) []ocsfComplianceFinding {
 	byControl := control.FindingsByControl(result.Findings)
 	product := ocsfProduct{Name: "Plumber", VendorName: "getplumber", Version: ocsfProductVersion(), URL: "https://getplumber.io"}
 
@@ -209,6 +217,7 @@ func buildOCSF(entries []control.ControlEntry, result *control.AnalysisResult, p
 			ev.Unmapped = ocsfFailUnmapped(findings)
 		}
 		ev.Resources = resources
+		ev.Policies = policiesByControl[e.ControlName]
 
 		events = append(events, ev)
 	}
@@ -395,9 +404,12 @@ func ocsfScanUID(result *control.AnalysisResult, now int64) string {
 // evaluation status onto an OCSF Compliance Finding, and writes the JSON array
 // to filePath. Provider-agnostic: every control is listed with an explicit
 // status, so the file is never empty and absence never reads as a pass.
-func writeOCSFToFile(p provider.Provider, result *control.AnalysisResult, conf *configuration.Configuration, filePath string) error {
-	entries := providerControlEntries(p, conf)
+// runs is non-empty in platform mode: the records are then the resolved
+// policies' controls over the policy runs' findings, each naming its policies
+// (spec s5). Outside it, nothing changes.
+func writeOCSFToFile(p provider.Provider, result *control.AnalysisResult, conf *configuration.Configuration, filePath string, runs []policyRun) error {
+	entries, policiesByControl := outputControlEntries(p, conf, runs)
 	now := time.Now().UTC().UnixMilli()
-	events := buildOCSF(entries, result, p.Name(), now, ocsfScanUID(result, now))
+	events := buildOCSF(entries, result, p.Name(), now, ocsfScanUID(result, now), policiesByControl)
 	return writeOCSFEvents(events, filePath)
 }

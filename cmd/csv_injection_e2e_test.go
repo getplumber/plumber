@@ -100,7 +100,7 @@ func TestCSVInjection_WorkflowFilenameReachesContextColumnEscaped(t *testing.T) 
 		})
 	}
 
-	records := buildCSV(entries, result)
+	records := buildCSV(entries, result, false)
 	const contextCol = 6
 
 	var checked int

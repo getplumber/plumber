@@ -26,7 +26,7 @@ func TestBuildCSV_ShapeColumnsAndOrdering(t *testing.T) {
 		},
 	}
 
-	records := buildCSV(entries, result)
+	records := buildCSV(entries, result, false)
 
 	wantHeader := []string{"code", "fingerprint", "controlName", "status", "severity", "message", "context", "file", "line", "url", "docUrl", "dismissed"}
 	if len(records) != 4 { // header + cleanControl(passed) + disabledControl(skipped) + actions(failed)
@@ -92,7 +92,7 @@ func TestBuildCSV_CleanRunListsEveryControl(t *testing.T) {
 	}
 	result := &control.AnalysisResult{CiValid: true}
 
-	records := buildCSV(entries, result)
+	records := buildCSV(entries, result, false)
 	if len(records) != 3 { // header + one row per control (NOT header-only)
 		t.Fatalf("records = %d, want 3 (header + one row per control)", len(records))
 	}
@@ -114,7 +114,7 @@ func TestBuildCSV_NonFailingBeforeFailing(t *testing.T) {
 		CiValid:  true,
 		Findings: []opaengine.Finding{{Code: "ISSUE-701", Message: "x"}},
 	}
-	records := buildCSV(entries, result)
+	records := buildCSV(entries, result, false)
 	if records[1][3] != "passed" {
 		t.Errorf("first data row status = %q, want passed (non-failing at top)", records[1][3])
 	}
@@ -132,7 +132,7 @@ func TestBuildCSV_ErrorStatusOnDegradedRun(t *testing.T) {
 		CiValid:         true,
 		DegradedReasons: []string{"3 workflow file(s) could not be fetched"},
 	}
-	records := buildCSV(entries, result)
+	records := buildCSV(entries, result, false)
 	if records[1][3] != "error" {
 		t.Errorf("degraded clean control status = %q, want error", records[1][3])
 	}
@@ -152,7 +152,7 @@ func TestBuildCSV_CodelessFindingSkipped(t *testing.T) {
 			{Code: "ISSUE-701", Message: "kept"}, // kept
 		},
 	}
-	records := buildCSV(entries, result)
+	records := buildCSV(entries, result, false)
 	if len(records) != 2 { // header + 1 kept finding row
 		t.Fatalf("records = %d, want 2 (header + 1 kept finding)", len(records))
 	}
@@ -169,7 +169,7 @@ func TestBuildCSV_LineZeroIsEmptyString(t *testing.T) {
 			{Code: "ISSUE-701", Severity: "high", Message: "no line"},
 		},
 	}
-	records := buildCSV(entries, result)
+	records := buildCSV(entries, result, false)
 	if records[1][8] != "" { // line column
 		t.Errorf("line = %q, want empty string for zero-value Line", records[1][8])
 	}
@@ -189,7 +189,7 @@ func TestBuildCSV_NeutralizesFormulaInjection(t *testing.T) {
 			File:    "+ci.yml",
 		}},
 	}
-	records := buildCSV(entries, result)
+	records := buildCSV(entries, result, false)
 	row := records[1]
 	for _, i := range []int{5, 6, 7} { // message, context, file
 		if row[i] == "" {
@@ -213,7 +213,7 @@ func TestBuildCSV_LeavesOrdinaryValuesUntouched(t *testing.T) {
 		CiValid:  true,
 		Findings: []opaengine.Finding{{Code: "ISSUE-701", Message: "unpinned action", Job: "ci/build"}},
 	}
-	records := buildCSV(entries, result)
+	records := buildCSV(entries, result, false)
 	if records[1][5] != "unpinned action" || records[1][6] != "ci/build" {
 		t.Errorf("ordinary values were modified: %q / %q", records[1][5], records[1][6])
 	}
@@ -278,7 +278,7 @@ func TestBuildCSV_DismissedColumnFollowsTheFinding(t *testing.T) {
 			{Code: "ISSUE-701", Message: "dismissed one", Dismissed: true},
 		},
 	}
-	records := buildCSV(entries, result)
+	records := buildCSV(entries, result, false)
 	if len(records) != 3 { // header + 2 finding rows
 		t.Fatalf("records = %d, want 3 (header + 2 finding rows)", len(records))
 	}
@@ -316,7 +316,7 @@ func TestBuildCSV_NotEvaluableUsesTheControlsOwnReason(t *testing.T) {
 		DegradedReasons: []string{"project variables could not be fetched"},
 		NotEvaluable:    map[string]string{"someControl": "include_attribution_unavailable"},
 	}
-	records := buildCSV(entries, result)
+	records := buildCSV(entries, result, false)
 	if records[1][3] != "error" {
 		t.Fatalf("status = %q, want error", records[1][3])
 	}

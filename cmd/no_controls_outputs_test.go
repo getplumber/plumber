@@ -613,7 +613,7 @@ func TestCSVAndOCSF_NoControlsDoNotClaimControlsPassed(t *testing.T) {
 	t.Run("csv", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "out.csv")
 		conf := &configuration.Configuration{PlumberConfig: pc, NoControls: true}
-		if err := writeCSVToFile(p, result, conf, path); err != nil {
+		if err := writeCSVToFile(p, result, conf, path, nil); err != nil {
 			t.Fatalf("write csv: %v", err)
 		}
 		raw, err := os.ReadFile(path)
@@ -637,7 +637,7 @@ func TestCSVAndOCSF_NoControlsDoNotClaimControlsPassed(t *testing.T) {
 	t.Run("ocsf", func(t *testing.T) {
 		path := filepath.Join(t.TempDir(), "out.ocsf.json")
 		conf := &configuration.Configuration{PlumberConfig: pc, NoControls: true}
-		if err := writeOCSFToFile(p, result, conf, path); err != nil {
+		if err := writeOCSFToFile(p, result, conf, path, nil); err != nil {
 			t.Fatalf("write ocsf: %v", err)
 		}
 		raw, err := os.ReadFile(path)
