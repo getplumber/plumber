@@ -424,3 +424,57 @@ func TestEqualIgnoringScheme(t *testing.T) {
 		}
 	}
 }
+
+// Spec s2: platform mode evaluates the platform's policies, not the local
+// configuration, so the zero-config notice would point the reader at a
+// configuration that produced none of the verdict they are about to read.
+// The embedded default is still loaded (collection needs one), it is just not
+// announced as the thing that was evaluated.
+func TestLoadEmbeddedDefaultConfig_PlatformModeSkipsTheZeroConfigNotice(t *testing.T) {
+	restore := withPlatformTestEnv(t, "https://platform.example.com", "tok")
+	defer restore()
+
+	var err error
+	out := captureStderr(t, func() {
+		_, _, _, err = loadEmbeddedDefaultConfig()
+	})
+
+	if err != nil {
+		t.Fatalf("the embedded default must still load in platform mode: %v", err)
+	}
+	if strings.Contains(out, "No .plumber.yaml found") || strings.Contains(out, "Generate your own with") {
+		t.Fatalf("platform mode did not evaluate a local configuration, so neither line may be printed:\n%s", out)
+	}
+}
+
+// A standalone run is unchanged: no local file means the zero-config notice
+// and the follow-up that says how to author one.
+func TestLoadEmbeddedDefaultConfig_StandaloneStillAnnouncesTheDefault(t *testing.T) {
+	restore := withPlatformTestEnv(t, "", "")
+	defer restore()
+
+	var err error
+	out := captureStderr(t, func() {
+		_, _, _, err = loadEmbeddedDefaultConfig()
+	})
+
+	if err != nil {
+		t.Fatalf("loadEmbeddedDefaultConfig: %v", err)
+	}
+	assertContains(t, out, "No .plumber.yaml found; using Plumber's built-in default configuration.")
+	assertContains(t, out, "Generate your own with")
+}
+
+// --no-controls takes the standalone branch under every mode (continueRun),
+// so its output is unchanged there too.
+func TestLoadEmbeddedDefaultConfig_NoControlsUnderPlatformKeepsTheNotice(t *testing.T) {
+	restore := withPlatformTestEnv(t, "https://platform.example.com", "tok")
+	defer restore()
+	orig := noControls
+	noControls = true
+	defer func() { noControls = orig }()
+
+	out := captureStderr(t, func() { _, _, _, _ = loadEmbeddedDefaultConfig() })
+
+	assertContains(t, out, "No .plumber.yaml found; using Plumber's built-in default configuration.")
+}

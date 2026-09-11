@@ -129,3 +129,45 @@ func TestBuildRunHeaderRows(t *testing.T) {
 		})
 	}
 }
+
+// Spec s2: in platform mode the controls, their configuration and the verdict
+// all come from the platform's policies. A "Config  .plumber.yaml" row would
+// assert a local configuration this run did not evaluate, which is the exact
+// wrong-verdict reading the mode exists to remove (QUESTIONS row 44).
+func TestBuildRunHeaderRows_PlatformModeNamesThePlatformsPolicies(t *testing.T) {
+	restore := withPlatformTestEnv(t, "https://platform.example.com", "tok")
+	defer restore()
+
+	for name, path := range map[string]string{
+		"a local file":         ".plumber.yaml",
+		"the built-in default": builtinDefaultConfigSource,
+		"nothing resolved":     "",
+	} {
+		t.Run(name, func(t *testing.T) {
+			rows := buildRunHeaderRows("gitlab",
+				&control.AnalysisResult{ProjectPath: "grp/app"},
+				&configuration.Configuration{ConfigFilePath: path})
+
+			got, ok := findRow(rows, "Config")
+			if !ok || got != "the platform's policies" {
+				t.Fatalf("Config row = %q (present=%v), want %q", got, ok, "the platform's policies")
+			}
+		})
+	}
+}
+
+// --no-controls evaluates nothing under any mode and takes the standalone
+// branch (continueRun), so its header keeps naming the local configuration
+// that was loaded.
+func TestBuildRunHeaderRows_NoControlsUnderPlatformKeepsTheLocalConfigRow(t *testing.T) {
+	restore := withPlatformTestEnv(t, "https://platform.example.com", "tok")
+	defer restore()
+
+	rows := buildRunHeaderRows("gitlab",
+		&control.AnalysisResult{ProjectPath: "grp/app"},
+		&configuration.Configuration{ConfigFilePath: ".plumber.yaml", NoControls: true})
+
+	if got, ok := findRow(rows, "Config"); !ok || got != ".plumber.yaml" {
+		t.Fatalf("Config row = %q (present=%v), want the local path", got, ok)
+	}
+}

@@ -107,11 +107,30 @@ func runPlatformMode(p provider.Provider, cmd *cobra.Command, conf *configuratio
 		if printOutput {
 			renderNothingEvaluated(platformRunOf(conf))
 		}
-		return nil
+		// Nothing was evaluated, so neither the degraded exit nor a gate can
+		// fire here (both are inert in platform mode anyway), but
+		// --fail-warnings is the other exit source spec s4 keeps and it is
+		// about the COLLECTION, not the verdict: a bare nil made the opt-in
+		// silently inert on exactly the runs where the warnings are all the
+		// operator has left.
+		return finalizeRun(result, summary, nil)
 	}
 	if printOutput {
 		renderPolicySections(p, conf, runs, controlsFilterList, skipControlsList)
 		renderWarnings(result.Warnings)
+		// The collection-truth diagnostics outputTextWithProvider prints on
+		// every standalone run. They are facts about what was COLLECTED, not
+		// a verdict: the CI errors explain why an inventory is thin, and the
+		// tier caveats explain why a control could not be checked on this
+		// GitLab plan. Platform mode replaces the local verdict, not the
+		// truth about the collection, so all five stay.
+		if len(result.CiErrors) > 0 {
+			printCIErrors(result)
+		}
+		renderApprovalRulesTierCaveat(result)
+		renderMRApprovalSettingsTierCaveat(result)
+		renderMRSettingsPremiumCaveat(result)
+		renderSecurityPolicyTierCaveat(result)
 	}
 	verdict, platformErr := publishRun(p, conf, result, summary, runs)
 	if err := writeOutputsWithProvider(p, result, conf, summary, runs, verdict); err != nil {

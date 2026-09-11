@@ -269,7 +269,15 @@ func buildRunHeaderRows(providerName string, result *control.AnalysisResult, con
 	}
 	rows = append(rows, headerRow{"Platform", platform})
 
-	if conf.ConfigFilePath != "" {
+	// In platform mode the controls, their configuration and the verdict all
+	// come from the platform's policies (spec s2). Naming a local file (or
+	// the built-in default) here would assert a configuration this run did
+	// not evaluate, which is the wrong-verdict reading the mode exists to
+	// remove (QUESTIONS row 44).
+	switch {
+	case platformPolicyMode(conf.NoControls):
+		rows = append(rows, headerRow{"Config", "the platform's policies"})
+	case conf.ConfigFilePath != "":
 		rows = append(rows, headerRow{"Config", conf.ConfigFilePath})
 	}
 	switch result.CIConfigSource {
@@ -341,8 +349,15 @@ func loadEmbeddedDefaultConfig() (*configuration.PlumberConfig, string, []string
 	if err != nil {
 		return nil, "", nil, fmt.Errorf("failed to load built-in default config: %w", err)
 	}
-	fmt.Fprintln(os.Stderr, "No .plumber.yaml found; using Plumber's built-in default configuration.")
-	fmt.Fprintln(os.Stderr, "Generate your own with 'plumber config generate' ('plumber config init' for the interactive wizard); see the default with 'plumber config view'.")
+	// Silent in platform mode: the embedded default is still loaded (the
+	// collection needs a configuration to run), but it is not what produced
+	// the verdict, so announcing it - and telling the operator to author
+	// their own - would point them at a file the report never used (spec
+	// s2). The run header says where the configuration came from instead.
+	if !platformPolicyMode(noControls) {
+		fmt.Fprintln(os.Stderr, "No .plumber.yaml found; using Plumber's built-in default configuration.")
+		fmt.Fprintln(os.Stderr, "Generate your own with 'plumber config generate' ('plumber config init' for the interactive wizard); see the default with 'plumber config view'.")
+	}
 	return pc, path, warnings, nil
 }
 
