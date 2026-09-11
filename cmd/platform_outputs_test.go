@@ -4,6 +4,7 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/getplumber/plumber/control"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 )
 
@@ -187,5 +188,38 @@ func TestAppendMissing(t *testing.T) {
 	}
 	if got := appendMissing(nil, nil); len(got) != 0 {
 		t.Fatalf("appendMissing(nil, nil) must stay empty, got %#v", got)
+	}
+}
+
+// The union's NotEvaluable field directly: the collected result's local marks
+// are replaced by the applied runs' own, one entry per marked control, and the
+// first run to mark a control owns the reason (any run's mark is enough for
+// the control never to read as a clean pass).
+func TestPlatformUnionResult_NotEvaluableIsTheRunsOwnMarks(t *testing.T) {
+	first := handMadePolicyRun(t, "A", debugTracePolicyYAML, nil)
+	first.Result.MarkNotEvaluable("pipelineMustNotEnableDebugTrace", "policy_lane_unavailable")
+	second := handMadePolicyRun(t, "B", dockerInDockerPolicyYAML, nil)
+	second.Result.MarkNotEvaluable("pipelineMustNotEnableDebugTrace", "a_second_reason")
+	skipped := handMadePolicyRun(t, "C", debugTracePolicyYAML, nil)
+	skipped.Result.MarkNotEvaluable("neverAppliedControl", "an_un_applied_run_marks_nothing")
+	skipped.Applied = false
+	base := &control.AnalysisResult{CiValid: true}
+	base.MarkNotEvaluable("pipelineMustNotUseDockerInDocker", "local_mark_must_not_appear")
+
+	union := platformUnionResult(base, []policyRun{first, second, skipped})
+
+	if _, leaked := union.NotEvaluable["pipelineMustNotUseDockerInDocker"]; leaked {
+		t.Errorf("the collected result's LOCAL mark must not survive into the union: %#v", union.NotEvaluable)
+	}
+	if got := union.NotEvaluable["pipelineMustNotEnableDebugTrace"]; got != "policy_lane_unavailable" {
+		t.Errorf("the first applied run to mark a control owns the reason, got %q", got)
+	}
+	if _, present := union.NotEvaluable["neverAppliedControl"]; present {
+		t.Errorf("an un-applied run evaluated nothing and marks nothing: %#v", union.NotEvaluable)
+	}
+	// The collected result is copied, never mutated: it is still what the JSON
+	// report and the PBOM are written from.
+	if base.NotEvaluable["pipelineMustNotUseDockerInDocker"] != "local_mark_must_not_appear" {
+		t.Errorf("the collected result was mutated: %#v", base.NotEvaluable)
 	}
 }

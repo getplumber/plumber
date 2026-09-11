@@ -57,6 +57,15 @@ gitlab:
       enabled: true
 `
 
+// dockerInDockerPolicyYAML is a SECOND single-control policy, so a test can
+// give one policy run a not-evaluable mark and keep another run healthy.
+const dockerInDockerPolicyYAML = `version: "2.0"
+gitlab:
+  controls:
+    pipelineMustNotUseDockerInDocker:
+      enabled: true
+`
+
 // The two image controls are INDEPENDENT, and enforcing tag pinning without a
 // registry allowlist (or the reverse) is the common split. These two policies
 // declare exactly one of them each.
@@ -294,6 +303,131 @@ func TestWriteCSV_PlatformMode_SharedControlNamesBothPolicies(t *testing.T) {
 	}
 	if !strings.Contains(policiesCell, "A") || !strings.Contains(policiesCell, "B") {
 		t.Fatalf("a control two policy runs both enable must name both in the csv, got %q", policiesCell)
+	}
+}
+
+// platformUnionResult swaps the not-evaluable marks the CSV and OCSF turn into
+// a per-control status: the collected result's LOCAL marks are dropped and the
+// applied runs' own marks put in their place. Both halves matter, and neither
+// was covered: without the repopulation a control a policy could not evaluate
+// renders as a clean pass, and without the reset a local mark contradicts spec
+// s5 by deciding a platform-mode control's status.
+func TestWriteCSV_PlatformMode_NotEvaluableComesFromTheRuns(t *testing.T) {
+	dir := withArtifactFiles(t)
+	csvFile = filepath.Join(dir, "out.csv")
+
+	degraded := handMadePolicyRun(t, "A", debugTracePolicyYAML, nil)
+	degraded.Result.MarkNotEvaluable("pipelineMustNotEnableDebugTrace", "policy_lane_unavailable")
+	healthy := handMadePolicyRun(t, "B", dockerInDockerPolicyYAML, nil)
+	// The LOCAL evaluation could not evaluate the control the OTHER policy
+	// enables. Its mark must not decide that control's platform-mode status.
+	base := &control.AnalysisResult{CiValid: true, ProjectPath: "grp/app"}
+	base.MarkNotEvaluable("pipelineMustNotUseDockerInDocker", "local_mark_must_not_appear")
+	conf := &configuration.Configuration{PlumberConfig: testDefaultPlumberConfig(t)}
+
+	if err := writeOutputsWithProvider(&providerPkg.GitLabProvider{}, base, conf,
+		complianceSummary{platformMode: true, scoreMode: true},
+		[]policyRun{degraded, healthy}, nil); err != nil {
+		t.Fatalf("write outputs: %v", err)
+	}
+
+	raw, err := os.ReadFile(csvFile)
+	if err != nil {
+		t.Fatalf("read the csv: %v", err)
+	}
+	records, err := csv.NewReader(strings.NewReader(string(raw))).ReadAll()
+	if err != nil {
+		t.Fatalf("the csv does not parse: %v", err)
+	}
+	byControl := map[string][]string{}
+	for _, r := range records[1:] {
+		byControl[r[2]] = r
+	}
+	marked, ok := byControl["pipelineMustNotEnableDebugTrace"]
+	if !ok {
+		t.Fatalf("the policy's control has no row: %v", records)
+	}
+	if marked[3] != control.StatusError {
+		t.Errorf("a control the policy run could not evaluate is %q, want %q: %v", marked[3], control.StatusError, marked)
+	}
+	if !strings.Contains(marked[5], "policy_lane_unavailable") {
+		t.Errorf("the row must carry the POLICY run's reason, got %q", marked[5])
+	}
+	clean, ok := byControl["pipelineMustNotUseDockerInDocker"]
+	if !ok {
+		t.Fatalf("the second policy's control has no row: %v", records)
+	}
+	if clean[3] == control.StatusError {
+		t.Errorf("no policy run marked this control, the LOCAL mark must not make it an error: %v", clean)
+	}
+	if strings.Contains(string(raw), "local_mark_must_not_appear") {
+		t.Errorf("the local evaluation's not-evaluable reason reached the platform-mode csv:\n%s", raw)
+	}
+}
+
+// The OCSF half of the same swap: the record's compliance status and its
+// status_details come from the policy run's mark, never the local one.
+func TestWriteOCSF_PlatformMode_NotEvaluableComesFromTheRuns(t *testing.T) {
+	dir := withArtifactFiles(t)
+	ocsfFile = filepath.Join(dir, "out.ocsf.json")
+
+	degraded := handMadePolicyRun(t, "A", debugTracePolicyYAML, nil)
+	degraded.Result.MarkNotEvaluable("pipelineMustNotEnableDebugTrace", "policy_lane_unavailable")
+	healthy := handMadePolicyRun(t, "B", dockerInDockerPolicyYAML, nil)
+	base := &control.AnalysisResult{CiValid: true, ProjectPath: "grp/app"}
+	base.MarkNotEvaluable("pipelineMustNotUseDockerInDocker", "local_mark_must_not_appear")
+	conf := &configuration.Configuration{PlumberConfig: testDefaultPlumberConfig(t)}
+
+	if err := writeOutputsWithProvider(&providerPkg.GitLabProvider{}, base, conf,
+		complianceSummary{platformMode: true, scoreMode: true},
+		[]policyRun{degraded, healthy}, nil); err != nil {
+		t.Fatalf("write outputs: %v", err)
+	}
+
+	raw, err := os.ReadFile(ocsfFile)
+	if err != nil {
+		t.Fatalf("read the ocsf feed: %v", err)
+	}
+	var records []struct {
+		Compliance struct {
+			Control       string   `json:"control"`
+			Status        string   `json:"status"`
+			StatusDetails []string `json:"status_details"`
+		} `json:"compliance"`
+	}
+	if err := json.Unmarshal(raw, &records); err != nil {
+		t.Fatalf("the ocsf feed is not valid JSON: %v", err)
+	}
+	seen := map[string]struct {
+		status  string
+		details string
+	}{}
+	for _, r := range records {
+		seen[r.Compliance.Control] = struct {
+			status  string
+			details string
+		}{r.Compliance.Status, strings.Join(r.Compliance.StatusDetails, " | ")}
+	}
+	marked, ok := seen["pipelineMustNotEnableDebugTrace"]
+	if !ok {
+		t.Fatalf("the policy's control has no record:\n%s", raw)
+	}
+	// OCSF maps the error status onto its Warning enum ("could not verify").
+	if marked.status != "Warning" {
+		t.Errorf("a control the policy run could not evaluate is %q, want Warning", marked.status)
+	}
+	if !strings.Contains(marked.details, "policy_lane_unavailable") {
+		t.Errorf("status_details must carry the POLICY run's reason, got %q", marked.details)
+	}
+	clean, ok := seen["pipelineMustNotUseDockerInDocker"]
+	if !ok {
+		t.Fatalf("the second policy's control has no record:\n%s", raw)
+	}
+	if clean.status != "Pass" {
+		t.Errorf("no policy run marked this control, the LOCAL mark must not move it off Pass: %#v", clean)
+	}
+	if strings.Contains(string(raw), "local_mark_must_not_appear") {
+		t.Errorf("the local evaluation's not-evaluable reason reached the ocsf feed:\n%s", raw)
 	}
 }
 
