@@ -966,9 +966,26 @@ func buildAnalysisJSONReport(result *control.AnalysisResult, pc *configuration.P
 	// comments and formatting never leave the repo) plus a content hash. The
 	// CLI does NOT classify standard-vs-custom (it's the untrusted client); the
 	// score service classifies server-side from this object and its hash.
-	output["plumberConfig"] = buildPlumberConfigBlock(pc)
-	for k, v := range legacyResultsByName(result, pc, provider, includeOnly, skip, p.noControls) {
-		output[k] = v
+	//
+	// Both blocks below are the LOCAL configuration's view: plumberConfig names
+	// the local file as the policy that produced the grade, and the per-control
+	// *Result blocks are control.GitLabControls(pc) evaluated over the local
+	// findings. In platform mode neither is true of this run - the policies
+	// produced the verdict, one control set each - so both are omitted rather
+	// than published beside a platform score they had no part in. The
+	// `policies` array is the per-control view there, and platformMode tells a
+	// consumer why the blocks it used to parse are gone.
+	if s.platformMode {
+		output["platformMode"] = true
+		// notEvaluable is the same thing in miniature: a per-control claim
+		// keyed on the local catalog. Each run's own marks reach the reader
+		// through its policy entry.
+		delete(output, "notEvaluable")
+	} else {
+		output["plumberConfig"] = buildPlumberConfigBlock(pc)
+		for k, v := range legacyResultsByName(result, pc, provider, includeOnly, skip, p.noControls) {
+			output[k] = v
+		}
 	}
 
 	// Top-level aggregate blocks (pipelineOriginMetrics +
@@ -1165,9 +1182,10 @@ var analysisJSONLegacyKeyHead = []string{
 	"ciConfigSource", "ciValid", "ciMissing", "ciErrors",
 	"pipelineOriginMetrics", "pipelineImageMetrics",
 	"minPoints", "minScore", "threshold", "passed", "plumberScore",
-	// policies is the platform-mode per-policy array (spec s5); absent from
-	// every other run, so this entry changes no standalone report.
-	"policies",
+	// platformMode and policies are the platform-mode block (spec s5); both
+	// are absent from every other run, so these entries change no standalone
+	// report.
+	"platformMode", "policies",
 }
 
 // analysisJSONLegacyKeyTail lists keys pinned to the END of the object, after

@@ -25,7 +25,7 @@ func TestOCSFCarriesAnalyzedCommitResource(t *testing.T) {
 	conf := &configuration.Configuration{PlumberConfig: testDefaultPlumberConfig(t)}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "out.ocsf.json")
-	if err := writeOCSFToFile(&providerPkg.GitLabProvider{}, result, conf, path); err != nil {
+	if err := writeOCSFToFile(&providerPkg.GitLabProvider{}, result, conf, path, nil); err != nil {
 		t.Fatalf("write ocsf: %v", err)
 	}
 	raw, _ := os.ReadFile(path)
@@ -63,7 +63,7 @@ func TestOCSFResourcePartialProvenanceBoundaries(t *testing.T) {
 		t.Helper()
 		conf := &configuration.Configuration{PlumberConfig: testDefaultPlumberConfig(t)}
 		path := filepath.Join(t.TempDir(), "out.ocsf.json")
-		if err := writeOCSFToFile(&providerPkg.GitLabProvider{}, result, conf, path); err != nil {
+		if err := writeOCSFToFile(&providerPkg.GitLabProvider{}, result, conf, path, nil); err != nil {
 			t.Fatalf("write ocsf: %v", err)
 		}
 		raw, _ := os.ReadFile(path)
@@ -112,7 +112,7 @@ func TestOCSFOmitsResourceWhenNoProvenance(t *testing.T) {
 	conf := &configuration.Configuration{PlumberConfig: testDefaultPlumberConfig(t)}
 	dir := t.TempDir()
 	path := filepath.Join(dir, "out.ocsf.json")
-	if err := writeOCSFToFile(&providerPkg.GitLabProvider{}, result, conf, path); err != nil {
+	if err := writeOCSFToFile(&providerPkg.GitLabProvider{}, result, conf, path, nil); err != nil {
 		t.Fatalf("write ocsf: %v", err)
 	}
 	raw, _ := os.ReadFile(path)

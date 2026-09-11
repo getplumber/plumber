@@ -86,23 +86,33 @@ func (p *GitLabProvider) RunRemote(_ *configuration.Configuration) (*control.Ana
 	return nil, ErrNoRemote
 }
 
-// noControlsAwareImageCompliance returns the per-image compliance flags, or
-// nil when the run evaluated nothing. The flags are derived from findings,
-// not from the score, so an empty findings slice would otherwise mark every
-// image forbiddenTag:false / authorized:true and assert the very image
-// checks --no-controls skipped, inside the artifact the flag exists to
-// produce. With nil the PBOM records the inventory and claims nothing.
+// imageComplianceFor returns the per-image compliance flags, or nil when this
+// run may not claim them. The flags are derived from findings, not from the
+// score, so an empty findings slice would otherwise mark every image
+// forbiddenTag:false / authorized:true and assert the very image checks
+// nobody ran, inside the artifact the flag exists to produce. With nil the
+// PBOM records the inventory and claims nothing.
+//
+// Two runs may not claim them. --no-controls evaluated nothing at all. And a
+// platform-mode run whose resolved policies do not enable the image controls
+// (platform.ImageControlsEvaluated) evaluated them for no policy, which is
+// the same absence of a verdict; the findings it does have come from the
+// policy runs' union, so the flags it CAN claim are the policies' own.
+//
 // conf is required, as everywhere else on this path (the writers read
 // conf.GitlabURL unconditionally).
-func noControlsAwareImageCompliance(result *control.AnalysisResult, conf *configuration.Configuration) *pbom.ImageComplianceData {
+func imageComplianceFor(result *control.AnalysisResult, conf *configuration.Configuration, platform *pbom.PlatformSummary) *pbom.ImageComplianceData {
 	if conf.NoControls {
+		return nil
+	}
+	if platform != nil && !platform.ImageControlsEvaluated {
 		return nil
 	}
 	return pbom.BuildImageComplianceData(result)
 }
 
 func (p *GitLabProvider) WritePBOM(result *control.AnalysisResult, conf *configuration.Configuration, filePath string, score *control.PlumberScoreResult, scoreMode bool, platform *pbom.PlatformSummary) error {
-	complianceData := noControlsAwareImageCompliance(result, conf)
+	complianceData := imageComplianceFor(result, conf, platform)
 	overrideData := pbom.BuildIncludeOverrideData(result)
 	gen := pbom.NewGenerator(result.ProjectPath, result.ProjectID, conf.GitlabURL, conf.Branch).
 		WithComplianceData(complianceData).
@@ -126,7 +136,7 @@ func (p *GitLabProvider) WritePBOM(result *control.AnalysisResult, conf *configu
 }
 
 func (p *GitLabProvider) WritePBOMCycloneDX(result *control.AnalysisResult, conf *configuration.Configuration, filePath string, score *control.PlumberScoreResult, scoreMode bool, platform *pbom.PlatformSummary) error {
-	complianceData := noControlsAwareImageCompliance(result, conf)
+	complianceData := imageComplianceFor(result, conf, platform)
 	overrideData := pbom.BuildIncludeOverrideData(result)
 	gen := pbom.NewGenerator(result.ProjectPath, result.ProjectID, conf.GitlabURL, conf.Branch).
 		WithComplianceData(complianceData).

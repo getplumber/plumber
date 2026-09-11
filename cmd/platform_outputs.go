@@ -4,9 +4,11 @@ import (
 	"math"
 	"strconv"
 
+	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	"github.com/getplumber/plumber/pbom"
+	providerPkg "github.com/getplumber/plumber/provider"
 )
 
 // This file turns the evaluated policy runs and the platform's verdict into
@@ -121,6 +123,83 @@ func platformPBOMSummary(runs []policyRun, v *platformVerdict) *pbom.PlatformSum
 	return out
 }
 
+// outputControlEntries returns the control entries the per-control artifacts
+// (CSV, OCSF) describe, and, in platform mode, the policies each control was
+// evaluated under.
+//
+// Outside platform mode this is the run's own catalog, unchanged. In platform
+// mode the local catalog is never consulted: the entries are the union of the
+// APPLIED runs' own catalogs, keeping only the controls a policy actually
+// enables, in /context order. A control no policy declares is absent rather
+// than listed as skipped, because "skipped" is a statement about this run's
+// configuration and there is no such configuration here.
+func outputControlEntries(p providerPkg.Provider, conf *configuration.Configuration, runs []policyRun) ([]control.ControlEntry, map[string][]string) {
+	if len(runs) == 0 {
+		return providerControlEntries(p, conf), nil
+	}
+	var entries []control.ControlEntry
+	seen := map[string]bool{}
+	policies := map[string][]string{}
+	for _, run := range runs {
+		if !run.Applied || run.Config == nil {
+			continue
+		}
+		names := policyNames(run)
+		for _, e := range p.Controls(run.Config) {
+			if e.Skipped {
+				continue
+			}
+			if !seen[e.ControlName] {
+				seen[e.ControlName] = true
+				entries = append(entries, e)
+			}
+			policies[e.ControlName] = appendMissing(policies[e.ControlName], names)
+		}
+	}
+	return entries, policies
+}
+
+// imageComplianceControls are the controls whose findings drive the PBOM's
+// per-image booleans (forbiddenTag / authorized). They are derived from the
+// codes BuildImageComplianceData consumes, through the codes registry, so a
+// code moving to another control cannot leave this list stale.
+func imageComplianceControls() map[string]bool {
+	out := map[string]bool{}
+	for _, code := range []control.ErrorCode{
+		control.CodeImageForbiddenTag,
+		control.CodeImageNotPinnedByDigest,
+		control.CodeImageUnauthorizedSource,
+	} {
+		if info := control.LookupCode(code); info != nil && info.ControlName != "" {
+			out[info.ControlName] = true
+		}
+	}
+	return out
+}
+
+// platformImageControlsEvaluated reports whether any applied policy actually
+// enables the image controls.
+//
+// The PBOM's per-image booleans are a POSITIVE claim: an image absent from
+// every finding is published as authorized with no forbidden tag. That is only
+// true of an image a control judged, so in platform mode it may be said only
+// when a policy asked for those controls; otherwise the writers omit the
+// booleans and the image is reported as inventory alone.
+func platformImageControlsEvaluated(p providerPkg.Provider, runs []policyRun) bool {
+	wanted := imageComplianceControls()
+	for _, run := range runs {
+		if !run.Applied || run.Config == nil {
+			continue
+		}
+		for _, e := range p.Controls(run.Config) {
+			if !e.Skipped && wanted[e.ControlName] {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // platformUnionResult returns the result the security-report writers (SARIF,
 // the GitLab SAST report) render in platform mode: the same run, with its
 // findings replaced by the union of every APPLIED policy run's findings,
@@ -142,12 +221,25 @@ func platformUnionResult(result *control.AnalysisResult, runs []policyRun) *cont
 	}
 	union := *result
 	union.Findings = nil
+	// The collected result's not-evaluable marks are the LOCAL evaluation's,
+	// and the CSV and OCSF feeds turn them into a per-control status. Replace
+	// them with the runs' own marks (any run's mark wins, so a control one
+	// policy could not evaluate is never reported as a clean pass).
+	union.NotEvaluable = nil
 	index := map[string]int{}
 	for _, run := range runs {
 		if !run.Applied || run.Result == nil {
 			continue
 		}
 		names := policyNames(run)
+		for controlName, reason := range run.Result.NotEvaluable {
+			if union.NotEvaluable == nil {
+				union.NotEvaluable = map[string]string{}
+			}
+			if _, seen := union.NotEvaluable[controlName]; !seen {
+				union.NotEvaluable[controlName] = reason
+			}
+		}
 		for _, f := range run.Result.Findings {
 			key := unionFindingKey(f)
 			if at, seen := index[key]; seen {
@@ -165,12 +257,20 @@ func platformUnionResult(result *control.AnalysisResult, runs []policyRun) *cont
 
 // unionFindingKey is the identity two policy runs are deduplicated on: the
 // stamped fingerprint, which is exactly what every consumer of these reports
-// tracks a finding by. Findings that were never stamped (codeless ones, or an
-// unstamped caller) fall back to their canonical fields rather than collapsing
-// into one entry under the empty string.
+// tracks a finding by, PLUS the line.
+//
+// The line is what makes this a report identity rather than the fingerprint's:
+// the fingerprint is deliberately line-independent (that is what makes a
+// dismissal survive an edit above the finding), so two occurrences of the same
+// subject on two different lines share it. They are two alerts, and collapsing
+// them would silently drop one from the security report.
+//
+// Findings that were never stamped (codeless ones, or an unstamped caller)
+// fall back to their canonical fields rather than collapsing into one entry
+// under the empty string.
 func unionFindingKey(f opaengine.Finding) string {
 	if f.Fingerprint != "" {
-		return "fp:" + f.Fingerprint
+		return "fp:" + f.Fingerprint + "|" + strconv.Itoa(f.Line)
 	}
 	return "raw:" + f.Code + "|" + f.File + "|" + strconv.Itoa(f.Line) + "|" + f.Job + "|" + f.Message
 }

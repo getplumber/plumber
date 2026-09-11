@@ -24,7 +24,7 @@ func TestBuildOCSF_FindingFingerprint(t *testing.T) {
 			{Code: "ISSUE-701", Message: "x", Fingerprint: "deadbeefcafef00d"},
 		},
 	}
-	events := buildOCSF(entries, result, "github", 1, "s")
+	events := buildOCSF(entries, result, "github", 1, "s", nil)
 	recs, ok := events[0].Unmapped["plumber_findings"].([]map[string]any)
 	if !ok || len(recs) != 1 {
 		t.Fatalf("plumber_findings = %v", events[0].Unmapped["plumber_findings"])
@@ -47,7 +47,7 @@ func TestBuildOCSF_DismissedMarkerFollowsTheFinding(t *testing.T) {
 			{Code: "ISSUE-701", Message: "dismissed one", Dismissed: true},
 		},
 	}
-	events := buildOCSF(entries, result, "github", 1, "s")
+	events := buildOCSF(entries, result, "github", 1, "s", nil)
 	recs, ok := events[0].Unmapped["plumber_findings"].([]map[string]any)
 	if !ok || len(recs) != 2 {
 		t.Fatalf("plumber_findings = %v, want 2 records", events[0].Unmapped["plumber_findings"])
@@ -83,7 +83,7 @@ func TestBuildOCSF_FailingControl(t *testing.T) {
 		},
 	}
 
-	events := buildOCSF(entries, result, "github", 1754179200000, "scan-1")
+	events := buildOCSF(entries, result, "github", 1754179200000, "scan-1", nil)
 	if len(events) != 1 {
 		t.Fatalf("events = %d, want 1", len(events))
 	}
@@ -131,7 +131,7 @@ func TestBuildOCSF_PassingControlIsListed(t *testing.T) {
 	}
 	result := &control.AnalysisResult{CiValid: true}
 
-	events := buildOCSF(entries, result, "github", 1, "s")
+	events := buildOCSF(entries, result, "github", 1, "s", nil)
 	if len(events) != 1 {
 		t.Fatalf("events = %d, want 1 (passing controls are listed)", len(events))
 	}
@@ -156,7 +156,7 @@ func TestBuildOCSF_DegradedCleanControlIsWarning(t *testing.T) {
 		DegradedReasons: []string{"3 workflow file(s) could not be fetched"},
 	}
 
-	events := buildOCSF(entries, result, "github", 1, "s")
+	events := buildOCSF(entries, result, "github", 1, "s", nil)
 	if events[0].Compliance.StatusID != 2 || events[0].Compliance.Status != "Warning" {
 		t.Errorf("degraded clean control status = %q/%d, want Warning/2 (must NOT be Pass)", events[0].Compliance.Status, events[0].Compliance.StatusID)
 	}
@@ -171,7 +171,7 @@ func TestBuildOCSF_SkippedControlIsOther(t *testing.T) {
 	}
 	result := &control.AnalysisResult{CiValid: true}
 
-	events := buildOCSF(entries, result, "github", 1, "s")
+	events := buildOCSF(entries, result, "github", 1, "s", nil)
 	if events[0].Compliance.StatusID != 99 || events[0].Compliance.Status != "Skipped" {
 		t.Errorf("skipped control status = %q/%d, want Skipped/99", events[0].Compliance.Status, events[0].Compliance.StatusID)
 	}
@@ -187,7 +187,7 @@ func TestBuildOCSF_EveryControlEmitted(t *testing.T) {
 		CiValid:  true,
 		Findings: []opaengine.Finding{{Code: "ISSUE-701", Message: "x"}},
 	}
-	events := buildOCSF(entries, result, "github", 1, "s")
+	events := buildOCSF(entries, result, "github", 1, "s", nil)
 	if len(events) != 3 {
 		t.Fatalf("events = %d, want 3 (one per control, none omitted)", len(events))
 	}
@@ -202,7 +202,7 @@ func TestWriteOCSFEvents_RoundTrip(t *testing.T) {
 		CiValid:  true,
 		Findings: []opaengine.Finding{{Code: "ISSUE-701", Severity: "high", Message: "unpinned"}},
 	}
-	events := buildOCSF(entries, result, "github", 1754179200000, "scan-1")
+	events := buildOCSF(entries, result, "github", 1754179200000, "scan-1", nil)
 
 	path := t.TempDir() + "/out.ocsf.json"
 	if err := writeOCSFEvents(events, path); err != nil {
@@ -264,7 +264,7 @@ func TestBuildOCSF_MultiCodeRequirements(t *testing.T) {
 	}
 	result := &control.AnalysisResult{CiValid: true}
 
-	events := buildOCSF(entries, result, "gitlab", 1, "s")
+	events := buildOCSF(entries, result, "gitlab", 1, "s", nil)
 	if len(events) != 1 {
 		t.Fatalf("events = %d, want 1", len(events))
 	}
@@ -279,7 +279,7 @@ func TestBuildOCSF_FindingTypes(t *testing.T) {
 	entries := []control.ControlEntry{{ControlName: "someControl", DisplayName: "X"}}
 	result := &control.AnalysisResult{CiValid: true}
 
-	events := buildOCSF(entries, result, "github", 1, "s")
+	events := buildOCSF(entries, result, "github", 1, "s", nil)
 	got := events[0].FindingInfo.Types
 	want := []string{"CI/CD Security", "Supply Chain", "Security"}
 	if !reflect.DeepEqual(got, want) {
@@ -305,7 +305,7 @@ func TestBuildOCSF_NotEvaluableUsesTheControlsOwnReason(t *testing.T) {
 		NotEvaluable:    map[string]string{"someControl": "include_attribution_unavailable"},
 	}
 
-	events := buildOCSF(entries, result, "gitlab", 1, "s")
+	events := buildOCSF(entries, result, "gitlab", 1, "s", nil)
 	details := strings.Join(events[0].Compliance.StatusDetails, " | ")
 	if !strings.Contains(details, "include_attribution_unavailable") {
 		t.Errorf("status_details %q must carry the control's own reason", details)

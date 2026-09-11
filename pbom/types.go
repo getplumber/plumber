@@ -76,9 +76,17 @@ type PlatformGlobalScore struct {
 // PlatformSummary is what a platform-mode run hands the PBOM writers: the
 // per-policy verdicts and the platform's global score (nil when the push
 // returned none). nil itself outside platform mode.
+//
+// ImageControlsEvaluated is false when no resolved policy enables the image
+// controls. The per-image ForbiddenTag / Authorized booleans are a POSITIVE
+// claim - an image no finding names is published as authorized - so with no
+// policy asking for those controls the writers drop them entirely and the
+// image is reported as inventory alone. Both fields are already *bool, so
+// dropping them is the existing tri-state, not a schema change.
 type PlatformSummary struct {
-	Policies    []PolicyScore
-	GlobalScore *PlatformGlobalScore
+	Policies               []PolicyScore
+	GlobalScore            *PlatformGlobalScore
+	ImageControlsEvaluated bool
 }
 
 // PlumberScoreCounts is the number of issues per severity bucket.
