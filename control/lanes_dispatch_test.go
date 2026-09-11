@@ -172,6 +172,34 @@ func TestResolveServedIncludesRestoreAttribution(t *testing.T) {
 	})
 }
 
+// TestResolveServedEmptyIncludesIsCompleteAttribution pins the other half
+// of the fix: an EMPTY served includes list is a complete, known answer
+// (this branch's merged config has zero includes, every job is
+// project-authored) and must evaluate the include-reasoning controls
+// normally, exactly like a non-empty served list does. Before the fix, an
+// empty list read the same as no list at all and left these controls
+// abstaining with ReasonIncludeAttributionUnavailable forever.
+func TestResolveServedEmptyIncludesIsCompleteAttribution(t *testing.T) {
+	anchorIncludes := oneInclude()
+	attributionControls := []string{
+		"pipelineMustNotIncludeHardcodedJobs",
+		"includesMustBeUpToDate",
+		"externalRefsMustNotCollide",
+	}
+
+	result := &AnalysisResult{}
+	conf := confWithControls(platformRun(platform.SourceResolved, "stages: [build]", anchorIncludes))
+	conf.PlatformRun.Config.Includes = []json.RawMessage{}
+
+	markPlatformLaneGaps(result, conf)
+
+	for _, name := range attributionControls {
+		if reason, marked := result.NotEvaluable[name]; marked {
+			t.Errorf("%s marked %q: a served EMPTY list is a complete answer, not an unavailable one", name, reason)
+		}
+	}
+}
+
 // The dispatcher chooses between three mutually exclusive treatments. A
 // swapped or inverted branch here would either degrade a healthy run
 // entirely or let an empty one report all-clean, and until now nothing
