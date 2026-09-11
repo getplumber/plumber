@@ -545,12 +545,45 @@ func TestEvaluatePlatformGate_UnparseableBodyCarriesNoScore(t *testing.T) {
 	}
 }
 
-// The belt-and-braces half of the same finding: whatever future field shape
-// makes encoding/json return an error, a gate that DID decode beside it is
-// still the platform's verdict, and the partial decode is reported rather
-// than swallowed.
-func TestEvaluatePlatformGate_PartialDecodeKeepsADecodedGate(t *testing.T) {
-	body := `{"gate":{"evaluated":true,"blocking":true,"reason":"live failures","policies":[]},"global_score":"not-an-object"}`
+// A gate whose OWN fields did not decode is not a verdict, and must never be
+// read as a passing one. encoding/json leaves a mistyped field at its zero
+// value and keeps going, so "blocking":"true" produced a fully-formed gate
+// with Blocking false: a blocking verdict silently became exit 0. The gate is
+// decoded strictly - any error drops it - and the run fails open honestly
+// instead (invariant 5: a let-through that says so, never a fake verdict).
+func TestEvaluatePlatformGate_MalformedGateIsDroppedNotReadAsPassing(t *testing.T) {
+	body := `{"gate":{"evaluated":true,"blocking":"true","policies":[{"id":"p1","name":"Prod","enforcement":"block","blocking":true,"live_fail_count":2}]},"global_score":{"letter":"C","points":66}}`
+
+	var v *platformVerdict
+	var err error
+	out := captureStderr(t, func() { v, err = evaluatePlatformGate([]byte(body)) })
+
+	if err != nil {
+		t.Fatalf("evaluatePlatformGate = %v, want nil: an undecodable gate fails open", err)
+	}
+	if v == nil || v.Gate != nil {
+		t.Fatalf("Gate = %+v, want nil: a half-decoded gate must never be carried", v)
+	}
+	if !platformGatePassed(v) {
+		t.Fatal("a dropped gate is a let-through, not a block")
+	}
+	if v.Unavailable == "" || !strings.Contains(v.Unavailable, "did not decode") {
+		t.Fatalf("Unavailable = %q, want it to say the gate did not decode", v.Unavailable)
+	}
+	if !strings.Contains(out, platformGateNoVerdictLine) || !strings.Contains(out, "did not decode") {
+		t.Errorf("stderr = %q, want the no-verdict line naming the gate decode failure", out)
+	}
+	// The score is a separate field and still decoded fine.
+	if v.GlobalScore == nil || v.GlobalScore.Letter != "C" {
+		t.Errorf("global_score = %+v, want the decoded C/66: only the gate was malformed", v.GlobalScore)
+	}
+}
+
+// The mirror image: a well-formed gate beside a global score that cannot be
+// read. Tolerance applies to the score ONLY, and it means dropping the score,
+// never inventing one: the verdict is the platform's and is returned intact.
+func TestEvaluatePlatformGate_UndecodableGlobalScoreDropsOnlyTheScore(t *testing.T) {
+	body := `{"gate":{"evaluated":true,"blocking":true,"reason":"live failures","policies":[{"id":"p1","name":"Prod","enforcement":"block","blocking":true,"live_fail_count":2}]},"global_score":{"letter":"C","points":"sixty"}}`
 
 	var v *platformVerdict
 	var err error
@@ -558,12 +591,32 @@ func TestEvaluatePlatformGate_PartialDecodeKeepsADecodedGate(t *testing.T) {
 
 	var gateErr *PlatformGateError
 	if !errors.As(err, &gateErr) {
-		t.Fatalf("evaluatePlatformGate = %v, want the blocking *PlatformGateError", err)
+		t.Fatalf("evaluatePlatformGate = %v, want the blocking *PlatformGateError: the gate is well-formed", err)
 	}
 	if v == nil || v.Gate == nil || !v.Gate.Blocking {
-		t.Fatalf("a decoded gate must survive an undecodable sibling field: %+v", v)
+		t.Fatalf("the gate must survive an unreadable global score: %+v", v)
 	}
-	if !strings.Contains(out, "partially decoded") {
-		t.Errorf("stderr = %q, want the partial-decode line: a body this CLI could only half read is worth saying out loud", out)
+	if v.GlobalScore != nil {
+		t.Fatalf("global_score = %+v, want nil: points that are not a number are not a score, and 0 would be a lie", v.GlobalScore)
+	}
+	if !strings.Contains(out, "global score could not be decoded") {
+		t.Errorf("stderr = %q, want the dropped-score line", out)
+	}
+}
+
+// A non-object gate (a shape this CLI predates entirely) is the same case as
+// a mistyped field: no verdict, fail open, and the score beside it survives.
+func TestEvaluatePlatformGate_NonObjectGateFailsOpen(t *testing.T) {
+	var v *platformVerdict
+	var err error
+	_ = captureStderr(t, func() {
+		v, err = evaluatePlatformGate([]byte(`{"gate":"blocked","global_score":{"letter":"A","points":100}}`))
+	})
+
+	if err != nil || v == nil || v.Gate != nil {
+		t.Fatalf("want a fail-open verdict with no gate, got %+v err %v", v, err)
+	}
+	if v.GlobalScore == nil || v.GlobalScore.Points != 100 {
+		t.Fatalf("global_score = %+v, want the decoded A/100", v.GlobalScore)
 	}
 }
