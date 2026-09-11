@@ -212,18 +212,22 @@ const maxServedRawConfigBytes = 2 << 20 // 2 MiB
 // the jobs that failed to merge.
 //
 // It applies only when the configuration being evaluated IS the snapshot's
-// - the same test the include attribution passes (see platformIncludes).
-// On a digest-divergent branch the merged document came from the resolve
-// endpoint for THIS branch while merged_yaml_status describes the anchor's,
-// and reporting one document's verdict about another is a diagnosis nothing
-// gathered. The resolve endpoint answers that case itself, through
-// ConfigInvalid.
+// own document (ConfigIsSnapshot). On a digest-divergent branch the merged
+// document came from the resolve endpoint for THIS branch while
+// merged_yaml_status describes the anchor's, and reporting one document's
+// verdict about another is a diagnosis nothing gathered. The resolve
+// endpoint answers that case itself, through ConfigInvalid.
+//
+// This is deliberately NOT the test the include attribution passes. The
+// endpoint can serve attribution for the document it returned, which makes
+// attribution available without making the snapshot's other statements
+// apply to it.
 //
 // Snapshots older than 2026-08-28 serve neither field, so the synthesis
 // stays the fallback rather than being replaced - and so does a status
 // outside the contract's closed set, which this CLI has no reading for.
 func platformMergeVerdict(conf *configuration.Configuration) (string, []string) {
-	if conf.PlatformRun.ConfigAndIncludesAgree() {
+	if conf.PlatformRun.ConfigIsSnapshot() {
 		if status, errs, served := conf.PlatformRun.SnapshotMergeVerdict(); served {
 			switch status {
 			case mergeStatusValid:
@@ -259,7 +263,7 @@ func platformMergeVerdict(conf *configuration.Configuration) (string, []string) 
 	return mergeStatusValid, nil
 }
 
-// platformIncludes decodes the snapshot's per-include attribution into the
+// platformIncludes decodes the platform's per-include attribution into the
 // CLI's own include shape. The platform carries these AS-IS - they ARE
 // MergedCIConfResponseInclude values, never a translation - so a decode
 // failure means the contract was broken, not that a field moved.
@@ -269,17 +273,15 @@ func platformMergeVerdict(conf *configuration.Configuration) (string, []string) 
 // project, and a half-decoded include produces a confidently wrong answer;
 // dropping it leaves the list short, which the caller detects as missing
 // attribution and degrades honestly.
-// It also returns nothing when the merged configuration in use did NOT come
-// from the same snapshot these includes did. The snapshot's attribution
-// describes the anchor's configuration; on a digest-divergent branch the
-// config being evaluated is the branch's own, and attaching the anchor's
-// attribution to it mis-classifies every job the branch's include changes
-// touched. See RunContext.ConfigAndIncludesAgree.
+// It returns only the attribution that belongs to the configuration in use:
+// the snapshot's list for a snapshot-sourced config, the resolve response's
+// own for a resolved one, and nothing when neither served any. The
+// snapshot's attribution describes the anchor's configuration; on a
+// digest-divergent branch the config being evaluated is the branch's own,
+// and attaching the anchor's attribution to it mis-classifies every job the
+// branch's include changes touched. See RunContext.Includes.
 func platformIncludes(conf *configuration.Configuration) []MergedCIConfResponseInclude {
-	if !conf.PlatformRun.ConfigAndIncludesAgree() {
-		return nil
-	}
-	raw, ok := conf.PlatformRun.SnapshotIncludes()
+	raw, ok := conf.PlatformRun.Includes()
 	if !ok {
 		return nil
 	}
@@ -287,7 +289,7 @@ func platformIncludes(conf *configuration.Configuration) []MergedCIConfResponseI
 	for _, r := range raw {
 		var inc MergedCIConfResponseInclude
 		if err := json.Unmarshal(r, &inc); err != nil {
-			logger.WithError(err).Warn("platform snapshot carried an include this CLI could not decode; dropping it")
+			logger.WithError(err).Warn("the platform carried an include this CLI could not decode; dropping it")
 			continue
 		}
 		out = append(out, inc)

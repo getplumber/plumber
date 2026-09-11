@@ -144,10 +144,11 @@ func (r *AnalysisResult) MarkNotEvaluable(controlName, reason string) {
 }
 
 // MarkIncludeAttributionUnavailable flags every control that reasons about
-// include attribution as not evaluable. Used when the merged configuration
-// came from somewhere that does not carry per-include provenance — today,
-// the platform snapshot or its resolve endpoint, both of which return the
-// merged document only.
+// include attribution as not evaluable. Used when nothing supplied
+// per-include provenance for the merged configuration being evaluated: a
+// snapshot that carried no includes, or a resolve response that served
+// none. Attribution served for a DIFFERENT document does not count, and is
+// never substituted.
 func (r *AnalysisResult) MarkIncludeAttributionUnavailable(entries []ControlEntry) {
 	r.markIncludeControls(entries, ReasonIncludeAttributionUnavailable)
 }
@@ -262,16 +263,19 @@ func markPlatformLaneGapsFor(result *AnalysisResult, conf *configuration.Configu
 			}
 		}
 		result.MarkMergedConfigUnavailable(entries, reason)
-	} else if _, haveIncludes := conf.PlatformRun.SnapshotIncludes(); !haveIncludes || !conf.PlatformRun.ConfigAndIncludesAgree() {
+	} else if !conf.PlatformRun.ConfigAndIncludesAgree() {
 		// A merged configuration with no USABLE attribution alongside it.
 		// Two ways that happens, and both must degrade:
 		//
-		//   - the snapshot carried no includes at all, or
-		//   - it carried includes for a DIFFERENT configuration than the one
-		//     being evaluated. On a digest-divergent branch MergedYAML is the
-		//     branch's freshly resolved config while the includes still
-		//     describe the anchor's, and the resolve endpoint serves no
-		//     includes of its own (see RunContext.ConfigAndIncludesAgree).
+		//   - nothing served attribution for the document being evaluated:
+		//     a snapshot-sourced config whose snapshot carried no includes,
+		//     or a resolve-sourced one the endpoint served none for, or
+		//   - the only attribution available describes a DIFFERENT
+		//     configuration. On a digest-divergent branch MergedYAML is the
+		//     branch's freshly resolved config while the snapshot's
+		//     includes still describe the anchor's, and that list is never
+		//     lent to it (see RunContext.Includes, which pairs each source
+		//     with the attribution that belongs to it).
 		//
 		// Marking here is not merely withholding a verdict: without matching
 		// attribution the per-job origin is WRONG, not absent, so these

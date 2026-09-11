@@ -241,6 +241,83 @@ func TestResolveRunConfig_InvalidMergeIsReportedAsResolved(t *testing.T) {
 	}
 }
 
+// TestResolveRunConfig_ServedIncludesTravelWithTheirConfig pins the
+// attribution half of the resolve response.
+//
+// The endpoint has served an "includes" array (the same per-entry shape as
+// snapshot.data.includes) since 2026-08-27, and the CLI dropped it on the
+// floor: ResolvedConfig had no field for it, so every resolve-sourced run
+// reported include_attribution_unavailable even though branch-accurate
+// attribution had just been handed to it. A resolve-sourced run is the
+// NORMAL shape of a CI job with no digest, so the three include controls
+// abstained on every one of them.
+//
+// The attribution stays paired with the document it describes: a response
+// that serves none leaves attribution unavailable rather than borrowing the
+// snapshot's, which describes the anchor.
+func TestResolveRunConfig_ServedIncludesTravelWithTheirConfig(t *testing.T) {
+	const served = `{"location":"gitlab.com/c/branch@2.0.0","type":"component"}`
+	snap := snapWith(t, "b: 2\n", "aaa", "1", "s0", "main")
+	snap.Data.Includes = []json.RawMessage{json.RawMessage(`{"location":"gitlab.com/c/anchor@1.0.0","type":"component"}`)}
+
+	t.Run("a served list is carried onto the resolution", func(t *testing.T) {
+		f := &fakeResolver{result: &ResolvedConfig{
+			MergedYaml: "a: 1\n", ResolvedSha: "s", Valid: true, Source: "resolved",
+			Includes: []json.RawMessage{json.RawMessage(served)},
+		}}
+
+		got := resolveRunConfigSync(f, snap, "grp/proj", "s", "bbb", "")
+
+		if len(got.Includes) != 1 {
+			t.Fatalf("want the served include carried, got %d", len(got.Includes))
+		}
+		if !bytesContain(got.Includes[0], "gitlab.com/c/branch@2.0.0") {
+			t.Fatalf("the resolution must carry the RESOLVED config's include, got %s", got.Includes[0])
+		}
+
+		rc := &RunContext{Context: &ProjectContext{Snapshot: snap}, Config: got}
+		inc, ok := rc.Includes()
+		if !ok || len(inc) != 1 || !bytesContain(inc[0], "gitlab.com/c/branch@2.0.0") {
+			t.Fatalf("Includes() = (%v, %v), want the resolve endpoint's own list", inc, ok)
+		}
+		if !rc.ConfigAndIncludesAgree() {
+			t.Error("the served attribution describes the config in use, so it agrees with it")
+		}
+		if rc.ConfigIsSnapshot() {
+			t.Error("a resolve-sourced config is not the snapshot's own document")
+		}
+	})
+
+	t.Run("no served list leaves attribution unavailable", func(t *testing.T) {
+		f := &fakeResolver{result: &ResolvedConfig{MergedYaml: "a: 1\n", ResolvedSha: "s", Valid: true, Source: "resolved"}}
+
+		got := resolveRunConfigSync(f, snap, "grp/proj", "s", "bbb", "")
+
+		rc := &RunContext{Context: &ProjectContext{Snapshot: snap}, Config: got}
+		if inc, ok := rc.Includes(); ok || inc != nil {
+			t.Fatalf("Includes() = (%v, %v), want none: the snapshot's list describes the anchor, not this branch", inc, ok)
+		}
+		if rc.ConfigAndIncludesAgree() {
+			t.Error("with nothing served there is no attribution for the config in use")
+		}
+	})
+
+	t.Run("a snapshot-sourced config keeps the snapshot's own list", func(t *testing.T) {
+		f := &fakeResolver{}
+
+		got := resolveRunConfigSync(f, snap, "grp/proj", "s0", "aaa", "")
+
+		rc := &RunContext{Context: &ProjectContext{Snapshot: snap}, Config: got}
+		inc, ok := rc.Includes()
+		if !ok || len(inc) != 1 || !bytesContain(inc[0], "gitlab.com/c/anchor@1.0.0") {
+			t.Fatalf("Includes() = (%v, %v), want the snapshot's own list", inc, ok)
+		}
+		if !rc.ConfigIsSnapshot() {
+			t.Error("a digest match evaluates the snapshot's own document")
+		}
+	})
+}
+
 // TestResolveRunConfig_CacheHitShaMayDiffer pins that a cache hit's
 // resolved_sha is recorded as-is. Asserting equality with the requested sha
 // would reject every legitimate cache hit.

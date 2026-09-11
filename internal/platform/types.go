@@ -472,4 +472,14 @@ type ResolvedConfig struct {
 	// sent is a diagnostic, never an error.
 	ConfigDigest  string `json:"config_digest,omitempty"`
 	DigestVersion string `json:"digest_version,omitempty"`
+
+	// Includes is the per-include attribution for THIS merged_yaml, in the
+	// same per-entry shape as snapshot.data.includes. Left raw for the same
+	// reason the snapshot's list is: the provider package owns that type,
+	// and a field added upstream must travel through untouched.
+	//
+	// It is absent on an older platform, and absence is not emptiness: a
+	// run with no attribution reports the include controls not_evaluable
+	// rather than reading the config as having no includes.
+	Includes []json.RawMessage `json:"includes,omitempty"`
 }

@@ -109,6 +109,69 @@ func TestIncludeAttributionDegradesWhenTheConfigIsNotTheSnapshots(t *testing.T) 
 	}
 }
 
+// The other half of the same rule: attribution that DOES describe the
+// configuration in use must be used, wherever it came from.
+//
+// The resolve endpoint serves an includes list for the document it returns,
+// and the CLI dropped it, so every resolve-sourced run abstained on the
+// three include controls even though branch-accurate attribution had just
+// been handed to it. That is the normal shape of a CI job with no checkout
+// digest, so the abstention was permanent rather than exceptional. The
+// snapshot's list is still never borrowed: only what the resolve response
+// itself carried counts here.
+func TestResolveServedIncludesRestoreAttribution(t *testing.T) {
+	// The snapshot's own list is present throughout, and describes the
+	// anchor. It must not be what unblocks (or blocks) anything below.
+	anchorIncludes := oneInclude()
+	served := []json.RawMessage{json.RawMessage(`{"location":"gitlab.com/c/branch@2.0.0","type":"component"}`)}
+
+	attributionControls := []string{
+		"pipelineMustNotIncludeHardcodedJobs",
+		"includesMustBeUpToDate",
+		"externalRefsMustNotCollide",
+	}
+
+	// Whether the SNAPSHOT carries a list of its own is irrelevant to a
+	// resolve-sourced run, and both states are real: a project analysed
+	// before its first snapshot include collection has none. Only what the
+	// resolve response carried decides.
+	for _, snapshotState := range []struct {
+		name     string
+		includes []json.RawMessage
+	}{
+		{"snapshot carrying its own anchor list", anchorIncludes},
+		{"snapshot carrying no list at all", nil},
+	} {
+		t.Run("a resolved config with its own includes evaluates them, "+snapshotState.name, func(t *testing.T) {
+			result := &AnalysisResult{}
+			conf := confWithControls(platformRun(platform.SourceResolved, "stages: [build]", snapshotState.includes))
+			conf.PlatformRun.Config.Includes = served
+
+			markPlatformLaneGaps(result, conf)
+
+			for _, name := range attributionControls {
+				if reason, marked := result.NotEvaluable[name]; marked {
+					t.Errorf("%s marked %q: the resolve endpoint served attribution for the config being evaluated", name, reason)
+				}
+			}
+		})
+	}
+
+	t.Run("a resolved config the endpoint served no includes for still degrades", func(t *testing.T) {
+		result := &AnalysisResult{}
+		conf := confWithControls(platformRun(platform.SourceResolved, "stages: [build]", anchorIncludes))
+
+		markPlatformLaneGaps(result, conf)
+
+		for _, name := range attributionControls {
+			if reason := result.NotEvaluable[name]; reason != ReasonIncludeAttributionUnavailable {
+				t.Errorf("%s reason = %q, want %q: the snapshot's list describes the anchor, not this branch",
+					name, reason, ReasonIncludeAttributionUnavailable)
+			}
+		}
+	})
+}
+
 // The dispatcher chooses between three mutually exclusive treatments. A
 // swapped or inverted branch here would either degrade a healthy run
 // entirely or let an empty one report all-clean, and until now nothing
