@@ -253,6 +253,75 @@ func TestResolveConfig_InvalidConfigIsA200(t *testing.T) {
 	}
 }
 
+// TestResolveConfig_DecodesIncludesFromTheWire pins the wire-level decode
+// of the resolve response's includes list, in the same per-entry shape as
+// snapshot.data.includes (location, raw, blob, contextProject, type,
+// extra, jobs, jobs_known). Absence of the key must decode to an empty
+// list, not a JSON error and not a defaulted non-nil slice.
+func TestResolveConfig_DecodesIncludesFromTheWire(t *testing.T) {
+	const body = `{
+	  "merged_yaml": "stages: [a]\n",
+	  "resolved_sha": "cafe",
+	  "valid": true,
+	  "source": "resolved",
+	  "includes": [
+	    {
+	      "location": "gitlab.com/c/anchor@1.0.0",
+	      "raw": "raw-anchor",
+	      "blob": "sha-anchor",
+	      "contextProject": "grp/anchor",
+	      "type": "component",
+	      "extra": {"project": "grp/anchor", "ref": "1.0.0"},
+	      "jobs": ["build"],
+	      "jobs_known": true
+	    },
+	    {
+	      "location": "gitlab.com/c/branch@2.0.0",
+	      "raw": "raw-branch",
+	      "blob": "sha-branch",
+	      "contextProject": "grp/branch",
+	      "type": "component",
+	      "extra": {"project": "grp/branch", "ref": "2.0.0"},
+	      "jobs": ["test"],
+	      "jobs_known": true
+	    }
+	  ]
+	}`
+	c, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, body)
+	})
+	got, err := c.ResolveConfig("a/b", "cafe", "", "")
+	if err != nil {
+		t.Fatalf("ResolveConfig: %v", err)
+	}
+	if len(got.Includes) != 2 {
+		t.Fatalf("want 2 includes, got %d: %+v", len(got.Includes), got.Includes)
+	}
+	var first struct {
+		Location string `json:"location"`
+	}
+	if err := json.Unmarshal(got.Includes[0], &first); err != nil {
+		t.Fatalf("include[0] must round-trip as JSON: %v", err)
+	}
+	if first.Location != "gitlab.com/c/anchor@1.0.0" {
+		t.Fatalf("include[0].location = %q", first.Location)
+	}
+	if !bytesContain(got.Includes[1], "gitlab.com/c/branch@2.0.0") {
+		t.Fatalf("include[1] carried verbatim? got %s", got.Includes[1])
+	}
+
+	c2, _ := newTestClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = io.WriteString(w, `{"merged_yaml":"x\n","resolved_sha":"cafe","valid":true,"source":"resolved"}`)
+	})
+	got2, err := c2.ResolveConfig("a/b", "cafe", "", "")
+	if err != nil {
+		t.Fatalf("ResolveConfig: %v", err)
+	}
+	if len(got2.Includes) != 0 {
+		t.Fatalf("a body without the includes key must decode empty, got %+v", got2.Includes)
+	}
+}
+
 func TestResolveConfig_503IsTypedAndNeverFatal(t *testing.T) {
 	for _, tc := range []struct {
 		name, body, wantReason string
