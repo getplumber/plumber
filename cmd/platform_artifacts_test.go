@@ -92,18 +92,30 @@ func withArtifactFiles(t *testing.T) (dir string) {
 func TestBuildAnalysisJSONReport_PlatformMode_NoLocalControlBlocks(t *testing.T) {
 	a := policyWithTree("A", "pipelineMustNotEnableDebugTrace", debugTraceControlConfig)
 	conf := confWithPolicies(t, a)
+	// The fixture has to CARRY a not-evaluable mark for the assertion below to
+	// mean anything: debugTraceResult() sets none, the field is omitempty, and
+	// an assertion that an absent key is absent holds whether or not the report
+	// removes it (the re-review finding).
+	collected := debugTraceResult()
+	collected.MarkNotEvaluable("pipelineMustNotOverrideJobVariables", "raw_config_unavailable")
 	runs := evaluatePlatformPolicies(testProvider(t), conf, debugTraceResult())
 
-	payload, err := buildAnalysisJSONReport(debugTraceResult(), conf.PlumberConfig,
-		complianceSummary{platformMode: true, scoreMode: true}, jsonOutputParams{provider: "gitlab"},
-		runs, &platformVerdict{GlobalScore: &platformScore{Letter: "C", Points: 66}})
-	if err != nil {
-		t.Fatalf("buildAnalysisJSONReport: %v", err)
+	decode := func(t *testing.T, s complianceSummary, runs []policyRun, v *platformVerdict) map[string]any {
+		t.Helper()
+		payload, err := buildAnalysisJSONReport(collected, conf.PlumberConfig, s,
+			jsonOutputParams{provider: "gitlab"}, runs, v)
+		if err != nil {
+			t.Fatalf("buildAnalysisJSONReport: %v", err)
+		}
+		var m map[string]any
+		if err := json.Unmarshal(payload, &m); err != nil {
+			t.Fatalf("the report is not valid JSON: %v", err)
+		}
+		return m
 	}
-	var report map[string]any
-	if err := json.Unmarshal(payload, &report); err != nil {
-		t.Fatalf("the report is not valid JSON: %v", err)
-	}
+
+	report := decode(t, complianceSummary{platformMode: true, scoreMode: true}, runs,
+		&platformVerdict{GlobalScore: &platformScore{Letter: "C", Points: 66}})
 
 	if report["platformMode"] != true {
 		t.Errorf("platformMode must say why the local blocks are absent, got %v", report["platformMode"])
@@ -117,11 +129,20 @@ func TestBuildAnalysisJSONReport_PlatformMode_NoLocalControlBlocks(t *testing.T)
 		}
 	}
 	if _, present := report["notEvaluable"]; present {
-		t.Error("notEvaluable is a per-control verdict of the local evaluation and must be absent")
+		t.Errorf("notEvaluable is a per-control verdict of the local evaluation and must be absent, got %v", report["notEvaluable"])
 	}
 	// The per-policy view is what replaces them.
 	if pols, ok := report["policies"].([]any); !ok || len(pols) != 1 {
 		t.Fatalf("policies: %#v", report["policies"])
+	}
+
+	// The SAME collected result, reported standalone, keeps the mark. That is
+	// what makes the assertion above a difference the platform branch creates
+	// rather than a property of the fixture.
+	standalone := decode(t, complianceSummary{scoreMode: true, controlCount: 1}, nil, nil)
+	marks, ok := standalone["notEvaluable"].(map[string]any)
+	if !ok || marks["pipelineMustNotOverrideJobVariables"] != "raw_config_unavailable" {
+		t.Fatalf("a standalone report keeps the run's not-evaluable marks, got %#v", standalone["notEvaluable"])
 	}
 }
 
