@@ -244,6 +244,47 @@ func TestWriteCSV_PlatformMode_OnlyThePoliciesFindings(t *testing.T) {
 	}
 }
 
+// Review comment 3985437498: every test above reaches the CSV writer with a
+// single policy run. twoPolicyRuns evaluates TWO runs that both enable the
+// debug-trace control; the shared control's finding row must still name
+// both policies, not just the one whose run outputControlEntries saw last.
+func TestWriteCSV_PlatformMode_SharedControlNamesBothPolicies(t *testing.T) {
+	dir := withArtifactFiles(t)
+	csvFile = filepath.Join(dir, "out.csv")
+
+	runs := twoPolicyRuns(t)
+	base := &control.AnalysisResult{CiValid: true, ProjectPath: "grp/app"}
+	conf := &configuration.Configuration{PlumberConfig: testDefaultPlumberConfig(t)}
+
+	if err := writeOutputsWithProvider(&providerPkg.GitLabProvider{}, base, conf,
+		complianceSummary{platformMode: true, scoreMode: true}, runs, nil); err != nil {
+		t.Fatalf("write outputs: %v", err)
+	}
+
+	raw, err := os.ReadFile(csvFile)
+	if err != nil {
+		t.Fatalf("read the csv: %v", err)
+	}
+	records, err := csv.NewReader(strings.NewReader(string(raw))).ReadAll()
+	if err != nil {
+		t.Fatalf("the csv does not parse: %v", err)
+	}
+	var policiesCell string
+	found := false
+	for _, r := range records[1:] {
+		if r[2] == "pipelineMustNotEnableDebugTrace" {
+			found = true
+			policiesCell = r[len(r)-1]
+		}
+	}
+	if !found {
+		t.Fatalf("the shared control's row is missing from the csv: %v", records)
+	}
+	if !strings.Contains(policiesCell, "A") || !strings.Contains(policiesCell, "B") {
+		t.Fatalf("a control two policy runs both enable must name both in the csv, got %q", policiesCell)
+	}
+}
+
 // A standalone CSV keeps its exact columns: no policies column at all.
 func TestWriteCSV_StandaloneHasNoPoliciesColumn(t *testing.T) {
 	dir := withArtifactFiles(t)
@@ -308,6 +349,50 @@ func TestWriteOCSF_PlatformMode_OnlyThePoliciesFindings(t *testing.T) {
 		if len(r.Policies) != 1 || r.Policies[0] != "A" {
 			t.Errorf("record for %q must name the policies it was evaluated under, got %v", r.Compliance.Control, r.Policies)
 		}
+	}
+}
+
+// Review comment 3985437498: same gap as the CSV test above, for the OCSF
+// feed. twoPolicyRuns's two runs both enable the debug-trace control, so its
+// record's policies array must name both, in /context order.
+func TestWriteOCSF_PlatformMode_SharedControlNamesBothPolicies(t *testing.T) {
+	dir := withArtifactFiles(t)
+	ocsfFile = filepath.Join(dir, "out.ocsf.json")
+
+	runs := twoPolicyRuns(t)
+	base := &control.AnalysisResult{CiValid: true, ProjectPath: "grp/app"}
+	conf := &configuration.Configuration{PlumberConfig: testDefaultPlumberConfig(t)}
+
+	if err := writeOutputsWithProvider(&providerPkg.GitLabProvider{}, base, conf,
+		complianceSummary{platformMode: true, scoreMode: true}, runs, nil); err != nil {
+		t.Fatalf("write outputs: %v", err)
+	}
+
+	raw, err := os.ReadFile(ocsfFile)
+	if err != nil {
+		t.Fatalf("read the ocsf feed: %v", err)
+	}
+	var records []struct {
+		Policies   []string `json:"policies"`
+		Compliance struct {
+			Control string `json:"control"`
+		} `json:"compliance"`
+	}
+	if err := json.Unmarshal(raw, &records); err != nil {
+		t.Fatalf("the ocsf feed is not valid JSON: %v", err)
+	}
+	found := false
+	for _, r := range records {
+		if r.Compliance.Control != "pipelineMustNotEnableDebugTrace" {
+			continue
+		}
+		found = true
+		if len(r.Policies) != 2 || r.Policies[0] != "A" || r.Policies[1] != "B" {
+			t.Fatalf("a control two policy runs both enable must name both, in /context order, got %v", r.Policies)
+		}
+	}
+	if !found {
+		t.Fatalf("the shared control's record is missing from the ocsf feed")
 	}
 }
 
