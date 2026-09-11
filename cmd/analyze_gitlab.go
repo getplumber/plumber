@@ -1481,6 +1481,10 @@ type complianceSummary struct {
 	noControls bool
 	// platformMode: every local gate is inert, the platform's verdict is the
 	// exit code (spec s4).
+	//
+	// It is platformPolicyMode, so it is already false on a --no-controls
+	// run: that run takes the standalone branch and its artifacts are the
+	// standalone ones. Every writer may therefore read this field alone.
 	platformMode bool
 }
 

@@ -368,7 +368,14 @@ func buildComplianceSummary(p provider.Provider, result *control.AnalysisResult,
 	// the existing withhold-the-score path (every consumer already guards
 	// on a nil score), so the outputs carry no score instead of a fake one.
 	scoreMode := !conf.NoControls
-	platformMode := func() bool { on, _ := effectivePlatformPush(); return on }()
+	// platformPolicyMode, not the bare link: --no-controls takes the
+	// standalone branch in continueRun under every mode, and this flag is
+	// what the writers key on. Set from the link alone, a linked inventory
+	// run wrote a report claiming platformMode with an empty policies array
+	// and none of the local blocks it takes the standalone branch to produce
+	// (the re-review finding). One condition, stated once, for the routing
+	// and for what the artifacts then say about it.
+	platformMode := platformPolicyMode(conf.NoControls)
 	// In platform mode there is no run-level score to compute: every verdict
 	// comes from the policies the platform resolved (spec s2), each with its
 	// own score over its own control set. A local figure computed here would
