@@ -2000,30 +2000,16 @@ func printSummaryScoreBanner(score *control.PlumberScoreResult, scoreMode, degra
 		return
 	}
 
-	// A nil score here is never the --no-controls case (scoreMode is false
-	// then, caught above): it means score mode was on but nothing was
-	// actually evaluated, e.g. every enabled control turned out
-	// config_required. Zero findings over that empty set would otherwise
-	// deduction-score a perfect 100/A, which reads as a clean pass rather
-	// than as nothing having been checked. Say so in the same withheld
-	// wording family as the degraded case below (platform decision row 45).
-	if score == nil {
-		sep := styleRule.Render(strings.Repeat("─", hrWidth))
-		fmt.Println()
-		fmt.Println(" " + sep)
-		fmt.Println(" " + styleMuted.Render("Plumber Score"))
-		fmt.Println()
-		fmt.Printf(" %s\n", styleFail.Render("Score withheld: no control was evaluated"))
-		fmt.Printf(" %s\n", styleMuted.Render("Nothing was checked, so this run makes no claim about the pipeline."))
-		fmt.Println()
-		fmt.Println(" " + sep)
-		fmt.Println()
-		return
-	}
-
 	// When data collection was degraded the score ran on incomplete data, so
 	// the letter grade would be meaningless (an empty pipeline reads as a clean
 	// A). Withhold the badge and say so plainly (#220).
+	//
+	// Checked before the generic nil-score case below: a degraded run also
+	// evaluates nothing trustworthy (every content control reports
+	// StatusError, so EvaluatedControlCount is zero and score is nil too),
+	// and the degraded wording is the accurate one here ("collection
+	// failed"), not the generic "nothing was checked" (review finding
+	// 6c38fbc735473281, platform decision row 45).
 	if degraded {
 		sep := styleRule.Render(strings.Repeat("─", hrWidth))
 		fmt.Println()
@@ -2032,6 +2018,28 @@ func printSummaryScoreBanner(score *control.PlumberScoreResult, scoreMode, degra
 		fmt.Println()
 		fmt.Printf(" %s\n", styleFail.Render("Score withheld — analysis ran on incomplete data"))
 		fmt.Printf(" %s\n", styleMuted.Render("Resolve the data-collection warnings above, then re-run for a grade."))
+		fmt.Println()
+		fmt.Println(" " + sep)
+		fmt.Println()
+		return
+	}
+
+	// A nil score here is never the --no-controls case (scoreMode is false
+	// then, caught above) and never the degraded case (caught above): it
+	// means score mode was on, collection was not degraded, but nothing was
+	// actually evaluated, e.g. every enabled control turned out
+	// config_required. Zero findings over that empty set would otherwise
+	// deduction-score a perfect 100/A, which reads as a clean pass rather
+	// than as nothing having been checked. Say so in the same withheld
+	// wording family as the degraded case above (platform decision row 45).
+	if score == nil {
+		sep := styleRule.Render(strings.Repeat("─", hrWidth))
+		fmt.Println()
+		fmt.Println(" " + sep)
+		fmt.Println(" " + styleMuted.Render("Plumber Score"))
+		fmt.Println()
+		fmt.Printf(" %s\n", styleFail.Render("Score withheld: no control was evaluated"))
+		fmt.Printf(" %s\n", styleMuted.Render("Nothing was checked, so this run makes no claim about the pipeline."))
 		fmt.Println()
 		fmt.Println(" " + sep)
 		fmt.Println()
