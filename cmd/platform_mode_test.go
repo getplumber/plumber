@@ -8,8 +8,10 @@ import (
 	"testing"
 
 	"github.com/getplumber/plumber/configuration"
+	"github.com/getplumber/plumber/control"
 	"github.com/getplumber/plumber/internal/cidigest"
 	"github.com/getplumber/plumber/internal/platform"
+	providerPkg "github.com/getplumber/plumber/provider"
 )
 
 // TestLocalDigestVersionMatchesCidigest pins the two halves of the pair
@@ -232,6 +234,85 @@ func TestSetupPlatformMode_Row46_PlainHTTPRequiresOptIn(t *testing.T) {
 		}
 		if got == nil || got.ContextErr == nil {
 			t.Fatalf("want a degraded run context (no token supplied), got %+v", got)
+		}
+	})
+}
+
+// TestPresentResultWithProvider_Row46_GitHubPathRefusesPlainHTTP pins the
+// SAME row-46 refusal on the OTHER of setupPlatformMode's two call sites:
+// presentResultWithProvider (analyze_shared.go), which is the only path a
+// GitHub run reaches it through - a GitLab run reaches it via runAnalyze in
+// analyze_gitlab.go instead, already covered by
+// TestSetupPlatformMode_Row46_PlainHTTPRequiresOptIn above. Without a test
+// exercising THIS call site, a change that swallowed or bypassed the
+// returned error here would send the CI OIDC id-token to a plain-http
+// platform in the clear on a GitHub run, with nothing to catch it.
+func TestPresentResultWithProvider_Row46_GitHubPathRefusesPlainHTTP(t *testing.T) {
+	restoreURL, restoreAllow := platformURL, platformAllowHTTP
+	t.Cleanup(func() {
+		platformURL = restoreURL
+		platformAllowHTTP = restoreAllow
+	})
+	// Unset: a run that (wrongly) got past the scheme check then degrades to
+	// "no CI OIDC id-token available" (err == nil, a ContextErr instead)
+	// rather than an HTTP round trip - the same no-network guarantee
+	// TestSetupPlatformMode_Row46_PlainHTTPRequiresOptIn relies on, and what
+	// keeps a bypass from being confused with a refusal below.
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", "")
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "")
+
+	gh, ok := providerPkg.Get("github")
+	if !ok {
+		t.Skip("github provider not registered")
+	}
+	pc := testDefaultPlumberConfig(t)
+
+	const wantRefusalPrefix = "refusing to send platform credentials over plain http to "
+
+	t.Run("plain http to a non-loopback host is refused without the flag", func(t *testing.T) {
+		platformURL = "http://platform.example.com"
+		platformAllowHTTP = false
+		conf := &configuration.Configuration{PlumberConfig: pc}
+
+		err := presentResultWithProvider(gh, nil, &control.AnalysisResult{}, conf)
+		if err == nil {
+			t.Fatal("want a refusal error, got nil")
+		}
+		if !strings.HasPrefix(err.Error(), wantRefusalPrefix) {
+			t.Fatalf("error = %q, want prefix %q", err.Error(), wantRefusalPrefix)
+		}
+		if !strings.Contains(err.Error(), "platform.example.com") {
+			t.Fatalf("error = %q, want it to name the refused host", err.Error())
+		}
+		if !strings.Contains(err.Error(), "--platform-allow-http") || !strings.Contains(err.Error(), "PLUMBER_ANALYZE_PLATFORM_ALLOW_HTTP=1") {
+			t.Fatalf("error = %q, want it to name the opt-in", err.Error())
+		}
+		// A refusal must leave no run context (and so no token, no client)
+		// behind: setupPlatformMode returns (nil, err), never (rc, err).
+		if conf.PlatformRun != nil {
+			t.Fatalf("want no run context on refusal, got %+v", conf.PlatformRun)
+		}
+	})
+
+	t.Run("plain http to loopback is allowed without the flag", func(t *testing.T) {
+		platformURL = "http://127.0.0.1:8080"
+		platformAllowHTTP = false
+		conf := &configuration.Configuration{PlumberConfig: pc}
+
+		var err error
+		_ = captureStdoutAll(t, func() {
+			_ = captureStderr(t, func() {
+				err = presentResultWithProvider(gh, nil, &control.AnalysisResult{}, conf)
+			})
+		})
+		if err != nil {
+			t.Fatalf("loopback http must not be refused: %v", err)
+		}
+		// No token was supplied (ACTIONS_ID_TOKEN_REQUEST_URL/TOKEN unset),
+		// so the run degrades to a ContextErr rather than being refused
+		// outright - proving the scheme check let it through.
+		if conf.PlatformRun == nil || conf.PlatformRun.ContextErr == nil {
+			t.Fatalf("want a degraded run context (no token supplied), got %+v", conf.PlatformRun)
 		}
 	})
 }
