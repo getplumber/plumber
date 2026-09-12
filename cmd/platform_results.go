@@ -39,7 +39,15 @@ func buildPolicyResults(runs []policyRun, p providerPkg.Provider, conf *configur
 		}
 		findings := platformFindingsFor(p, run.Result, run.Config, includeOnly, skip)
 		effective := platformEffectiveConfigRaw(run.Config, p.Name())
-		score := platformScoreFrom(run.Score)
+		// run.Score is nil when this run's own control set evaluated
+		// nothing real (row 45), and the wire's score must then be
+		// genuinely absent rather than platformScoreFrom's zero-value
+		// fallback for a nil input.
+		var score *platformScore
+		if run.Score != nil {
+			s := platformScoreFrom(run.Score)
+			score = &s
+		}
 		for _, pol := range run.Policies {
 			out = append(out, platformPolicyResult{
 				Policy: pol.Name,
@@ -252,10 +260,18 @@ func standalonePolicyResult(
 		pc = conf.PlumberConfig
 		includeOnly, skip = conf.ControlsFilter, conf.SkipControlsFilter
 	}
+	// A nil score (row 45: nothing was evaluated, or the deliberate
+	// --no-controls/best-effort nil) must reach the wire as an absent
+	// "score" key, not platformScoreFrom's zero-value fallback.
+	var wireScore *platformScore
+	if score != nil {
+		s := platformScoreFrom(score)
+		wireScore = &s
+	}
 	return platformPolicyResult{
 		Policy:          platformPolicyNameFor(configPath),
 		EffectiveConfig: platformEffectiveConfigRaw(pc, p.Name()),
 		Findings:        platformFindingsFor(p, result, pc, includeOnly, skip),
-		Score:           platformScoreFrom(score),
+		Score:           wireScore,
 	}
 }

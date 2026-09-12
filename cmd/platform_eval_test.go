@@ -100,8 +100,36 @@ func TestEvaluatePlatformPolicies_NoControlsDeclared_EvaluatesEmptySet(t *testin
 	if len(runs) != 1 || !runs[0].Applied || runs[0].Reason != reasonNoControls {
 		t.Fatalf("want one applied run with the declares-no-controls reason, got %+v", runs)
 	}
-	if len(runs[0].Result.Findings) != 0 || runs[0].Score.Score != "A" {
-		t.Fatalf("empty set must yield no findings and A, got %d findings, %s", len(runs[0].Result.Findings), runs[0].Score.Score)
+	// Row 45: an empty control set evaluates nothing, so it has no score to
+	// report - not the perfect A a zero-finding empty set used to produce.
+	if len(runs[0].Result.Findings) != 0 || runs[0].Score != nil {
+		t.Fatalf("empty set must yield no findings and no score, got %d findings, score %+v", len(runs[0].Result.Findings), runs[0].Score)
+	}
+}
+
+// TestEvaluatePlatformPolicies_Row45AllUnconfiguredWithholdsScore covers the
+// real-control counterpart of the empty-set case above: a policy that
+// declares a control but leaves it with no substantive field is
+// config_required (#459), not evaluated, so the run still has nothing to
+// score even though it is Applied and its config is real.
+func TestEvaluatePlatformPolicies_Row45AllUnconfiguredWithholdsScore(t *testing.T) {
+	// debugTraceControlConfig's own doc comment: {"enabled":true} alone,
+	// with no forbiddenVariables, is exactly the unconfigured shape
+	// MarkUnconfiguredControls marks config_required.
+	unconfigured := policyWithTree("Unconfigured", "pipelineMustNotEnableDebugTrace", `{"enabled":true}`)
+	conf := confWithPolicies(t, unconfigured)
+
+	runs := evaluatePlatformPolicies(testProvider(t), conf, debugTraceResult())
+
+	if len(runs) != 1 || !runs[0].Applied {
+		t.Fatalf("want one applied run, got %+v", runs)
+	}
+	if runs[0].Score != nil {
+		t.Fatalf("every declared control is config_required, nothing was evaluated, score must be withheld, got %+v", runs[0].Score)
+	}
+	reason, marked := runs[0].Result.NotEvaluableReason("pipelineMustNotEnableDebugTrace")
+	if !marked || reason != control.ReasonConfigRequired {
+		t.Fatalf("the control must carry its own config_required mark regardless of the withheld score, got (%q, %v)", reason, marked)
 	}
 }
 

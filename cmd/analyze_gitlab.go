@@ -1147,7 +1147,14 @@ func platformPolicyReportEntries(runs []policyRun) []map[string]any {
 		var findings any
 		var notEvaluable any
 		if run.Applied {
-			score = platformScoreFrom(run.Score)
+			// run.Score is nil when this run's own control set evaluated
+			// nothing real (row 45: an empty tree, or every declared
+			// control config_required) - platformScoreFrom(nil) would send
+			// the zero-value {"points":0}, a fabricated score for a run
+			// that never produced one, so it is left absent instead.
+			if run.Score != nil {
+				score = platformScoreFrom(run.Score)
+			}
 			findings = projectFindings(run.Result.Findings, "job")
 			marks := make(map[string]string, len(run.Result.NotEvaluable))
 			for controlName, reason := range run.Result.NotEvaluable {
@@ -1160,7 +1167,7 @@ func platformPolicyReportEntries(runs []policyRun) []map[string]any {
 			if pol.MinPoints != nil {
 				minPoints = *pol.MinPoints
 			}
-			out = append(out, map[string]any{
+			entry := map[string]any{
 				"name": pol.Name,
 				// Only a real policy id is stamped, never the nil uuid the
 				// derived "[Plumber default]" placeholder carries: it is not
@@ -1170,10 +1177,22 @@ func platformPolicyReportEntries(runs []policyRun) []map[string]any {
 				"min_points":   minPoints,
 				"applied":      run.Applied,
 				"reason":       run.Reason,
-				"score":        score,
 				"findings":     findings,
 				"notEvaluable": notEvaluable,
-			})
+			}
+			// An un-applied policy keeps the "score" key present with a
+			// null value (it never had the chance to evaluate anything,
+			// same as findings/notEvaluable above). An applied one that
+			// genuinely produced no score (row 45) omits the key entirely
+			// instead: null would read as "the platform decoded an absent
+			// score", which is not what happened here.
+			switch {
+			case !run.Applied:
+				entry["score"] = nil
+			case score != nil:
+				entry["score"] = score
+			}
+			out = append(out, entry)
 		}
 	}
 	return out
@@ -1584,8 +1603,14 @@ func (s complianceSummary) gateLine() string {
 	if s.controlCount == 0 {
 		return "no controls evaluated, nothing to score"
 	}
+	// controlCount alone is not proof that anything real was checked: on
+	// GitHub it counts enabled controls whether or not their lane ever fed
+	// them, so a run whose enabled controls are all config_required carries
+	// a nonzero controlCount and a nil score. Say so in the same words as
+	// the zero-controlCount case above, rather than leaving the gate line
+	// blank (platform decision row 45).
 	if s.score == nil {
-		return ""
+		return "no control was evaluated, nothing to score"
 	}
 	requirements := []string{}
 	if s.pointsGateActive() {
@@ -1956,7 +1981,28 @@ func printNoControlsSummary() {
 }
 
 func printSummaryScoreBanner(score *control.PlumberScoreResult, scoreMode, degraded bool) {
-	if score == nil || !scoreMode {
+	if !scoreMode {
+		return
+	}
+
+	// A nil score here is never the --no-controls case (scoreMode is false
+	// then, caught above): it means score mode was on but nothing was
+	// actually evaluated, e.g. every enabled control turned out
+	// config_required. Zero findings over that empty set would otherwise
+	// deduction-score a perfect 100/A, which reads as a clean pass rather
+	// than as nothing having been checked. Say so in the same withheld
+	// wording family as the degraded case below (platform decision row 45).
+	if score == nil {
+		sep := styleRule.Render(strings.Repeat("─", hrWidth))
+		fmt.Println()
+		fmt.Println(" " + sep)
+		fmt.Println(" " + styleMuted.Render("Plumber Score"))
+		fmt.Println()
+		fmt.Printf(" %s\n", styleFail.Render("Score withheld: no control was evaluated"))
+		fmt.Printf(" %s\n", styleMuted.Render("Nothing was checked, so this run makes no claim about the pipeline."))
+		fmt.Println()
+		fmt.Println(" " + sep)
+		fmt.Println()
 		return
 	}
 

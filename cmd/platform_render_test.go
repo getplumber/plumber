@@ -111,6 +111,29 @@ func TestRenderPolicySections_NoControlsDeclared(t *testing.T) {
 
 	assertContains(t, out, "== Policy: Empty  [report]")
 	assertContains(t, out, "declares no controls, nothing evaluated")
+	// Row 45: an empty control set evaluated nothing, so no score banner
+	// follows the reason line - the same absence R3's un-applied case gets.
+	if strings.Contains(out, "Plumber Score") {
+		t.Fatalf("a policy declaring no controls must print no score banner, got:\n%s", out)
+	}
+}
+
+// Row 45: a policy whose only declared control is config_required (#459)
+// evaluated nothing real either, even though it is Applied over a real
+// config and not the reasonNoControls empty-set case above. Its section
+// prints the withheld line rather than a perfect 100/A grade.
+func TestRenderPolicySections_Row45AllUnconfiguredPrintsWithheldLine(t *testing.T) {
+	unconfigured := policyWithTree("Unconfigured", "pipelineMustNotEnableDebugTrace", `{"enabled":true}`)
+	conf := confWithPolicies(t, unconfigured)
+	runs := evaluatePlatformPolicies(testProvider(t), conf, debugTraceResult())
+
+	out := captureStdoutAll(t, func() { renderPolicySections(testProvider(t), conf, runs, nil, nil) })
+
+	assertContains(t, out, "== Policy: Unconfigured  [report]")
+	assertContains(t, out, "Score withheld: no control was evaluated")
+	if strings.Contains(out, "/ 100 pts") {
+		t.Fatalf("must not print a graded letter-score badge, got:\n%s", out)
+	}
 }
 
 // --no-controls is a request for NO verdict, and platform mode does not

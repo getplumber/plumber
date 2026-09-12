@@ -3,6 +3,8 @@ package control
 import (
 	"sort"
 	"strings"
+
+	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 )
 
 // Per-control evaluation statuses. `passed` and `failed` mean the control
@@ -192,6 +194,29 @@ func StatusFor(e ControlEntry, result *AnalysisResult, findingCount int) string 
 		}
 	}
 	return StatusPassed
+}
+
+// EvaluatedControlCount counts the entries whose StatusFor is passed or
+// failed: a run or a policy that evaluated nothing real has no basis for a
+// score, and skipped, lane-missing and not_evaluable controls (including the
+// config_required case, #459) are exactly the statuses that mean "nothing
+// real happened here" (platform decision row 45). Findings not attributed to
+// any entry's control name are read as zero for that entry, matching every
+// other StatusFor caller in this package.
+func EvaluatedControlCount(entries []ControlEntry, result *AnalysisResult) int {
+	var findings []opaengine.Finding
+	if result != nil {
+		findings = result.Findings
+	}
+	findingsByControl := FindingsByControl(findings)
+	n := 0
+	for _, e := range entries {
+		switch StatusFor(e, result, len(findingsByControl[e.ControlName])) {
+		case StatusPassed, StatusFailed:
+			n++
+		}
+	}
+	return n
 }
 
 // CodesForControl returns every ISSUE code registered to a control name,

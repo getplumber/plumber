@@ -132,7 +132,15 @@ type platformPolicyResult struct {
 	PolicyID        string            `json:"policy_id,omitempty"`
 	EffectiveConfig json.RawMessage   `json:"effective_config,omitempty"`
 	Findings        []platformFinding `json:"findings"`
-	Score           platformScore     `json:"score"`
+	// Score is a pointer so a run that evaluated nothing real (row 45: an
+	// empty control set, or every declared control config_required) can
+	// omit it from the wire entirely. platformScoreFrom itself still takes
+	// and tolerates a nil *control.PlumberScoreResult by returning the
+	// zero value (existing callers that always have a real score keep
+	// working unchanged); it is the caller's job to leave this field nil
+	// rather than call it when there is genuinely no score to send. The
+	// platform's contract accepts an absent policy score.
+	Score *platformScore `json:"score,omitempty"`
 }
 
 // platformFinding is one EXPLICIT per-control result entry — see
@@ -270,9 +278,11 @@ func roundJSONScorePoints(v any) (int, error) {
 // contract's Score.Points type actually is. FinalPoints carries the
 // malus-capped final figure (floored at 0, capped at 30 while any Critical
 // exists) so the platform can cross-check its own recompute against the
-// CLI's exact formula. Tolerates a nil score (no production caller passes
-// one today, but a best-effort push should never panic a run over a nil
-// pointer) by sending the zero value, with FinalPoints left nil.
+// CLI's exact formula. Tolerates a nil score (a best-effort push should
+// never panic a run over a nil pointer) by returning the zero value, with
+// FinalPoints left nil; every caller that can genuinely have no score to
+// send (row 45: nothing was evaluated) checks for nil itself and leaves the
+// wire field absent instead of calling this with one.
 func platformScoreFrom(score *control.PlumberScoreResult) platformScore {
 	if score == nil {
 		return platformScore{}

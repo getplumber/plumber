@@ -118,6 +118,20 @@ func evaluatePlatformPolicies(p providerPkg.Provider, conf *configuration.Config
 				// so annotate here (same linker, same order).
 				newLocationLinker(conf, scoped, p.Name()).Annotate(scoped.Findings)
 				run.Result, run.Score, run.Applied = scoped, &score, true
+				// Row 45: a nonzero control count on this policy's own tree
+				// is not proof anything was actually evaluated - an
+				// enabled-but-unconfigured control counts as declared but
+				// reports config_required (#459), and reasonNoControls's
+				// empty tree declares nothing at all. Either way the
+				// deduction-based score over an empty findings list would
+				// read as a clean pass, so it is withheld instead.
+				entries := p.Controls(cfg)
+				if conf != nil {
+					control.MarkSkippedByFilter(entries, conf.ControlsFilter, conf.SkipControlsFilter)
+				}
+				if control.EvaluatedControlCount(entries, scoped) == 0 {
+					run.Score = nil
+				}
 			}
 		}
 		groups[key] = run
