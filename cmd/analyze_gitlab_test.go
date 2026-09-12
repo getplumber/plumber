@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/getplumber/plumber/control"
+	"github.com/getplumber/plumber/utils"
 	"github.com/spf13/cobra"
 )
 
@@ -477,4 +478,38 @@ func TestLoadEmbeddedDefaultConfig_NoControlsUnderPlatformKeepsTheNotice(t *test
 	out := captureStderr(t, func() { _, _, _, _ = loadEmbeddedDefaultConfig() })
 
 	assertContains(t, out, "No .plumber.yaml found; using Plumber's built-in default configuration.")
+}
+
+// TestCheckoutIsAnalyzedProject_Row51UserinfoStripped pins the GitLab CI
+// runner scenario behind platform row 51: the job clones with the job token
+// embedded in the remote (gitlab-ci-token:<token>@host), and that checkout
+// must still be recognized as the analyzed project.
+//
+// Before the fix, ParseGitRemoteURL kept the userinfo in Host and URL, so
+// the parsed remote URL never equaled the plain --gitlab-url the pipeline
+// passes in, CheckoutIsAnalyzedProject stayed false, and the include
+// controls that depend on it never evaluated.
+func TestCheckoutIsAnalyzedProject_Row51UserinfoStripped(t *testing.T) {
+	const rawRemote = "https://gitlab-ci-token:glcbt-xxxx@gitlab.example.com/group/project.git"
+	const cleanURL = "https://gitlab.example.com"
+
+	parsed := utils.ParseGitRemoteURL(rawRemote)
+	if parsed == nil {
+		t.Fatalf("ParseGitRemoteURL(%q) = nil", rawRemote)
+	}
+
+	saved := projectPath
+	projectPath = parsed.ProjectPath
+	t.Cleanup(func() { projectPath = saved })
+
+	remote := gitLabRemoteInfo{
+		repoRoot:    "/src/project",
+		remoteURL:   parsed.URL,
+		projectPath: parsed.ProjectPath,
+	}
+
+	conf := buildGitLabConf(cleanURL, "glcbt-xxxx", analyzeFlags{}, remote, nil, nil, nil)
+	if !conf.CheckoutIsAnalyzedProject {
+		t.Errorf("CheckoutIsAnalyzedProject = false, want true (parsed remote URL %q vs %q)", parsed.URL, cleanURL)
+	}
 }
