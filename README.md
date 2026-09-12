@@ -225,6 +225,14 @@ Display it with a badge in your README (swap in your platform/owner/repo):
 Without `--platform` nothing changes: Plumber collects everything itself and
 evaluates one policy, exactly as it always has.
 
+A plain-http `--platform` URL is refused unless its host is loopback
+(`localhost`, `127.0.0.0/8`, `::1`): the push carries the CI OIDC id-token
+and the response carries the run's own verdict, and either can be read or
+rewritten by anyone on the network path between the job and a plain-http
+endpoint. Pass `--platform-allow-http` (or `PLUMBER_ANALYZE_PLATFORM_ALLOW_HTTP=1`)
+to opt in for a trusted internal instance that has no TLS in front of it;
+`https://` and loopback `http://` need no opt-in.
+
 With `--platform`, Plumber first reads the project's context from the
 platform - the resolved policy set and a cached settings snapshot - and uses
 it to decide what to collect and what to report:

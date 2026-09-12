@@ -139,10 +139,101 @@ func TestSetupPlatformMode_NilWithoutTheFlag(t *testing.T) {
 
 	for _, v := range []string{"", "   ", platformSentinelURL} {
 		platformURL = v
-		if got := setupPlatformMode(testProvider(t), &configuration.Configuration{}); got != nil {
+		got, err := setupPlatformMode(testProvider(t), &configuration.Configuration{})
+		if err != nil {
+			t.Fatalf("platformURL=%q: unexpected error %v", v, err)
+		}
+		if got != nil {
 			t.Fatalf("platformURL=%q must not enter platform mode, got %+v", v, got)
 		}
 	}
+}
+
+// TestSetupPlatformMode_Row46_PlainHTTPRequiresOptIn covers platform
+// decision row 46: a plain-http --platform endpoint whose host is not
+// loopback lets an on-path attacker read the CI OIDC id-token and rewrite
+// the response that carries the run's own verdict and served dismissals, so
+// it must be refused before any token is minted or client built, unless the
+// operator opts in with --platform-allow-http.
+func TestSetupPlatformMode_Row46_PlainHTTPRequiresOptIn(t *testing.T) {
+	restoreURL, restoreAllow := platformURL, platformAllowHTTP
+	t.Cleanup(func() {
+		platformURL = restoreURL
+		platformAllowHTTP = restoreAllow
+	})
+	// No token env set: a run that (wrongly) got past the scheme check would
+	// still fail here with "no CI OIDC id-token available", a DIFFERENT
+	// error than the refusal this test checks for. That keeps the two
+	// failure modes from being confused with one another.
+	_ = os.Unsetenv(gitlabPlatformTokenEnv)
+
+	const wantRefusalPrefix = "refusing to send platform credentials over plain http to "
+
+	t.Run("plain http to a non-loopback host is refused without the flag", func(t *testing.T) {
+		platformURL = "http://platform.example.com"
+		platformAllowHTTP = false
+
+		got, err := setupPlatformMode(testProvider(t), &configuration.Configuration{})
+		if got != nil {
+			t.Fatalf("want no run context on refusal, got %+v", got)
+		}
+		if err == nil {
+			t.Fatal("want a refusal error, got nil")
+		}
+		if !strings.HasPrefix(err.Error(), wantRefusalPrefix) {
+			t.Fatalf("error = %q, want prefix %q", err.Error(), wantRefusalPrefix)
+		}
+		if !strings.Contains(err.Error(), "platform.example.com") {
+			t.Fatalf("error = %q, want it to name the refused host", err.Error())
+		}
+		if !strings.Contains(err.Error(), "--platform-allow-http") || !strings.Contains(err.Error(), "PLUMBER_ANALYZE_PLATFORM_ALLOW_HTTP=1") {
+			t.Fatalf("error = %q, want it to name the opt-in", err.Error())
+		}
+	})
+
+	t.Run("plain http to loopback is allowed without the flag", func(t *testing.T) {
+		for _, host := range []string{"http://127.0.0.1:8080", "http://localhost:8080", "http://[::1]:8080"} {
+			platformURL = host
+			platformAllowHTTP = false
+
+			got, err := setupPlatformMode(testProvider(t), &configuration.Configuration{})
+			if err != nil {
+				t.Fatalf("host %q: unexpected refusal: %v", host, err)
+			}
+			// No token was supplied, so the run degrades to a ContextErr
+			// rather than being refused outright - proving the scheme check
+			// let it through.
+			if got == nil || got.ContextErr == nil {
+				t.Fatalf("host %q: want a degraded run context (no token supplied), got %+v", host, got)
+			}
+		}
+	})
+
+	t.Run("plain http to a non-loopback host is allowed with the flag", func(t *testing.T) {
+		platformURL = "http://platform.example.com"
+		platformAllowHTTP = true
+
+		got, err := setupPlatformMode(testProvider(t), &configuration.Configuration{})
+		if err != nil {
+			t.Fatalf("unexpected refusal with --platform-allow-http: %v", err)
+		}
+		if got == nil || got.ContextErr == nil {
+			t.Fatalf("want a degraded run context (no token supplied), got %+v", got)
+		}
+	})
+
+	t.Run("https is unaffected by the flag", func(t *testing.T) {
+		platformURL = "https://platform.example.com"
+		platformAllowHTTP = false
+
+		got, err := setupPlatformMode(testProvider(t), &configuration.Configuration{})
+		if err != nil {
+			t.Fatalf("https must never be refused: %v", err)
+		}
+		if got == nil || got.ContextErr == nil {
+			t.Fatalf("want a degraded run context (no token supplied), got %+v", got)
+		}
+	})
 }
 
 // TestReportPlatformMode_AlwaysReportsProvenance pins that the platform
