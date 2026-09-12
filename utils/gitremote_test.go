@@ -144,6 +144,45 @@ func TestParseGitRemoteURL(t *testing.T) {
 			remoteURL: "ftp://gitlab.com/group/project.git",
 			wantNil:   true,
 		},
+
+		// Row51/UserinfoStripped: a runner clone carries the job token as
+		// userinfo in the remote (gitlab-ci-token:<token>@host), and it must
+		// never survive into Host or URL.
+		{
+			name:        "Row51 GitLab CI job token stripped from HTTPS host",
+			remoteURL:   "https://gitlab-ci-token:glcbt-xxxx@gitlab.example.com/group/project.git",
+			wantHost:    "gitlab.example.com",
+			wantProject: "group/project",
+			wantURL:     "https://gitlab.example.com",
+		},
+		{
+			name:        "Row51 GHES access token stripped from HTTPS host",
+			remoteURL:   "https://x-access-token:ghs_xxx@ghes.example.com/org/repo.git",
+			wantHost:    "ghes.example.com",
+			wantProject: "org/repo",
+			wantURL:     "https://ghes.example.com",
+		},
+		{
+			name:        "Row51 UserinfoStripped bare username stripped from HTTPS host",
+			remoteURL:   "https://user@gitlab.example.com/g/p.git",
+			wantHost:    "gitlab.example.com",
+			wantProject: "g/p",
+			wantURL:     "https://gitlab.example.com",
+		},
+		{
+			name:        "Row51 UserinfoStripped SSH URL unchanged",
+			remoteURL:   "ssh://git@gitlab.example.com:2222/g/p.git",
+			wantHost:    "gitlab.example.com",
+			wantProject: "g/p",
+			wantURL:     "https://gitlab.example.com",
+		},
+		{
+			name:        "Row51 UserinfoStripped SCP-like unchanged",
+			remoteURL:   "git@gitlab.example.com:g/p.git",
+			wantHost:    "gitlab.example.com",
+			wantProject: "g/p",
+			wantURL:     "https://gitlab.example.com",
+		},
 	}
 
 	for _, tt := range tests {
