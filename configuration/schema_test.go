@@ -74,6 +74,50 @@ func TestReflectControlSchemas(t *testing.T) {
 	})
 }
 
+// nullableFixture pins the difference Optional cannot express: A is optional
+// because it is a pointer (unset is meaningful, distinct from the zero
+// value), B is optional only because of the omitempty yaml tag on a plain
+// int (unset and zero are indistinguishable, so nothing is lost by omitting
+// it) (platform row 52).
+type nullableFixture struct {
+	A *int `yaml:"a,omitempty"`
+	B int  `yaml:"b,omitempty"`
+}
+
+func TestStructFields_NullableTracksPointerness(t *testing.T) {
+	fields := structFields(reflect.TypeOf(nullableFixture{}))
+	byName := map[string]SchemaField{}
+	for _, f := range fields {
+		byName[f.Name] = f
+	}
+
+	a, ok := byName["a"]
+	if !ok || !a.Optional || !a.Nullable {
+		t.Errorf("a = %+v, ok=%v, want optional and nullable (pointer field)", a, ok)
+	}
+	b, ok := byName["b"]
+	if !ok || !b.Optional || b.Nullable {
+		t.Errorf("b = %+v, ok=%v, want optional and NOT nullable (omitempty non-pointer field)", b, ok)
+	}
+}
+
+// TestConfigSchemaFor_PointerFieldIsNullable pins the real-world case:
+// cicdVariablesMustBeProtected's only field, Enabled, is a *bool, so the
+// welded schema the platform reflects on GET /controls must mark it
+// nullable so an editor knows absence is meaningful, not just "optional".
+func TestConfigSchemaFor_PointerFieldIsNullable(t *testing.T) {
+	s, ok := ConfigSchemaFor("cicdVariablesMustBeProtected")
+	if !ok {
+		t.Fatalf("cicdVariablesMustBeProtected: no schema")
+	}
+	if len(s.Fields) != 1 || s.Fields[0].Name != "enabled" {
+		t.Fatalf("fields = %+v, want exactly one field named enabled", s.Fields)
+	}
+	if !s.Fields[0].Nullable {
+		t.Errorf("enabled.Nullable = false, want true: the field is a *bool")
+	}
+}
+
 // controlBlockGuardFixture stands in for a ControlsConfig that has drifted: every control block
 // is a pointer to a struct today, and the two other shapes below are what a future field could
 // look like. Reflection cannot be type-checked at compile time, so the guard needs a fixture
