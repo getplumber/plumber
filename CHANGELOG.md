@@ -1,3 +1,35 @@
+## [0.4.61](https://github.com/getplumber/plumber/compare/v0.4.60...v0.4.61) (2026-09-12)
+
+
+### ✨ Features
+
+* **configuration:** export nullable on schema fields so an editor knows when unset is meaningful ([6ce3630](https://github.com/getplumber/plumber/commit/6ce3630a2a9b5a098e4afbe882f326f4e9bcd992))
+* **platform:** require --platform-allow-http before sending credentials to a plain-http platform ([fe0537c](https://github.com/getplumber/plumber/commit/fe0537c9e53b679bca389abc4c0a23aaf434c5e3))
+* **scoring:** withhold the score when no control was evaluated ([230a389](https://github.com/getplumber/plumber/commit/230a3897b6249c300d6a6ce5bdb9efcf11a5f007))
+
+
+### 🐛 Bug Fixes
+
+* **cmd:** keep the degraded-collection message ahead of the withheld score ([d594e7f](https://github.com/getplumber/plumber/commit/d594e7f2db81b7ce4b701bcee4c408d3b006efd7))
+* **scoring:** count a finding once per identity so the job and the platform score the same input ([ed43bb5](https://github.com/getplumber/plumber/commit/ed43bb5e81aa947890d9af76e556766fd8e3cd28))
+* **utils:** strip userinfo from the parsed git remote so a token clone still matches the analyzed project ([b571f61](https://github.com/getplumber/plumber/commit/b571f61b249822c4c72127657404e4bb3834ed0f))
+
+
+### 📚 Documentation
+
+* **plans:** cli batch 2, platform decision rows 41, 45, 46, 51, 52 ([4148d57](https://github.com/getplumber/plumber/commit/4148d5712ff6ae3447498083fb0588a4420e9314))
+
+
+### ✅ Tests
+
+* **cmd:** assert the withheld-score gate line when controls exist but none was evaluated ([7ecdabc](https://github.com/getplumber/plumber/commit/7ecdabc6a31d36f60799f29b677ffd429763f925))
+* **cmd:** pin the plain-http refusal on the GitHub analysis path ([894a527](https://github.com/getplumber/plumber/commit/894a527cc922380d4a74b50933314be14cd46be4))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.60 refs [skip ci] ([cb34e01](https://github.com/getplumber/plumber/commit/cb34e011033022edac1b6fcff27d1f951a29eef8))
+
 ## [0.4.60](https://github.com/getplumber/plumber/compare/v0.4.59...v0.4.60) (2026-09-11)
 
 
