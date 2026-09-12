@@ -763,13 +763,11 @@ func ReEvaluateForConfig(
 		MarkDismissed(scopedResult.Findings, conf.PlatformRun.Context.DismissedIssues)
 	}
 
-	counts := map[ErrorCode]int{}
-	for _, f := range scopedResult.Findings {
-		if f.Dismissed {
-			continue
-		}
-		counts[ErrorCode(f.Code)]++
-	}
+	// codeCountsForFindings (control/scoring.go) counts one per distinct
+	// identity per code (row 41), the same rule AggregateIssueCodeCounts
+	// applies to the run-level score, so a policy's own score and the
+	// platform's recompute over the same findings never disagree.
+	counts := codeCountsForFindings(scopedResult.Findings)
 	// The whole scoped result is returned, not just its findings. The marks
 	// computed just above are what StatusFor reads to report a control as
 	// not_evaluable, and DropNotEvaluableFindings has already removed the

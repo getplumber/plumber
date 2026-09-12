@@ -4,6 +4,7 @@ import (
 	"math"
 	"sort"
 
+	"github.com/getplumber/plumber/finding/identity"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 )
 
@@ -110,14 +111,57 @@ func SeverityCountsFromIssueCodes(codes []ErrorCode) SeverityCounts {
 	return c
 }
 
-// AggregateIssueCodeCounts walks analysis issues and counts occurrences per ErrorCode.
+// codeCountsForFindings counts one occurrence per distinct identity per code
+// (row 41): two findings that share a platform identity, the hash
+// identity.PlatformHash derives from a finding's IdentityInput and the very
+// key control.MarkDismissed matches served dismissals against (#447), count
+// once, so the CLI's own score and the platform's recompute over the same
+// findings never disagree about how many occurrences a code has. A finding
+// with no identity (a codeless entry, where PlatformHash reports !ok) has
+// nothing to dedupe against and counts on its own, once per entry. Dismissed
+// findings are skipped before the identity check, same as forEachIssueCode.
+//
+// Both the run-level score (AggregateIssueCodeCounts) and the per-policy
+// score (control/lanes.go's ReEvaluateForConfig) read this one function, so
+// the two counting rules cannot drift the way two separately maintained
+// loops eventually would.
+func codeCountsForFindings(findings []opaengine.Finding) map[ErrorCode]int {
+	out := map[ErrorCode]int{}
+	seen := map[ErrorCode]map[string]struct{}{}
+	for _, f := range findings {
+		if f.Dismissed {
+			continue
+		}
+		code := ErrorCode(f.Code)
+		hash, _, ok := identity.PlatformHash(f.IdentityInput())
+		if !ok {
+			// Codeless: no identity to dedupe against, count the entry itself.
+			out[code]++
+			continue
+		}
+		set, exists := seen[code]
+		if !exists {
+			set = map[string]struct{}{}
+			seen[code] = set
+		}
+		if _, dup := set[hash]; dup {
+			continue
+		}
+		set[hash] = struct{}{}
+		out[code]++
+	}
+	return out
+}
+
+// AggregateIssueCodeCounts walks analysis issues and counts occurrences per ErrorCode,
+// one per distinct identity (row 41): duplicate occurrences of the same finding
+// identity count once, matching the platform's own recompute over the same findings.
 // This is the input expected by ComputePlumberScore in scoring-v3 (per-code caps).
 func AggregateIssueCodeCounts(result *AnalysisResult) map[ErrorCode]int {
-	out := map[ErrorCode]int{}
-	forEachIssueCode(result, func(code ErrorCode) {
-		out[code]++
-	})
-	return out
+	if result == nil {
+		return map[ErrorCode]int{}
+	}
+	return codeCountsForFindings(result.Findings)
 }
 
 // CriticalIssueCodesSorted returns unique Critical-level issue codes present in the analysis, sorted.

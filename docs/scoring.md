@@ -43,6 +43,8 @@ Both views are reported:
 - `counts.{critical,high,medium,low}`: total findings per severity (banner, MR comment).
 - `codeLosses[]`: per-code rows that drive the score (full breakdown via `--score-point`).
 
+Occurrences of a code that share the same finding identity (the platform's own grouping key, see `docs/FINGERPRINT.md`) count once toward that code's tally, so the CLI's own score and the platform's recomputed score are computed over the same input.
+
 An enabled control none of whose substantive configuration fields is set is not evaluated (`not_evaluable`, reason `config_required`) and contributes no findings. When at least one other control genuinely evaluated (a real pass or fail), the loss-based points above are simply computed over that smaller evaluated set, exactly as with any other `not_evaluable` control (#459).
 
 When **nothing at all** evaluated, a run or a policy has no basis for a score. Zero findings over an empty or all-`not_evaluable` control set would otherwise compute the deduction-based formula down to a perfect 100/A, which reads as a clean pass rather than as nothing having been checked. The score is **withheld** instead: the banner prints "Score withheld: no control was evaluated", the JSON report omits `plumberScore` (top-level) and the policy entry's `score`, and the push omits the policy's `score`. This applies at both levels: a whole run with nothing evaluated, and, in platform mode, an individual policy whose own control set evaluated nothing while other policies in the same run scored normally.

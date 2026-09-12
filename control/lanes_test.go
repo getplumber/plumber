@@ -617,6 +617,111 @@ func TestReEvaluateForConfigWorksForGitHub(t *testing.T) {
 	}
 }
 
+// TestReEvaluateForConfig_Row41CollapsesIdentityCollision pins row 41 in the
+// per-policy path. action-unpinned (ISSUE-701, declared identity {file, job,
+// uses, step}) has two separate deny blocks in its rego file: one for
+// step-level `uses:` and one for a job-level `reusableWorkflowUses:` call. A
+// job that (synthetically, for this test) carries both an unpinned step and
+// an unpinned reusable-workflow call with the SAME ref produces two raw
+// findings that differ in Message (the only thing keeping OPA's deny set
+// from collapsing them before Go ever sees them) but share every declared
+// identity field: same File (both resolve from job.OriginFile), same Job,
+// same uses string, and neither gets a resolved step (Line is 0 on both, and
+// enrichFindingsWithJobLocation only resolves step from a nonzero Line). The
+// per-policy score must count this pair once, the same as
+// AggregateIssueCodeCounts would for the run-level score.
+func TestReEvaluateForConfig_Row41CollapsesIdentityCollision(t *testing.T) {
+	pc := &configuration.PlumberConfig{
+		Version: "2.0",
+		GitHub: &configuration.ProviderConfig{
+			Controls: configuration.ControlsConfig{
+				ActionsMustBePinnedByCommitSha: &configuration.ActionsPinnedByShaControlConfig{
+					Enabled: boolPtr(true),
+				},
+			},
+		},
+	}
+	pipeline := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitHub,
+		Jobs: []ir.Job{{
+			Name:                 "build",
+			OriginFile:           "workflows/ci.yml",
+			Uses:                 []ir.Action{{Uses: "acme/repo@main"}},
+			ReusableWorkflowUses: "acme/repo@main",
+		}},
+	}
+
+	conf := &configuration.Configuration{PlumberConfig: pc}
+	scoped, score, ok := ReEvaluateForConfig(&AnalysisResult{CiValid: true, GitHubPipeline: pipeline}, conf, "github", pc)
+	if !ok {
+		t.Fatal("re-evaluation must succeed")
+	}
+
+	var unpinned []opaengine.Finding
+	for _, f := range scoped.Findings {
+		if f.Code == string(CodeActionUnpinned) {
+			unpinned = append(unpinned, f)
+		}
+	}
+	if len(unpinned) != 2 {
+		t.Fatalf("fixture must produce 2 raw ISSUE-701 findings (one per deny block), got %d: %+v", len(unpinned), unpinned)
+	}
+	if unpinned[0].Message == unpinned[1].Message {
+		t.Fatalf("the two findings must differ in Message (the step-level and reusable-workflow deny blocks), got identical %q", unpinned[0].Message)
+	}
+
+	want := ComputePlumberScore(map[ErrorCode]int{CodeActionUnpinned: 1})
+	if score.FinalPoints != want.FinalPoints || score.Score != want.Score {
+		t.Fatalf("score = %+v, want %+v (the identity collision must count once)", score, want)
+	}
+}
+
+// TestReEvaluateForConfig_Row41CountsDistinctIdentitiesSeparately is the
+// other half through the per-policy path: two jobs, each with its own
+// unpinned reusable-workflow call to the same ref, are genuinely distinct
+// ISSUE-701 findings because job is a declared identity field, and both
+// must count.
+func TestReEvaluateForConfig_Row41CountsDistinctIdentitiesSeparately(t *testing.T) {
+	pc := &configuration.PlumberConfig{
+		Version: "2.0",
+		GitHub: &configuration.ProviderConfig{
+			Controls: configuration.ControlsConfig{
+				ActionsMustBePinnedByCommitSha: &configuration.ActionsPinnedByShaControlConfig{
+					Enabled: boolPtr(true),
+				},
+			},
+		},
+	}
+	pipeline := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitHub,
+		Jobs: []ir.Job{
+			{Name: "build", OriginFile: "workflows/ci.yml", ReusableWorkflowUses: "acme/repo@main"},
+			{Name: "deploy", OriginFile: "workflows/ci.yml", ReusableWorkflowUses: "acme/repo@main"},
+		},
+	}
+
+	conf := &configuration.Configuration{PlumberConfig: pc}
+	scoped, score, ok := ReEvaluateForConfig(&AnalysisResult{CiValid: true, GitHubPipeline: pipeline}, conf, "github", pc)
+	if !ok {
+		t.Fatal("re-evaluation must succeed")
+	}
+
+	unpinned := 0
+	for _, f := range scoped.Findings {
+		if f.Code == string(CodeActionUnpinned) {
+			unpinned++
+		}
+	}
+	if unpinned != 2 {
+		t.Fatalf("fixture must produce 2 raw ISSUE-701 findings (one per job), got %d", unpinned)
+	}
+
+	want := ComputePlumberScore(map[ErrorCode]int{CodeActionUnpinned: 2})
+	if score.FinalPoints != want.FinalPoints || score.Score != want.Score {
+		t.Fatalf("score = %+v, want %+v (a different job is a different identity, both must count)", score, want)
+	}
+}
+
 // TestReEvaluateForConfigMarksThePolicysOwnControls is the end-to-end half
 // of TestPerPolicyMarkingUsesThePolicysOwnControls: it drives the real
 // per-policy path rather than the marker in isolation.
