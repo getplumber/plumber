@@ -43,7 +43,9 @@ Both views are reported:
 - `counts.{critical,high,medium,low}`: total findings per severity (banner, MR comment).
 - `codeLosses[]`: per-code rows that drive the score (full breakdown via `--score-point`).
 
-An enabled control none of whose substantive configuration fields is set is not evaluated (`not_evaluable`, reason `config_required`) and contributes no findings; the loss-based points above are unaffected, so such a policy can still read 100 while every one of its controls is marked not evaluated (#459). Whether a policy with no evaluable control should have its score withheld instead is an open platform question.
+An enabled control none of whose substantive configuration fields is set is not evaluated (`not_evaluable`, reason `config_required`) and contributes no findings. When at least one other control genuinely evaluated (a real pass or fail), the loss-based points above are simply computed over that smaller evaluated set, exactly as with any other `not_evaluable` control (#459).
+
+When **nothing at all** evaluated, a run or a policy has no basis for a score. Zero findings over an empty or all-`not_evaluable` control set would otherwise compute the deduction-based formula down to a perfect 100/A, which reads as a clean pass rather than as nothing having been checked. The score is **withheld** instead: the banner prints "Score withheld: no control was evaluated", the JSON report omits `plumberScore` (top-level) and the policy entry's `score`, and the push omits the policy's `score`. This applies at both levels: a whole run with nothing evaluated, and, in platform mode, an individual policy whose own control set evaluated nothing while other policies in the same run scored normally.
 
 ---
 
@@ -152,6 +154,8 @@ top level, the platform's global score.
 A run where **zero controls were evaluated** fails the score gate rather than passing as an empty 100-point pipeline: a `.plumber.yaml` that enables no controls for the scanned provider (e.g. a `github:`-only config on a GitLab project), a filter that skips them all, and — on GitLab, where a missing or unparseable CI configuration leaves no control evaluated — a project with no usable CI. On GitLab this matches the historical default (compliance was 0 in those cases).
 
 **On GitHub, a repository with no workflows (or workflows Plumber cannot parse) passes the default gate** when its enabled controls report no findings — the pre-0.4.0 behavior, deliberately restored so fleet scanners can sweep repositories that have no CI without failing on them. Note the score is then computed over what could be checked; gate on findings, not on CI presence.
+
+A related but distinct shape: GitHub's control count, unlike GitLab's, does not exclude `not_evaluable` controls, so a repository whose enabled controls are all `config_required` still carries a nonzero control count. Nothing was actually checked either way, so the score is withheld exactly as in the zero-control case above, but the **exit code does not change**: this shape already passed the gate before this rule existed (a zero-finding empty set scored a fake 100), and a nil score still passes it now, for the same reason a `.plumber.yaml`-declared empty policy passes. Only the number shown at the grade changes, from a perfect A to none.
 
 The legacy `--threshold` flag (percentage of passing controls) is **deprecated**: it still works, with a warning, and cannot be combined with the score gate flags. Its old default (100) matches the default score gate on any repository with CI to score, since any finding drops both below 100.
 

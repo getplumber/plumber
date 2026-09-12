@@ -387,7 +387,16 @@ func buildComplianceSummary(p provider.Provider, result *control.AnalysisResult,
 	// there is no score. Every consumer of the score already guards on nil
 	// (the JSON report, the PBOM writers, the banner, the badge, the MR
 	// comment, the gate), so a nil here withholds rather than crashes.
-	score := computeScoreResult(result, scoreMode)
+	//
+	// controlCount (from ComputeCompliance) is not the right gauge for this:
+	// GitLab's own compliance already excludes not_evaluable controls, but
+	// GitHub's does not, so a run whose enabled controls are all
+	// config_required can carry a nonzero controlCount while nothing was
+	// actually checked. evaluatedCount reads each entry's real StatusFor
+	// instead (platform decision row 45): pass or fail only, the same
+	// definition of "evaluated" the render and push layers use.
+	evaluatedCount := control.EvaluatedControlCount(providerControlEntries(p, conf), result)
+	score := computeScoreResult(result, scoreMode, evaluatedCount)
 	if platformMode {
 		score = nil
 	}
@@ -742,10 +751,15 @@ func shouldShowProgress(printOutput, verbose, stderrIsTerminal bool) bool {
 	return printOutput && !verbose && stderrIsTerminal
 }
 
-// computeScoreResult computes the Plumber score when score mode is active.
-// Returns nil when scoreMode is false.
-func computeScoreResult(result *control.AnalysisResult, scoreMode bool) *control.PlumberScoreResult {
-	if !scoreMode {
+// computeScoreResult computes the Plumber score when score mode is active
+// and at least one control was actually evaluated. Returns nil when
+// scoreMode is false (--no-controls) or when evaluatedCount is zero: a run
+// that checked nothing has no basis for a score, and zero findings over an
+// empty or all-not_evaluable control set would otherwise compute a
+// deduction-based 100/A that reads as a clean pass rather than as nothing
+// having been checked (platform decision row 45).
+func computeScoreResult(result *control.AnalysisResult, scoreMode bool, evaluatedCount int) *control.PlumberScoreResult {
+	if !scoreMode || evaluatedCount == 0 {
 		return nil
 	}
 	s := control.ComputePlumberScore(control.AggregateIssueCodeCounts(result))

@@ -483,6 +483,75 @@ func TestBuildComplianceSummary_CiWiring(t *testing.T) {
 }
 
 // ---------------------------------------------------------------------------
+// buildComplianceSummary, row 45: withhold the score when nothing was
+// evaluated, even when the provider's own control count is not zero.
+// ---------------------------------------------------------------------------
+
+// TestBuildComplianceSummary_Row45GitHubWithholdsScoreOnAllNotEvaluable pins
+// the gap GitLab's own compliance count does not have: GitHub's
+// ComputeCompliance counts every non-skipped entry regardless of whether it
+// was actually evaluated, so a control that is enabled but config_required
+// still inflates the control count while contributing nothing real. Before
+// this fix that read as a clean 100/A; now the score is withheld, and the
+// gate outcome is unchanged (it already passed on the old fake 100).
+func TestBuildComplianceSummary_Row45GitHubWithholdsScoreOnAllNotEvaluable(t *testing.T) {
+	newGateFlagsCmd(t)
+	gh := &provider.GitHubProvider{}
+	enabled := true
+	conf := configuration.NewDefaultConfiguration()
+	conf.PlumberConfig = &configuration.PlumberConfig{
+		GitHub: &configuration.ProviderConfig{
+			Controls: configuration.ControlsConfig{
+				ActionsMustBePinnedByCommitSha: &configuration.ActionsPinnedByShaControlConfig{Enabled: &enabled},
+			},
+		},
+	}
+	result := &control.AnalysisResult{
+		CiValid: true,
+		NotEvaluable: map[string]string{
+			"actionsMustBePinnedByCommitSha": control.ReasonConfigRequired,
+		},
+	}
+
+	s := buildComplianceSummary(gh, result, conf)
+	if s.controlCount == 0 {
+		t.Fatalf("GitHub's compliance count does not exclude not_evaluable controls, so it must stay nonzero here (got 0), or this test no longer exercises the gap")
+	}
+	if s.score != nil {
+		t.Fatalf("nothing was actually evaluated, the score must be withheld, got %+v", s.score)
+	}
+	if err := s.gateErr(); err != nil {
+		t.Fatalf("the exit code must stay unchanged: this shape passed the gate before (fake 100/A), it must still pass now, got %v", err)
+	}
+}
+
+// TestBuildComplianceSummary_Row45GitLabWithholdsScoreOnAllNotEvaluable is
+// the GitLab counterpart: GitLab's own ComputeCompliance already excludes
+// not_evaluable controls from controlCount, so this shape fails via the
+// existing zero-control gate (unchanged), and the score itself must also be
+// nil rather than the old perfect 100/A.
+func TestBuildComplianceSummary_Row45GitLabWithholdsScoreOnAllNotEvaluable(t *testing.T) {
+	newGateFlagsCmd(t)
+	gl := &provider.GitLabProvider{}
+	conf := confWithDebugTrace()
+	result := &control.AnalysisResult{
+		CiValid: true,
+		NotEvaluable: map[string]string{
+			"pipelineMustNotEnableDebugTrace": control.ReasonConfigRequired,
+		},
+	}
+
+	s := buildComplianceSummary(gl, result, conf)
+	if s.score != nil {
+		t.Fatalf("nothing was actually evaluated, the score must be withheld, got %+v", s.score)
+	}
+	var gateErr *ScoreGateError
+	if !errors.As(s.gateErr(), &gateErr) || !gateErr.NoControls {
+		t.Fatalf("GitLab's compliance count already excludes not_evaluable, so this must still fail via ScoreGateError{NoControls}, got %v", s.gateErr())
+	}
+}
+
+// ---------------------------------------------------------------------------
 // buildAnalysisJSONReport — the machine contract action.yml and the job
 // summary parse: conditional minPoints/minScore/threshold keys + passed
 // ---------------------------------------------------------------------------
@@ -773,5 +842,47 @@ func TestBuildAnalysisJSONReport_PlatformMode_PerPolicy(t *testing.T) {
 	blocked := decode(t, &platformVerdict{Gate: &platformGate{Evaluated: true, Blocking: true}})
 	if blocked["passed"] != false {
 		t.Errorf("passed = %v, want false: the platform's gate blocked", blocked["passed"])
+	}
+}
+
+// TestBuildAnalysisJSONReport_Row45PerPolicyOmitsScoreWhenNothingEvaluated
+// pins platform decision row 45 at the report layer: a policy whose only
+// declared control is config_required is Applied over a real config, but
+// nothing in it was actually evaluated, so its entry must have no "score"
+// key at all, distinct from an un-applied policy, which keeps the key
+// present with a null value (TestBuildAnalysisJSONReport_PlatformMode_PerPolicy
+// covers that shape and must keep passing unchanged).
+func TestBuildAnalysisJSONReport_Row45PerPolicyOmitsScoreWhenNothingEvaluated(t *testing.T) {
+	unconfigured := policyWithTree("Unconfigured", "pipelineMustNotEnableDebugTrace", `{"enabled":true}`)
+	conf := confWithPolicies(t, unconfigured)
+	runs := evaluatePlatformPolicies(testProvider(t), conf, debugTraceResult())
+	if runs[0].Score != nil {
+		t.Fatalf("test setup: expected the run's score already withheld, got %+v", runs[0].Score)
+	}
+	s := complianceSummary{platformMode: true, scoreMode: true}
+	params := jsonOutputParams{provider: "gitlab"}
+
+	payload, err := buildAnalysisJSONReport(debugTraceResult(), conf.PlumberConfig, s, params, runs, nil)
+	if err != nil {
+		t.Fatalf("buildAnalysisJSONReport: %v", err)
+	}
+	var report map[string]any
+	if err := json.Unmarshal(payload, &report); err != nil {
+		t.Fatalf("report is not valid JSON: %v", err)
+	}
+	pols, ok := report["policies"].([]any)
+	if !ok || len(pols) != 1 {
+		t.Fatalf("policies: %#v", report["policies"])
+	}
+	entry, _ := pols[0].(map[string]any)
+	if entry["applied"] != true {
+		t.Fatalf("the policy is applied over its own real (if unconfigured) config: %#v", entry)
+	}
+	if _, present := entry["score"]; present {
+		t.Errorf("a policy that evaluated nothing must have no score key at all, got %#v", entry["score"])
+	}
+	marks, ok := entry["notEvaluable"].(map[string]any)
+	if !ok || marks["pipelineMustNotEnableDebugTrace"] != control.ReasonConfigRequired {
+		t.Errorf("the control's own config_required mark must still be reported, got %#v", entry["notEvaluable"])
 	}
 }

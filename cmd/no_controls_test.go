@@ -42,9 +42,16 @@ func TestBuildComplianceSummary_NoControlsWithholdsScore(t *testing.T) {
 
 // A run WITHOUT the flag keeps computing a score: the default behaviour is
 // untouched by this feature.
+//
+// The fixture must declare at least one enabled control: a bare
+// &configuration.Configuration{} (nil PlumberConfig) declares none, which
+// evaluates nothing regardless of the --no-controls flag and must withhold
+// the score just the same (platform decision row 45) - it would not be
+// testing "the flag is off" any more, only reproducing the exact bug this
+// row exists to close.
 func TestBuildComplianceSummary_ScoreStillComputedByDefault(t *testing.T) {
 	result := &control.AnalysisResult{CiValid: true}
-	conf := &configuration.Configuration{}
+	conf := confWithDebugTrace()
 	s := buildComplianceSummary(&provider.GitLabProvider{}, result, conf)
 	if s.score == nil || !s.scoreMode {
 		t.Fatal("without --no-controls the score must still be computed")

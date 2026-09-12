@@ -985,9 +985,10 @@ func TestMaybePushPlatform_NegativeScorePointsReachTheWire(t *testing.T) {
 	}
 }
 
-// No production caller passes a nil score (scoreMode is always on in
-// buildComplianceSummary), but a best-effort push crashing the run over a nil
-// pointer would be strictly worse than sending the zero value.
+// A nil score reaches maybePushPlatform for real now (row 45:
+// buildComplianceSummary withholds it whenever nothing was evaluated), and a
+// best-effort push crashing the run over a nil pointer would be strictly
+// worse than sending no score at all.
 func TestMaybePushPlatform_NilScoreDoesNotPanic(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusAccepted)
@@ -998,6 +999,38 @@ func TestMaybePushPlatform_NilScoreDoesNotPanic(t *testing.T) {
 
 	if _, err := maybePushPlatform(testProvider(t), nil, &control.AnalysisResult{}, nil, nil); err != nil {
 		t.Fatalf("maybePushPlatform: %v", err)
+	}
+}
+
+// TestMaybePushPlatform_Row45OmitsScoreWhenNil is the standalone-push
+// counterpart of TestBuildPolicyResults_Row45OmitsScoreWhenNothingEvaluated:
+// a nil score must reach the wire as an absent "score" key, never as
+// platformScoreFrom's zero-value fallback ({"points":0}), which would read
+// as a real, if empty, score rather than as none at all.
+func TestMaybePushPlatform_Row45OmitsScoreWhenNil(t *testing.T) {
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+	restore := withPlatformTestEnv(t, srv.URL, "tok-123")
+	defer restore()
+
+	if _, err := maybePushPlatform(testProvider(t), nil, &control.AnalysisResult{}, nil, nil); err != nil {
+		t.Fatalf("maybePushPlatform: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(gotBody, &raw); err != nil {
+		t.Fatal(err)
+	}
+	results, ok := raw["results"].([]any)
+	if !ok || len(results) != 1 {
+		t.Fatalf("results: %#v", raw["results"])
+	}
+	entry, _ := results[0].(map[string]any)
+	if _, present := entry["score"]; present {
+		t.Errorf("a nil score must be omitted from the push, not sent as a zero-value object, got %#v", entry["score"])
 	}
 }
 

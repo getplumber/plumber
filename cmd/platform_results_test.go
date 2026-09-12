@@ -195,6 +195,42 @@ func TestBuildPolicyResults_StandaloneFallsBackToTheLocalPolicy(t *testing.T) {
 	}
 }
 
+// TestBuildPolicyResults_Row45OmitsScoreWhenNothingEvaluated pins platform
+// decision row 45 at the push layer: a policy whose only declared control is
+// config_required (#459) is Applied (evaluatePlatformPolicies already
+// withholds its Score), and the pushed entry's score must be genuinely
+// absent from the wire rather than the zero-value {"points":0}
+// platformScoreFrom(nil) would otherwise send for a run that evaluated
+// nothing real.
+func TestBuildPolicyResults_Row45OmitsScoreWhenNothingEvaluated(t *testing.T) {
+	unconfigured := policyWithTree("Unconfigured", "pipelineMustNotEnableDebugTrace", `{"enabled":true}`)
+	conf := confWithPolicies(t, unconfigured)
+	runs := evaluatePlatformPolicies(testProvider(t), conf, debugTraceResult())
+	if !runs[0].Applied || runs[0].Score != nil {
+		t.Fatalf("test setup: want an applied run with an already-withheld score, got %+v", runs[0])
+	}
+
+	got := buildPolicyResults(runs, testProvider(t), conf)
+	if len(got) != 1 {
+		t.Fatalf("want one entry, got %d", len(got))
+	}
+	if got[0].Score != nil {
+		t.Fatalf("the entry's score must be nil (absent on the wire), got %+v", got[0].Score)
+	}
+
+	raw, err := json.Marshal(got[0])
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var m map[string]any
+	if err := json.Unmarshal(raw, &m); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	if _, present := m["score"]; present {
+		t.Errorf("score must be omitted from the wire, not sent as a zero-value object, got %#v", m["score"])
+	}
+}
+
 func TestConfigFingerprint(t *testing.T) {
 	a, _, _, err := configuration.LoadPlumberConfigFromBytes([]byte("version: \"2.0\"\n"), "a")
 	if err != nil {

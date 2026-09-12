@@ -77,7 +77,12 @@ func renderPolicySections(p providerPkg.Provider, conf *configuration.Configurat
 			continue
 		}
 		if r.Reason == reasonNoControls {
+			// An empty control set evaluated nothing (row 45: run.Score is
+			// already nil for this reason), and the line above already
+			// says so - printing the withheld banner underneath it would
+			// be a second way of saying the same thing.
 			fmt.Println("  declares no controls, nothing evaluated")
+			continue
 		}
 		var controls []controlSummary
 		var groups []findingGroup

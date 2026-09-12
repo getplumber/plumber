@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/getplumber/plumber/gitlab"
+	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	glab "gitlab.com/gitlab-org/api/client-go"
 )
 
@@ -68,6 +69,75 @@ func TestStatusFor(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := StatusFor(tc.entry, tc.result, tc.findings); got != tc.want {
 				t.Errorf("StatusFor() = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestEvaluatedControlCount_Row45 pins platform decision row 45: a control
+// only counts toward "something was evaluated" when its own status is
+// passed or failed. Skipped and not_evaluable (StatusError, including the
+// config_required case) contribute nothing, which is what lets a caller
+// tell "nothing was checked" apart from "everything checked out clean".
+func TestEvaluatedControlCount_Row45(t *testing.T) {
+	debugTrace := ControlEntry{ControlName: "pipelineMustNotEnableDebugTrace"}
+	branch := ControlEntry{ControlName: "branchMustBeProtected"}
+	skipped := ControlEntry{ControlName: "pipelineMustNotEnableDebugTrace", Skipped: true}
+
+	cases := []struct {
+		name    string
+		entries []ControlEntry
+		result  *AnalysisResult
+		want    int
+	}{
+		{
+			name:    "a passed control counts",
+			entries: []ControlEntry{debugTrace},
+			result:  &AnalysisResult{CiValid: true},
+			want:    1,
+		},
+		{
+			name:    "a failed control counts",
+			entries: []ControlEntry{debugTrace},
+			result: &AnalysisResult{CiValid: true, Findings: []opaengine.Finding{
+				{Code: string(CodeDebugTraceEnabled)},
+			}},
+			want: 1,
+		},
+		{
+			name:    "a skipped control does not count",
+			entries: []ControlEntry{skipped},
+			result:  &AnalysisResult{CiValid: true},
+			want:    0,
+		},
+		{
+			name:    "a not_evaluable control (config_required) does not count",
+			entries: []ControlEntry{branch},
+			result: &AnalysisResult{
+				NotEvaluable: map[string]string{"branchMustBeProtected": ReasonConfigRequired},
+			},
+			want: 0,
+		},
+		{
+			name:    "an empty entry set counts nothing (declares no controls)",
+			entries: nil,
+			result:  &AnalysisResult{CiValid: true},
+			want:    0,
+		},
+		{
+			name:    "a mix counts only the evaluated ones",
+			entries: []ControlEntry{debugTrace, branch, skipped},
+			result: &AnalysisResult{
+				CiValid:      true,
+				NotEvaluable: map[string]string{"branchMustBeProtected": ReasonConfigRequired},
+			},
+			want: 1,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := EvaluatedControlCount(tc.entries, tc.result); got != tc.want {
+				t.Errorf("EvaluatedControlCount() = %d, want %d", got, tc.want)
 			}
 		})
 	}
