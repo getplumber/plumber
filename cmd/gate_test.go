@@ -523,6 +523,27 @@ func TestBuildComplianceSummary_Row45GitHubWithholdsScoreOnAllNotEvaluable(t *te
 	if err := s.gateErr(); err != nil {
 		t.Fatalf("the exit code must stay unchanged: this shape passed the gate before (fake 100/A), it must still pass now, got %v", err)
 	}
+
+	// Review finding c20a70b26b847830 (row 45): the gateLine() branch that
+	// handles a nonzero controlCount alongside a nil score had no assertion
+	// pinning its exact text, even though this test already builds that
+	// summary shape.
+	const wantGateLine = "no control was evaluated, nothing to score"
+	if got := s.gateLine(); got != wantGateLine {
+		t.Fatalf("gateLine() = %q, want %q", got, wantGateLine)
+	}
+
+	oPrint := printOutput
+	defer func() { printOutput = oPrint }()
+	printOutput = true
+	out := captureStdout(t, func() {
+		if err := outputTextWithProvider(gh, result, conf, s, nil, nil); err != nil {
+			t.Fatalf("render: %v", err)
+		}
+	})
+	if !strings.Contains(out, wantGateLine) {
+		t.Fatalf("the status line must carry the withheld gate line, got:\n%s", out)
+	}
 }
 
 // TestBuildComplianceSummary_Row45GitLabWithholdsScoreOnAllNotEvaluable is
