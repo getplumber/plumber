@@ -29,6 +29,76 @@ func TestAggregateIssueCodeCounts_SkipsDismissedFindings(t *testing.T) {
 	}
 }
 
+// TestAggregateIssueCodeCounts_Row41CollapsesIdentityCollision pins row 41:
+// two live findings that share a platform identity (same code, and for a
+// {file, job}-keyed code, the same file and job) count once, not twice, so
+// the CLI's own score and the platform's recompute over the same findings
+// agree.
+func TestAggregateIssueCodeCounts_Row41CollapsesIdentityCollision(t *testing.T) {
+	result := &AnalysisResult{
+		Findings: []opaengine.Finding{
+			{Code: string(CodeUndocumentedPermissions), File: "workflows/ci.yml", Job: "build"},
+			{Code: string(CodeUndocumentedPermissions), File: "workflows/ci.yml", Job: "build"},
+		},
+	}
+	counts := AggregateIssueCodeCounts(result)
+	if got := counts[CodeUndocumentedPermissions]; got != 1 {
+		t.Fatalf("counts[%s] = %d, want 1 (same file+job identity collision must count once)", CodeUndocumentedPermissions, got)
+	}
+}
+
+// TestAggregateIssueCodeCounts_Row41CountsDistinctIdentitiesSeparately is
+// the other half: two findings of the same code that differ in a declared
+// identity field (job) are genuinely distinct findings and must both count.
+func TestAggregateIssueCodeCounts_Row41CountsDistinctIdentitiesSeparately(t *testing.T) {
+	result := &AnalysisResult{
+		Findings: []opaengine.Finding{
+			{Code: string(CodeUndocumentedPermissions), File: "workflows/ci.yml", Job: "build"},
+			{Code: string(CodeUndocumentedPermissions), File: "workflows/ci.yml", Job: "deploy"},
+		},
+	}
+	counts := AggregateIssueCodeCounts(result)
+	if got := counts[CodeUndocumentedPermissions]; got != 2 {
+		t.Fatalf("counts[%s] = %d, want 2 (a different job is a different identity)", CodeUndocumentedPermissions, got)
+	}
+}
+
+// TestAggregateIssueCodeCounts_Row41DismissedSkippedBeforeIdentityDedup pins
+// the ordering: a dismissed finding is skipped before the identity check
+// ever runs, so it is not merely absorbed into the same identity bucket as a
+// live duplicate: two colliding live findings plus a dismissed duplicate of
+// the same identity still count once.
+func TestAggregateIssueCodeCounts_Row41DismissedSkippedBeforeIdentityDedup(t *testing.T) {
+	result := &AnalysisResult{
+		Findings: []opaengine.Finding{
+			{Code: string(CodeUndocumentedPermissions), File: "workflows/ci.yml", Job: "build"},
+			{Code: string(CodeUndocumentedPermissions), File: "workflows/ci.yml", Job: "build"},
+			{Code: string(CodeUndocumentedPermissions), File: "workflows/ci.yml", Job: "build", Dismissed: true},
+		},
+	}
+	counts := AggregateIssueCodeCounts(result)
+	if got := counts[CodeUndocumentedPermissions]; got != 1 {
+		t.Fatalf("counts[%s] = %d, want 1 (two colliding live findings plus a dismissed duplicate still count once)", CodeUndocumentedPermissions, got)
+	}
+}
+
+// TestAggregateIssueCodeCounts_Row41CodelessFindingCountsPerEntry: a
+// codeless finding has no identity (identity.PlatformHash reports !ok for
+// an empty code), so there is nothing to dedupe it against and each
+// codeless entry counts on its own.
+func TestAggregateIssueCodeCounts_Row41CodelessFindingCountsPerEntry(t *testing.T) {
+	result := &AnalysisResult{
+		Findings: []opaengine.Finding{
+			{Code: "", File: "workflows/ci.yml", Job: "build"},
+			{Code: "", File: "workflows/ci.yml", Job: "build"},
+		},
+	}
+	counts := AggregateIssueCodeCounts(result)
+	if got := counts[ErrorCode("")]; got != 2 {
+		t.Fatalf("counts[\"\"] = %d, want 2 (a codeless finding has no identity to dedupe against)", got)
+	}
+}
+
 // TestCriticalIssueCodesSorted_StillListsCodeWhenLiveFindingRemains documents
 // the deliberate asymmetry: forEachIssueCode skips a dismissed finding for
 // EVERY reader (AggregateIssueCodeCounts and CriticalIssueCodesSorted alike,
