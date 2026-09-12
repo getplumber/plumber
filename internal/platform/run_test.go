@@ -152,9 +152,10 @@ func TestDescribe_ReportsTheFactsTheRunObserved(t *testing.T) {
 	}
 
 	cases := []struct {
-		name     string
-		cfg      *ConfigResolution
-		contains []string
+		name        string
+		cfg         *ConfigResolution
+		contains    []string
+		notContains []string
 	}{
 		{
 			name: "digest match uses the snapshot",
@@ -183,6 +184,19 @@ func TestDescribe_ReportsTheFactsTheRunObserved(t *testing.T) {
 				Includes: []json.RawMessage{json.RawMessage(`{"location":"gitlab.com/c/x@1.0.0","type":"component"}`)},
 			},
 			contains: []string{"platform resolve endpoint", "includes served"},
+		},
+		{
+			// The divergence case above leaves Includes nil incidentally;
+			// this case pins that on purpose so an inverted or dropped
+			// condition on c.Includes cannot slip the string in here too.
+			name: "a resolved config with no attribution does not say includes served",
+			cfg: &ConfigResolution{
+				Source: SourceResolved, Digest: DigestDiverged, Valid: true,
+				LocalDigest: "a", DigestVersion: "1", AnchorDigest: "b", ResolvedSha: "s",
+				Includes: nil,
+			},
+			contains:    []string{"platform resolve endpoint, resolved at"},
+			notContains: []string{"includes served"},
 		},
 		{
 			name: "a cache hit says so",
@@ -230,6 +244,11 @@ func TestDescribe_ReportsTheFactsTheRunObserved(t *testing.T) {
 			for _, want := range tc.contains {
 				if !strings.Contains(out, want) {
 					t.Fatalf("Describe() missing %q:\n%s", want, out)
+				}
+			}
+			for _, unwanted := range tc.notContains {
+				if strings.Contains(out, unwanted) {
+					t.Fatalf("Describe() unexpectedly contains %q:\n%s", unwanted, out)
 				}
 			}
 			// The policy set and snapshot age are reported on every path.
