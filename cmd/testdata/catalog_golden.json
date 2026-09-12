@@ -47,6 +47,7 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -72,6 +73,7 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
@@ -107,6 +109,7 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -132,6 +135,7 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -171,6 +175,7 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -199,6 +204,7 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
@@ -215,30 +221,35 @@
             "name": "defaultMustBeProtected",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Requires the default branch to be protected."
           },
           {
             "name": "allowForcePush",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "When false, force push must be disabled on protected branches."
           },
           {
             "name": "codeOwnerApprovalRequired",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "When true, code owner approval is required."
           },
           {
             "name": "minMergeAccessLevel",
             "type": "integer",
             "optional": true,
+            "nullable": true,
             "description": "Minimum access level required to merge (0 = No one, 30 = Developer, 40 = Maintainer)."
           },
           {
             "name": "minPushAccessLevel",
             "type": "integer",
             "optional": true,
+            "nullable": true,
             "description": "Minimum access level required to push (0 = No one, 30 = Developer, 40 = Maintainer)."
           }
         ]
@@ -265,6 +276,7 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -291,6 +303,7 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -316,6 +329,7 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -356,6 +370,7 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
@@ -372,12 +387,14 @@
             "name": "trustDockerHubOfficialImages",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Trusts official Docker Hub images, such as nginx or alpine."
           },
           {
             "name": "includePlumberDefaults",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "In overlay mode, unions Plumber's curated default trusted list with trustedUrls; set false to trust only the listed entries; ignored in legacy mode.",
             "default": "true"
           }
@@ -405,6 +422,7 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
@@ -421,6 +439,7 @@
             "name": "containerImagesMustBePinnedByDigest",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "When true, all images must use immutable digest references, taking precedence over the forbidden tags list."
           }
         ]
@@ -504,6 +523,7 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -529,12 +549,14 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
             "name": "trustGithubOfficialActions",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Trusts first-party GitHub-owned actions (actions/*, github/*); defaults to true when unset.",
             "default": "true"
           },
@@ -542,6 +564,7 @@
             "name": "trustSameOrgActions",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Trusts actions whose owner is the same org or user as the scanned repository; defaults to true when unset.",
             "default": "true"
           },
@@ -566,6 +589,7 @@
             "name": "includePlumberDefaults",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "In overlay mode, unions Plumber's curated default trusted list with trustedGithubActions; set false to trust only the listed entries; ignored in legacy mode.",
             "default": "true"
           }
@@ -607,6 +631,7 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -633,6 +658,7 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
@@ -649,6 +675,7 @@
             "name": "defaultBranchIsForbiddenVersion",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "When true, adds the project's default branch to the forbidden versions list."
           }
         ]
@@ -674,6 +701,7 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -699,12 +727,14 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
             "name": "minimumRequiredApprovals",
             "type": "integer",
             "optional": true,
+            "nullable": true,
             "description": "Fewest approvals a rule covering all protected branches must require; a covering rule below this is flagged. Unset asserts nothing."
           }
         ]
@@ -730,36 +760,42 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
             "name": "preventApprovalByAuthor",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "When true, expects that merge request authors cannot approve their own merge requests."
           },
           {
             "name": "preventApprovalsByCommitters",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "When true, expects that users who committed to a merge request cannot approve it."
           },
           {
             "name": "preventEditingApprovalRulesInMR",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "When true, expects that approval rules cannot be overridden per merge request."
           },
           {
             "name": "requireReAuthToApprove",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "When true, expects that approving a merge request requires re-authentication."
           },
           {
             "name": "behaviorWhenCommitIsAdded",
             "type": "string",
             "optional": true,
+            "nullable": true,
             "description": "Minimum required strictness for what happens to existing approvals when a commit is added to an open merge request; a project below the configured rung is flagged.",
             "enum": [
               "keep_approvals",
@@ -790,12 +826,14 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
             "name": "mergeMethod",
             "type": "string",
             "optional": true,
+            "nullable": true,
             "description": "Expected merge method; any other value fails config validation.",
             "enum": [
               "merge",
@@ -807,6 +845,7 @@
             "name": "squashOption",
             "type": "string",
             "optional": true,
+            "nullable": true,
             "description": "Expected squash policy; any other value fails config validation.",
             "enum": [
               "never",
@@ -819,36 +858,42 @@
             "name": "mergePipelinesEnabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Expected merged-results-pipelines setting."
           },
           {
             "name": "mergeTrainsEnabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Expected merge-trains setting."
           },
           {
             "name": "allowMergeOnSkippedPipeline",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Expected allow-merge-when-pipeline-is-skipped setting."
           },
           {
             "name": "resolveOutdatedDiffDiscussions",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Expected auto-resolve-outdated-discussions setting."
           },
           {
             "name": "printingMergeRequestLinkEnabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Expected print-merge-request-link-on-push setting."
           },
           {
             "name": "removeSourceBranchAfterMerge",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Expected delete-source-branch-after-merge default."
           }
         ]
@@ -875,6 +920,7 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
@@ -922,6 +968,7 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
@@ -969,6 +1016,7 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
@@ -1005,6 +1053,7 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
@@ -1041,6 +1090,7 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -1067,6 +1117,7 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
@@ -1103,12 +1154,14 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
             "name": "detectInsecureDaemon",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "When true, also flags insecure daemon configuration in jobs that use a Docker-in-Docker service."
           }
         ]
@@ -1136,6 +1189,7 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
@@ -1181,18 +1235,21 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
             "name": "expectedProjectId",
             "type": "integer",
             "optional": true,
+            "nullable": true,
             "description": "Numeric GitLab project ID the linked security policy project must match; unset requires only that some policy project is linked."
           },
           {
             "name": "expectedProjectPath",
             "type": "string",
             "optional": true,
+            "nullable": true,
             "description": "Full namespace/project path the linked security policy project must match, compared case-insensitively; ignored when expectedProjectId is also set."
           }
         ]
@@ -1232,6 +1289,7 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -1257,6 +1315,7 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
@@ -1305,6 +1364,7 @@
                   "name": "disableValue",
                   "type": "bool",
                   "optional": true,
+                  "nullable": true,
                   "description": "For mode default, the value of disableInput that turns caching off."
                 },
                 {
@@ -1431,6 +1491,7 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -1457,6 +1518,7 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
@@ -1473,12 +1535,14 @@
             "name": "allowFailureMustBeFalse",
             "type": "object",
             "optional": true,
+            "nullable": true,
             "description": "Sub-control toggle requiring allow_failure to be false on matched security jobs.",
             "fields": [
               {
                 "name": "enabled",
                 "type": "bool",
                 "optional": true,
+                "nullable": true,
                 "description": "Turns the control on; when false or absent the control is skipped."
               }
             ]
@@ -1487,12 +1551,14 @@
             "name": "rulesMustNotBeRedefined",
             "type": "object",
             "optional": true,
+            "nullable": true,
             "description": "Sub-control toggle requiring rules to not be redefined on matched security jobs.",
             "fields": [
               {
                 "name": "enabled",
                 "type": "bool",
                 "optional": true,
+                "nullable": true,
                 "description": "Turns the control on; when false or absent the control is skipped."
               }
             ]
@@ -1501,12 +1567,14 @@
             "name": "whenMustNotBeManual",
             "type": "object",
             "optional": true,
+            "nullable": true,
             "description": "Sub-control toggle requiring when to not be set to manual on matched security jobs.",
             "fields": [
               {
                 "name": "enabled",
                 "type": "bool",
                 "optional": true,
+                "nullable": true,
                 "description": "Turns the control on; when false or absent the control is skipped."
               }
             ]
@@ -1562,6 +1630,7 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
@@ -1635,6 +1704,7 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -1660,6 +1730,7 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -1699,6 +1770,7 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -1780,6 +1852,7 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -1819,6 +1892,7 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -1872,6 +1946,7 @@
             "name": "enabled",
             "type": "bool",
             "optional": true,
+            "nullable": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]

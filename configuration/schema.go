@@ -11,10 +11,24 @@ import (
 // pointers/omitempty. Structure is REFLECTED from the real config structs
 // so it can never drift from the code; Description/Enum/Default are welded
 // on from the authored table in schema_docs.go (#458).
+//
+// Optional is true for a pointer field OR a plain field with an omitempty
+// yaml tag, and that conflates two different things: on a plain field,
+// unset and the zero value are indistinguishable, so nothing is lost by
+// omitting it; on a pointer field, unset is a distinct, meaningful state
+// (the caller made no choice) from a present zero value. Nullable
+// disambiguates that: it is true iff the Go field itself is a pointer, so a
+// consumer (an editor rendering a config form) knows which optional fields
+// can legitimately be left blank versus which are just conventionally
+// omitted. Nested struct fields inherit Nullable through the same
+// recursion structFields already does for Optional. A pointer-typed slice
+// element or map value is out of scope: Elem never carries Nullable, only
+// the field that holds the slice or map itself can.
 type SchemaField struct {
 	Name        string        `json:"name,omitempty"`
 	Type        string        `json:"type"`
 	Optional    bool          `json:"optional"`
+	Nullable    bool          `json:"nullable,omitempty"`
 	Description string        `json:"description,omitempty"`
 	Elem        *SchemaField  `json:"elem,omitempty"`
 	Fields      []SchemaField `json:"fields,omitempty"`
@@ -90,7 +104,10 @@ func structFields(t reflect.Type) []SchemaField {
 		}
 		sf := typeToField(f.Type)
 		sf.Name = name
-		if f.Type.Kind() == reflect.Ptr || yamlOmitempty(f) {
+		if f.Type.Kind() == reflect.Ptr {
+			sf.Optional = true
+			sf.Nullable = true
+		} else if yamlOmitempty(f) {
 			sf.Optional = true
 		}
 		fields = append(fields, sf)
