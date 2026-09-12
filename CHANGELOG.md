@@ -1,3 +1,23 @@
+## [0.4.62](https://github.com/getplumber/plumber/compare/v0.4.61...v0.4.62) (2026-09-12)
+
+
+### 🐛 Bug Fixes
+
+* **gitremote:** eat every userinfo @ up to the last one before the path ([d370cbd](https://github.com/getplumber/plumber/commit/d370cbd49aed5127ab7f53498bdbeb59b50a7c4d))
+* **platform:** a served empty include list is complete attribution, not unknown ([754ab69](https://github.com/getplumber/plumber/commit/754ab6909b07048359b02349f1d65b75421ce81c))
+* **platform:** use the includes the resolve endpoint serves ([dc10a57](https://github.com/getplumber/plumber/commit/dc10a578aea6acebaf97c3496fab7530459db739))
+
+
+### ✅ Tests
+
+* **platform:** pin the no-attribution branch of the includes served line ([9b18a79](https://github.com/getplumber/plumber/commit/9b18a79e016aecfaaa8cedf1712e9843cb09ac9d))
+* **platform:** pin the wire-level decode of resolve response includes ([4e2837d](https://github.com/getplumber/plumber/commit/4e2837d411892fa12d772e5f4527642743f80d00))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.61 refs [skip ci] ([cc366ec](https://github.com/getplumber/plumber/commit/cc366ec1261fbe5bac350a7114f1d55eae238139))
+
 ## [0.4.61](https://github.com/getplumber/plumber/compare/v0.4.60...v0.4.61) (2026-09-12)
 
 
