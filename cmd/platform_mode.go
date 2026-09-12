@@ -2,6 +2,8 @@ package cmd
 
 import (
 	"fmt"
+	"net"
+	"net/url"
 	"os"
 	"strings"
 
@@ -33,20 +35,68 @@ func platformPolicyMode(noControlsRun bool) bool {
 	return push
 }
 
+// validatePlatformScheme refuses a plain-http --platform endpoint whose host
+// is not loopback, unless --platform-allow-http opts in.
+//
+// The push carries the CI OIDC id-token, and the platform's response carries
+// the run's own verdict (the gate) and served dismissals that move the
+// score. Over plain http both travel in the clear to any on-path attacker,
+// who can read the token and rewrite the response to change the job's exit
+// code and score (platform decision row 46). https is unaffected, and
+// loopback http (localhost, 127.0.0.0/8, ::1) stays allowed without the flag:
+// it never leaves the machine running the job.
+//
+// It runs before scoreOIDCToken mints anything and before platform.NewClient
+// is built, so a refusal here mints no token and opens no connection.
+func validatePlatformScheme(endpoint string) error {
+	u, err := url.Parse(endpoint)
+	if err != nil || u.Scheme != "http" {
+		return nil
+	}
+	if platformAllowHTTP || isLoopbackPlatformHost(u.Hostname()) {
+		return nil
+	}
+	return fmt.Errorf(
+		"refusing to send platform credentials over plain http to %s: pass --platform-allow-http (PLUMBER_ANALYZE_PLATFORM_ALLOW_HTTP=1) for a trusted internal instance",
+		u.Host,
+	)
+}
+
+// isLoopbackPlatformHost reports whether host names the local machine: the
+// literal "localhost", or an IP in net.IP.IsLoopback's range (127.0.0.0/8,
+// ::1). host is already the URL's hostname with any port stripped.
+func isLoopbackPlatformHost(host string) bool {
+	if strings.EqualFold(host, "localhost") {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 // setupPlatformMode resolves everything platform mode needs BEFORE
 // collection begins, and returns the run context to hang on conf. It
-// returns nil when --platform is not set, which is the CLI's default and
-// leaves every downstream path exactly as it is in standalone mode.
+// returns (nil, nil) when --platform is not set, which is the CLI's default
+// and leaves every downstream path exactly as it is in standalone mode.
 //
-// Nothing here can fail a run. A platform that is unreachable, forbidden or
-// out of date degrades to a stated warning and a standalone collection: the
-// pipeline is never coupled to a third party's availability. The one
-// exception is the token, which is minted against the CI provider's OWN
-// infrastructure and is handled by the push path exactly as before.
-func setupPlatformMode(p providerPkg.Provider, conf *configuration.Configuration) *platform.RunContext {
+// Nothing past the scheme check can fail a run. A platform that is
+// unreachable, forbidden or out of date degrades to a stated warning and a
+// standalone collection: the pipeline is never coupled to a third party's
+// availability. The one exception is the token, which is minted against the
+// CI provider's OWN infrastructure and is handled by the push path exactly
+// as before.
+//
+// The scheme check (row 46) is different in kind: a plain-http endpoint that
+// is not loopback is a configuration error, not a degradation, so a
+// non-nil error here fails the run outright (the caller must propagate it)
+// rather than becoming a ContextErr warning.
+func setupPlatformMode(p providerPkg.Provider, conf *configuration.Configuration) (*platform.RunContext, error) {
 	push, endpoint := effectivePlatformPush()
 	if !push {
-		return nil
+		return nil, nil
+	}
+
+	if err := validatePlatformScheme(endpoint); err != nil {
+		return nil, err
 	}
 
 	rc := &platform.RunContext{Endpoint: endpoint}
@@ -58,13 +108,13 @@ func setupPlatformMode(p providerPkg.Provider, conf *configuration.Configuration
 		// context could not be fetched and lets the run proceed. Reporting
 		// it twice would double up on the same diagnosis.
 		rc.ContextErr = fmt.Errorf("no CI OIDC id-token available")
-		return rc
+		return rc, nil
 	}
 
 	_, projectPath, ok := resolveScoreTarget(p, conf)
 	if !ok {
 		rc.ContextErr = fmt.Errorf("could not resolve the project path")
-		return rc
+		return rc, nil
 	}
 	rc.ProjectPath = projectPath
 
@@ -74,7 +124,7 @@ func setupPlatformMode(p providerPkg.Provider, conf *configuration.Configuration
 	ctx, err := client.FetchContext(projectPath)
 	if err != nil {
 		rc.ContextErr = err
-		return rc
+		return rc, nil
 	}
 	rc.Context = ctx
 
@@ -90,7 +140,7 @@ func setupPlatformMode(p providerPkg.Provider, conf *configuration.Configuration
 	// endpoint costs its timeout in parallel rather than before any of it.
 	rc.Config = platform.StartRunConfigResolution(client, ctx.Snapshot, projectPath, sha, localDigest, abortReason)
 	rc.Config.ShaFromAnchor = shaFromAnchor
-	return rc
+	return rc, nil
 }
 
 // computeLocalCIDigest computes this checkout's CI config digest, the key

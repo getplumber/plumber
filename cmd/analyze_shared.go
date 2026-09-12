@@ -704,7 +704,11 @@ func presentResultWithProvider(p provider.Provider, cmd *cobra.Command, result *
 	// policy set for the push and the operator-facing report. GitHub lane
 	// wiring is a separate piece of work.
 	if conf != nil && conf.PlatformRun == nil {
-		conf.PlatformRun = setupPlatformMode(p, conf)
+		rc, err := setupPlatformMode(p, conf)
+		if err != nil {
+			return err
+		}
+		conf.PlatformRun = rc
 		reportPlatformMode(conf.PlatformRun)
 	}
 

@@ -101,6 +101,10 @@ spec:
     platform:
       description: "Plumber platform base URL. Setting it pushes this run's full results there over CI OIDC, and takes precedence over score_push. The default is a placeholder (RFC 2606 .invalid) that never enables a push - GitLab requires the id_tokens audience to be non-empty, so this input cannot default to empty. In platform mode only the platform's policies are evaluated and the platform's gate decides the exit code."
       default: "https://platform.invalid"
+    platform_allow_http:
+      description: "Allow the platform input to be plain http for a non-loopback host. Without it, http to anything but localhost/127.0.0.0/8/::1 is refused before any credential is sent; https and loopback http need no opt-in."
+      default: false
+      type: boolean
     controls:
       description: Run only listed controls (comma-separated control names). Cannot be used with skip_controls.
       default: ""
@@ -202,6 +206,7 @@ spec:
     # in cmd/platform_push.go), so this passthrough alone never turns the push
     # on for everyone.
     PLUMBER_ANALYZE_PLATFORM: $[[ inputs.platform ]]
+    PLUMBER_ANALYZE_PLATFORM_ALLOW_HTTP: $[[ inputs.platform_allow_http ]]
     PLUMBER_ANALYZE_CONTROLS: $[[ inputs.controls ]]
     PLUMBER_ANALYZE_SKIP_CONTROLS: $[[ inputs.skip_controls ]]
     PLUMBER_ANALYZE_FAIL_WARNINGS: $[[ inputs.fail_warnings ]]

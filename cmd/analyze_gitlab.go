@@ -64,6 +64,10 @@ var (
 	pushScore         bool
 	scoreEndpoint     string
 	platformURL       string
+	// platformAllowHTTP opts in to a plain-http --platform endpoint whose
+	// host is not loopback (row 46). Without it such an endpoint is refused
+	// before any credential is sent; https and loopback http are unaffected.
+	platformAllowHTTP bool
 	controlsFilter    string
 	skipControls      string
 	// noControls (--no-controls) turns off control evaluation for the run.
@@ -206,6 +210,7 @@ func init() {
 	analyzeCmd.Flags().BoolVar(&pushScore, "score-push", false, "Publish this repo's Plumber Score to the hosted badge service (CI only; needs a CI OIDC id-token, so a local run is a no-op)")
 	analyzeCmd.Flags().StringVar(&scoreEndpoint, "score-endpoint", "", "Score service base URL (default https://score.getplumber.io); override only for a self-hosted score service")
 	analyzeCmd.Flags().StringVar(&platformURL, "platform", "", "Plumber platform base URL; turns on platform mode (policies and collected data come from the platform) and pushes this run's full results there over CI OIDC, taking precedence over --score-push")
+	analyzeCmd.Flags().BoolVar(&platformAllowHTTP, "platform-allow-http", false, "Allow --platform to be plain http for a non-loopback host; without it, http to anything but localhost/127.0.0.0/8/::1 is refused before any credential is sent")
 	analyzeCmd.Flags().StringVar(&controlsFilter, "controls", "", "Run only listed controls (comma-separated)")
 	analyzeCmd.Flags().StringVar(&skipControls, "skip-controls", "", "Skip listed controls (comma-separated)")
 	analyzeCmd.Flags().BoolVar(&noControls, "no-controls", false, "Run no controls at all: collect the pipeline and write the requested inventory artifacts (PBOM, JSON, CSV, OCSF), skip evaluation, withhold the score, and never fail the gate")
@@ -568,36 +573,37 @@ func buildGitLabConf(
 // envKeys maps each analyze flag to the environment variable that overrides it
 // when the flag is not set explicitly on the command line (flags always win).
 var envKeys = map[string]string{
-	"gitlab-url":     "PLUMBER_ANALYZE_GITLAB_URL",
-	"github-url":     "PLUMBER_ANALYZE_GITHUB_URL",
-	"project":        "PLUMBER_ANALYZE_PROJECT",
-	"provider":       "PLUMBER_ANALYZE_PROVIDER",
-	"branch":         "PLUMBER_ANALYZE_BRANCH",
-	"config":         "PLUMBER_ANALYZE_CONFIG",
-	"threshold":      "PLUMBER_ANALYZE_THRESHOLD",
-	"min-score":      "PLUMBER_ANALYZE_MIN_SCORE",
-	"min-points":     "PLUMBER_ANALYZE_MIN_POINTS",
-	"print":          "PLUMBER_ANALYZE_PRINT",
-	"output":         "PLUMBER_ANALYZE_OUTPUT",
-	"pbom":           "PLUMBER_ANALYZE_PBOM",
-	"pbom-cyclonedx": "PLUMBER_ANALYZE_PBOM_CYCLONEDX",
-	"sarif":          "PLUMBER_ANALYZE_SARIF",
-	"glsast":         "PLUMBER_ANALYZE_GLSAST",
-	"csv":            "PLUMBER_ANALYZE_CSV",
-	"ocsf":           "PLUMBER_ANALYZE_OCSF",
-	"mr-comment":     "PLUMBER_ANALYZE_MR_COMMENT",
-	"badge":          "PLUMBER_ANALYZE_BADGE",
-	"score":          "PLUMBER_ANALYZE_SCORE",
-	"score-point":    "PLUMBER_ANALYZE_SCORE_POINT",
-	"score-push":     "PLUMBER_ANALYZE_SCORE_PUSH",
-	"score-endpoint": "PLUMBER_ANALYZE_SCORE_ENDPOINT",
-	"platform":       "PLUMBER_ANALYZE_PLATFORM",
-	"controls":       "PLUMBER_ANALYZE_CONTROLS",
-	"skip-controls":  "PLUMBER_ANALYZE_SKIP_CONTROLS",
-	"no-controls":    "PLUMBER_ANALYZE_NO_CONTROLS",
-	"fail-warnings":  "PLUMBER_ANALYZE_FAIL_WARNINGS",
-	"ci-config-path": "PLUMBER_ANALYZE_CI_CONFIG_PATH",
-	"verbose":        "PLUMBER_ANALYZE_VERBOSE",
+	"gitlab-url":          "PLUMBER_ANALYZE_GITLAB_URL",
+	"github-url":          "PLUMBER_ANALYZE_GITHUB_URL",
+	"project":             "PLUMBER_ANALYZE_PROJECT",
+	"provider":            "PLUMBER_ANALYZE_PROVIDER",
+	"branch":              "PLUMBER_ANALYZE_BRANCH",
+	"config":              "PLUMBER_ANALYZE_CONFIG",
+	"threshold":           "PLUMBER_ANALYZE_THRESHOLD",
+	"min-score":           "PLUMBER_ANALYZE_MIN_SCORE",
+	"min-points":          "PLUMBER_ANALYZE_MIN_POINTS",
+	"print":               "PLUMBER_ANALYZE_PRINT",
+	"output":              "PLUMBER_ANALYZE_OUTPUT",
+	"pbom":                "PLUMBER_ANALYZE_PBOM",
+	"pbom-cyclonedx":      "PLUMBER_ANALYZE_PBOM_CYCLONEDX",
+	"sarif":               "PLUMBER_ANALYZE_SARIF",
+	"glsast":              "PLUMBER_ANALYZE_GLSAST",
+	"csv":                 "PLUMBER_ANALYZE_CSV",
+	"ocsf":                "PLUMBER_ANALYZE_OCSF",
+	"mr-comment":          "PLUMBER_ANALYZE_MR_COMMENT",
+	"badge":               "PLUMBER_ANALYZE_BADGE",
+	"score":               "PLUMBER_ANALYZE_SCORE",
+	"score-point":         "PLUMBER_ANALYZE_SCORE_POINT",
+	"score-push":          "PLUMBER_ANALYZE_SCORE_PUSH",
+	"score-endpoint":      "PLUMBER_ANALYZE_SCORE_ENDPOINT",
+	"platform":            "PLUMBER_ANALYZE_PLATFORM",
+	"platform-allow-http": "PLUMBER_ANALYZE_PLATFORM_ALLOW_HTTP",
+	"controls":            "PLUMBER_ANALYZE_CONTROLS",
+	"skip-controls":       "PLUMBER_ANALYZE_SKIP_CONTROLS",
+	"no-controls":         "PLUMBER_ANALYZE_NO_CONTROLS",
+	"fail-warnings":       "PLUMBER_ANALYZE_FAIL_WARNINGS",
+	"ci-config-path":      "PLUMBER_ANALYZE_CI_CONFIG_PATH",
+	"verbose":             "PLUMBER_ANALYZE_VERBOSE",
 }
 
 func envStringFallback(cmd *cobra.Command, flag, envKey string, dest *string) error {
@@ -711,6 +717,9 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 			return envStringFallback(cmd, "score-endpoint", envKeys["score-endpoint"], &scoreEndpoint)
 		},
 		func() error { return envStringFallback(cmd, "platform", envKeys["platform"], &platformURL) },
+		func() error {
+			return envBoolFallback(cmd, "platform-allow-http", envKeys["platform-allow-http"], &platformAllowHTTP)
+		},
 		func() error { return envStringFallback(cmd, "controls", envKeys["controls"], &controlsFilter) },
 		func() error { return envStringFallback(cmd, "skip-controls", envKeys["skip-controls"], &skipControls) },
 		func() error {
@@ -800,8 +809,14 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	// Platform mode resolves its policy set, snapshot and CI configuration
 	// BEFORE collection, because what it resolves decides which lanes
 	// collection needs to run at all. Returns nil (and changes nothing)
-	// unless --platform is set.
-	conf.PlatformRun = setupPlatformMode(p, conf)
+	// unless --platform is set. A non-nil error is a configuration error
+	// (row 46: a plain-http endpoint refused without --platform-allow-http)
+	// and fails the run before any credential is sent.
+	rc, err := setupPlatformMode(p, conf)
+	if err != nil {
+		return err
+	}
+	conf.PlatformRun = rc
 	reportPlatformMode(conf.PlatformRun)
 
 	return runWithProvider(p, cmd, conf, controlsFilterList, skipControlsList)
