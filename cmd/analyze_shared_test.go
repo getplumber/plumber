@@ -76,3 +76,25 @@ func TestOutputText_Row45WithholdsScoreWhenNothingEvaluated(t *testing.T) {
 		t.Fatalf("must not print the graded letter-score badge, got:\n%s", out)
 	}
 }
+
+// TestPrintSummaryScoreBanner_Row45DegradedTakesPrecedenceOverWithheldScore
+// covers review finding 6c38fbc735473281 (row 45): a degraded run
+// (DataCollectionDegraded, every content control StatusError) also has a nil
+// score, since nothing it evaluated is trustworthy enough to count as
+// evaluated. The degraded wording is the accurate one ("analysis ran on
+// incomplete data, resolve the warnings above"); the generic
+// "no control was evaluated" line would be wrong here (it reads as "there
+// was nothing to check", not "collection failed"), so degraded must be
+// checked first.
+func TestPrintSummaryScoreBanner_Row45DegradedTakesPrecedenceOverWithheldScore(t *testing.T) {
+	out := captureStdout(t, func() {
+		printSummaryScoreBanner(nil, true, true)
+	})
+
+	if !strings.Contains(out, "Score withheld — analysis ran on incomplete data") {
+		t.Fatalf("a degraded run with nothing evaluated must print the degraded wording, got:\n%s", out)
+	}
+	if strings.Contains(out, "no control was evaluated") {
+		t.Fatalf("a degraded run must not print the generic withheld-score line, got:\n%s", out)
+	}
+}
