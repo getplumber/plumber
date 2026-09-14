@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/getplumber/plumber/configuration"
@@ -113,7 +114,7 @@ func TestPlatformFlow_NoPolicies_NothingEvaluatedNoPush(t *testing.T) {
 	if err != nil {
 		t.Fatalf("want exit 0, got %v", err)
 	}
-	assertContains(t, out, "no policy resolved for g/p (dial tcp: connection refused), nothing evaluated, exit 0")
+	assertContains(t, out, "no policy resolved for g/p (dial tcp: connection refused), nothing evaluated")
 	if strings.Contains(out, "Plumber Score") || pushed {
 		t.Fatalf("nothing may be evaluated or pushed: banner=%v pushed=%v", strings.Contains(out, "Plumber Score"), pushed)
 	}
@@ -435,4 +436,238 @@ func TestPlatformFlow_NoPolicies_FailWarningsStillDecidesTheExit(t *testing.T) {
 			t.Fatalf("err = %v, want nil: warnings alone never fail a run", err)
 		}
 	})
+}
+
+// Row 63, the flow half: a LINKED run whose platform answered and resolved
+// no policy used to return before the push, so the run was lost entirely -
+// the platform kept showing the PREVIOUS run as the project's current one,
+// and freshness lied about a project that had just been analysed. It now
+// goes through the same publishRun path as any other push, carrying the
+// nothing-evaluated marker and no result, and the platform's own gate answer
+// is what decides the exit code. Nothing local is invented at either end.
+func TestRunPlatformMode_Row63_ZeroPoliciesStillPushes(t *testing.T) {
+	newGateFlagsCmd(t)
+	origPrint := printOutput
+	printOutput = true
+	defer func() { printOutput = origPrint }()
+
+	var reqs []string
+	var pushed []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		b, _ := io.ReadAll(r.Body)
+		reqs = append(reqs, r.Method+" "+r.URL.Path)
+		pushed = b
+		w.WriteHeader(http.StatusAccepted)
+		// What the platform answers a run it recorded as not evaluable: no
+		// verdict, and the reason echoed back.
+		_, _ = w.Write([]byte(`{"gate":{"evaluated":false,"reason":"no_policy"}}`))
+	}))
+	defer srv.Close()
+	restore := withPlatformTestEnv(t, srv.URL, "tok")
+	defer restore()
+
+	// The /context fetch SUCCEEDED and assigned nothing, which is the only
+	// shape row 63 marks: an unreachable platform said nothing at all.
+	conf := confWithPolicies(t)
+	var err error
+	var errOut string
+	out := captureStdoutAll(t, func() {
+		errOut = captureStderr(t, func() {
+			err = presentResultWithProvider(testProvider(t), nil, debugTraceResult(), conf)
+		})
+	})
+
+	if len(reqs) != 1 || reqs[0] != "POST /api/v1/pushes" {
+		t.Fatalf("requests = %v, want exactly one POST /api/v1/pushes: the run must reach the platform (row 63)", reqs)
+	}
+	var body struct {
+		Evaluation *struct {
+			NothingEvaluated bool   `json:"nothing_evaluated"`
+			Reason           string `json:"reason"`
+		} `json:"evaluation"`
+		Results []json.RawMessage `json:"results"`
+	}
+	if jsonErr := json.Unmarshal(pushed, &body); jsonErr != nil {
+		t.Fatalf("push body does not parse as JSON: %v\n%s", jsonErr, pushed)
+	}
+	if body.Evaluation == nil || !body.Evaluation.NothingEvaluated {
+		t.Fatalf("push body carries no nothing-evaluated marker: %s", pushed)
+	}
+	if body.Evaluation.Reason != "no_policy" {
+		t.Errorf("evaluation.reason = %q, want %q: the platform resolved no policy for this project", body.Evaluation.Reason, "no_policy")
+	}
+	if len(body.Results) != 0 {
+		t.Errorf("results = %d entries, want none: a marked push carrying a result is a 422 by contract\n%s", len(body.Results), pushed)
+	}
+	// The hazard this rewiring creates: buildPlatformPush's standalone branch
+	// would put the LOCAL configuration's verdict on the wire under a platform
+	// link, which is the wrong-verdict failure platform mode exists to remove.
+	// A linked run never evaluates the local configuration, so no policy entry
+	// may reach the wire at all - asserted on the RAW bytes, because a decode
+	// into a named struct would pass on a renamed field.
+	if strings.Contains(string(pushed), `"policy"`) {
+		t.Errorf("a policy entry from the local configuration reached the wire on a linked run that evaluated nothing:\n%s", pushed)
+	}
+	if err != nil {
+		t.Fatalf("err = %v, want nil: the platform answered evaluated:false, which is not a blocking verdict", err)
+	}
+	// The one-line notice stays, and the platform's own answer is reported
+	// rather than swallowed: without it the operator sees a push and no word
+	// on what the platform made of it.
+	assertContains(t, out, "no policy resolved for  (no policy assigned), nothing evaluated")
+	assertContains(t, errOut, "platform gate not evaluated: no_policy")
+
+	// The platform stays the authority on the exit code here exactly as it
+	// is on every other push: if it ever answers a blocking gate for such a
+	// run, the CLI reports it instead of deciding locally that a run which
+	// evaluated nothing has nothing to block.
+	t.Run("a blocking answer from the platform still decides", func(t *testing.T) {
+		blocking := gatePushServer(t, http.StatusAccepted, `{"gate":{"evaluated":true,"blocking":true,"reason":"the organisation requires a policy on every project","policies":[]}}`)
+		defer blocking.Close()
+		restoreBlocking := withPlatformTestEnv(t, blocking.URL, "tok")
+		defer restoreBlocking()
+
+		var blockErr error
+		_ = captureStdoutAll(t, func() {
+			_ = captureStderr(t, func() {
+				blockErr = presentResultWithProvider(testProvider(t), nil, debugTraceResult(), confWithPolicies(t))
+			})
+		})
+		var gateErr *PlatformGateError
+		if !errors.As(blockErr, &gateErr) {
+			t.Fatalf("err = %v (%T), want a *PlatformGateError: the platform decides, not the CLI", blockErr, blockErr)
+		}
+	})
+
+	// The boundary of the change, stated here beside the pushing case: a
+	// platform whose /context fetch FAILED assigned no policy because it
+	// answered nothing. It is not a nothing-evaluated run, the only verdict
+	// available for it would be the local configuration's, and it keeps
+	// exactly the behaviour it had before row 63 - the notice, no request at
+	// all, exit 0.
+	t.Run("an unreachable platform is unchanged", func(t *testing.T) {
+		var unreachableReqs []string
+		unreachable := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			unreachableReqs = append(unreachableReqs, r.Method+" "+r.URL.Path)
+		}))
+		defer unreachable.Close()
+		restoreUnreachable := withPlatformTestEnv(t, unreachable.URL, "tok")
+		defer restoreUnreachable()
+
+		conf := configuration.NewDefaultConfiguration()
+		conf.PlumberConfig = testDefaultPlumberConfig(t)
+		conf.PlatformRun = &platform.RunContext{
+			Endpoint:    "https://platform.example.com",
+			ProjectPath: "g/p",
+			ContextErr:  errors.New("dial tcp: connection refused"),
+		}
+		var unreachableErr error
+		unreachableOut := captureStdoutAll(t, func() {
+			_ = captureStderr(t, func() {
+				unreachableErr = presentResultWithProvider(testProvider(t), nil, debugTraceResult(), conf)
+			})
+		})
+		if len(unreachableReqs) != 0 {
+			t.Fatalf("requests = %v, want none: a run the platform never answered is not marked and is not pushed", unreachableReqs)
+		}
+		if unreachableErr != nil {
+			t.Fatalf("err = %v, want nil", unreachableErr)
+		}
+		assertContains(t, unreachableOut, "no policy resolved for g/p (dial tcp: connection refused), nothing evaluated")
+	})
+}
+
+// Row 63, the publish leg: the nothing-evaluated push goes through publishRun
+// like every other push, and publishRun opens with the score-publishing leg.
+// That leg publishes nothing under --platform, but it is not silent: with
+// score-push off it invites the operator to turn on a live badge. A run that
+// evaluated nothing has no score to put on a badge, and this path never
+// printed that invitation before (the early return skipped publishRun
+// entirely), so pushing the run must not start advertising one.
+func TestRunPlatformMode_Row63_NothingEvaluatedPushDoesNotNudgeForABadge(t *testing.T) {
+	newGateFlagsCmd(t)
+	origPrint, origPushScore := printOutput, pushScore
+	printOutput, pushScore = true, false
+	defer func() { printOutput, pushScore = origPrint, origPushScore }()
+	// The nudge prints at most once per process, so without this reset the
+	// test would report on whatever ran before it rather than on the run it
+	// drives.
+	scorePublishOnce = sync.Once{}
+
+	pushes := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		pushes++
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"gate":{"evaluated":false,"reason":"no_policy"}}`))
+	}))
+	defer srv.Close()
+	restore := withPlatformTestEnv(t, srv.URL, "tok")
+	defer restore()
+
+	var err error
+	var errOut string
+	_ = captureStdoutAll(t, func() {
+		errOut = captureStderr(t, func() {
+			err = presentResultWithProvider(testProvider(t), nil, debugTraceResult(), confWithPolicies(t))
+		})
+	})
+
+	if err != nil {
+		t.Fatalf("err = %v, want nil: the platform answered evaluated:false", err)
+	}
+	// Without this the assertion below would also pass on a run that never
+	// reached the publish leg at all.
+	if pushes != 1 {
+		t.Fatalf("pushes = %d, want exactly 1: the run must have reached the publish leg", pushes)
+	}
+	if strings.Contains(errOut, "turn on score-push") {
+		t.Errorf("the badge nudge printed on a run that evaluated nothing, and there is no verdict to badge:\n%s", errOut)
+	}
+}
+
+// Row 63, the all-unappliable shape: policies DID resolve (len(runs) > 0),
+// but every one of their trees failed to apply, so buildPolicyResults sends
+// an empty results array and the push carries the same nothing-evaluated
+// marker as the zero-policy case above. publishRun's badge-nudge skip must
+// key on that same "no policy result produced" fact rather than on
+// len(runs) == 0, or this shape sails through with runs non-empty and starts
+// advertising a badge for a verdict nobody computed.
+func TestRunPlatformMode_Row63_AllUnappliableRunsDoesNotNudgeForABadge(t *testing.T) {
+	newGateFlagsCmd(t)
+	origPrint, origPushScore := printOutput, pushScore
+	printOutput, pushScore = true, false
+	defer func() { printOutput, pushScore = origPrint, origPushScore }()
+	scorePublishOnce = sync.Once{}
+
+	unreadableA := policyWithTree("Unreadable A", "pipelineMustNotEnableDebugTrace", unreadableControlConfig)
+	unreadableB := policyWithTree("Unreadable B", "pipelineMustNotUseDockerInDocker", unreadableControlConfig)
+	conf := confWithPolicies(t, unreadableA, unreadableB)
+
+	pushes := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		pushes++
+		w.WriteHeader(http.StatusAccepted)
+		_, _ = w.Write([]byte(`{"gate":{"evaluated":false,"reason":"policies_not_applicable"}}`))
+	}))
+	defer srv.Close()
+	restore := withPlatformTestEnv(t, srv.URL, "tok")
+	defer restore()
+
+	var err error
+	var errOut string
+	_ = captureStdoutAll(t, func() {
+		errOut = captureStderr(t, func() {
+			err = presentResultWithProvider(testProvider(t), nil, debugTraceResult(), conf)
+		})
+	})
+
+	if err != nil {
+		t.Fatalf("err = %v, want nil: the platform answered evaluated:false", err)
+	}
+	if pushes != 1 {
+		t.Fatalf("pushes = %d, want exactly 1: the run must have reached the publish leg", pushes)
+	}
+	if strings.Contains(errOut, "turn on score-push") {
+		t.Errorf("the badge nudge printed on a run whose policies all failed to apply, and there is no verdict to badge:\n%s", errOut)
+	}
 }

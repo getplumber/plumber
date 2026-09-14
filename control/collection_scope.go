@@ -151,9 +151,17 @@ func collectionBranchProtectionConfig(conf *configuration.Configuration) *config
 // The enabled check cannot be replaced by a nil test on the scope: with a
 // single collecting configuration the scope IS that configuration, so a
 // disabled control still reaches the collector, which no-ops on its own
-// guards. EVERY one of those guards is mirrored here, the unaddressable
+// guards. Every one of those guards this function can actually be asked
+// about is mirrored here: benched, disabled/no-config, and the unaddressable
 // project path included, so a lane recorded as collected always means a
 // fetch was attempted (platform decision row 62).
+//
+// enrichGitHubBranches' pipeline == nil guard is the one deliberately left
+// out: this function has no pipeline to test, and both call sites
+// (task_github.go) already dereference the pipeline they pass it (reading
+// DefaultBranch, then Jobs, to build the AnalysisResult) before
+// markGitHubLanes runs. A nil pipeline would have panicked earlier, so that
+// guard never has anything to fire on by the time this runs.
 func branchLaneCollected(conf *configuration.Configuration, projectPath string, scope *configuration.PlumberConfig) bool {
 	if scope == nil || !shouldRunControl(controlBranchMustBeProtected, conf) {
 		return false

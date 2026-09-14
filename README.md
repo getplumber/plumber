@@ -256,7 +256,13 @@ it to decide what to collect and what to report:
   gated by the platform, never failed locally.
 - **No policy, nothing evaluated.** If the platform is unreachable or resolves
   no policy for the project, the run evaluates nothing, prints one line saying
-  so, pushes nothing and exits 0.
+  so, writes no artifact and exits 0. A linked run whose platform resolved no
+  policy, or none of whose policies applied, is still reported to the platform,
+  marked as having evaluated nothing, so the project's freshness reflects the
+  analysis that just ran instead of the previous one; the platform records it
+  as not evaluable, with no score and no verdict. A platform the run could not
+  reach is reported nothing at all: it assigned no policy because it answered
+  nothing, so that run keeps pushing nothing and exits 0.
 - **The CI configuration comes from the platform.** Resolving `include:`
   directives needs an API a CI job token cannot reach, so platform mode reads
   the resolved configuration from the platform instead of asking the git host
