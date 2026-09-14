@@ -38,3 +38,46 @@ func TestPlatformModeNotices(t *testing.T) {
 		t.Fatalf("sentinel URL is not platform mode: got %v", lines)
 	}
 }
+
+// Row 64: --controls and --skip-controls are ignored on a linked run, and
+// platformModeNotices names each one the same way it names an inert
+// threshold.
+func TestPlatformModeNotices_Row64_NamesTheIgnoredControlFilters(t *testing.T) {
+	newGateFlagsCmd(t)
+	origURL := platformURL
+	origInclude, origSkip := controlsFilter, skipControls
+	defer func() {
+		platformURL = origURL
+		controlsFilter, skipControls = origInclude, origSkip
+	}()
+
+	conf := configuration.NewDefaultConfiguration()
+	conf.ConfigFilePath = ""
+
+	platformURL = "https://platform.example.com"
+	controlsFilter, skipControls = "a", ""
+	lines := platformModeNotices(conf)
+	if !contains(lines, "  --controls ignored: the platform's policies decide which controls run") {
+		t.Fatalf("expected a --controls notice, got %v", lines)
+	}
+
+	controlsFilter, skipControls = "", "b"
+	lines = platformModeNotices(conf)
+	if !contains(lines, "  --skip-controls ignored: the platform's policies decide which controls run") {
+		t.Fatalf("expected a --skip-controls notice, got %v", lines)
+	}
+
+	controlsFilter, skipControls = "", ""
+	lines = platformModeNotices(conf)
+	if contains(lines, "  --controls ignored: the platform's policies decide which controls run") ||
+		contains(lines, "  --skip-controls ignored: the platform's policies decide which controls run") {
+		t.Fatalf("neither flag set: expected no control-filter notice, got %v", lines)
+	}
+
+	controlsFilter, skipControls = "a", "b"
+	platformURL = platformSentinelURL
+	lines = platformModeNotices(conf)
+	if len(lines) != 0 {
+		t.Fatalf("sentinel URL is not platform mode: got %v", lines)
+	}
+}

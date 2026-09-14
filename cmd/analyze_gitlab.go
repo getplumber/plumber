@@ -404,7 +404,11 @@ func validateProviderFlags(flags analyzeFlags) error {
 	return nil
 }
 
-// parseControlsFilters validates and parses the --controls / --skip-controls flags.
+// parseControlsFilters validates and parses the --controls / --skip-controls
+// flags. On a linked run the validation still applies, but the returned
+// filters are always empty: the platform's resolved policies decide which
+// controls run, so a local job-level filter is ignored the same way a local
+// threshold is (row 64).
 func parseControlsFilters() (includeOnly, skip []string, err error) {
 	if controlsFilter != "" && skipControls != "" {
 		return nil, nil, fmt.Errorf("--controls and --skip-controls cannot be used together")
@@ -421,6 +425,16 @@ func parseControlsFilters() (includeOnly, skip []string, err error) {
 	skip, err = parseControlsFilter(skipControls)
 	if err != nil {
 		return nil, nil, err
+	}
+	// A linked run evaluates the platform's policies, and the platform's
+	// policy configuration is the ONLY way to exclude a control from it
+	// (platform decision row 64). A job-level filter here silently changed
+	// what every resolved policy evaluated and pushed, which is the same
+	// wrong-verdict failure platform mode exists to remove. The validation
+	// above still runs: a contradictory invocation is a broken pipeline in
+	// either mode, and platformModeNotices says the flags were ignored.
+	if platformPolicyMode(noControls) {
+		return nil, nil, nil
 	}
 	return includeOnly, skip, nil
 }

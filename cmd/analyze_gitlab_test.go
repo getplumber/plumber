@@ -128,6 +128,100 @@ func TestParseControlsFilters_NoControlsAlone(t *testing.T) {
 	}
 }
 
+// Row 64: a linked run evaluates the platform's resolved policies, and the
+// platform's policy configuration is the only way to exclude a control from
+// it. --controls / --skip-controls still parse and still validate (a
+// contradictory invocation is a broken pipeline in either mode), but on a
+// linked run they yield empty filters instead of narrowing what runs.
+func TestParseControlsFilters_Row64_IgnoredInPlatformMode(t *testing.T) {
+	origInclude, origSkip, origNone := controlsFilter, skipControls, noControls
+	origURL := platformURL
+	defer func() {
+		controlsFilter, skipControls, noControls = origInclude, origSkip, origNone
+		platformURL = origURL
+	}()
+
+	t.Run("--controls ignored when linked", func(t *testing.T) {
+		controlsFilter, skipControls, noControls = "pipelineMustNotEnableDebugTrace", "", false
+		platformURL = "https://platform.example.com"
+
+		include, skip, err := parseControlsFilters()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(include) != 0 || len(skip) != 0 {
+			t.Fatalf("expected both filters empty on a linked run, got include=%v skip=%v", include, skip)
+		}
+	})
+
+	t.Run("--skip-controls ignored when linked", func(t *testing.T) {
+		controlsFilter, skipControls, noControls = "", "pipelineMustNotEnableDebugTrace", false
+		platformURL = "https://platform.example.com"
+
+		include, skip, err := parseControlsFilters()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(include) != 0 || len(skip) != 0 {
+			t.Fatalf("expected both filters empty on a linked run, got include=%v skip=%v", include, skip)
+		}
+	})
+
+	t.Run("standalone run keeps parsing the filters", func(t *testing.T) {
+		controlsFilter, skipControls, noControls = "pipelineMustNotEnableDebugTrace", "", false
+		platformURL = ""
+
+		include, skip, err := parseControlsFilters()
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if len(include) != 1 || include[0] != "pipelineMustNotEnableDebugTrace" {
+			t.Fatalf("standalone run: expected the filter to survive, got %v", include)
+		}
+		if len(skip) != 0 {
+			t.Fatalf("skip: expected empty, got %v", skip)
+		}
+	})
+
+	for _, tc := range []struct {
+		name        string
+		platformURL string
+	}{
+		{"standalone", ""},
+		{"linked", "https://platform.example.com"},
+	} {
+		t.Run("--controls and --skip-controls still conflict, "+tc.name, func(t *testing.T) {
+			controlsFilter, skipControls, noControls = "a", "b", false
+			platformURL = tc.platformURL
+
+			_, _, err := parseControlsFilters()
+			if err == nil || !strings.Contains(err.Error(), "cannot be used together") {
+				t.Fatalf("expected mutual-exclusion error, got %v", err)
+			}
+		})
+
+		t.Run("--no-controls still conflicts with --controls, "+tc.name, func(t *testing.T) {
+			controlsFilter, skipControls, noControls = "a", "", true
+			platformURL = tc.platformURL
+
+			_, _, err := parseControlsFilters()
+			if err == nil || !strings.Contains(err.Error(), "--no-controls") {
+				t.Fatalf("expected a --no-controls conflict error, got %v", err)
+			}
+		})
+
+		t.Run("--no-controls still conflicts with --skip-controls, "+tc.name, func(t *testing.T) {
+			controlsFilter, skipControls, noControls = "", "b", true
+			platformURL = tc.platformURL
+
+			_, _, err := parseControlsFilters()
+			if err == nil || !strings.Contains(err.Error(), "--no-controls") {
+				t.Fatalf("expected a --no-controls conflict error, got %v", err)
+			}
+		})
+	}
+}
+
 func TestParseControlsFilters_IncludeOnly(t *testing.T) {
 	origInclude, origSkip := controlsFilter, skipControls
 	controlsFilter = "pipelineMustNotEnableDebugTrace,containerImageMustNotUseForbiddenTags"

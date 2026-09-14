@@ -151,7 +151,10 @@ The score is also the pass/fail gate for `plumber analyze` (exit code 1 on failu
 platform's gate verdict, computed per policy from each policy's `enforcement`
 and `min_points`; a locally supplied threshold prints an "ignored" notice. The
 JSON report then carries a `policies` array (one score per policy) and, at the
-top level, the platform's global score.
+top level, the platform's global score. `--controls` and `--skip-controls` are
+inert the same way: the platform's policy configuration is the only way to
+exclude a control from a linked run, so both flags print an "ignored" notice
+and every resolved policy still evaluates its full control set.
 
 A run where **zero controls were evaluated** fails the score gate rather than passing as an empty 100-point pipeline: a `.plumber.yaml` that enables no controls for the scanned provider (e.g. a `github:`-only config on a GitLab project), a filter that skips them all, and — on GitLab, where a missing or unparseable CI configuration leaves no control evaluated — a project with no usable CI. On GitLab this matches the historical default (compliance was 0 in those cases).
 

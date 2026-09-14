@@ -248,7 +248,10 @@ it to decide what to collect and what to report:
   The local file decides nothing on a linked run, collection included: what
   Plumber fetches is the union of the resolved policies' own configurations,
   collected once, so a control any policy enables has its data collected
-  even when the local file switches that control off.
+  even when the local file switches that control off. `--controls` and
+  `--skip-controls` are ignored the same way (one notice each): the
+  platform's policy configuration is the only way to exclude a control from
+  a linked run.
 - **The platform decides the exit code.** `--min-points`, `--min-score` and
   the deprecated `--threshold` are ignored in platform mode (one notice each):
   each policy's own `enforcement` and `min_points`, as configured on the

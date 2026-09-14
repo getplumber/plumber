@@ -9,13 +9,16 @@ import (
 )
 
 // platformModeNotices prints, once, what platform mode makes inert (spec s1):
-// a local configuration file that was read, and every local threshold that
-// was supplied. The file is not merely unevaluated: it is read for nothing
-// at all, since the resolved policies decide both what is evaluated and what
-// is collected, so the notice below is honest even about a local file that
-// would have enabled collection the policies do not need. Returns the lines
-// for tests. Silent outside platform mode and on a default component run (no
-// file, no threshold set).
+// a local configuration file that was read, every local threshold that was
+// supplied, and either of --controls / --skip-controls if set. The file is
+// not merely unevaluated: it is read for nothing at all, since the resolved
+// policies decide both what is evaluated and what is collected, so the
+// notice below is honest even about a local file that would have enabled
+// collection the policies do not need. The control filters are inert for the
+// same reason: the platform's policy configuration is the only way to
+// exclude a control from a linked run (row 64). Returns the lines for tests.
+// Silent outside platform mode and on a default component run (no file, no
+// threshold, no control filter set).
 func platformModeNotices(conf *configuration.Configuration) []string {
 	on, endpoint := effectivePlatformPush()
 	if !on {
@@ -35,6 +38,17 @@ func platformModeNotices(conf *configuration.Configuration) []string {
 	} {
 		if f.set {
 			lines = append(lines, fmt.Sprintf("  %s ignored: enforcement comes from the platform's policies", f.name))
+		}
+	}
+	for _, f := range []struct {
+		name string
+		set  bool
+	}{
+		{"--controls", controlsFilter != ""},
+		{"--skip-controls", skipControls != ""},
+	} {
+		if f.set {
+			lines = append(lines, fmt.Sprintf("  %s ignored: the platform's policies decide which controls run", f.name))
 		}
 	}
 	for _, l := range lines {
