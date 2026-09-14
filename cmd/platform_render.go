@@ -201,10 +201,22 @@ func blockingReason(runs []policyRun, gp platformGatePolicy) string {
 	return fmt.Sprintf(" (%d live failures)", gp.LiveFailCount)
 }
 
-// renderNothingEvaluated is the whole report of a platform-mode run that
+// renderNothingEvaluated is the local report of a platform-mode run that
 // resolved no policy (unreachable platform, or none assigned): one line
 // (spec s3). It never prints a score or a status, because nothing was
 // evaluated and a verdict here would be invented.
+//
+// It is not the whole of such a run any more: when the platform answered and
+// assigned nothing, the run is pushed with the nothing-evaluated marker
+// (row 63) and the platform's own verdict block follows this line. Only the
+// artifacts are withheld - there is no verdict to stamp on them.
+//
+// Which is why the line no longer promises an exit code. It used to end in
+// "exit 0", printed BEFORE the push, and the platform's answer to a marked
+// push is the thing that actually decides the exit: evaluated:false keeps it
+// 0, and a blocking answer does not. Announcing the outcome of a call that
+// has not been made yet is exactly the fabricated verdict this line exists
+// to avoid.
 func renderNothingEvaluated(rc *platform.RunContext) {
 	reason := "no policy assigned"
 	if rc != nil && rc.ContextErr != nil {
@@ -214,5 +226,5 @@ func renderNothingEvaluated(rc *platform.RunContext) {
 	if rc != nil {
 		endpoint, project = rc.Endpoint, rc.ProjectPath
 	}
-	fmt.Printf("  linked to %s: no policy resolved for %s (%s), nothing evaluated, exit 0\n", endpoint, project, reason)
+	fmt.Printf("  linked to %s: no policy resolved for %s (%s), nothing evaluated\n", endpoint, project, reason)
 }

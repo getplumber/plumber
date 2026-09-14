@@ -385,7 +385,13 @@ func TestRenderNothingEvaluated(t *testing.T) {
 
 	out := captureStdoutAll(t, func() { renderNothingEvaluated(rc) })
 
-	assertContains(t, out, "  linked to https://platform.example.com: no policy resolved for g/p (dial tcp: refused), nothing evaluated, exit 0")
+	assertContains(t, out, "  linked to https://platform.example.com: no policy resolved for g/p (dial tcp: refused), nothing evaluated")
+	// The line is printed BEFORE the push a marked run now makes (row 63),
+	// so it must not announce the exit code the platform's own answer
+	// decides.
+	if strings.Contains(out, "exit 0") {
+		t.Errorf("the notice promises an exit code it does not decide: %q", out)
+	}
 }
 
 // A reachable platform that assigned nothing is a different fact from an
@@ -395,7 +401,7 @@ func TestRenderNothingEvaluated_NoAssignment(t *testing.T) {
 
 	out := captureStdoutAll(t, func() { renderNothingEvaluated(rc) })
 
-	assertContains(t, out, "no policy resolved for g/p (no policy assigned), nothing evaluated, exit 0")
+	assertContains(t, out, "no policy resolved for g/p (no policy assigned), nothing evaluated")
 }
 
 // A verdict that never arrived because the token failed is NOT a fail-open.

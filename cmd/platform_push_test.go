@@ -1634,3 +1634,235 @@ func TestPlatformFindingsCarryDisplayMetadata(t *testing.T) {
 		t.Fatalf("an unknown control must not invent metadata: %+v", unknown)
 	}
 }
+
+// row63Fixture is one shape of a LINKED run, as the nothing-evaluated marker
+// (platform decision row 63) has to classify it: either the run reported a
+// policy verdict, or it evaluated nothing and says so.
+type row63Fixture struct {
+	name       string
+	conf       *configuration.Configuration
+	result     *control.AnalysisResult
+	wantMarker bool
+	wantReason string
+}
+
+// unreadableControlConfig is a control config the CLI cannot read at all
+// (truncated JSON). A policy declaring only this has a tree that FAILS TO
+// APPLY: policyConfigFromTree reports that none of its controls could be
+// read, so the policy is evaluated against nothing and its run is not
+// applied. That is the "policies_not_applicable" fact itself, rather than
+// the weaker "there was no pipeline to re-evaluate".
+const unreadableControlConfig = `{"enabled":`
+
+// confWithUnreachablePlatform is a LINKED run whose /context fetch failed:
+// the RunContext exists (platform mode was set up) but carries no Context,
+// which is what RunContext.Engaged answers false for. Such a run resolved no
+// policy because the platform said nothing, not because it assigned nothing.
+func confWithUnreachablePlatform(t *testing.T) *configuration.Configuration {
+	t.Helper()
+	conf := confWithPolicies(t)
+	conf.PlatformRun = &platform.RunContext{
+		Endpoint:    "https://platform.example.com",
+		ProjectPath: "g/p",
+		ContextErr:  errors.New("dial tcp: connection refused"),
+	}
+	return conf
+}
+
+// row63Fixtures builds the four shapes side by side, so the marker and the
+// results array are always asserted against the same set of runs.
+//
+// The second is the "not applicable" shape: two policies that DO declare a
+// tree, over a real retained pipeline, whose trees cannot be applied at all
+// (they group into one run, since they fail for the same reason), so nothing
+// is applied and nothing may be pushed as a verdict.
+//
+// The fourth is the one that is NOT a nothing-evaluated run: a platform that
+// never answered. It resolves no policy either, and it must still take the
+// standalone branch.
+func row63Fixtures(t *testing.T) []row63Fixture {
+	t.Helper()
+	baseline := policyWithTree("Baseline", "pipelineMustNotEnableDebugTrace", debugTraceControlConfig)
+	unreadableA := policyWithTree("Unreadable A", "pipelineMustNotEnableDebugTrace", unreadableControlConfig)
+	unreadableB := policyWithTree("Unreadable B", "pipelineMustNotUseDockerInDocker", unreadableControlConfig)
+	return []row63Fixture{
+		{
+			name:       "no policy resolved",
+			conf:       confWithPolicies(t),
+			result:     &control.AnalysisResult{},
+			wantMarker: true,
+			wantReason: "no_policy",
+		},
+		{
+			name:       "policies resolved, no tree applied",
+			conf:       confWithPolicies(t, unreadableA, unreadableB),
+			result:     debugTraceResult(),
+			wantMarker: true,
+			wantReason: "policies_not_applicable",
+		},
+		{
+			name:       "one applied run",
+			conf:       confWithPolicies(t, baseline),
+			result:     debugTraceResult(),
+			wantMarker: false,
+		},
+		{
+			name:       "the platform never answered",
+			conf:       confWithUnreachablePlatform(t),
+			result:     debugTraceResult(),
+			wantMarker: false,
+		},
+	}
+}
+
+// row63PushBody builds the push for one fixture and decodes the RAW wire
+// bytes, the way TestBuildPlatformPush_KeysAreSnakeCaseAndPolicyIsAString
+// does: the marker is a wire contract, and a decode back into this package's
+// own types would pass on a renamed or re-typed json tag.
+func row63PushBody(t *testing.T, f row63Fixture) (map[string]any, []byte) {
+	t.Helper()
+	runs := evaluatePlatformPolicies(testProvider(t), f.conf, f.result)
+	body, err := buildPlatformPush(testProvider(t), f.conf, f.result, nil, "team.plumber.yaml", runs)
+	if err != nil {
+		t.Fatalf("buildPlatformPush: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("push does not parse as JSON: %v", err)
+	}
+	return raw, body
+}
+
+// A linked run that resolved NO policy pushes the marker and no result at
+// all (row 63). Pushing the local configuration's verdict here would report
+// a verdict no policy asked for, and pushing a bare empty results array is
+// what the platform refuses outright (422).
+func TestBuildPlatformPush_Row63_NoPolicyResolvedSendsTheMarkerAndNoResults(t *testing.T) {
+	restore := withPlatformTestEnv(t, "https://platform.example.com", "")
+	defer restore()
+
+	f := row63Fixtures(t)[0]
+	raw, body := row63PushBody(t, f)
+
+	results, ok := raw["results"].([]any)
+	if !ok {
+		t.Fatalf("results = %#v, want an EMPTY array: the key is present and non-null on every push", raw["results"])
+	}
+	if len(results) != 0 {
+		t.Fatalf("results = %v, want no entry at all for a run that evaluated nothing", results)
+	}
+	if strings.Contains(string(body), `"policy"`) {
+		t.Errorf("a policy entry reached the wire on a run that evaluated nothing:\n%s", body)
+	}
+	evaluation, ok := raw["evaluation"].(map[string]any)
+	if !ok {
+		t.Fatalf("evaluation = %#v, want the nothing-evaluated marker (row 63)", raw["evaluation"])
+	}
+	if evaluation["nothing_evaluated"] != true {
+		t.Errorf("evaluation.nothing_evaluated = %v, want true", evaluation["nothing_evaluated"])
+	}
+	if evaluation["reason"] != f.wantReason {
+		t.Errorf("evaluation.reason = %v, want %q: the platform resolved no policy for this project", evaluation["reason"], f.wantReason)
+	}
+}
+
+// Policies WERE resolved and not one of their trees could be applied here:
+// the same empty push, a different reason. The two must not be collapsed -
+// the platform echoes the reason back through the gate, and "no policy
+// assigned" and "your policies did not apply" are different operator
+// problems.
+func TestBuildPlatformPush_Row63_AllTreesUnappliableSendsPoliciesNotApplicable(t *testing.T) {
+	restore := withPlatformTestEnv(t, "https://platform.example.com", "")
+	defer restore()
+
+	f := row63Fixtures(t)[1]
+	raw, _ := row63PushBody(t, f)
+
+	results, ok := raw["results"].([]any)
+	if !ok || len(results) != 0 {
+		t.Fatalf("results = %#v, want an empty array: a policy the CLI could not evaluate is absent from the push", raw["results"])
+	}
+	evaluation, ok := raw["evaluation"].(map[string]any)
+	if !ok {
+		t.Fatalf("evaluation = %#v, want the nothing-evaluated marker (row 63)", raw["evaluation"])
+	}
+	if evaluation["reason"] != f.wantReason {
+		t.Errorf("evaluation.reason = %v, want %q", evaluation["reason"], f.wantReason)
+	}
+}
+
+// An unreachable platform is NOT a nothing-evaluated run. The /context fetch
+// failed, so no policy was ASSIGNED - none was ANSWERED, and reporting
+// no_policy for it would blame the project's configuration for a third party
+// being down. Such a run keeps the existing degradation: the standalone
+// branch, the single locally-named entry, no marker.
+//
+// This is what pins the RunContext.Engaged term in buildPlatformPush.
+// Keying the marker on "a platform URL is set and a RunContext exists"
+// instead passes every other test in this file, and turns every unreachable
+// platform into a marked, resultless push.
+func TestBuildPlatformPush_Row63_UnreachablePlatformIsNotAMarkedRun(t *testing.T) {
+	restore := withPlatformTestEnv(t, "https://platform.example.com", "")
+	defer restore()
+
+	f := row63Fixtures(t)[3]
+	if platformRunOf(f.conf).Engaged() {
+		t.Fatal("the fixture must be a run whose context fetch FAILED (Engaged false)")
+	}
+	raw, _ := row63PushBody(t, f)
+
+	if v, present := raw["evaluation"]; present {
+		t.Errorf("evaluation = %#v on a run the platform never answered, want the key ABSENT: it evaluated nothing because nothing answered, which is the existing degradation and not a nothing-evaluated run", v)
+	}
+	results, _ := raw["results"].([]any)
+	if len(results) != 1 {
+		t.Fatalf("results = %#v, want the single locally-named entry the standalone branch builds", raw["results"])
+	}
+	entry, _ := results[0].(map[string]any)
+	if entry["policy"] != "team" {
+		t.Errorf("policy = %v, want the local config's name: the unreachable run keeps today's name-only push", entry["policy"])
+	}
+}
+
+// The golden shape of every push that came before the field existed: one
+// applied run reports its verdict and carries NO evaluation key. Absent is
+// what means "this push evaluated something", so an always-present marker
+// object would re-interpret every ordinary push.
+func TestBuildPlatformPush_Row63_AnOrdinaryPushCarriesNoEvaluationKey(t *testing.T) {
+	restore := withPlatformTestEnv(t, "https://platform.example.com", "")
+	defer restore()
+
+	raw, _ := row63PushBody(t, row63Fixtures(t)[2])
+
+	results, _ := raw["results"].([]any)
+	if len(results) == 0 {
+		t.Fatalf("results = %#v, want the applied run's entry", raw["results"])
+	}
+	if v, present := raw["evaluation"]; present {
+		t.Errorf("evaluation = %#v is present on a push that evaluated something, want the key ABSENT", v)
+	}
+}
+
+// The invariant the platform enforces from both sides (row 63): an empty
+// results array is legitimate ONLY with the marker (422 without it), and the
+// marker is refused outright when it rides a non-empty results array (422,
+// reason evaluation_marker_with_results). The two are derived from one
+// another here so they can never contradict each other on the wire.
+func TestBuildPlatformPush_Row63_MarkerAndResultsAreMutuallyExclusive(t *testing.T) {
+	restore := withPlatformTestEnv(t, "https://platform.example.com", "")
+	defer restore()
+
+	for _, f := range row63Fixtures(t) {
+		t.Run(f.name, func(t *testing.T) {
+			raw, _ := row63PushBody(t, f)
+			results, _ := raw["results"].([]any)
+			_, marked := raw["evaluation"]
+			if (len(results) == 0) != marked {
+				t.Fatalf("results = %d entries, marker present = %v: the platform 422s both halves of this disagreement", len(results), marked)
+			}
+			if marked != f.wantMarker {
+				t.Fatalf("marker present = %v, want %v", marked, f.wantMarker)
+			}
+		})
+	}
+}

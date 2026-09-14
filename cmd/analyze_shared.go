@@ -97,7 +97,14 @@ func continueRun(p provider.Provider, cmd *cobra.Command, conf *configuration.Co
 // still runs after writeOutputsWithProvider on that path.
 //
 // A run that resolved no policy evaluates NOTHING (spec s4, invariant 5): it
-// prints the one-line notice, exits 0, pushes nothing and writes no artifact.
+// prints the one-line notice and writes no artifact. When the platform
+// ANSWERED and assigned nothing, the run is still pushed, carrying the
+// nothing-evaluated marker and no policy result (row 63); the platform
+// records a not evaluable run and its gate answers evaluated:false, so the
+// exit stays 0 unless the platform itself says otherwise. A platform the run
+// could not reach is a different fact - it said nothing rather than assigned
+// nothing - and keeps today's behaviour: the notice, no push, exit 0.
+//
 // There is no local fallback anywhere on this path - a report produced from
 // the local configuration under a platform link is exactly the wrong-verdict
 // failure the mode exists to remove (QUESTIONS row 44) - and an artifact
@@ -116,16 +123,44 @@ func runPlatformMode(p provider.Provider, cmd *cobra.Command, conf *configuratio
 	// path could not be resolved). renderNothingEvaluated states the reason
 	// for either.
 	if len(runs) == 0 {
+		rc := platformRunOf(conf)
 		if printOutput {
-			renderNothingEvaluated(platformRunOf(conf))
+			renderNothingEvaluated(rc)
 		}
-		// Nothing was evaluated, so neither the degraded exit nor a gate can
-		// fire here (both are inert in platform mode anyway), but
-		// --fail-warnings is the other exit source spec s4 keeps and it is
-		// about the COLLECTION, not the verdict: a bare nil made the opt-in
-		// silently inert on exactly the runs where the warnings are all the
-		// operator has left.
-		return finalizeRun(result, summary, nil)
+		// The run still reaches the platform (row 63). Returning here lost
+		// it entirely: the platform kept showing the PREVIOUS run as the
+		// project's current one, so freshness lied about a project that had
+		// just been analysed. The push carries the nothing-evaluated marker
+		// and no policy result, the platform records a not evaluable run,
+		// and no verdict is fabricated at either end.
+		//
+		// It goes through publishRun, the same leg every other push takes,
+		// so the platform's own answer is printed and decides the exit code
+		// exactly as it does everywhere else. The rest of that leg has
+		// nothing to do here: summary.score is nil in platform mode by
+		// construction, and publishRun skips the score-publishing step on
+		// this branch, which publishes nothing under --platform but would
+		// otherwise invite a badge for a verdict nobody computed.
+		//
+		// Only a run the platform ANSWERED is pushed, the same condition
+		// buildPlatformPush marks on (RunContext.Engaged). A platform the
+		// run could not reach assigned nothing because it said nothing: it
+		// is not a nothing-evaluated run, the only verdict available for it
+		// would be the local configuration's (the wrong-verdict failure the
+		// mode exists to remove), and it keeps today's behaviour instead.
+		//
+		// No artifact is written and no post action runs on either branch:
+		// there is no verdict to stamp on a badge, a comment or a report.
+		//
+		// --fail-warnings is still the other exit source spec s4 keeps, and
+		// it is about the COLLECTION rather than the verdict, so
+		// finalizeRun keeps deciding: a blocking answer from the platform
+		// outranks it, a token failure does not.
+		var platformErr error
+		if rc.Engaged() {
+			_, platformErr = publishRun(p, conf, result, summary, nil)
+		}
+		return finalizeRun(result, summary, platformErr)
 	}
 	if printOutput {
 		renderPolicySections(p, conf, runs, controlsFilterList, skipControlsList)
@@ -257,8 +292,28 @@ func publishAndFinalize(p provider.Provider, cmd *cobra.Command, result *control
 // standalone run keeps writing them first; both callers run the same steps in
 // the same order, so the two paths cannot drift.
 func publishRun(p provider.Provider, conf *configuration.Configuration, result *control.AnalysisResult, summary complianceSummary, runs []policyRun) (*platformVerdict, error) {
-	jsonPayload := buildPublishPayload(p, conf, result, summary)
-	handleScorePublishing(p, conf, result, summary, jsonPayload)
+	// The score-publishing leg publishes nothing under --platform, but it is
+	// not silent: with score-push off it invites the operator to turn a live
+	// badge on. A linked run that evaluated nothing (row 63) has no score and
+	// no verdict, so there is nothing to put on a badge and nothing to
+	// advertise - and this push is the only reason that invitation would be
+	// printed here at all, since the branch used to return before the publish
+	// leg. Every other run keeps it.
+	//
+	// "Evaluated nothing" is keyed on runsProduceNoPolicyResult, the same
+	// predicate buildPlatformPush/buildPolicyResults use to decide the
+	// push's results array is empty (and so stamps the push's own
+	// nothing-evaluated marker): an empty runs slice is one way to reach
+	// it, and a linked run whose every resolved policy came back
+	// Applied == false (all unappliable, row 63) is another. len(runs) == 0
+	// alone caught only the first, letting the second sail through with a
+	// non-empty runs slice and start advertising a badge for a verdict
+	// nobody computed.
+	nothingEvaluated := summary.platformMode && runsProduceNoPolicyResult(runs)
+	if !nothingEvaluated {
+		jsonPayload := buildPublishPayload(p, conf, result, summary)
+		handleScorePublishing(p, conf, result, summary, jsonPayload)
+	}
 	verdict, platformErr := maybePushPlatform(p, conf, result, summary.score, runs)
 	reportPlatformOutcome(conf.PlatformRun)
 	// The verdict block closes the platform-mode report: it is the last

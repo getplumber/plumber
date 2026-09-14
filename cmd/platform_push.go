@@ -58,6 +58,10 @@ type platformPush struct {
 	Pipeline      platformPipeline       `json:"pipeline"`
 	CLI           platformCLI            `json:"cli"`
 	Collection    platformCollectionMeta `json:"collection"`
+	// Evaluation is the nothing-evaluated marker, present ONLY on a linked
+	// run that evaluated nothing at all (row 63). Absent means this push
+	// evaluated something, exactly as every push before the field existed.
+	Evaluation *platformEvaluation `json:"evaluation,omitempty"`
 	// Results carries one entry per policy. Local policy resolution always
 	// yields exactly one; a multi-policy platform grows this array without
 	// changing the shape of anything else.
@@ -111,6 +115,30 @@ type platformCollectionMeta struct {
 	SnapshotCollectedAt string   `json:"snapshot_collected_at,omitempty"`
 	MissingFields       []string `json:"missing_fields,omitempty"`
 }
+
+// platformEvaluation is the nothing-evaluated marker (platform decision row
+// 63). A linked run that resolved NO policy, or whose every resolved policy
+// tree failed to apply, has nothing to report: it used to either not push at
+// all (the run was lost and the platform kept showing the previous one as
+// current) or push an empty results array the platform refused outright.
+// Both were dishonest about the same fact - an analysis ran, and it evaluated
+// nothing - so the run is pushed with this marker instead and the platform
+// records it as not evaluable: no score, no verdict, and a gate that answers
+// evaluated:false with the reason echoed.
+//
+// It only ever rides an EMPTY results array. The platform rejects a marked
+// push that carries results (422), and rightly: the marker must only make
+// the record say LESS.
+type platformEvaluation struct {
+	NothingEvaluated bool   `json:"nothing_evaluated"`
+	Reason           string `json:"reason,omitempty"`
+}
+
+// The two reasons the contract's closed set defines.
+const (
+	platformReasonNoPolicy              = "no_policy"
+	platformReasonPoliciesNotApplicable = "policies_not_applicable"
+)
 
 // platformPolicyResult is one policy's verdict: what it ran (EffectiveConfig),
 // its explicit per-control findings, and the resulting score. Policy is a
@@ -339,19 +367,47 @@ func platformPolicyNameFor(configPath string) string {
 // runs are the evaluated platform policy runs (evaluatePlatformPolicies).
 // When there are any, the results array carries one entry per policy they
 // cover and nothing else - see buildPolicyResults, which owns that decision.
-// With none, this is a run that resolved no platform policy, and the push
-// keeps the single locally-named entry the CLI has always sent.
+// With none, either the platform answered and assigned nothing (the run is
+// pushed with the nothing-evaluated marker, row 63) or there is no platform
+// answer at all, and the push keeps the single locally-named entry the CLI
+// has always sent.
 func buildPlatformPush(p providerPkg.Provider, conf *configuration.Configuration, result *control.AnalysisResult, score *control.PlumberScoreResult, configPath string, runs []policyRun) ([]byte, error) {
 	forgeHost, projectPath, _ := resolveScoreTarget(p, conf)
 
-	// The two branches are exclusive on purpose: a push built from the policy
-	// runs never touches the local configuration, and a standalone push never
-	// builds a per-policy entry.
+	// The branches are exclusive on purpose: a push built from the policy
+	// runs never touches the local configuration, a linked run that evaluated
+	// nothing sends no policy result at all rather than the local
+	// configuration's verdict (row 63), and a standalone push never builds a
+	// per-policy entry.
+	//
+	// The middle branch is keyed on RunContext.Engaged, the state that says
+	// the /context fetch SUCCEEDED, not merely that a platform URL was set.
+	// A platform the run could not reach assigned nothing because it said
+	// nothing: that run is not a nothing-evaluated one, it is the existing
+	// degradation to local collection, and it keeps pushing its local entry
+	// exactly as it does today.
+	linked, _ := effectivePlatformPush()
+	rc := platformRunOf(conf)
+	answered := linked && rc.Engaged()
 	var results []platformPolicyResult
-	if len(runs) > 0 {
+	switch {
+	case len(runs) > 0:
 		results = buildPolicyResults(runs, p, conf)
-	} else {
+	case answered:
+		results = []platformPolicyResult{}
+	default:
 		results = []platformPolicyResult{standalonePolicyResult(p, conf, result, score, configPath)}
+	}
+	// Marker exactly when there is nothing to report, which is what makes an
+	// empty results array a legitimate run instead of a malformed envelope.
+	// Derived from the results themselves so the two can never contradict
+	// each other on the wire.
+	var evaluation *platformEvaluation
+	if answered && len(results) == 0 {
+		evaluation = &platformEvaluation{
+			NothingEvaluated: true,
+			Reason:           nothingEvaluatedReason(rc),
+		}
 	}
 
 	push := platformPush{
@@ -363,6 +419,7 @@ func buildPlatformPush(p providerPkg.Provider, conf *configuration.Configuration
 		Pipeline:      platformPipelineFor(p),
 		CLI:           platformCLI{Version: strings.TrimPrefix(Version, "v")},
 		Collection:    platformCollectionFor(conf, result),
+		Evaluation:    evaluation,
 		Results:       results,
 	}
 

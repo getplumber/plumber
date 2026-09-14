@@ -66,6 +66,23 @@ func buildPolicyResults(runs []policyRun, p providerPkg.Provider, conf *configur
 	return out
 }
 
+// runsProduceNoPolicyResult reports whether buildPolicyResults would return
+// an empty results array for runs: true when there is no run, or none of
+// them applied (the only condition the loop above filters on). publishRun's
+// badge-nudge skip keys on this exact predicate rather than reimplementing
+// its own idea of "nothing evaluated" (len(runs) == 0 alone), so the skip
+// and the push's own nothing-evaluated marker cannot drift apart: a linked
+// run whose policies all failed to apply (row 63) has runs != nil but still
+// produces no policy result, and both must agree it did.
+func runsProduceNoPolicyResult(runs []policyRun) bool {
+	for _, run := range runs {
+		if run.Applied {
+			return false
+		}
+	}
+	return true
+}
+
 // platformRunOf reads the run context off conf, tolerating a nil conf. A
 // nil *RunContext is standalone mode and every accessor on it answers
 // accordingly, so callers get one uniform "no platform" path instead of
@@ -86,6 +103,24 @@ func realPolicyID(pol platform.Policy) string {
 		return ""
 	}
 	return pol.ID
+}
+
+// nothingEvaluatedReason names WHY a linked run evaluated nothing: the
+// platform resolved no policy for this project at all, or policies were
+// resolved and not one of their trees could be applied here (row 63). A
+// closed set of two values; the platform tolerates an unknown one but
+// records no reason for it, so nothing else is ever sent.
+//
+// It answers only for a run whose /context fetch SUCCEEDED (the caller gates
+// on RunContext.Engaged). A run that never reached the platform resolved no
+// policy because it got no answer, not because none was assigned, and
+// reporting no_policy for it would blame the project's configuration for a
+// third party being unreachable.
+func nothingEvaluatedReason(rc *platform.RunContext) string {
+	if len(rc.Policies()) == 0 {
+		return platformReasonNoPolicy
+	}
+	return platformReasonPoliciesNotApplicable
 }
 
 // policyConfigVersion is the schema version every assembled policy
