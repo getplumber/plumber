@@ -2011,7 +2011,7 @@ the policy from the repo landing page and the "Security" tab.
 | `0` | The Plumber Score meets the gate (`--min-points` / `--min-score`) |
 | `1` | The Plumber Score is below the gate |
 | `2` | Invalid usage, configuration, or a runtime / provider / auth / network failure |
-| `3` | A check could not be verified and `--fail-warnings` is set (e.g. an action version that could not be resolved), or the run was degraded |
+| `3` | A check could not be verified and `--fail-warnings` is set (e.g. an action version that could not be resolved), or the run was degraded, and a blocking platform gate (exit 1) outranks it |
 
 ### `.plumber.yaml` control names
 

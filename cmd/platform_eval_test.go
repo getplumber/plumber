@@ -169,6 +169,31 @@ func TestEvaluatePlatformPolicies_DerivedPlaceholder_UsesEmbeddedDefault(t *test
 	}
 }
 
+// Row 62: a policy with a blank or nil-uuid id that carries its own tree
+// must not be swept into the derived placeholder's group. It is grouped by
+// its own configFingerprint like any other tree-bearing policy, so it stays
+// distinguishable from the real "[Plumber default]" placeholder even though
+// both fail IsReal.
+func TestEvaluatePlatformPolicies_Row62_BlankIdWithTreeGroupsByFingerprintNotDerived(t *testing.T) {
+	blank := policyWithTree("Blank", "pipelineMustNotEnableDebugTrace", debugTraceControlConfig)
+	blank.ID = ""
+	conf := confWithPolicies(t, blank, derivedDefaultPolicy())
+	// A local config that enables nothing must not influence either run.
+	conf.PlumberConfig = &configuration.PlumberConfig{Version: "2.0"}
+
+	runs := evaluatePlatformPolicies(testProvider(t), conf, debugTraceResult())
+
+	if len(runs) != 2 {
+		t.Fatalf("want 2 runs (the blank-id tree and the derived placeholder, distinct groups), got %d: %+v", len(runs), runs)
+	}
+	if runs[0].Names() != "Blank" || runs[0].Derived {
+		t.Fatalf("the blank-id tree-bearing policy must group on its own, not derived: %+v", runs[0])
+	}
+	if runs[1].Names() != "[Plumber default]" || !runs[1].Derived {
+		t.Fatalf("the derived placeholder must still be its own group: %+v", runs[1])
+	}
+}
+
 // R6: no retained IR means nothing can be re-evaluated.
 func TestEvaluatePlatformPolicies_NoRetainedPipeline_NotApplied(t *testing.T) {
 	a := policyWithTree("A", "pipelineMustNotEnableDebugTrace", debugTraceControlConfig)

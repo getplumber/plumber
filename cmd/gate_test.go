@@ -732,6 +732,42 @@ func TestFinalizeRun_OrderingPriority(t *testing.T) {
 	})
 }
 
+// TestFinalizeRun_Row62_BlockingGateOutranksFailWarnings pins row 62: a
+// blocking platform verdict IS this run's verdict, so it outranks the
+// --fail-warnings exit. Only the gate outranks it; a *PlatformTokenError
+// stays last, below --fail-warnings, so a broken id-token grant can still
+// never mask a security finding the scan just made.
+func TestFinalizeRun_Row62_BlockingGateOutranksFailWarnings(t *testing.T) {
+	passingGate := complianceSummary{minPoints: 100, score: scoreWithPoints(100), controlCount: 1}
+	origFail := failWarnings
+	failWarnings = true
+	defer func() { failWarnings = origFail }()
+	result := &control.AnalysisResult{Warnings: []string{"could not verify something"}}
+
+	t.Run("a blocking gate error wins over --fail-warnings", func(t *testing.T) {
+		gateErr := &PlatformGateError{Reason: "blocked", Policies: nil}
+		var want *PlatformGateError
+		if err := finalizeRun(result, passingGate, gateErr); !errors.As(err, &want) {
+			t.Fatalf("finalizeRun = %v (%T), want *PlatformGateError", err, err)
+		}
+	})
+
+	t.Run("a platform token failure still loses to --fail-warnings", func(t *testing.T) {
+		tokenErr := &PlatformTokenError{Reason: "no CI OIDC id-token available"}
+		var want *DegradedError
+		if err := finalizeRun(result, passingGate, tokenErr); !errors.As(err, &want) {
+			t.Fatalf("finalizeRun = %v (%T), want *DegradedError", err, err)
+		}
+	})
+
+	t.Run("no platform error: --fail-warnings still wins", func(t *testing.T) {
+		var want *DegradedError
+		if err := finalizeRun(result, passingGate, nil); !errors.As(err, &want) {
+			t.Fatalf("finalizeRun = %v (%T), want *DegradedError", err, err)
+		}
+	})
+}
+
 // Spec s4: in platform mode the local score gate is inert, whatever the flags
 // say; the exit code is the platform's verdict (finalizeRun below).
 func TestGate_PlatformModeIgnoresLocalScoreGates(t *testing.T) {
@@ -748,7 +784,7 @@ func TestGate_PlatformModeIgnoresLocalScoreGates(t *testing.T) {
 }
 
 // Spec s4: the degraded exit 3 does not apply in platform mode; the platform's
-// gate decides. --fail-warnings still applies, and outranks the platform error.
+// gate decides. A blocking platform gate outranks --fail-warnings (row 62).
 func TestFinalizeRun_PlatformModeOrdering(t *testing.T) {
 	gateErr := &PlatformGateError{Reason: "blocked", Policies: nil}
 	s := complianceSummary{platformMode: true, score: scoreWithPoints(0), controlCount: 1, minPoints: 100, minPointsSet: true}
@@ -764,9 +800,9 @@ func TestFinalizeRun_PlatformModeOrdering(t *testing.T) {
 	failWarnings = true
 	defer func() { failWarnings = origFail }()
 	warned := &control.AnalysisResult{Warnings: []string{"could not verify"}}
-	var degradedErr *DegradedError
-	if err := finalizeRun(warned, s, gateErr); !errors.As(err, &degradedErr) {
-		t.Fatalf("--fail-warnings outranks the platform gate, got %v", err)
+	var gotGateErr *PlatformGateError
+	if err := finalizeRun(warned, s, gateErr); !errors.As(err, &gotGateErr) {
+		t.Fatalf("the blocking platform gate outranks --fail-warnings, got %v", err)
 	}
 }
 

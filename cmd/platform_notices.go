@@ -10,8 +10,12 @@ import (
 
 // platformModeNotices prints, once, what platform mode makes inert (spec s1):
 // a local configuration file that was read, and every local threshold that
-// was supplied. Returns the lines for tests. Silent outside platform mode and
-// on a default component run (no file, no threshold set).
+// was supplied. The file is not merely unevaluated: it is read for nothing
+// at all, since the resolved policies decide both what is evaluated and what
+// is collected, so the notice below is honest even about a local file that
+// would have enabled collection the policies do not need. Returns the lines
+// for tests. Silent outside platform mode and on a default component run (no
+// file, no threshold set).
 func platformModeNotices(conf *configuration.Configuration) []string {
 	on, endpoint := effectivePlatformPush()
 	if !on {
