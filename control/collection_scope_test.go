@@ -1,6 +1,9 @@
 package control
 
 import (
+	"reflect"
+	"sort"
+	"strings"
 	"testing"
 
 	"github.com/getplumber/plumber/configuration"
@@ -542,7 +545,6 @@ func TestMarkUncollectedLanes_Row62_AStandaloneRunMarksNothing(t *testing.T) {
 		laneGitLabSecurityPolicy: securityPolicyControlEnabled,
 	}
 
-	boolPtr := func(b bool) *bool { return &b }
 	two := 2
 	controlsWith := func(enabled *bool) configuration.ControlsConfig {
 		return configuration.ControlsConfig{
@@ -588,6 +590,136 @@ func TestMarkUncollectedLanes_Row62_AStandaloneRunMarksNothing(t *testing.T) {
 
 			if len(result.NotEvaluable) != 0 {
 				t.Fatalf("a standalone run has no uncollected lane to mark, got %v", result.NotEvaluable)
+			}
+		})
+	}
+}
+
+// configurableControlsFor returns every control name this provider can have
+// switched on in a configuration: the ControlsConfig fields (whose yaml tag
+// IS the control name) that apply to the provider and are not benched in
+// code. Derived from the struct rather than listed, so a control added to
+// ControlsConfig is covered by the drift guard below without editing it.
+func configurableControlsFor(provider string) []string {
+	typ := reflect.TypeOf(configuration.ControlsConfig{})
+	names := make([]string, 0, typ.NumField())
+	for i := 0; i < typ.NumField(); i++ {
+		name, _, _ := strings.Cut(typ.Field(i).Tag.Get("yaml"), ",")
+		if name == "" || !configuration.IsControlApplicableTo(name, provider) {
+			continue
+		}
+		if configuration.IsBenched(provider, name) {
+			continue
+		}
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	return names
+}
+
+// configEnablingOnly returns a Configuration for provider whose ONLY enabled
+// control is name, so a gate evaluated over it answers about that one control
+// and nothing else. The field is located by its yaml tag and filled through
+// reflection for the same reason: no per-control literal to keep in step.
+func configEnablingOnly(t *testing.T, provider, name string) *configuration.Configuration {
+	t.Helper()
+	var controls configuration.ControlsConfig
+	v := reflect.ValueOf(&controls).Elem()
+	typ := v.Type()
+	for i := 0; i < typ.NumField(); i++ {
+		if tag, _, _ := strings.Cut(typ.Field(i).Tag.Get("yaml"), ","); tag != name {
+			continue
+		}
+		cfg := reflect.New(typ.Field(i).Type.Elem())
+		enabled := cfg.Elem().FieldByName("Enabled")
+		if !enabled.IsValid() || enabled.Kind() != reflect.Pointer || enabled.Type().Elem().Kind() != reflect.Bool {
+			t.Fatalf("control %s: %s has no Enabled *bool field, so this helper cannot switch it on", name, typ.Field(i).Type)
+		}
+		on := true
+		enabled.Set(reflect.ValueOf(&on))
+		v.Field(i).Set(cfg)
+		pc := &configuration.PlumberConfig{Version: "2.0"}
+		switch provider {
+		case configuration.ProviderGitLab:
+			pc.GitLab = &configuration.ProviderConfig{Controls: controls}
+		case configuration.ProviderGitHub:
+			pc.GitHub = &configuration.ProviderConfig{Controls: controls}
+		default:
+			t.Fatalf("unknown provider %q", provider)
+		}
+		return &configuration.Configuration{PlumberConfig: pc}
+	}
+	t.Fatalf("control %s has no ControlsConfig field", name)
+	return nil
+}
+
+// TestControlsByGatedLane_Row62_MirrorsTheGatesItStandsFor is the drift guard
+// for the one coupling row 62 introduced: controlsByGatedLane restates, as a
+// hand-written literal, a fact that already lives in the collection gates
+// (protectionDataNeeded, cicdVariableControlEnabled,
+// securityPolicyControlEnabled, branchLaneCollected, shouldScanMutableExec).
+// Nothing else pins that the two keep agreeing, and they must: a control
+// listed under a lane whose gate does not consider it is marked
+// not_evaluable on every per-policy push even though its data WAS collected,
+// and a control the gate considers but the table omits passes vacuously over
+// a lane that never ran.
+//
+// The expectation is DERIVED rather than restated: for each lane, switch on
+// exactly one control at a time and ask that lane's own gate whether it would
+// collect. The controls whose enabling flips the gate are, by definition, the
+// controls that have nothing to evaluate when the lane did not run, and that
+// set must be exactly the table's row.
+//
+// The lane keys are compared both ways too, so a lane added to the table
+// without its gate named here (the shape that forgets markLaneCollected) does
+// not slip through silently (platform decision row 62).
+func TestControlsByGatedLane_Row62_MirrorsTheGatesItStandsFor(t *testing.T) {
+	gatesByProviderLane := map[string]map[string]func(*configuration.Configuration) bool{
+		configuration.ProviderGitLab: {
+			laneGitLabProtection:     protectionDataNeeded,
+			laneGitLabVariables:      cicdVariableControlEnabled,
+			laneGitLabSecurityPolicy: securityPolicyControlEnabled,
+		},
+		configuration.ProviderGitHub: {
+			// The one lane whose gate needs the collector's own inputs: the
+			// scope it is handed and the project path it addresses.
+			laneGitHubBranches: func(conf *configuration.Configuration) bool {
+				return branchLaneCollected(conf, "acme/app", collectionBranchProtectionConfig(conf))
+			},
+			laneGitHubActionSource: shouldScanMutableExec,
+		},
+	}
+
+	for provider, gates := range gatesByProviderLane {
+		t.Run(provider, func(t *testing.T) {
+			table := controlsByGatedLane[provider]
+			for lane := range table {
+				if _, ok := gates[lane]; !ok {
+					t.Fatalf("lane %q is in controlsByGatedLane but has no gate here: name the gate that records it, or the table cannot be checked against anything", lane)
+				}
+			}
+			for lane, gate := range gates {
+				if _, ok := table[lane]; !ok {
+					t.Fatalf("lane %q has a gate but no controlsByGatedLane row: every gated collection owes its controls a reason", lane)
+				}
+				t.Run(lane, func(t *testing.T) {
+					var derived []string
+					for _, name := range configurableControlsFor(provider) {
+						if gate(configEnablingOnly(t, provider, name)) {
+							derived = append(derived, name)
+						}
+					}
+					want := append([]string(nil), table[lane]...)
+					sort.Strings(want)
+					if len(derived) != len(want) {
+						t.Fatalf("lane %q collects for %v, but the table lists %v", lane, derived, want)
+					}
+					for i := range want {
+						if derived[i] != want[i] {
+							t.Fatalf("lane %q collects for %v, but the table lists %v", lane, derived, want)
+						}
+					}
+				})
 			}
 		})
 	}

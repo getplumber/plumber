@@ -204,9 +204,9 @@ func TestIncludeList_DirectUnmarshal(t *testing.T) {
 // definitions caused hardcoded jobs to be invisible: yaml.Unmarshal only read
 // the first document, so GitlabJobs was always empty for such files.
 func TestUnmarshalMultiDocGitlabCI_SpecSeparated(t *testing.T) {
-	conf, err := unmarshalMultiDocGitlabCI([]byte(specSeparatedCI))
+	conf, err := ParseGitlabCIConf([]byte(specSeparatedCI))
 	if err != nil {
-		t.Fatalf("unmarshalMultiDocGitlabCI: %v", err)
+		t.Fatalf("ParseGitlabCIConf: %v", err)
 	}
 
 	// The `spec:` block must be captured.
@@ -293,17 +293,17 @@ variables:
 `
 
 // TestUnmarshalMultiDocGitlabCI_AllFieldsCovered asserts that every exported
-// field of GitlabCIConf participates in the multi-doc merge — both that it
+// field of GitlabCIConf participates in the multi-doc merge: both that it
 // lands when set, and that the merge contract documented on
-// unmarshalMultiDocGitlabCI (first-doc-wins for scalars, union for
+// ParseGitlabCIConf (first-doc-wins for scalars, union for
 // GitlabJobs) actually holds. Acts as a tripwire: when a new field is
 // added to GitlabCIConf without a corresponding merge branch, this test
 // fails with a precise "field X is zero after merge" message, instead of
 // the silent drop bug we are fixing.
 func TestUnmarshalMultiDocGitlabCI_AllFieldsCovered(t *testing.T) {
-	conf, err := unmarshalMultiDocGitlabCI([]byte(specSeparatedFullCI))
+	conf, err := ParseGitlabCIConf([]byte(specSeparatedFullCI))
 	if err != nil {
-		t.Fatalf("unmarshalMultiDocGitlabCI: %v", err)
+		t.Fatalf("ParseGitlabCIConf: %v", err)
 	}
 
 	// Every doc1 scalar must survive (first-doc-wins).
@@ -353,16 +353,93 @@ func TestUnmarshalMultiDocGitlabCI_AllFieldsCovered(t *testing.T) {
 
 	// Reflection guard: every exported field on GitlabCIConf must be
 	// non-zero in the merged result. If anyone adds a new field to
-	// GitlabCIConf without a merge branch in unmarshalMultiDocGitlabCI,
+	// GitlabCIConf without a merge branch in ParseGitlabCIConf,
 	// they need to also extend the fixture above so this check passes.
 	// Failing here is the explicit "you added a field, now wire the
 	// merge" signal.
-	v := reflect.ValueOf(conf)
+	v := reflect.ValueOf(*conf)
 	for i := 0; i < v.NumField(); i++ {
 		f := v.Field(i)
 		name := v.Type().Field(i).Name
 		if f.IsZero() {
-			t.Errorf("GitlabCIConf.%s is zero after merge — field added without a merge branch in unmarshalMultiDocGitlabCI, or fixture specSeparatedFullCI missing this key", name)
+			t.Errorf("GitlabCIConf.%s is zero after merge: field added without a merge branch in ParseGitlabCIConf, or fixture specSeparatedFullCI missing this key", name)
 		}
+	}
+}
+
+// specSeparatedWithIncludeCI mirrors specSeparatedCI but adds an include
+// entry with its own declared inputs in the document after the `spec:`
+// separator - the exact shape ParseGitlabCIConf exists to preserve for a
+// consumer outside this package, since a plain yaml.Unmarshal would only
+// ever see the first document and never this include list at all.
+const specSeparatedWithIncludeCI = `
+spec:
+  inputs:
+    gitlab_token:
+      default: $GITLAB_TOKEN
+
+---
+
+include:
+  - component: gitlab.com/getplumber/plumber/analyze@~latest
+    inputs:
+      stage: test
+
+plumber:
+  stage: .pre
+  script:
+    - /plumber analyze
+`
+
+// TestParseGitlabCIConf_Row54_ExportedMultiDocParse pins ParseGitlabCIConf as
+// the exported entry point a consumer outside this package uses to parse a
+// project's own CI file the way the collector does: merging every document
+// of a `spec:` + `---` layout so the include list, with each include's
+// declared inputs, survives instead of only the first document. Row 54.
+func TestParseGitlabCIConf_Row54_ExportedMultiDocParse(t *testing.T) {
+	conf, err := ParseGitlabCIConf([]byte(specSeparatedWithIncludeCI))
+	if err != nil {
+		t.Fatalf("ParseGitlabCIConf: %v", err)
+	}
+	if conf == nil {
+		t.Fatal("expected a non-nil *GitlabCIConf")
+	}
+
+	// The `spec:` block from the first document must be captured.
+	if conf.Spec == nil {
+		t.Error("expected Spec to be populated from the first document, got nil")
+	}
+
+	// The `plumber` job from the second document must be present.
+	if conf.GitlabJobs == nil {
+		t.Fatal("expected GitlabJobs to be non-nil")
+	}
+	if _, ok := conf.GitlabJobs["plumber"]; !ok {
+		t.Errorf("expected 'plumber' job in GitlabJobs, got keys: %v", jobKeys(conf.GitlabJobs))
+	}
+
+	// The include entry and its declared inputs must survive the merge.
+	if len(conf.Include) != 1 {
+		t.Fatalf("expected exactly one include entry, got %d: %#v", len(conf.Include), conf.Include)
+	}
+	includeEntry, ok := conf.Include[0].(map[interface{}]interface{})
+	if !ok {
+		t.Fatalf("expected include entry to decode as a map, got %T: %#v", conf.Include[0], conf.Include[0])
+	}
+	inputs, ok := includeEntry["inputs"].(map[interface{}]interface{})
+	if !ok {
+		t.Fatalf("expected include entry to carry an inputs map, got %#v", includeEntry["inputs"])
+	}
+	if inputs["stage"] != "test" {
+		t.Errorf("expected include inputs.stage to be \"test\", got %#v", inputs["stage"])
+	}
+
+	// A decode failure must return a nil pointer and a non-nil error.
+	badConf, err := ParseGitlabCIConf([]byte("a: [\n"))
+	if err == nil {
+		t.Fatal("expected an error for invalid YAML")
+	}
+	if badConf != nil {
+		t.Errorf("expected a nil *GitlabCIConf on error, got %#v", badConf)
 	}
 }
