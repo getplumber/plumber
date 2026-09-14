@@ -82,6 +82,13 @@ type AnalysisResult struct {
 	// report not-evaluable rather than a false pass (see StatusFor).
 	VariablesData *gitlab.GitlabVariablesAnalysisData `json:"-"`
 
+	// SecurityPolicyData is the security-policy linkage collection, retained
+	// for the same reason ProtectionData and VariablesData are: the
+	// per-policy evaluation recomputes this control's tier caveat against
+	// the POLICY's configuration, and the two booleans below cannot answer
+	// "is a policy project linked" on their own (row 62).
+	SecurityPolicyData *gitlab.SecurityPolicyData `json:"-"`
+
 	// SecurityPolicyEvaluable is true when the security policy project linkage
 	// was read authoritatively (a successful GraphQL read). False when it could
 	// not be read (auth error, or the field is unavailable on the instance), so
@@ -186,6 +193,16 @@ type AnalysisResult struct {
 	// findings still win: a control that DID fire is failed, because a
 	// violation found on partial data is still a violation.
 	NotEvaluable map[string]string `json:"notEvaluable,omitempty"`
+
+	// CollectedLanes records which GATED data collections this run actually
+	// performed, keyed by the lane names in collection_scope.go. A gate that
+	// did not fire leaves its lane absent, and the per-policy path then
+	// marks the controls reading that lane not_evaluable with
+	// lane_not_collected rather than letting an empty result read as a pass
+	// (platform decision row 62). True as soon as the collection ran, from
+	// the platform's snapshot or from the git host: what matters here is
+	// whether the data was sought at all, not whether it arrived.
+	CollectedLanes map[string]bool `json:"-"`
 }
 
 // GitHubAnalysisStats holds per-control aggregations computed by

@@ -817,6 +817,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		return err
 	}
 	conf.PlatformRun = rc
+	applyCollectionScope(p, conf)
 	reportPlatformMode(conf.PlatformRun)
 
 	return runWithProvider(p, cmd, conf, controlsFilterList, skipControlsList)

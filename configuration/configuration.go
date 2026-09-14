@@ -58,6 +58,20 @@ type Configuration struct {
 	// ask for.
 	PlatformRun *platform.RunContext
 
+	// CollectionConfigs are the control configurations whose UNION decides
+	// what this run COLLECTS. In platform mode that is one entry per
+	// resolved policy configuration (platform decision row 62): each policy
+	// is evaluated under its own control tree, so a control any policy
+	// enables must have its data collected, and gating collection on the
+	// run's own configuration instead made those policies evaluate over
+	// data nobody fetched.
+	//
+	// Empty means "use the run's own PlumberConfig", which is every
+	// standalone run and every path that has not resolved a policy set.
+	// Collection still happens ONCE: this is a union of GATES, not a second
+	// collection pass.
+	CollectionConfigs []*PlumberConfig
+
 	// Local CI configuration (from local filesystem)
 	LocalCIConfigContent []byte // Content of local .gitlab-ci.yml (nil if using remote)
 	UsingLocalCIConfig   bool   // True when using local CI config file

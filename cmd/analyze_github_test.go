@@ -1,9 +1,19 @@
 package cmd
 
 import (
+	"encoding/json"
+	"errors"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/getplumber/plumber/configuration"
+	"github.com/getplumber/plumber/control"
+	"github.com/getplumber/plumber/internal/platform"
+	"github.com/getplumber/plumber/utils"
 )
 
 // ---------------------------------------------------------------------------
@@ -157,4 +167,107 @@ func TestLoadGitHubConfig_WarningsNoFail(t *testing.T) {
 
 func writeMinimalConfig(path string) error {
 	return os.WriteFile(path, []byte("version: \"2.0\"\n"), 0644)
+}
+
+// ---------------------------------------------------------------------------
+// platform mode before collection
+// ---------------------------------------------------------------------------
+
+// TestRunGitHubAnalyze_Row62_EstablishesPlatformModeBeforeCollection pins the
+// ordering on both GitHub entry points: what the platform resolved decides
+// which data lanes collection has to fetch at all, so the run context and the
+// collecting configurations must already be on the Configuration when the
+// collection is entered. Observed at the collection seam itself: the stub
+// records what it was handed and stops the run there, so a setup that happened
+// afterwards would be recorded as an empty one (platform decision row 62).
+func TestRunGitHubAnalyze_Row62_EstablishesPlatformModeBeforeCollection(t *testing.T) {
+	t.Setenv("CI", "true")
+
+	policy := policyWithTree("Actions", "actionsMustNotExecuteMutableRemoteCode", `{"enabled":true}`)
+	contextBody, err := json.Marshal(platform.ProjectContext{Policies: []platform.Policy{policy}})
+	if err != nil {
+		t.Fatalf("marshal context: %v", err)
+	}
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if strings.HasSuffix(r.URL.Path, "/context") {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write(contextBody)
+			return
+		}
+		w.WriteHeader(http.StatusNotFound)
+	}))
+	defer srv.Close()
+	// The GitHub id-token is minted over HTTP from the runtime's own endpoint,
+	// which is what makes a GitHub platform run exercisable without a runner.
+	mint := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{"value":"id-token"}`))
+	}))
+	defer mint.Close()
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", mint.URL)
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "req-token")
+
+	origURL, origPrint, origConfig, origExplicit := platformURL, printOutput, configFile, configExplicitlySet
+	platformURL, printOutput = srv.URL, false
+	configFile, configExplicitlySet = filepath.Join(t.TempDir(), ".plumber.yaml"), false
+	defer func() {
+		platformURL, printOutput = origURL, origPrint
+		configFile, configExplicitlySet = origConfig, origExplicit
+	}()
+
+	// Stopping at the collection seam keeps the test to the ordering claim: the
+	// run never reaches presentation, scoring or the push.
+	stopped := errors.New("collection reached")
+
+	for _, tc := range []struct {
+		name string
+		run  func(t *testing.T, observe func(*configuration.Configuration)) error
+	}{
+		{
+			name: "local clone",
+			run: func(t *testing.T, observe func(*configuration.Configuration)) error {
+				orig := githubAnalysis
+				githubAnalysis = func(conf *configuration.Configuration) (*control.AnalysisResult, error) {
+					observe(conf)
+					return nil, stopped
+				}
+				t.Cleanup(func() { githubAnalysis = orig })
+				info := &utils.GitRemoteInfo{Host: githubDotCom, ProjectPath: "owner/repo", RepoRoot: t.TempDir()}
+				return runGitHubAnalyze(info, nil, nil)
+			},
+		},
+		{
+			name: "upstream fetch",
+			run: func(t *testing.T, observe func(*configuration.Configuration)) error {
+				orig := githubAnalysisRemote
+				githubAnalysisRemote = func(conf *configuration.Configuration, owner, repo, ref string) (*control.AnalysisResult, error) {
+					observe(conf)
+					return nil, stopped
+				}
+				t.Cleanup(func() { githubAnalysisRemote = orig })
+				return runGitHubAnalyzeRemote(githubDotCom, "owner/repo", "main", nil, nil)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var engagedAtCollection bool
+			var collectionConfigsAtCollection int
+			var runErr error
+			_ = captureStderr(t, func() {
+				runErr = tc.run(t, func(conf *configuration.Configuration) {
+					engagedAtCollection = conf.PlatformRun.Engaged()
+					collectionConfigsAtCollection = len(conf.CollectionConfigs)
+				})
+			})
+
+			if !errors.Is(runErr, stopped) {
+				t.Fatalf("want the run to stop at the collection seam, got %v", runErr)
+			}
+			if !engagedAtCollection {
+				t.Fatal("platform mode was not established when collection began: the lanes collection has to fetch are decided by what the platform resolved")
+			}
+			if collectionConfigsAtCollection != 1 {
+				t.Fatalf("collecting configurations at collection = %d, want the one resolved policy's tree", collectionConfigsAtCollection)
+			}
+		})
+	}
 }

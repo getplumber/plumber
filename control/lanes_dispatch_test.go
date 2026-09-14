@@ -7,6 +7,7 @@ import (
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/gitlab"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
+	"github.com/getplumber/plumber/internal/ir"
 	"github.com/getplumber/plumber/internal/platform"
 )
 
@@ -409,6 +410,126 @@ func TestPerPolicyMarkingUsesThePolicysOwnControls(t *testing.T) {
 	if _, marked := policyMarks.NotEvaluable["pipelineMustNotIncludeHardcodedJobs"]; !marked {
 		t.Error("a control the POLICY enables must be marked when its lane supplied nothing, " +
 			"or its findings reach that policy's pushed verdict")
+	}
+}
+
+// TestPerPolicyMarkingCoversTheGitHubArm_Row62 is the sibling of the test
+// above for the provider it leaves out.
+//
+// markPlatformLaneGapsFor is GitLab-only by design: every reason it knows
+// about describes a GitLab snapshot lane or a GitLab include resolution. So
+// a GitHub policy got no per-policy marking at all, and GitHub's failure
+// direction is worse than GitLab's. A GitLab settings control with no
+// collected data abstains with no reason; GitHub's branchMustBeProtected
+// iterates an empty branch list and PASSES, so a policy enabling it over a
+// lane this run never fetched was pushed a clean verdict.
+//
+// The run here is the ordinary platform-mode one: the local configuration
+// does not enable the control, so its lane was never gated open, while the
+// resolved policy does enable it (platform decision row 62).
+func TestPerPolicyMarkingCoversTheGitHubArm_Row62(t *testing.T) {
+	on := true
+	local := &configuration.PlumberConfig{Version: "2.0"}
+	policyEnables := &configuration.PlumberConfig{
+		Version: "2.0",
+		GitHub: &configuration.ProviderConfig{Controls: configuration.ControlsConfig{
+			BranchMustBeProtected: &configuration.BranchProtectionControlConfig{
+				Enabled:      &on,
+				NamePatterns: []string{"main"},
+			},
+		}},
+	}
+	conf := &configuration.Configuration{PlumberConfig: local}
+
+	// No CollectedLanes: the branch-protection fetch never happened.
+	result := &AnalysisResult{
+		CiValid:        true,
+		GitHubPipeline: &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, ProjectPath: "acme/app"},
+	}
+
+	scoped, _, ok := ReEvaluateForConfig(result, conf, configuration.ProviderGitHub, policyEnables)
+	if !ok {
+		t.Fatal("a GitHub run retaining its IR must re-evaluate")
+	}
+
+	if reason := scoped.NotEvaluable[controlBranchMustBeProtected]; reason != ReasonLaneNotCollected {
+		t.Fatalf("reason = %q, want %q", reason, ReasonLaneNotCollected)
+	}
+	var entry ControlEntry
+	for _, e := range GitHubControls(policyEnables) {
+		if e.ControlName == controlBranchMustBeProtected {
+			entry = e
+		}
+	}
+	if status := StatusFor(entry, scoped, 0); status != StatusError {
+		t.Errorf("status = %q, want %q: an empty findings list over an uncollected lane is not a pass", status, StatusError)
+	}
+}
+
+// TestReEvaluateForConfig_Row62_GitHubStatsFollowThePolicy covers the same
+// row-62 gap as the tier caveats (65bc3f6) for GitHubStats: the denominators
+// every GitHub control's status and header are read from are derived from
+// the CONFIG (forbidden tags, trusted owners, security-job patterns), so a
+// scoped result sharing the run's *GitHubAnalysisStats pointer judges a
+// policy's controls against another configuration's denominators.
+//
+// The run leaves containerImageMustNotUseForbiddenTags at its default (the
+// image's "latest" tag is forbidden under the built-in list), while the
+// policy configures its own tags list that does not include "latest" - the
+// scoped ImagesUsingForbidden must reflect the POLICY's list, not the run's.
+// The run's own GitHubStats is seeded with a value neither the default nor
+// the policy config would produce, so the assertion only passes if a fresh
+// stats object was aggregated rather than the run's pointer inherited.
+//
+// UnverifiedScriptsFound is seeded the same stale way to cover the finding-
+// count half: ApplyGitHubFindingCounts must run against the SCOPED findings
+// (none here trigger ISSUE-per-script), not carry over the run's number.
+func TestReEvaluateForConfig_Row62_GitHubStatsFollowThePolicy(t *testing.T) {
+	local := &configuration.PlumberConfig{Version: "2.0"}
+	policyConf := &configuration.PlumberConfig{
+		Version: "2.0",
+		GitHub: &configuration.ProviderConfig{Controls: configuration.ControlsConfig{
+			ContainerImageMustNotUseForbiddenTags: &configuration.ImageForbiddenTagsControlConfig{
+				Tags: []string{"custom-tag"},
+			},
+		}},
+	}
+	conf := &configuration.Configuration{PlumberConfig: local}
+
+	pipeline := &ir.NormalizedPipeline{
+		Provider:    ir.ProviderGitHub,
+		ProjectPath: "acme/app",
+		Jobs: []ir.Job{
+			{Name: "build", Image: &ir.Image{Name: "foo", Tag: "latest"}},
+		},
+	}
+
+	result := &AnalysisResult{
+		CiValid:        true,
+		GitHubPipeline: pipeline,
+		// The run's own stats, seeded with values neither the default nor
+		// the policy config produce, so an inherited pointer is caught.
+		GitHubStats: &GitHubAnalysisStats{ImagesUsingForbidden: 1, UnverifiedScriptsFound: 7},
+	}
+
+	scoped, _, ok := ReEvaluateForConfig(result, conf, configuration.ProviderGitHub, policyConf)
+	if !ok {
+		t.Fatal("a GitHub run retaining its IR must re-evaluate")
+	}
+
+	if scoped.GitHubStats == result.GitHubStats {
+		t.Fatal("scoped.GitHubStats must not be the run's own pointer: each policy needs its own denominators")
+	}
+	if scoped.GitHubStats.ImagesUsingForbidden != 0 {
+		t.Errorf("ImagesUsingForbidden = %d, want 0: the policy's tags list does not forbid \"latest\"",
+			scoped.GitHubStats.ImagesUsingForbidden)
+	}
+	if scoped.GitHubStats.UnverifiedScriptsFound != 0 {
+		t.Errorf("UnverifiedScriptsFound = %d, want 0: it must be recomputed from the SCOPED findings, "+
+			"not inherited from the run's stale stats", scoped.GitHubStats.UnverifiedScriptsFound)
+	}
+	if result.GitHubStats.ImagesUsingForbidden != 1 {
+		t.Error("the run's own GitHubStats must be left untouched by the policy's re-evaluation")
 	}
 }
 

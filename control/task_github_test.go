@@ -380,6 +380,91 @@ func TestRunGitHubAnalysisRemote_MarksUnconfiguredControlNotEvaluable(t *testing
 	}
 }
 
+// TestRunGitHubAnalysisRemote_Row62_CollectsForThePolicyUnion pins the two
+// GitHub collection lanes onto the union of the collecting configurations: a
+// run whose OWN configuration disables a control must still collect that
+// control's lane when a resolved policy enables it, and the result must record
+// which lanes ran (platform decision row 62).
+func TestRunGitHubAnalysisRemote_Row62_CollectsForThePolicyUnion(t *testing.T) {
+	boolPtr := func(b bool) *bool { return &b }
+	githubConfig := func(controls configuration.ControlsConfig) *configuration.PlumberConfig {
+		return &configuration.PlumberConfig{
+			Version: "2.0",
+			GitHub:  &configuration.ProviderConfig{Controls: controls},
+		}
+	}
+	mutableExec := func(enabled bool) configuration.ControlsConfig {
+		return configuration.ControlsConfig{
+			ActionsMustNotExecuteMutableRemoteCode: &configuration.EnabledOnlyControlConfig{Enabled: boolPtr(enabled)},
+		}
+	}
+	branchProtection := func(enabled bool) configuration.ControlsConfig {
+		return configuration.ControlsConfig{
+			BranchMustBeProtected: &configuration.BranchProtectionControlConfig{
+				Enabled:      boolPtr(enabled),
+				NamePatterns: []string{"main"},
+			},
+		}
+	}
+
+	t.Run("the action-source scan is asked for by a policy the local config disables", func(t *testing.T) {
+		var gotScanMutableExec bool
+		swapRemoteScan(t, func(host, owner, repo, ref string, enrich, scanMutableExec bool, progressFn githubpkg.ProgressFunc) (*ir.NormalizedPipeline, []error, error) {
+			gotScanMutableExec = scanMutableExec
+			return remoteScanStub(host, owner, repo, ref, enrich, scanMutableExec, progressFn)
+		})
+
+		conf := &configuration.Configuration{
+			PlumberConfig:     githubConfig(mutableExec(false)),
+			CollectionConfigs: []*configuration.PlumberConfig{githubConfig(mutableExec(true))},
+		}
+
+		result, err := RunGitHubAnalysisRemote(conf, "owner", "repo", "main")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !gotScanMutableExec {
+			t.Fatal("the collector was told not to scan action source, but a collecting configuration enables the control")
+		}
+		if !result.CollectedLanes[laneGitHubActionSource] {
+			t.Fatalf("the action-source lane must be recorded as collected, got %v", result.CollectedLanes)
+		}
+		if result.CollectedLanes[laneGitHubBranches] {
+			t.Fatalf("no configuration enables branchMustBeProtected: the branch lane must stay unrecorded, got %v", result.CollectedLanes)
+		}
+	})
+
+	t.Run("the branch-protection fetch runs for a policy the local config disables", func(t *testing.T) {
+		swapRemoteScan(t, remoteScanStub)
+
+		conf := &configuration.Configuration{
+			// A closed port: the fetch fails immediately without reaching any
+			// service, and the failure is itself the evidence that the scope
+			// handed to the collector came from the union. Had the run's own
+			// configuration been passed, the control is disabled there and no
+			// fetch would have been attempted at all.
+			GithubAPIHost: "127.0.0.1:1",
+			PlumberConfig: githubConfig(branchProtection(false)),
+			CollectionConfigs: []*configuration.PlumberConfig{
+				githubConfig(branchProtection(true)),
+				githubConfig(branchProtection(false)),
+			},
+		}
+
+		result, err := RunGitHubAnalysisRemote(conf, "owner", "repo", "main")
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if !result.CollectedLanes[laneGitHubBranches] {
+			t.Fatalf("the branch-protection lane must be recorded as collected, got %v", result.CollectedLanes)
+		}
+		if !result.DataCollectionDegraded {
+			t.Fatal("the branch-protection fetch was attempted and failed, so the run is degraded: " +
+				"a run that never attempted it would not be, which is what proves the union scope reached the collector")
+		}
+	})
+}
+
 // findControlEntry returns the ControlEntry named name out of entries, or
 // fails the test. Small helper shared by the two tests above.
 func findControlEntry(t *testing.T, entries []ControlEntry, name string) ControlEntry {

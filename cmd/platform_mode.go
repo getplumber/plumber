@@ -232,6 +232,34 @@ func platformAnalyzedSha(p providerPkg.Provider, conf *configuration.Configurati
 	return "", false
 }
 
+// applyCollectionScope records the control configurations whose UNION drives
+// this run's data collection: one per resolved policy (platform decision row
+// 62).
+//
+// It runs BEFORE collection, which is the whole point: what the platform
+// resolved decides which lanes collection has to fetch at all. Each tree is
+// assembled by configForPlatformPolicy, the same function the per-policy
+// evaluation uses, so the set collected for and the set evaluated can never
+// describe different trees. A policy whose tree could not be applied
+// contributes nothing: it evaluates nothing, so there is nothing to collect
+// on its behalf.
+//
+// With no platform run, or a context that resolved no policy, the list stays
+// empty and collection reads the run's own configuration exactly as a
+// standalone run does.
+func applyCollectionScope(p providerPkg.Provider, conf *configuration.Configuration) {
+	if conf == nil {
+		return
+	}
+	var configs []*configuration.PlumberConfig
+	for _, pol := range platformRunOf(conf).Policies() {
+		if cfg, _, _ := configForPlatformPolicy(p.Name(), pol); cfg != nil {
+			configs = append(configs, cfg)
+		}
+	}
+	conf.CollectionConfigs = configs
+}
+
 // reportPlatformMode prints what platform mode resolved. It runs before the
 // analysis output so an operator reads which policy set and which CI
 // configuration produced the verdict they are about to see, rather than
