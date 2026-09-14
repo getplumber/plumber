@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 
@@ -446,7 +447,7 @@ func outputTextWithProvider(p provider.Provider, result *control.AnalysisResult,
 		renderDegradedCaveat(result.DegradedReasons)
 	}
 
-	controls, groups := buildProviderControlSummariesAndGroups(p, result, conf.PlumberConfig, controlsFilterList, skipControlsList)
+	controls, groups := buildProviderControlSummariesAndGroups(p, result, conf.PlumberConfig, conf.PlatformRun.Active(), controlsFilterList, skipControlsList)
 	// Nothing was selected, so listing every control as "skipped" is noise
 	// that reads like a misconfiguration.
 	if s.noControls {
@@ -532,7 +533,13 @@ func countNotEvaluated(groups []findingGroup) int {
 // parameter rather than conf.PlumberConfig because in platform mode that is
 // the POLICY's configuration, not the run's: a section rendered from the
 // local config would enumerate controls the policy never declared.
-func buildProviderControlSummariesAndGroups(p provider.Provider, result *control.AnalysisResult, pc *configuration.PlumberConfig, controlsFilterList, skipControlsList []string) ([]controlSummary, []findingGroup) {
+//
+// linked is conf.PlatformRun.Active(): whether this run is linked to the
+// platform at all. It decides which not-evaluated bucket below applies (row
+// 62) - the caller supplies it rather than this function inspecting a
+// *configuration.Configuration itself, because the platform-render caller
+// passes r.Config (the POLICY's configuration), never the run's conf.
+func buildProviderControlSummariesAndGroups(p provider.Provider, result *control.AnalysisResult, pc *configuration.PlumberConfig, linked bool, controlsFilterList, skipControlsList []string) ([]controlSummary, []findingGroup) {
 	findingsByControl := control.FindingsByControl(result.Findings)
 	entries := p.Controls(pc)
 	control.MarkSkippedByFilter(entries, controlsFilterList, skipControlsList)
@@ -556,13 +563,35 @@ func buildProviderControlSummariesAndGroups(p provider.Provider, result *control
 		stats := provider.BuildControlStats(p.Name(), e.ControlName, result, pc, findings)
 		// A control whose lane supplied nothing must not render as passed.
 		//
-		// Keyed on result.NotEvaluable rather than StatusFor: StatusFor also
-		// returns StatusError for the older run-wide degradation signals,
-		// and re-bucketing those would change what a STANDALONE run prints.
+		// On a run LINKED to the platform, the bucket is
+		// control.StatusFor(...) == control.StatusError: the same
+		// predicate the push uses (platformFindingsFor) and the same one
+		// EvaluatedControlCount already reads for row 45, so the job log
+		// and the platform record can no longer disagree about what was
+		// evaluated (platform decision row 62).
+		//
+		// A STANDALONE run keeps the older, narrower bucket, keyed on
+		// result.NotEvaluable alone rather than on StatusFor: StatusFor
+		// also returns StatusError for the run-wide degradation signals
+		// (nil ProtectionData/VariablesData, CiMissing, ...), and
+		// re-bucketing those on a run the platform never reads would
+		// change what this terminal has always printed - a deliberate
+		// earlier decision (nothing platform-side depends on it), kept
+		// unchanged rather than widened along with the linked case.
+		//
+		// The REASON is still only the machine-readable one this run
+		// recorded: the older run-wide signals name no single control, and
+		// inventing a reason for them here would be worse than printing
+		// none - the same rule notEvaluableReasonData applies on the push.
 		reason := ""
 		notEvaluable := false
 		if !skipped && result != nil {
-			reason, notEvaluable = result.NotEvaluable[e.ControlName]
+			if linked {
+				notEvaluable = control.StatusFor(e, result, len(findings)) == control.StatusError
+				reason = result.NotEvaluable[e.ControlName]
+			} else {
+				reason, notEvaluable = result.NotEvaluable[e.ControlName]
+			}
 		}
 		// #447: the Controls table's issue count and per-severity tally
 		// deliberately count EVERY finding, dismissed ones included. This is
@@ -606,7 +635,8 @@ func buildProviderControlSummariesAndGroups(p provider.Provider, result *control
 // policy runs rather than from the collected result: their consumers key on
 // one alert per finding, and the collected result's findings are the LOCAL
 // configuration's, which platform mode does not publish. CSV and OCSF are
-// untouched by this task and still describe the collected run.
+// not exceptions: both take reportResult and runs too, and so describe the
+// same policy union as every other finding-derived artifact.
 func writeOutputsWithProvider(p provider.Provider, result *control.AnalysisResult, conf *configuration.Configuration, s complianceSummary, runs []policyRun, verdict *platformVerdict) error {
 	// Artifacts are still written on a degraded run (they are files the user
 	// asked for, and the exit-3 gate, not the file's absence, protects CI).
@@ -829,10 +859,14 @@ func buildPublishPayload(p provider.Provider, conf *configuration.Configuration,
 }
 
 // finalizeRun applies the exit-code gates in priority order: a degraded run
-// (incomplete data) fails at exit 3 regardless of the gate (#220); then
-// --fail-warnings fails at exit 3 when "could not verify" warnings exist; then
-// the score gate (or the deprecated --threshold gate). A platform token failure
-// is evaluated LAST so a broken id-token grant can never mask a security
+// (incomplete data) fails at exit 3 regardless of the gate (#220); then a
+// blocking platform verdict (*PlatformGateError), which IS this run's
+// verdict and so outranks --fail-warnings (row 62): exit 3 says "a check
+// could not be verified", exit 1 says "the platform blocked this pipeline",
+// and a run that is both must report the blocking one; then --fail-warnings
+// fails at exit 3 when "could not verify" warnings exist; then the score
+// gate (or the deprecated --threshold gate). A platform token failure is
+// evaluated LAST so a broken id-token grant can never mask a security
 // finding the scan just made.
 //
 // In platform mode (s.platformMode) the degraded exit 3 and the local score
@@ -842,6 +876,19 @@ func buildPublishPayload(p provider.Provider, conf *configuration.Configuration,
 func finalizeRun(result *control.AnalysisResult, s complianceSummary, platformErr error) error {
 	if result.DataCollectionDegraded && !s.platformMode {
 		return &IncompleteDataError{Reasons: result.DegradedReasons}
+	}
+
+	// A blocking platform verdict IS this run's verdict, so it outranks the
+	// --fail-warnings exit (platform decision row 62): exit 3 says "a check
+	// could not be verified", exit 1 says "the platform blocked this
+	// pipeline", and a run that is both must report the blocking one.
+	//
+	// Only the gate outranks it. A *PlatformTokenError stays last, below the
+	// local gates, so a broken id-token grant can still never mask a
+	// security finding the scan just made.
+	var gateErr *PlatformGateError
+	if errors.As(platformErr, &gateErr) {
+		return platformErr
 	}
 	if failWarnings && len(result.Warnings) > 0 {
 		return &DegradedError{Count: len(result.Warnings)}

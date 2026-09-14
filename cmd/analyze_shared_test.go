@@ -6,6 +6,7 @@ import (
 
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
+	"github.com/getplumber/plumber/gitlab"
 	"github.com/getplumber/plumber/provider"
 )
 
@@ -97,4 +98,139 @@ func TestPrintSummaryScoreBanner_Row45DegradedTakesPrecedenceOverWithheldScore(t
 	if strings.Contains(out, "no control was evaluated") {
 		t.Fatalf("a degraded run must not print the generic withheld-score line, got:\n%s", out)
 	}
+}
+
+// ---------------------------------------------------------------------------
+// buildProviderControlSummariesAndGroups, row 62: on a run LINKED to the
+// platform, bucket not-evaluated controls the same way the push does
+// (control.StatusFor(...) == control.StatusError). A STANDALONE run keeps
+// today's narrower bucket, keyed on result.NotEvaluable alone.
+// ---------------------------------------------------------------------------
+
+func TestBuildProviderControlSummariesAndGroups_Row62_BucketsLikeThePush(t *testing.T) {
+	p := &provider.GitLabProvider{}
+
+	t.Run("linked run, nil VariablesData buckets both variable controls not-evaluable", func(t *testing.T) {
+		pc := &configuration.PlumberConfig{GitLab: &configuration.ProviderConfig{Controls: configuration.ControlsConfig{
+			CicdVariablesMustBeProtected: &configuration.EnabledOnlyControlConfig{Enabled: boolPtr(true)},
+			CicdVariablesMustBeMasked:    &configuration.EnabledOnlyControlConfig{Enabled: boolPtr(true)},
+		}}}
+		result := &control.AnalysisResult{CiValid: true, VariablesData: nil}
+
+		_, groups := buildProviderControlSummariesAndGroups(p, result, pc, true, nil, nil)
+
+		found := 0
+		for _, g := range groups {
+			if g.Title != "CI/CD variables must be protected" && g.Title != "CI/CD variables must be masked" {
+				continue
+			}
+			found++
+			if !g.NotEvaluable {
+				t.Fatalf("%s: want NotEvaluable true on a linked run whose VariablesData is nil, got false", g.Title)
+			}
+			if g.NotEvaluableReason != "" {
+				t.Fatalf("%s: VariablesData==nil names no single control in result.NotEvaluable, want an empty reason, got %q", g.Title, g.NotEvaluableReason)
+			}
+		}
+		if found != 2 {
+			t.Fatalf("want both variable controls present, found %d", found)
+		}
+		if n := countNotEvaluated(groups); n != 2 {
+			t.Fatalf("countNotEvaluated: want 2, got %d", n)
+		}
+	})
+
+	t.Run("standalone run, nil VariablesData keeps today's pass-with-caveat bucket", func(t *testing.T) {
+		pc := &configuration.PlumberConfig{GitLab: &configuration.ProviderConfig{Controls: configuration.ControlsConfig{
+			CicdVariablesMustBeProtected: &configuration.EnabledOnlyControlConfig{Enabled: boolPtr(true)},
+			CicdVariablesMustBeMasked:    &configuration.EnabledOnlyControlConfig{Enabled: boolPtr(true)},
+		}}}
+		result := &control.AnalysisResult{CiValid: true, VariablesData: nil}
+
+		_, groups := buildProviderControlSummariesAndGroups(p, result, pc, false, nil, nil)
+
+		found := 0
+		for _, g := range groups {
+			if g.Title != "CI/CD variables must be protected" && g.Title != "CI/CD variables must be masked" {
+				continue
+			}
+			found++
+			if g.NotEvaluable {
+				t.Fatalf("%s: standalone run must keep today's bucket (result.NotEvaluable only), got NotEvaluable true", g.Title)
+			}
+		}
+		if found != 2 {
+			t.Fatalf("want both variable controls present, found %d", found)
+		}
+		if n := countNotEvaluated(groups); n != 0 {
+			t.Fatalf("countNotEvaluated: want 0 on the unchanged standalone bucket, got %d", n)
+		}
+	})
+
+	t.Run("a control named in result.NotEvaluable keeps its reason, linked or not", func(t *testing.T) {
+		pc := &configuration.PlumberConfig{GitLab: &configuration.ProviderConfig{Controls: configuration.ControlsConfig{
+			BranchMustBeProtected: &configuration.BranchProtectionControlConfig{Enabled: boolPtr(true)},
+		}}}
+		result := &control.AnalysisResult{
+			CiValid:      true,
+			NotEvaluable: map[string]string{"branchMustBeProtected": "include_attribution_unavailable"},
+		}
+
+		for _, linked := range []bool{true, false} {
+			_, groups := buildProviderControlSummariesAndGroups(p, result, pc, linked, nil, nil)
+			for _, g := range groups {
+				if g.Title != "Branch must be protected" {
+					continue
+				}
+				if !g.NotEvaluable {
+					t.Fatalf("linked=%v: want NotEvaluable true, got false", linked)
+				}
+				if g.NotEvaluableReason != "include_attribution_unavailable" {
+					t.Fatalf("linked=%v: want the reason from result.NotEvaluable, got %q", linked, g.NotEvaluableReason)
+				}
+			}
+		}
+	})
+
+	t.Run("a skipped control stays skipped, not not-evaluable", func(t *testing.T) {
+		pc := &configuration.PlumberConfig{GitLab: &configuration.ProviderConfig{Controls: configuration.ControlsConfig{
+			BranchMustBeProtected: &configuration.BranchProtectionControlConfig{Enabled: boolPtr(false)},
+		}}}
+		result := &control.AnalysisResult{CiValid: true}
+
+		_, groups := buildProviderControlSummariesAndGroups(p, result, pc, true, nil, nil)
+		for _, g := range groups {
+			if g.Title != "Branch must be protected" {
+				continue
+			}
+			if !g.Skipped {
+				t.Fatalf("want Skipped true for a disabled control, got false")
+			}
+			if g.NotEvaluable {
+				t.Fatalf("a disabled control must never also read as not-evaluable")
+			}
+		}
+	})
+
+	t.Run("a passing control on a healthy run is untouched", func(t *testing.T) {
+		pc := &configuration.PlumberConfig{GitLab: &configuration.ProviderConfig{Controls: configuration.ControlsConfig{
+			CicdVariablesMustBeProtected: &configuration.EnabledOnlyControlConfig{Enabled: boolPtr(true)},
+		}}}
+		result := &control.AnalysisResult{
+			CiValid:       true,
+			VariablesData: &gitlab.GitlabVariablesAnalysisData{Known: true},
+		}
+
+		for _, linked := range []bool{true, false} {
+			_, groups := buildProviderControlSummariesAndGroups(p, result, pc, linked, nil, nil)
+			for _, g := range groups {
+				if g.Title != "CI/CD variables must be protected" {
+					continue
+				}
+				if g.NotEvaluable {
+					t.Fatalf("linked=%v: a passing control with known data must not be bucketed not-evaluable", linked)
+				}
+			}
+		}
+	})
 }

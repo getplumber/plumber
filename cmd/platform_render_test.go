@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/getplumber/plumber/control"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	"github.com/getplumber/plumber/internal/platform"
 )
@@ -259,6 +260,68 @@ func TestRenderPlatformVerdict_LiveFailuresReasonWithoutMinPoints(t *testing.T) 
 
 	assertContains(t, out, "  Live   block    BLOCKING (3 live failures)\n")
 	assertContains(t, out, "  Exit 1: Live blocks\n")
+}
+
+// Row 62: blockingReason must not print a min_points comparison that does
+// not hold. A policy can carry a min_points and still be blocked for a
+// different reason (the live-failure budget), and the line must say that
+// instead of a false "91 < min_points 80".
+func TestBlockingReason_Row62_OnlyClaimsAThresholdItCanShow(t *testing.T) {
+	eighty := 80
+	policyID := "pol-1"
+	gp := platformGatePolicy{ID: policyID, LiveFailCount: 2}
+
+	t.Run("min_points set but not missed falls back to live failures", func(t *testing.T) {
+		runs := []policyRun{{
+			Policies: []platform.Policy{{ID: policyID, MinPoints: &eighty}},
+			Score:    &control.PlumberScoreResult{FinalPoints: 91},
+		}}
+
+		got := blockingReason(runs, gp)
+
+		if got != " (2 live failures)" {
+			t.Fatalf("got %q, want %q", got, " (2 live failures)")
+		}
+	})
+
+	t.Run("min_points set and missed prints the comparison", func(t *testing.T) {
+		runs := []policyRun{{
+			Policies: []platform.Policy{{ID: policyID, MinPoints: &eighty}},
+			Score:    &control.PlumberScoreResult{FinalPoints: 66},
+		}}
+
+		got := blockingReason(runs, gp)
+
+		if got != " (66 < min_points 80)" {
+			t.Fatalf("got %q, want %q", got, " (66 < min_points 80)")
+		}
+	})
+
+	t.Run("no min_points keeps live failures", func(t *testing.T) {
+		runs := []policyRun{{
+			Policies: []platform.Policy{{ID: policyID}},
+			Score:    &control.PlumberScoreResult{FinalPoints: 66},
+		}}
+
+		got := blockingReason(runs, gp)
+
+		if got != " (2 live failures)" {
+			t.Fatalf("got %q, want %q", got, " (2 live failures)")
+		}
+	})
+
+	t.Run("min_points set but nil score keeps live failures", func(t *testing.T) {
+		runs := []policyRun{{
+			Policies: []platform.Policy{{ID: policyID, MinPoints: &eighty}},
+			Score:    nil,
+		}}
+
+		got := blockingReason(runs, gp)
+
+		if got != " (2 live failures)" {
+			t.Fatalf("got %q, want %q", got, " (2 live failures)")
+		}
+	})
 }
 
 // Nothing blocking: the block still prints, and it says exit 0 rather than

@@ -106,8 +106,9 @@ func (p Policy) ControlConfig(controlType string) (json.RawMessage, bool) {
 }
 
 // DeclaresAnyControl reports whether this policy carries a non-empty tree.
-// A policy that declares nothing must fall back to the CLI's local config
-// rather than evaluate against an empty ruleset.
+// A real policy that declares nothing is still evaluated, under an empty v2
+// configuration (reasonNoControls in cmd/platform_eval.go): the local file
+// is never read for a verdict in platform mode, empty tree or not.
 func (p Policy) DeclaresAnyControl() bool {
 	for _, req := range p.Requirements {
 		if len(req.Controls) > 0 {

@@ -66,6 +66,11 @@ func equalMinPoints(a, b *int) bool {
 // depend on which caller happens to be in front of this function.
 func renderPolicySections(p providerPkg.Provider, conf *configuration.Configuration, runs []policyRun, controlsFilterList, skipControlsList []string) {
 	noControls := conf != nil && conf.NoControls
+	// This function only ever runs on the platform-mode path (row 62), but
+	// conf's nil-guard above is defence in depth, not the live path, and
+	// this follows the same defence rather than dereferencing conf.PlatformRun
+	// unguarded.
+	linked := conf != nil && conf.PlatformRun.Active()
 	for _, r := range runs {
 		fmt.Println()
 		fmt.Println(policyHeader(r))
@@ -91,7 +96,7 @@ func renderPolicySections(p providerPkg.Provider, conf *configuration.Configurat
 		// misconfiguration, and the banner is withheld rather than
 		// stamping a perfect score on a run that evaluated nothing.
 		if !noControls {
-			controls, groups = buildProviderControlSummariesAndGroups(p, r.Result, r.Config, controlsFilterList, skipControlsList)
+			controls, groups = buildProviderControlSummariesAndGroups(p, r.Result, r.Config, linked, controlsFilterList, skipControlsList)
 		}
 		renderFindingGroups(filterGroupsForDegraded(groups, r.Result.DataCollectionDegraded))
 		if n := countNotEvaluated(groups); n > 0 {
@@ -173,17 +178,22 @@ func renderPlatformVerdict(runs []policyRun, v *platformVerdict, exitErr error) 
 }
 
 // blockingReason renders " (66 < min_points 80)" for a policy the platform
-// gates on a threshold, and " (N live failures)" otherwise. The points are
-// this run's own recomputed final points for that policy, which is what the
-// sections above printed: the line explains the platform's verdict in the
-// numbers the reader just saw.
+// gates on a threshold this run's points actually miss, and " (N live
+// failures)" otherwise. The points are this run's own recomputed final
+// points for that policy, which is what the sections above printed: the line
+// explains the platform's verdict in the numbers the reader just saw.
+//
+// The comparison is made before it is claimed. A policy can carry a
+// min_points and be blocked for a different reason entirely, and printing
+// "91 < min_points 80" then states something the reader can see is false
+// (platform decision row 62).
 func blockingReason(runs []policyRun, gp platformGatePolicy) string {
 	for _, r := range runs {
 		for _, p := range r.Policies {
 			if p.ID != gp.ID {
 				continue
 			}
-			if p.MinPoints != nil && r.Score != nil {
+			if p.MinPoints != nil && r.Score != nil && r.Score.FinalPoints < float64(*p.MinPoints) {
 				return fmt.Sprintf(" (%.0f < min_points %d)", r.Score.FinalPoints, *p.MinPoints)
 			}
 		}

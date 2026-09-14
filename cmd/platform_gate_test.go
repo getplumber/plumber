@@ -409,11 +409,11 @@ func TestClassifyExecError_PlatformGateError(t *testing.T) {
 	}
 }
 
-// The precedence the plan fixes: a local score-gate failure and a platform
-// gate block can both occur on the same run. The local gate's error stays
-// primary (exit 1, same as before), but the platform gate's job-log line
-// must still have reached stderr - nothing about losing the precedence race
-// may swallow that message.
+// The precedence: a local score-gate failure and a platform gate block can
+// both occur on the same run. A blocking platform verdict IS the run's
+// verdict (row 62), so it stays primary (exit 1) over the local score gate
+// too, but the platform gate's job-log line must still have reached stderr -
+// nothing about winning the precedence race may swallow that message.
 func TestFinalizeRun_LocalGateAndPlatformGateBothPresent(t *testing.T) {
 	srv := gatePushServer(t, http.StatusAccepted, `{"gate":{"evaluated":true,"blocking":true,"policies":[
 		{"id":"p1","name":"team-baseline","enforcement":"block","blocking":true,"live_fail_count":3}
@@ -438,16 +438,16 @@ func TestFinalizeRun_LocalGateAndPlatformGateBothPresent(t *testing.T) {
 	result := &control.AnalysisResult{}
 	finalErr := finalizeRun(result, failingGate, platformErr)
 
-	var scoreErr *ScoreGateError
-	if !errors.As(finalErr, &scoreErr) {
-		t.Fatalf("finalizeRun = %v (%T), want the local *ScoreGateError to stay primary", finalErr, finalErr)
+	var finalGateErr *PlatformGateError
+	if !errors.As(finalErr, &finalGateErr) {
+		t.Fatalf("finalizeRun = %v (%T), want the blocking *PlatformGateError to stay primary (row 62)", finalErr, finalErr)
 	}
-	// Both messages are present: the local gate's message via the returned
-	// error (the primary exit reason), and the platform gate's job-log line
-	// already on stderr from the maybePushPlatform call above.
+	// Both messages are present: the platform gate's error (the primary exit
+	// reason) and its job-log line already on stderr from the
+	// maybePushPlatform call above.
 
-	// Spec s4: in platform mode the local gate is inert, so the platform gate
-	// error is what comes back instead of the local ScoreGateError above.
+	// Spec s4: in platform mode the local gate is inert too, so the same
+	// platform gate error comes back here as well.
 	platformModeGate := failingGate
 	platformModeGate.platformMode = true
 	platformFinalErr := finalizeRun(result, platformModeGate, platformErr)

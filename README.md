@@ -245,6 +245,10 @@ it to decide what to collect and what to report:
   per policy (its controls, findings and score), then a `Platform verdict`
   block with the platform's decision per policy, the platform's global score
   and the exit code.
+  The local file decides nothing on a linked run, collection included: what
+  Plumber fetches is the union of the resolved policies' own configurations,
+  collected once, so a control any policy enables has its data collected
+  even when the local file switches that control off.
 - **The platform decides the exit code.** `--min-points`, `--min-score` and
   the deprecated `--threshold` are ignored in platform mode (one notice each):
   each policy's own `enforcement` and `min_points`, as configured on the
@@ -292,7 +296,9 @@ it to decide what to collect and what to report:
   reporting a clean result over data nobody collected. A lane the platform
   vouches for as genuinely empty is still a real verdict a control may fail
   on. A run prints which configuration it used and why, with no `--verbose`
-  needed.
+  needed. A control whose data lane was not collected at all reports
+  `not_evaluable` with reason `lane_not_collected`, the same way, rather than
+  passing over data that was never fetched.
 
 - **The checkout is trusted for git regardless of who cloned it.** Plumber
   declares the analysed directory `safe.directory` for git before reading it,
@@ -517,7 +523,7 @@ More details:
 | `0` | The Plumber Score meets the gate (`--min-points` / `--min-score`), or `--no-controls` was used and data collection succeeded, or platform mode and the platform's gate did not block (or could not be reached) |
 | `1` | The Plumber Score is below the gate (or the deprecated `--threshold` is not met), or the platform's gate blocked the run (platform mode) |
 | `2` | Invalid usage, configuration, or a runtime / provider / auth / network failure |
-| `3` | A check could not be verified and `--fail-warnings` is set (e.g. an action version that could not be resolved) (not in platform mode: a degraded collection is pushed and gated by the platform) |
+| `3` | A check could not be verified and `--fail-warnings` is set (e.g. an action version that could not be resolved) (not in platform mode: a degraded collection is pushed and gated by the platform), and a blocking platform gate (exit 1) outranks it |
 
 The deprecated `--threshold` gate is computed from each control's own
 pass/fail rather than the Plumber Score, so a control whose only findings are

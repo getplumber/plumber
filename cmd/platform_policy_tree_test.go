@@ -60,6 +60,70 @@ func TestConfigForPolicyUsesEachPolicysOwnConfig(t *testing.T) {
 	}
 }
 
+// Row 62: the tree is the more specific fact. A policy carrying a control
+// tree is evaluated under that tree whatever its id, blank or nil-uuid
+// included - checking the id first meant such a policy was silently pushed
+// to the embedded default while its own tree sat unread. Only a policy with
+// NO tree falls back: the embedded default when the id is not real, the
+// empty configuration with reasonNoControls when it is.
+func TestConfigForPlatformPolicy_Row62_ABlankIdWithATreeEvaluatesTheTree(t *testing.T) {
+	treeWithID := func(id string) platform.Policy {
+		pol := treePolicy("Blank", platform.PolicyControl{
+			ControlType: "branchMustBeProtected",
+			Config:      []byte(`{"enabled":true,"minMergeAccessLevel":40}`),
+		})
+		pol.ID = id
+		return pol
+	}
+
+	for _, tc := range []struct {
+		name string
+		id   string
+	}{
+		{"blank id", ""},
+		{"nil uuid", platform.NilUUID},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, derived, reason := configForPlatformPolicy("gitlab", treeWithID(tc.id))
+			if cfg == nil {
+				t.Fatalf("a policy carrying a tree must evaluate it, got reason %q", reason)
+			}
+			if derived {
+				t.Fatal("a policy carrying its own tree is not the derived placeholder")
+			}
+			if reason != "" {
+				t.Fatalf("reason = %q, want none: the tree WAS applied", reason)
+			}
+			b := cfg.ControlsFor("gitlab").BranchMustBeProtected
+			if b == nil || b.MinMergeAccessLevel == nil || *b.MinMergeAccessLevel != 40 {
+				t.Fatal("the policy's own tree must be the one evaluated, not the embedded default")
+			}
+		})
+	}
+
+	t.Run("blank id with no tree still falls back to the embedded default", func(t *testing.T) {
+		pol := platform.Policy{ID: "", Name: "NoTree"}
+		cfg, derived, reason := configForPlatformPolicy("gitlab", pol)
+		if cfg == nil || !derived {
+			t.Fatalf("a blank id with no tree must fall back to the embedded default, got cfg=%v derived=%v", cfg, derived)
+		}
+		if reason != "" {
+			t.Fatalf("reason = %q, want none", reason)
+		}
+	})
+
+	t.Run("a real policy with no tree still yields the empty configuration", func(t *testing.T) {
+		pol := platform.Policy{ID: "real-id", Name: "RealNoTree"}
+		cfg, derived, reason := configForPlatformPolicy("gitlab", pol)
+		if cfg == nil || derived {
+			t.Fatalf("a real policy with no tree must resolve an empty config, got cfg=%v derived=%v", cfg, derived)
+		}
+		if reason != reasonNoControls {
+			t.Fatalf("reason = %q, want %q", reason, reasonNoControls)
+		}
+	})
+}
+
 // R2: a REAL policy with no stored tree declares an empty set, and that is
 // what it is evaluated under. Falling back to the local configuration would
 // report a verdict the policy never asked for, under this policy's name -

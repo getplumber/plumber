@@ -147,14 +147,26 @@ func evaluatePlatformPolicies(p providerPkg.Provider, conf *configuration.Config
 
 // configForPlatformPolicy resolves the configuration one resolved policy is
 // evaluated under, with no local fallback anywhere:
-//   - the derived placeholder (not a real policies row): the embedded default
-//     configuration, derived=true (R1);
+//   - a policy that DECLARES controls: its own tree, whatever its id. The
+//     tree is the more specific fact, and testing the id first meant a
+//     policy with a blank or nil-uuid id was evaluated under the embedded
+//     default while carrying a tree of its own (platform decision row 62).
+//     Such a policy is still pushed name-only, which realPolicyID owns;
+//   - the derived placeholder with no tree (not a real policies row): the
+//     embedded default configuration, derived=true (R1);
 //   - a real policy with no declared control: an empty v2 configuration,
 //     reason "declares no controls" (R2). An empty set is what the policy
 //     says, and evaluating it honestly is the answer - reading the local
 //     file instead would report a verdict the policy never asked for;
-//   - a real policy whose tree cannot be applied: nil, with the reason (R3).
+//   - a policy whose tree cannot be applied: nil, with the reason (R3).
 func configForPlatformPolicy(provider string, pol platform.Policy) (cfg *configuration.PlumberConfig, derived bool, reason string) {
+	if pol.DeclaresAnyControl() {
+		pc, err := policyConfigFromTree(provider, pol)
+		if err != nil {
+			return nil, false, fmt.Sprintf("%s (%v)", reasonTreeNotApplied, err)
+		}
+		return pc, false, ""
+	}
 	if !pol.IsReal() {
 		pc, _, _, err := configuration.LoadPlumberConfigFromBytes(defaultconfig.Get(), "embedded default")
 		if err != nil {
@@ -162,18 +174,11 @@ func configForPlatformPolicy(provider string, pol platform.Policy) (cfg *configu
 		}
 		return pc, true, ""
 	}
-	if !pol.DeclaresAnyControl() {
-		pc, _, _, err := configuration.LoadPlumberConfigFromBytes([]byte(emptyPolicyConfigYAML), "empty policy")
-		if err != nil {
-			return nil, false, fmt.Sprintf("%s (%v)", reasonTreeNotApplied, err)
-		}
-		return pc, false, reasonNoControls
-	}
-	pc, err := policyConfigFromTree(provider, pol)
+	pc, _, _, err := configuration.LoadPlumberConfigFromBytes([]byte(emptyPolicyConfigYAML), "empty policy")
 	if err != nil {
 		return nil, false, fmt.Sprintf("%s (%v)", reasonTreeNotApplied, err)
 	}
-	return pc, false, ""
+	return pc, false, reasonNoControls
 }
 
 // emptyPolicyConfigYAML is the configuration a policy declaring no control is
