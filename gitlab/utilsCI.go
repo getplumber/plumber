@@ -460,10 +460,13 @@ func GetFullGitlabCI(project *ProjectInfo, ref, token, url string, conf *configu
 	// multi-document YAML layout where `spec:` is the first document and job
 	// definitions come after the `---` separator. yaml.Unmarshal only reads
 	// the first document, so jobs in the second document would be invisible
-	// to the hardcoded-job detector. unmarshalMultiDocGitlabCI merges all
-	// documents so that jobs defined after a `spec:` block are still seen.
+	// to the hardcoded-job detector. ParseGitlabCIConf merges all documents
+	// so that jobs defined after a `spec:` block are still seen.
 	var unmarshalErr error
-	gitlabConf, unmarshalErr = unmarshalMultiDocGitlabCI(confByte)
+	parsedConf, unmarshalErr := ParseGitlabCIConf(confByte)
+	if unmarshalErr == nil {
+		gitlabConf = *parsedConf
+	}
 	if unmarshalErr != nil {
 		if mergedResponse.CiConfig.Status == "INVALID" {
 			l.WithError(unmarshalErr).Info("Unable to unmarshal the configuration to GitlabCIConf, but the CI config is invalid")
@@ -483,13 +486,13 @@ func GetFullGitlabCI(project *ProjectInfo, ref, token, url string, conf *configu
 	return &gitlabConf, &mergedConf, &mergedResponse, confStr, mergedResponse.CiConfig.MergedYaml, nil
 }
 
-// unmarshalMultiDocGitlabCI decodes all YAML documents in data and merges
-// them into a single GitlabCIConf. This handles CI component template files
-// that start with a `spec:` block in the first document and define jobs
-// after a `---` separator in subsequent documents. With a plain
-// yaml.Unmarshal only the first document would be read, causing jobs and
-// any top-level settings in later documents to be invisible to the
-// hardcoded-job detector and other downstream consumers.
+// ParseGitlabCIConf decodes all YAML documents in data and merges them into
+// a single GitlabCIConf. This handles CI component template files that
+// start with a `spec:` block in the first document and define jobs after a
+// `---` separator in subsequent documents. With a plain yaml.Unmarshal only
+// the first document would be read, causing jobs and any top-level settings
+// in later documents to be invisible to the hardcoded-job detector and
+// other downstream consumers.
 //
 // Merge contract:
 //   - GitlabJobs is the union across every document (a job defined in any
@@ -505,7 +508,13 @@ func GetFullGitlabCI(project *ProjectInfo, ref, token, url string, conf *configu
 // to GitlabCIConf, extend the merge logic here too — the
 // TestUnmarshalMultiDocGitlabCI_AllFieldsCovered test fails fast if a
 // new field lands without a merge branch.
-func unmarshalMultiDocGitlabCI(data []byte) (GitlabCIConf, error) {
+//
+// Exported because the multi-document merge is the only parse that sees a
+// CI file laid out as `spec:` + `---` whole: a plain yaml.Unmarshal reads
+// the first document, so a consumer outside this package that needs the
+// file's own include list (with each include's declared inputs) would
+// silently see only half of such a file. Returns nil on a decode error.
+func ParseGitlabCIConf(data []byte) (*GitlabCIConf, error) {
 	result := GitlabCIConf{}
 	decoder := yaml.NewDecoder(bytes.NewReader(data))
 	for {
@@ -515,7 +524,7 @@ func unmarshalMultiDocGitlabCI(data []byte) (GitlabCIConf, error) {
 			break
 		}
 		if err != nil {
-			return result, err
+			return nil, err
 		}
 		// Jobs: union across documents.
 		if doc.GitlabJobs != nil {
@@ -575,7 +584,7 @@ func unmarshalMultiDocGitlabCI(data []byte) (GitlabCIConf, error) {
 			result.Default = doc.Default
 		}
 	}
-	return result, nil
+	return &result, nil
 }
 
 // ResolveLocalIncludes pre-processes a local CI configuration to inline include:local entries

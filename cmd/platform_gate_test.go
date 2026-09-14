@@ -434,6 +434,11 @@ func TestFinalizeRun_LocalGateAndPlatformGateBothPresent(t *testing.T) {
 		t.Fatalf("stderr = %q, want the platform gate's job-log line naming team-baseline (3)", out)
 	}
 
+	// Hand-built for a unit-level precedence pin, not a combination a real
+	// run produces: a linked run never runs the local gate (platformMode
+	// would be true and the local thresholds are ignored), so a live
+	// platform gate error beside a failing local gate exists here only to
+	// state which one finalizeRun must keep.
 	failingGate := complianceSummary{minPoints: 100, score: scoreWithPoints(0), controlCount: 1}
 	result := &control.AnalysisResult{}
 	finalErr := finalizeRun(result, failingGate, platformErr)

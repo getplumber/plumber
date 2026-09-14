@@ -91,9 +91,12 @@ func TestPlatformFlow_TwoPoliciesOneBlocking(t *testing.T) {
 	}
 }
 
-// Spec s4: zero policies (context failed) evaluates nothing, prints the notice,
-// exits 0, and never pushes.
-func TestPlatformFlow_NoPolicies_NothingEvaluatedNoPush(t *testing.T) {
+// Spec s4: a platform the run could not reach evaluates nothing, prints the
+// notice, exits 0, and never pushes. The rule is the UNREACHABLE platform's,
+// not "no policy resolved" in general: since row 63 a linked run whose
+// platform answered and assigned nothing does push, marked as having
+// evaluated nothing (TestRunPlatformMode_Row63_ZeroPoliciesStillPushes).
+func TestPlatformFlow_UnreachablePlatform_NothingEvaluatedNoPush(t *testing.T) {
 	newGateFlagsCmd(t)
 	origPrint := printOutput
 	printOutput = true
@@ -376,11 +379,10 @@ func TestPlatformFlow_CollectionDiagnosticsAreStillPrinted(t *testing.T) {
 }
 
 // Spec s4: --fail-warnings is one of the two exit sources platform mode
-// keeps, and a run that resolved no policy is no exception. Returning a bare
-// nil there made the opt-in silently inert on exactly the runs (an
-// unreachable platform, an unassigned project) where the warnings are the
-// only thing the operator has left.
-func TestPlatformFlow_NoPolicies_FailWarningsStillDecidesTheExit(t *testing.T) {
+// keeps, and a run that evaluated nothing is no exception. Returning a bare
+// nil there made the opt-in silently inert on exactly the run (an unreachable
+// platform) where the warnings are the only thing the operator has left.
+func TestPlatformFlow_UnreachablePlatform_FailWarningsStillDecidesTheExit(t *testing.T) {
 	newGateFlagsCmd(t)
 	origPrint, origFail := printOutput, failWarnings
 	printOutput = true
@@ -400,7 +402,7 @@ func TestPlatformFlow_NoPolicies_FailWarningsStillDecidesTheExit(t *testing.T) {
 	run := func(t *testing.T, warnings []string) error {
 		t.Helper()
 		srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			t.Error("a run that resolved no policy must never push")
+			t.Error("a run the platform never answered must never push")
 		}))
 		defer srv.Close()
 		restore := withPlatformTestEnv(t, srv.URL, "tok")
@@ -485,7 +487,9 @@ func TestRunPlatformMode_Row63_ZeroPoliciesStillPushes(t *testing.T) {
 			NothingEvaluated bool   `json:"nothing_evaluated"`
 			Reason           string `json:"reason"`
 		} `json:"evaluation"`
-		Results []json.RawMessage `json:"results"`
+		// Kept raw: decoding into a slice cannot tell an empty array from a
+		// null or an absent key, and the platform 422s two of those three.
+		Results json.RawMessage `json:"results"`
 	}
 	if jsonErr := json.Unmarshal(pushed, &body); jsonErr != nil {
 		t.Fatalf("push body does not parse as JSON: %v\n%s", jsonErr, pushed)
@@ -496,8 +500,8 @@ func TestRunPlatformMode_Row63_ZeroPoliciesStillPushes(t *testing.T) {
 	if body.Evaluation.Reason != "no_policy" {
 		t.Errorf("evaluation.reason = %q, want %q: the platform resolved no policy for this project", body.Evaluation.Reason, "no_policy")
 	}
-	if len(body.Results) != 0 {
-		t.Errorf("results = %d entries, want none: a marked push carrying a result is a 422 by contract\n%s", len(body.Results), pushed)
+	if got := string(body.Results); got != "[]" {
+		t.Errorf("results = %s on the wire, want the empty array []: a marked push carrying a result is a 422 by contract, and so is one carrying a null results list\n%s", got, pushed)
 	}
 	// The hazard this rewiring creates: buildPlatformPush's standalone branch
 	// would put the LOCAL configuration's verdict on the wire under a platform
