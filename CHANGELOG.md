@@ -1,3 +1,27 @@
+## [0.4.63](https://github.com/getplumber/plumber/compare/v0.4.62...v0.4.63) (2026-09-14)
+
+
+### ✨ Features
+
+* **cmd:** push a linked run that evaluated nothing, with the marker the platform records (row 63) ([c713d04](https://github.com/getplumber/plumber/commit/c713d0459c8f540a8d287861e5c703cba271822b))
+* **control:** drive platform-mode collection from the union of the resolved policies (row 62) ([f318bcb](https://github.com/getplumber/plumber/commit/f318bcbffa45e58766990c3c651a47840d02e1c2))
+
+
+### 🐛 Bug Fixes
+
+* **cmd:** ignore --controls and --skip-controls on a linked run (row 64) ([f93ed94](https://github.com/getplumber/plumber/commit/f93ed94265d8bbedcda49adb298536a97abc52b0))
+* **cmd:** terminal, exit code and docs follow the policy verdicts on a linked run (row 62) ([9b5d4ff](https://github.com/getplumber/plumber/commit/9b5d4ff4e6df2d246a0d498b139f336c79b82ccb))
+
+
+### ♻️ Refactoring
+
+* **gitlab:** export the multi-document CI parser as ParseGitlabCIConf (row 54) ([0795790](https://github.com/getplumber/plumber/commit/0795790126fb4da92c4b0e731255d62b496987c2))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.62 refs [skip ci] ([1840df4](https://github.com/getplumber/plumber/commit/1840df493deca2b28add09484f5f5d5f629720af))
+
 ## [0.4.62](https://github.com/getplumber/plumber/compare/v0.4.61...v0.4.62) (2026-09-12)
 
 
