@@ -985,8 +985,12 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	// project, so a project scanned once per .plumber.yaml would pay for
 	// them once per config file. The platform collects them on its own
 	// schedule and the runner reads the result.
+	//
+	// In platform mode the decision to fetch is the union of the resolved
+	// policies' configurations, not this run's own file (row 62).
 	var protectionData *gitlab.GitlabProtectionAnalysisData
-	if protectionDataNeeded(conf) {
+	if anyCollectionConfig(conf, protectionDataNeeded) {
+		result.markLaneCollected(laneGitLabProtection)
 		reportProgress(conf, 9, analysisStepCount, "Checking branch protection")
 		if fromSnapshot, served := gitlab.ProtectionFromSnapshot(conf.PlatformRun); served {
 			protectionData = fromSnapshot
@@ -1015,7 +1019,8 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	// platform serves — and is why this lane can move without the snapshot
 	// ever holding a secret.
 	var variablesData *gitlab.GitlabVariablesAnalysisData
-	if cicdVariableControlEnabled(conf) {
+	if anyCollectionConfig(conf, cicdVariableControlEnabled) {
+		result.markLaneCollected(laneGitLabVariables)
 		reportProgress(conf, 10, analysisStepCount, "Checking CI/CD variables")
 		if fromSnapshot, served := gitlab.VariablesFromSnapshot(conf.PlatformRun); served {
 			variablesData = fromSnapshot
@@ -1047,7 +1052,8 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	// control then reports not_evaluable over a nil collection rather than
 	// spending a privileged credential on an answer the run cannot use.
 	var securityPolicyData *gitlab.SecurityPolicyData
-	if securityPolicyControlEnabled(conf) {
+	if anyCollectionConfig(conf, securityPolicyControlEnabled) {
+		result.markLaneCollected(laneGitLabSecurityPolicy)
 		if fromSnapshot, served := gitlab.SecurityPolicyFromSnapshot(conf.PlatformRun); served {
 			securityPolicyData = fromSnapshot
 		} else if !conf.PlatformRun.Engaged() {
@@ -1086,6 +1092,7 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	// field unavailable): the collector leaves SecurityPolicyKnown false, so
 	// StatusFor reports error rather than a false pass. When it WAS read but
 	// nothing is linked, surface the conditional Ultimate tier caveat.
+	result.SecurityPolicyData = securityPolicyData
 	result.SecurityPolicyEvaluable = securityPolicyData != nil && securityPolicyData.Known
 	result.SecurityPolicyTierCaveat = securityPolicyTierCaveatApplies(conf, securityPolicyData)
 

@@ -91,6 +91,17 @@ const (
 	// state is authored truth (configuration.ControlMeta.RequiresConfig);
 	// which fields count is the catalog's own reflected schema.
 	ReasonConfigRequired = "config_required"
+
+	// ReasonLaneNotCollected is the reason a control could not be evaluated
+	// because the data collection it reads was never PERFORMED this run.
+	//
+	// It is the per-policy counterpart of the collection gates: collection
+	// is driven by the union of the resolved policies' configurations
+	// (platform decision row 62), and if a control still ends up enabled by
+	// a policy while its lane was not collected, the honest answer is that
+	// nothing was evaluated. The alternative is the vacuous pass this whole
+	// file exists to prevent: zero findings over data nobody fetched.
+	ReasonLaneNotCollected = "lane_not_collected"
 )
 
 // controlsRequiringIncludeAttribution lists the GitLab controls whose
@@ -728,6 +739,27 @@ func ReEvaluateForConfig(
 	for k, v := range result.NotEvaluable {
 		scopedResult.MarkNotEvaluable(k, v)
 	}
+	// Tier caveats are a statement about a CONTROL, so they belong to the
+	// policy that enables it, not to the run. Inherited from the run they
+	// were computed against the local configuration: a policy enabling an
+	// approval-rule control got no caveat, and one that disables it got
+	// someone else's (row 62). Every predicate reads only the config and
+	// the collected data, both of which are in hand here. This must run
+	// before the marking steps below, which read these caveats via
+	// StatusFor once the scoped result reaches a renderer.
+	scopedResult.ApprovalRulesTierCaveat = approvalRulesTierCaveatApplies(&scopedConf, result.ProtectionData)
+	scopedResult.MRApprovalSettingsTierCaveat = mrApprovalSettingsTierCaveatApplies(&scopedConf, result.ProtectionData)
+	scopedResult.MRSettingsPremiumCaveatFields = mrSettingsPremiumFieldsNeedingUpgrade(&scopedConf, result.ProtectionData)
+	scopedResult.SecurityPolicyTierCaveat = securityPolicyTierCaveatApplies(&scopedConf, result.SecurityPolicyData)
+	// The GitHub stats are the denominators every GitHub control's status
+	// and header are read from, and they are derived from the CONFIG
+	// (trusted owners, forbidden tags, security-job patterns). Sharing the
+	// run's pointer meant a policy's controls were judged against another
+	// configuration's denominators (row 62). Recomputed from the same IR:
+	// no collection, one walk per distinct policy configuration.
+	if provider == configuration.ProviderGitHub {
+		scopedResult.GitHubStats = AggregateGitHubStats(pipeline, pc)
+	}
 	// Inheriting the run's marks is not enough. Every marker skips controls
 	// the config it was given had DISABLED, and the run's marks were
 	// computed against the LOCAL config. A control this policy enables and
@@ -751,7 +783,20 @@ func ReEvaluateForConfig(
 		entries = GitHubControls(pc)
 	}
 	MarkUnconfiguredControls(&scopedResult, entries, pc, provider)
+	// Collection is gated, so a control this policy enables whose lane was
+	// never collected has nothing to report: mark it rather than let an
+	// empty findings list read as a pass (row 62). This is the arm GitHub
+	// was missing entirely - markPlatformLaneGapsFor above is GitLab-only
+	// by design, and GitHub's branch control passed vacuously without it.
+	MarkUncollectedLanes(&scopedResult, entries, provider)
 	scopedResult.DropNotEvaluableFindings()
+	// The counters must describe the findings that survive the drop above,
+	// so this runs after it: the per-control counts on GitHubStats have to
+	// match the SCOPED findings this policy actually reports, not whatever
+	// the run computed under its own config (row 62).
+	if provider == configuration.ProviderGitHub {
+		ApplyGitHubFindingCounts(scopedResult.GitHubStats, scopedResult.Findings)
+	}
 
 	// #447: these findings are fresh out of evaluatePolicies and still carry
 	// whatever File the rule engine reported (a GitHub-style absolute path

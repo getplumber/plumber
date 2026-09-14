@@ -17,6 +17,16 @@ import (
 
 const githubDotCom = "github.com"
 
+// githubAnalysis and githubAnalysisRemote are test seams over the two GitHub
+// collection entry points, in the same spirit as the seams control/ keeps over
+// the scan itself: replacing one lets a test observe the Configuration
+// collection is handed, which is how the "platform mode is established BEFORE
+// collection" ordering is asserted. Production code never reassigns them.
+var (
+	githubAnalysis       = control.RunGitHubAnalysis
+	githubAnalysisRemote = control.RunGitHubAnalysisRemote
+)
+
 // runGitHubAnalyze handles `plumber analyze` for GitHub-hosted projects.
 // Local-only MVP: walks .github/workflows/*.{yml,yaml} under the detected
 // git repo root, evaluates the embedded Rego policies, and prints /
@@ -120,8 +130,20 @@ func runGitHubAnalyze(info *utils.GitRemoteInfo, controlsFilterList, skipControl
 	if !ok {
 		return fmt.Errorf("github provider not registered")
 	}
+	// Platform mode is established BEFORE collection here, not after: what
+	// the platform resolves decides which data lanes collection has to
+	// fetch at all (platform decision row 62). presentResultWithProvider
+	// keeps its own lazy setup for callers that reach it without one.
+	rc, err := setupPlatformMode(p, conf)
+	if err != nil {
+		return err
+	}
+	conf.PlatformRun = rc
+	applyCollectionScope(p, conf)
+	reportPlatformMode(conf.PlatformRun)
+
 	sp := installSpinner(conf)
-	result, err := control.RunGitHubAnalysis(conf)
+	result, err := githubAnalysis(conf)
 	sp.Stop()
 	if err != nil {
 		return fmt.Errorf("analysis failed: %w", err)
@@ -160,8 +182,18 @@ func runGitHubAnalyzeRemote(host, project, ref string, controlsFilterList, skipC
 	if !ok {
 		return fmt.Errorf("github provider not registered")
 	}
+	// Same ordering as the local path: the resolved policy set decides which
+	// lanes collection has to fetch (platform decision row 62).
+	rc, err := setupPlatformMode(p, conf)
+	if err != nil {
+		return err
+	}
+	conf.PlatformRun = rc
+	applyCollectionScope(p, conf)
+	reportPlatformMode(conf.PlatformRun)
+
 	sp := installSpinner(conf)
-	result, err := control.RunGitHubAnalysisRemote(conf, owner, repo, ref)
+	result, err := githubAnalysisRemote(conf, owner, repo, ref)
 	sp.Stop()
 	if err != nil {
 		if errors.Is(err, githubpkg.ErrAuthRequired) {

@@ -82,6 +82,13 @@ func TestReEvaluateForConfigMarksUnconfiguredControls(t *testing.T) {
 	result := &AnalysisResult{
 		CiValid:  true,
 		Pipeline: &ir.NormalizedPipeline{Provider: ir.ProviderGitLab, ProjectPath: "grp/app"},
+		// The protection lane WAS collected on this run, which is what a
+		// real run does as soon as any resolved policy enables
+		// branchMustBeProtected (the union gate, row 62). Without it the
+		// only honest answer for both policies would be
+		// lane_not_collected, and this test is about telling a bare
+		// control from a configured one.
+		CollectedLanes: map[string]bool{laneGitLabProtection: true},
 	}
 
 	barePolicy := &configuration.PlumberConfig{Version: "2.0", GitLab: &configuration.ProviderConfig{

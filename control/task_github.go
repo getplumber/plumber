@@ -78,8 +78,8 @@ func enrichGitHubBranches(l *logrus.Entry, pipeline *ir.NormalizedPipeline, host
 	if cfg == nil || !cfg.IsEnabled() {
 		return false
 	}
-	parts := strings.SplitN(projectPath, "/", 2)
-	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+	owner, repo, addressable := gitHubOwnerRepo(projectPath)
+	if !addressable {
 		return false
 	}
 
@@ -133,7 +133,7 @@ func enrichGitHubBranches(l *logrus.Entry, pipeline *ir.NormalizedPipeline, host
 		return false
 	}
 
-	branches, err := githubpkg.FetchGitHubBranchProtection(host, parts[0], parts[1], githubpkg.BranchFetchOptions{
+	branches, err := githubpkg.FetchGitHubBranchProtection(host, owner, repo, githubpkg.BranchFetchOptions{
 		ExactNames: exact,
 		Listing:    listing,
 		OnProgress: onProgress,
@@ -153,7 +153,7 @@ func enrichGitHubBranches(l *logrus.Entry, pipeline *ir.NormalizedPipeline, host
 		// invisible repo reads as a vacuous branch-protection pass
 		// (caught empirically: a scan against an unreachable remote
 		// reported branchMustBeProtected as passed).
-		visible, derr := githubpkg.GitHubRepoVisible(host, parts[0], parts[1])
+		visible, derr := githubpkg.GitHubRepoVisible(host, owner, repo)
 		if derr != nil {
 			l.WithError(derr).Warn("GitHub repo visibility probe failed with zero branches fetched; branch protection cannot be evaluated")
 			return true
@@ -165,6 +165,22 @@ func enrichGitHubBranches(l *logrus.Entry, pipeline *ir.NormalizedPipeline, host
 	}
 	pipeline.Branches = branches
 	return false
+}
+
+// gitHubOwnerRepo splits an owner/repo project path, reporting ok=false for
+// anything else (empty, single-segment, or either half empty).
+//
+// One definition, because two places have to agree on what counts as
+// fetchable: enrichGitHubBranches returns early on a path it cannot address,
+// and the lane record (branchLaneCollected) has to return early on exactly
+// the same paths, or the run would claim it collected branch protections
+// when no request was ever made.
+func gitHubOwnerRepo(projectPath string) (owner, repo string, ok bool) {
+	parts := strings.SplitN(projectPath, "/", 2)
+	if len(parts) != 2 || parts[0] == "" || parts[1] == "" {
+		return "", "", false
+	}
+	return parts[0], parts[1], true
 }
 
 // isBranchGlob reports whether a branch-name pattern contains the
@@ -197,13 +213,17 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 	if conf.ProgressFunc != nil {
 		progressFn = githubpkg.ProgressFunc(conf.ProgressFunc)
 	}
+	// In platform mode the decision to fetch is the union of the resolved
+	// policies' configurations, not this run's own file (row 62). Computed
+	// once and reused for the lane record below.
+	scanMutableExec := anyCollectionConfig(conf, shouldScanMutableExec)
 	pipeline, partial, err := githubpkg.ScanGitHubWorkflowsWithProgress(
 		conf.ProjectPath,
 		conf.Branch,
 		conf.GitRepoRoot,
 		conf.GithubAPIHost,
 		configuration.ProviderNeedsActionMetadata("github"),
-		shouldScanMutableExec(conf),
+		scanMutableExec,
 		progressFn,
 	)
 	if err != nil {
@@ -216,6 +236,9 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 
 	resolveGitHubDefaultBranch(l, pipeline, conf.GithubAPIHost, conf.ProjectPath)
 
+	// The union of every collecting configuration's branchMustBeProtected
+	// scope, so one fetch covers every policy's branches (row 62).
+	branchScope := collectionBranchProtectionConfig(conf)
 	branchFetchFailed := false
 	if shouldRunControl(controlBranchMustBeProtected, conf) {
 		total := githubpkg.TotalProgressStepsForPipeline(pipeline)
@@ -231,7 +254,7 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 				conf.ProgressFunc(total-2, total, message)
 			}
 		}
-		branchFetchFailed = enrichGitHubBranches(l, pipeline, conf.GithubAPIHost, conf.PlumberConfig, conf.ProjectPath, onProgress)
+		branchFetchFailed = enrichGitHubBranches(l, pipeline, conf.GithubAPIHost, branchScope, conf.ProjectPath, onProgress)
 	}
 
 	if conf.ProgressFunc != nil {
@@ -257,6 +280,7 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 		AnalyzedCIConfig: githubAnalyzedCIConfig(pipeline),
 		Warnings:         pipeline.AdvisoryWarnings,
 	}
+	markGitHubLanes(result, conf, conf.ProjectPath, scanMutableExec, branchScope)
 	// Local scans read workflow files from disk, so a skipped file is a
 	// parse/read problem (user-fixable), not a degraded collection — only
 	// a failed branch-protection API fetch counts as degraded here (#220).
@@ -314,11 +338,14 @@ func RunGitHubAnalysisRemote(conf *configuration.Configuration, owner, repo, ref
 	if conf.ProgressFunc != nil {
 		progressFn = githubpkg.ProgressFunc(conf.ProgressFunc)
 	}
+	// Same union as the local path: a control any resolved policy enables
+	// needs its data collected (row 62).
+	scanMutableExec := anyCollectionConfig(conf, shouldScanMutableExec)
 	pipeline, partial, err := scanGitHubWorkflowsRemote(
 		conf.GithubAPIHost,
 		owner, repo, ref,
 		configuration.ProviderNeedsActionMetadata("github"),
-		shouldScanMutableExec(conf),
+		scanMutableExec,
 		progressFn,
 	)
 	if err != nil {
@@ -337,6 +364,7 @@ func RunGitHubAnalysisRemote(conf *configuration.Configuration, owner, repo, ref
 
 	resolveGitHubDefaultBranch(l, pipeline, conf.GithubAPIHost, owner+"/"+repo)
 
+	branchScope := collectionBranchProtectionConfig(conf)
 	branchFetchFailed := false
 	if shouldRunControl(controlBranchMustBeProtected, conf) {
 		total := githubpkg.TotalProgressStepsForPipeline(pipeline)
@@ -349,7 +377,7 @@ func RunGitHubAnalysisRemote(conf *configuration.Configuration, owner, repo, ref
 				conf.ProgressFunc(total-2, total, message)
 			}
 		}
-		branchFetchFailed = enrichGitHubBranches(l, pipeline, conf.GithubAPIHost, conf.PlumberConfig, owner+"/"+repo, onProgress)
+		branchFetchFailed = enrichGitHubBranches(l, pipeline, conf.GithubAPIHost, branchScope, owner+"/"+repo, onProgress)
 	}
 
 	if conf.ProgressFunc != nil {
@@ -376,6 +404,7 @@ func RunGitHubAnalysisRemote(conf *configuration.Configuration, owner, repo, ref
 		AnalyzedCIConfig: githubAnalyzedCIConfig(pipeline),
 		Warnings:         pipeline.AdvisoryWarnings,
 	}
+	markGitHubLanes(result, conf, owner+"/"+repo, scanMutableExec, branchScope)
 	applyGitHubDegraded(result, len(partial), branchFetchFailed)
 	// An enabled control asserting nothing until its substantive fields are set is not a clean
 	// pass either (#459): it is not_evaluable, config_required, same as any other lane gap. Runs

@@ -24,11 +24,22 @@ func init() {
 	})
 }
 
+// gitlabAnalysis is a test seam over p.Run, the collection entry point
+// runWithProvider calls (in practice the GitLab path: it is runAnalyze's only
+// caller). In the same spirit as githubAnalysis and githubAnalysisRemote
+// (cmd/analyze_github.go), replacing it lets a test observe the
+// Configuration collection is handed, which is how the "collection scope
+// established BEFORE collection" ordering is asserted for GitLab too
+// (platform decision row 62). Production code never reassigns it.
+var gitlabAnalysis = func(p provider.Provider, conf *configuration.Configuration) (*control.AnalysisResult, error) {
+	return p.Run(conf)
+}
+
 // runWithProvider executes the full analysis + output pipeline for any registered
 // provider, replacing the per-provider if/switch chains in runAnalyze.
 func runWithProvider(p provider.Provider, cmd *cobra.Command, conf *configuration.Configuration, controlsFilterList, skipControlsList []string) error {
 	sp := installSpinner(conf)
-	result, err := p.Run(conf)
+	result, err := gitlabAnalysis(p, conf)
 	sp.Stop()
 	if err != nil {
 		return err
@@ -699,16 +710,28 @@ func presentResultWithProvider(p provider.Provider, cmd *cobra.Command, result *
 	// Without it conf.PlatformRun stays nil, the resolved policy set is
 	// never fetched, and every GitHub platform push is keyed name-only.
 	//
-	// It runs AFTER collection on this path (the caller already has a
-	// result), so it cannot feed GitHub's data lanes — it supplies the
-	// policy set for the push and the operator-facing report. GitHub lane
-	// wiring is a separate piece of work.
+	// Who actually reaches the guard below, plainly:
+	//
+	//   - a LINKED GitHub run does not. Both GitHub entry points now
+	//     establish platform mode BEFORE their collection, so the resolved
+	//     policy set feeds their data lanes (row 62) and conf.PlatformRun is
+	//     already set by the time the run gets here.
+	//   - a STANDALONE run reaches it on every single pass, because nothing
+	//     ever sets PlatformRun for it, and that is harmless rather than
+	//     wasteful: setupPlatformMode returns (nil, nil) as soon as it sees
+	//     pushing is off, applyCollectionScope then finds no policy and
+	//     leaves CollectionConfigs empty (so collection keeps reading the
+	//     run's own configuration), and reportPlatformMode prints nothing.
+	//   - a caller arriving with no run context while pushing IS on is what
+	//     the guard is really for: that run still needs the policy set for
+	//     the push and the operator-facing report.
 	if conf != nil && conf.PlatformRun == nil {
 		rc, err := setupPlatformMode(p, conf)
 		if err != nil {
 			return err
 		}
 		conf.PlatformRun = rc
+		applyCollectionScope(p, conf)
 		reportPlatformMode(conf.PlatformRun)
 	}
 
