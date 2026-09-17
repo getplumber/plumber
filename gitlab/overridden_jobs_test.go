@@ -101,7 +101,7 @@ func TestCollectOverriddenJobs_DedupsByJobName(t *testing.T) {
 	}
 }
 
-func TestForbiddenOverrideKeys_DedupsRepeatedKey(t *testing.T) {
+func TestForbiddenOverrides_DedupsRepeatedKey(t *testing.T) {
 	// A forbidden key appearing in nested structures must be reported once.
 	job := map[interface{}]interface{}{
 		"script": []interface{}{"a", "b"},
@@ -110,16 +110,77 @@ func TestForbiddenOverrideKeys_DedupsRepeatedKey(t *testing.T) {
 			map[interface{}]interface{}{"when": "always"},
 		},
 	}
-	keys := forbiddenOverrideKeys(job)
+	keys, values := forbiddenOverrides(job)
 	sort.Strings(keys)
 	want := []string{"rules", "script", "when"}
 	if !reflect.DeepEqual(keys, want) {
 		t.Errorf("keys = %v, want %v", keys, want)
 	}
+	if !reflect.DeepEqual(values["script"], []interface{}{"a", "b"}) {
+		t.Errorf("values[script] = %#v, want [a b]", values["script"])
+	}
+	if values["rules"] == nil {
+		t.Error("values[rules] = nil, want the job's rules block")
+	}
+	// "when" is only nested inside "rules": it is reported as an overridden
+	// key, and its content travels with the enclosing top-level key.
+	if _, ok := values["when"]; ok {
+		t.Errorf("values[when] = %#v, want no top-level value", values["when"])
+	}
 }
 
-func TestForbiddenOverrideKeys_NilJob(t *testing.T) {
-	if got := forbiddenOverrideKeys(nil); got != nil {
-		t.Errorf("nil job: got %+v, want nil", got)
+func TestForbiddenOverrides_NilJob(t *testing.T) {
+	keys, values := forbiddenOverrides(nil)
+	if keys != nil {
+		t.Errorf("nil job: keys = %+v, want nil", keys)
+	}
+	if values != nil {
+		t.Errorf("nil job: values = %+v, want nil", values)
+	}
+}
+
+// Row 85 (platform QUESTIONS, 2026-09-16): the collector carries the overridden
+// keys' values, and the include's fingerprint names that content, so a dismissal
+// keyed on it lapses as soon as the overriding job changes.
+func TestBuildIncludes_OverrideFingerprint_Row85(t *testing.T) {
+	originData := func(script string) *GitlabPipelineOriginData {
+		full := fullWithJobs(GitlabPipelineJobData{Name: "deploy", IsOverridden: true})
+		full.OriginType = "component"
+		full.GitlabIncludeOrigin.Location = "templates/deploy.yml"
+		return &GitlabPipelineOriginData{
+			Origins: []GitlabPipelineOriginDataFull{*full},
+			JobHardcodedContent: map[string]interface{}{
+				"deploy": map[interface{}]interface{}{
+					"script": []interface{}{script},
+					"image":  "alpine:3",
+				},
+			},
+		}
+	}
+
+	includes := buildIncludes(originData("deploy.sh"), ".gitlab-ci.yml")
+	if len(includes) != 1 {
+		t.Fatalf("got %d includes, want 1: %+v", len(includes), includes)
+	}
+	jobs := includes[0].OverriddenJobs
+	if len(jobs) != 1 || jobs[0].Name != "deploy" {
+		t.Fatalf("got %+v, want one overridden job named deploy", jobs)
+	}
+	if !reflect.DeepEqual(jobs[0].Values["script"], []interface{}{"deploy.sh"}) {
+		t.Errorf("Values[script] = %#v, want [deploy.sh]", jobs[0].Values["script"])
+	}
+	if jobs[0].Values["image"] != "alpine:3" {
+		t.Errorf("Values[image] = %#v, want alpine:3", jobs[0].Values["image"])
+	}
+	if includes[0].OverrideFingerprint == "" {
+		t.Fatal("an overridden job must give the include a fingerprint")
+	}
+
+	changed := buildIncludes(originData("deploy.sh --prod"), ".gitlab-ci.yml")
+	if len(changed) != 1 {
+		t.Fatalf("got %d includes, want 1: %+v", len(changed), changed)
+	}
+	if changed[0].OverrideFingerprint == includes[0].OverrideFingerprint {
+		t.Error("a changed script must move the include's override fingerprint")
 	}
 }

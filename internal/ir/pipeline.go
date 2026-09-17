@@ -458,6 +458,12 @@ type Include struct {
 	// upstream source across pipelines.
 	OriginHash     uint64          `json:"originHash,omitempty"`
 	OverriddenJobs []OverriddenJob `json:"overriddenJobs,omitempty"`
+	// OverrideFingerprint is the canonical digest of the override
+	// content above (see OverrideFingerprint). It lets a consumer tell
+	// "the same override as last time" from "the override changed"
+	// without carrying the content itself. Empty when nothing is
+	// overridden.
+	OverrideFingerprint string `json:"overrideFingerprint,omitempty"`
 }
 
 // OverriddenJob captures a single job whose inherited definition was
@@ -466,6 +472,11 @@ type Include struct {
 type OverriddenJob struct {
 	Name string   `json:"name"`
 	Keys []string `json:"keys,omitempty"`
+	// Values holds the overridden keys' values exactly as the user's own
+	// job block declares them. It exists to feed the override
+	// fingerprint: it is local analysis material, not a surface the
+	// platform consumes as such.
+	Values map[string]any `json:"values,omitempty"`
 }
 
 // Branch is a branch of the source repository as seen by the collector.
