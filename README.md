@@ -195,6 +195,19 @@ plumber analyze \
     ```
 2. Add `GITLAB_TOKEN` in **Settings -> CI/CD -> Variables**.
     Use `read_api` + `read_repository` for scanning, or `api` if you want Plumber to post MR comments or badges.
+3. The `plumber` job runs on merge request pipelines, on the default branch, on tags, on a branch
+    pipeline whose commit has an open merge request, and on any `plumber/*` branch (the branch the
+    Plumber platform's onboarding merge request is created from). If your project runs both branch
+    and merge request pipelines for the same commit, the job runs in both; keep a single pipeline
+    with GitLab's standard workflow rule in your `.gitlab-ci.yml`:
+    ```yaml
+    workflow:
+      rules:
+        - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+        - if: $CI_COMMIT_BRANCH && $CI_OPEN_MERGE_REQUESTS
+          when: never
+        - if: $CI_COMMIT_BRANCH
+    ```
 
 **Full guide:** [getplumber.io/docs/cli/gitlab#run-with-the-gitlab-ci-component](https://getplumber.io/docs/cli/gitlab#run-with-the-gitlab-ci-component)
 
