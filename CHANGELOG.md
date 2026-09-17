@@ -1,3 +1,29 @@
+## [0.5.0](https://github.com/getplumber/plumber/compare/v0.4.63...v0.5.0) (2026-09-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* **identity:** every ISSUE-406 and ISSUE-409 finding re-keys; a dismissal made under recipe version 4 no longer suppresses them and the platform re-detects the issue once.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01FUFtr3m8zC2mVNKVTQvaNz
+
+### ✨ Features
+
+* **identity:** recipe version 5, the override fingerprint keys ISSUE-406 and ISSUE-409 ([38c87b0](https://github.com/getplumber/plumber/commit/38c87b0f41e3f2deb1b205e92eaa66ac3095199c))
+* **ir:** fingerprint an include's override content from the overridden keys and their values ([a8378a5](https://github.com/getplumber/plumber/commit/a8378a566d494912684e67cdecf65156dbc2c7be))
+* **policies:** overridden findings carry the override fingerprint and the overridden jobs ([e133aba](https://github.com/getplumber/plumber/commit/e133aba7b289a6409776c5da3a0cb6a2a07f2e18))
+
+
+### 🐛 Bug Fixes
+
+* **ir:** the override fingerprint hashes the whole local job block, nested keys included ([12fac4c](https://github.com/getplumber/plumber/commit/12fac4cbc272594177f1271b52ab78e28d0bb164))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.4.63 refs [skip ci] ([9c6f60d](https://github.com/getplumber/plumber/commit/9c6f60da03cdaa35702d3c372cb21e8ec5049fd5))
+
 ## [0.4.63](https://github.com/getplumber/plumber/compare/v0.4.62...v0.4.63) (2026-09-14)
 
 
