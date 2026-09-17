@@ -1,3 +1,20 @@
+## [0.5.1](https://github.com/getplumber/plumber/compare/v0.5.0...v0.5.1) (2026-09-17)
+
+
+### 🐛 Bug Fixes
+
+* **component:** run the plumber job on branch pipelines with an open MR and on plumber/ branches ([045fe6f](https://github.com/getplumber/plumber/commit/045fe6fcd179f0d0d7e680379a1a9230371d3299)), closes [#476](https://github.com/getplumber/plumber/issues/476)
+
+
+### 📚 Documentation
+
+* **component:** list when the plumber job runs and the workflow rule that avoids a duplicate pipeline ([c083e0a](https://github.com/getplumber/plumber/commit/c083e0a430f6b6f91300c69d9e6dec845618bee9)), closes [getplumber/plumber#476](https://github.com/getplumber/plumber/issues/476)
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.5.0 refs [skip ci] ([1472696](https://github.com/getplumber/plumber/commit/1472696cbf44a5d6a61e944d49e8a5bbcdb61c7e))
+
 ## [0.5.0](https://github.com/getplumber/plumber/compare/v0.4.63...v0.5.0) (2026-09-17)
 
 
