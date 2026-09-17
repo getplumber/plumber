@@ -20,6 +20,7 @@ deny contains finding if {
 	inc.kind == "component"
 	_paths_match(inc, required)
 	count(inc.overriddenJobs) > 0
+	jobs := _overridden_jobs(inc)
 	finding := {
 		"code":     "ISSUE-409",
 		"severity": "high",
@@ -28,8 +29,23 @@ deny contains finding if {
 		# what this finding is about, so its identity does not depend on the
 		# message above, whose override count moves as jobs are added.
 		"componentPath": required,
+		# The digest of the override content the collector computed. It moves
+		# when the override changes, so a decision keyed on it lapses exactly
+		# then, and it carries none of the overridden content itself.
+		"overrideFingerprint": object.get(inc, "overrideFingerprint", ""),
+		"overriddenJobs":      jobs,
 	}
 }
+
+# _overridden_jobs reports what was overridden, for a reader: the job name and
+# the CI/CD keys it redefines. The values behind those keys stay in the CLI,
+# where they only feed the fingerprint above.
+#
+# Both lookups default rather than dereference: an absent evidence field must
+# leave the finding thinner, never make the deny rule drop a real override.
+_overridden_jobs(inc) := [{"name": j.name, "keys": object.get(j, "keys", [])} |
+	some j in inc.overriddenJobs
+]
 
 _paths_match(inc, required) if {
 	inc.path != ""

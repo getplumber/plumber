@@ -2,6 +2,7 @@ package policies_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -2140,6 +2141,51 @@ func assertNoJob(t *testing.T, findings []opaengine.Finding, code string) {
 	}
 }
 
+// assertOverrideEvidence pins what an overridden-include finding says about the
+// override (row 85, platform QUESTIONS, 2026-09-16): the fingerprint of the
+// override content, so a consumer can tell the same override from a changed
+// one, and the overridden jobs by name and key so a reader knows what moved.
+// The content itself never travels: the values are local analysis material
+// that feeds the fingerprint, and a finding is published.
+// absentContent is the overridden value the fixture declares: it must appear
+// nowhere in the published finding.
+func assertOverrideEvidence(t *testing.T, findings []opaengine.Finding, code, wantFingerprint, wantJobs, absentContent string) {
+	t.Helper()
+	if wantFingerprint == "" {
+		t.Fatalf("%s: the expected fingerprint is empty, the assertion would pass vacuously", code)
+	}
+	count := 0
+	for _, f := range findings {
+		if f.Code != code {
+			continue
+		}
+		count++
+		if got, _ := f.Data["overrideFingerprint"].(string); got != wantFingerprint {
+			t.Errorf("%s: overrideFingerprint = %q, want %q", code, got, wantFingerprint)
+		}
+		gotJobs, err := json.Marshal(f.Data["overriddenJobs"])
+		if err != nil {
+			t.Fatalf("%s: marshal overriddenJobs: %v", code, err)
+		}
+		if string(gotJobs) != wantJobs {
+			t.Errorf("%s: overriddenJobs = %s, want %s", code, gotJobs, wantJobs)
+		}
+		raw, err := json.Marshal(f)
+		if err != nil {
+			t.Fatalf("%s: marshal finding: %v", code, err)
+		}
+		if strings.Contains(string(raw), "values") {
+			t.Errorf("%s: the finding must not carry a values key, got %s", code, raw)
+		}
+		if strings.Contains(string(raw), absentContent) {
+			t.Errorf("%s: the finding must not carry the overridden content %q, got %s", code, absentContent, raw)
+		}
+	}
+	if count == 0 {
+		t.Fatalf("%s: no findings with this code, assertOverrideEvidence passes vacuously", code)
+	}
+}
+
 // TestIssue101_ImageAuthorizedSources flags jobs using images from
 // untrusted registries. Exercises the Docker-Hub-official-image
 // fast-path and the trustedUrls glob matcher. Uses hand-built IRs
@@ -3043,16 +3089,23 @@ func TestIssue409_ComponentOverridden(t *testing.T) {
 			},
 		},
 	}
+	overridden := []ir.OverriddenJob{{
+		Name: "sast",
+		Keys: []string{"script", "rules"},
+		Values: map[string]any{
+			"script": []any{"./deploy-to-prod.sh"},
+			"rules":  []any{map[string]any{"when": "always"}},
+		},
+	}}
 	pipeline := &ir.NormalizedPipeline{
 		Provider: ir.ProviderGitLab,
 		Includes: []ir.Include{
 			{
-				Kind:   "component",
-				Source: "gitlab.example.com/components/sast/sast@1.0.0",
-				Path:   "components/sast/sast",
-				OverriddenJobs: []ir.OverriddenJob{
-					{Name: "sast", Keys: []string{"script", "rules"}},
-				},
+				Kind:                "component",
+				Source:              "gitlab.example.com/components/sast/sast@1.0.0",
+				Path:                "components/sast/sast",
+				OverriddenJobs:      overridden,
+				OverrideFingerprint: ir.OverrideFingerprint(overridden),
 			},
 		},
 	}
@@ -3071,6 +3124,52 @@ func TestIssue409_ComponentOverridden(t *testing.T) {
 	}
 	assertSubjectKey(t, findings, "ISSUE-409", "componentPath", []string{"components/sast/sast"})
 	assertNoJob(t, findings, "ISSUE-409")
+	assertOverrideEvidence(t, findings, "ISSUE-409", ir.OverrideFingerprint(overridden),
+		`[{"keys":["script","rules"],"name":"sast"}]`, "deploy-to-prod")
+
+	// Row 85 (platform QUESTIONS, 2026-09-16): the override evidence is
+	// evidence, not a precondition. An include whose fingerprint or key list
+	// the collector could not produce is still an overridden component, so the
+	// finding must come out with a thinner payload rather than disappear.
+	// component_overridden.rego is an independent copy of the template rule,
+	// so it needs its own guard: the template one cannot hold this rule open.
+	t.Run("evidence missing still denies", func(t *testing.T) {
+		thin := &ir.NormalizedPipeline{
+			Provider: ir.ProviderGitLab,
+			Includes: []ir.Include{
+				{
+					Kind:           "component",
+					Source:         "gitlab.example.com/components/sast/sast@1.0.0",
+					Path:           "components/sast/sast",
+					OverriddenJobs: []ir.OverriddenJob{{Name: "build"}},
+				},
+			},
+		}
+		thinFindings, err := engine.Evaluate(context.Background(), thin, cfg)
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		hits := 0
+		for _, f := range thinFindings {
+			if f.Code != "ISSUE-409" {
+				continue
+			}
+			hits++
+			if got, ok := f.Data["overrideFingerprint"].(string); !ok || got != "" {
+				t.Errorf("ISSUE-409: overrideFingerprint = %v, want an empty string", f.Data["overrideFingerprint"])
+			}
+			gotJobs, err := json.Marshal(f.Data["overriddenJobs"])
+			if err != nil {
+				t.Fatalf("marshal overriddenJobs: %v", err)
+			}
+			if string(gotJobs) != `[{"keys":[],"name":"build"}]` {
+				t.Errorf("ISSUE-409: overriddenJobs = %s, want the job with an empty key list", gotJobs)
+			}
+		}
+		if hits != 1 {
+			t.Fatalf("expected 1 ISSUE-409 finding on an include without override evidence, got %d", hits)
+		}
+	})
 }
 
 // TestIssue405_TemplateMissing flags DNF groups whose required
@@ -3132,17 +3231,19 @@ func TestIssue406_TemplateOverridden(t *testing.T) {
 			},
 		},
 	}
+	overridden := []ir.OverriddenJob{
+		{Name: "build", Keys: []string{"script"}, Values: map[string]any{"script": []any{"make"}}},
+	}
 	pipeline := &ir.NormalizedPipeline{
 		Provider: ir.ProviderGitLab,
 		Includes: []ir.Include{
 			{
-				Kind:    "project",
-				Source:  "group/templates/templates/go/go.yml",
-				Path:    "group/templates/templates/go/go.yml",
-				AltPath: "templates/go/go",
-				OverriddenJobs: []ir.OverriddenJob{
-					{Name: "build", Keys: []string{"script"}},
-				},
+				Kind:                "project",
+				Source:              "group/templates/templates/go/go.yml",
+				Path:                "group/templates/templates/go/go.yml",
+				AltPath:             "templates/go/go",
+				OverriddenJobs:      overridden,
+				OverrideFingerprint: ir.OverrideFingerprint(overridden),
 			},
 		},
 	}
@@ -3161,6 +3262,51 @@ func TestIssue406_TemplateOverridden(t *testing.T) {
 	}
 	assertSubjectKey(t, findings, "ISSUE-406", "templatePath", []string{"templates/go/go"})
 	assertNoJob(t, findings, "ISSUE-406")
+	assertOverrideEvidence(t, findings, "ISSUE-406", ir.OverrideFingerprint(overridden),
+		`[{"keys":["script"],"name":"build"}]`, "make")
+
+	// Row 85 (platform QUESTIONS, 2026-09-16): the override evidence is
+	// evidence, not a precondition. An include whose fingerprint or key list
+	// the collector could not produce is still an overridden template, so the
+	// finding must come out with a thinner payload rather than disappear.
+	t.Run("evidence missing still denies", func(t *testing.T) {
+		thin := &ir.NormalizedPipeline{
+			Provider: ir.ProviderGitLab,
+			Includes: []ir.Include{
+				{
+					Kind:           "project",
+					Source:         "group/templates/templates/go/go.yml",
+					Path:           "group/templates/templates/go/go.yml",
+					AltPath:        "templates/go/go",
+					OverriddenJobs: []ir.OverriddenJob{{Name: "build"}},
+				},
+			},
+		}
+		thinFindings, err := engine.Evaluate(context.Background(), thin, cfg)
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		hits := 0
+		for _, f := range thinFindings {
+			if f.Code != "ISSUE-406" {
+				continue
+			}
+			hits++
+			if got, ok := f.Data["overrideFingerprint"].(string); !ok || got != "" {
+				t.Errorf("ISSUE-406: overrideFingerprint = %v, want an empty string", f.Data["overrideFingerprint"])
+			}
+			gotJobs, err := json.Marshal(f.Data["overriddenJobs"])
+			if err != nil {
+				t.Fatalf("marshal overriddenJobs: %v", err)
+			}
+			if string(gotJobs) != `[{"keys":[],"name":"build"}]` {
+				t.Errorf("ISSUE-406: overriddenJobs = %s, want the job with an empty key list", gotJobs)
+			}
+		}
+		if hits != 1 {
+			t.Fatalf("expected 1 ISSUE-406 finding on an include without override evidence, got %d", hits)
+		}
+	})
 }
 
 // parseGitHubStepsUses extracts `steps[].uses` entries from a workflow
