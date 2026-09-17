@@ -28,7 +28,7 @@ Both read it from one place, the public package
 | `identity.Fingerprint(f)` | the short hash of exactly what `Of` selected |
 | `identity.Declared(code)` | a code's declared identity field names, in hash order (see The declared fields below) |
 | `identity.DeclaredCodes()` | every code that has a declaration |
-| `identity.SubjectKeys()` | **deprecated**: the retired v3 subject-key priority list; recipe v4 does not consult it |
+| `identity.SubjectKeys()` | **deprecated**: the retired v3 subject-key priority list; recipe v5 does not consult it |
 | `identity.RecipeVersion` | the version of the selection |
 | `identity.FromMap(m)` | a finding read back from Plumber's serialized JSON, when that JSON is a whole finding rather than an exported issue entry (see below) |
 
@@ -36,7 +36,7 @@ The two sides never have to agree on a hash, only on the selection.
 
 ### The recipe version
 
-`identity.RecipeVersion` is currently **4**. Store it next to anything you key
+`identity.RecipeVersion` is currently **5**. Store it next to anything you key
 off the selection.
 
 It tracks identity **outcomes**, not just the code in the package, so it moves
@@ -64,6 +64,7 @@ signal.
 | 2 | Eleven finding blocks that had no structured key, or that smuggled their subject through the `job` field, now name what they are about: ISSUE-401 (`hardcodedJob`), ISSUE-402 GitLab / ISSUE-403 / ISSUE-404 (`includePath`), ISSUE-405 / ISSUE-406 (`templatePath`), ISSUE-408 / ISSUE-409 (`componentPath`), ISSUE-417 (`requiredAction`), and ISSUE-501 / ISSUE-505 keep `branchName` while dropping `job`. Ten of the eleven also dropped `job`; ISSUE-401's `job` is a real job name and was kept. The algorithm is unchanged; their fingerprints are not. |
 | 3 | `file` is normalized to a repository-relative path before hashing. It was previously the collector's absolute path, so the same finding carried a different identity depending on whether it was scanned on a laptop or on a runner. Every finding whose file was recorded absolutely is re-keyed once. |
 | 4 | Per-code declarations (`finding/identity/declarations.go`) replace the global subject-key priority list: every registered code now names its own ordered identity fields instead of the recipe picking one field by priority at hash time. The canonical form is uniformly `key=value` per declared field, where v3 rendered `code` / `file` / `job` / `step` bare and only the subject as `key=value`; every fingerprint value changed at this bump, even for the codes whose selected fields did not change. No registered code keys on its prose: the 29 GitHub controls that measured onto `message` were moved onto the subject their rule emits (`uses`, `variableName`, `condition`, `ecosystem`) or onto canonical coordinates alone (`{file, job}`, `{file}`, or the `{}` per-repository singleton) where the finding is inherently one per job, per file, or per repository. The `message` fallback remains only as the backstop for an undeclared code, which the parity test makes unreachable. |
+| 5 | ISSUE-406 and ISSUE-409 (the forbidden override of a required template / component) gain `overrideFingerprint`, the digest the collector computes over the override content. Their identity was the required path alone, so every override of one template was the same issue forever and a decision taken on one override silently carried over to whatever the override became next. With the fingerprint in the key, the identity moves exactly when the overriding content moves, and only then: a dismissal covers only the override content it was made on. Every ISSUE-406 and ISSUE-409 finding re-keys once at this bump. |
 
 The SARIF `partialFingerprints["plumber/v1"]` key is the name of that SARIF
 entry, not the recipe version. It stays at `v1` across bumps, because renaming
@@ -300,7 +301,7 @@ forbidden-include-version (ISSUE-404) and required-actions (ISSUE-417) emit
 plus ISSUE-403 emit `includePath`. The remaining two of the eleven,
 ISSUE-501 and ISSUE-505, already had `branchName` as their subject before this
 version; they only dropped `job`, so they are not part of the nine. Every one
-of these keys is still what its code declares under v4.
+of these keys is still what its code declares under v5.
 
 Four collapses were introduced along the way, each dropping one input from
 identity on purpose:
@@ -313,10 +314,13 @@ identity on purpose:
   `code + file + includePath`. `inc.source` excludes the ref, so the same
   include source pinned at two different refs produced two fingerprints
   before this version and produces one now.
-- The overridden-job count (ISSUE-406 and ISSUE-409): identity is now
-  `code + templatePath` (or `componentPath`) alone. The prose message
-  embedded that count, so two includes matching the same required path with
-  different override counts now share one fingerprint.
+- The overridden-job count (ISSUE-406 and ISSUE-409): the prose message
+  embedded that count, and identity became `code + templatePath` (or
+  `componentPath`) alone, so two includes matching the same required path with
+  different override counts shared one fingerprint. Recipe version 5 reopened
+  this one on purpose: those two codes now also key on `overrideFingerprint`,
+  the digest of the override content, which separates one override from the
+  next without ever depending on the count in the prose.
 
 Each of these is a deliberate narrowing, not a bug: the consumer-facing
 consequence is that a single report can contain two issue entries that share

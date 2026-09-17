@@ -349,9 +349,9 @@ func TestDeclarations_EveryCodeFingerprintIsPinned(t *testing.T) {
 		"ISSUE-403": "9c0211f37dbdd777",
 		"ISSUE-404": "6d22a43975ac3476",
 		"ISSUE-405": "de90ff665182fa46",
-		"ISSUE-406": "89e96f29fbdc966c",
+		"ISSUE-406": "501661c23ef116a0",
 		"ISSUE-408": "303554d7d0a1f66a",
-		"ISSUE-409": "4e8a0cb83c191ba0",
+		"ISSUE-409": "f7bd5ed732e20b1b",
 		"ISSUE-410": "7ec575989260503a",
 		"ISSUE-411": "00a582d1c7ce3b61",
 		"ISSUE-412": "a7e4aba60a34a04a",
@@ -498,8 +498,11 @@ func TestOf_V4_UsesDeclaredFieldsInDeclaredOrder(t *testing.T) {
 	if !ok {
 		t.Fatal("coded finding must have an identity")
 	}
-	if fields.Version != 4 {
-		t.Errorf("Version = %d, want 4", fields.Version)
+	// The declaration mechanism arrived in v4 and still holds; the stamp on a
+	// field set is always the recipe that selected it, not the version that
+	// introduced the mechanism.
+	if fields.Version != identity.RecipeVersion {
+		t.Errorf("Version = %d, want %d", fields.Version, identity.RecipeVersion)
 	}
 	got := fields.Pairs()
 	want := []identity.Field{
@@ -582,12 +585,31 @@ func TestOf_V4_UndeclaredCodeBackstop(t *testing.T) {
 	}
 }
 
-// FromMap findings still round-trip: same map, same identity, version 4.
+// FromMap findings still round-trip: same map, same identity, stamped with the
+// active recipe version.
 func TestFromMap_V4_RoundTrip(t *testing.T) {
 	m := map[string]any{"code": "ISSUE-701", "file": "ci.yml", "job": "ci/build",
 		"message": "x", "uses": "actions/checkout@v4", "step": "Checkout"}
 	fields, ok := identity.Of(identity.FromMap(m))
-	if !ok || fields.Version != 4 {
-		t.Fatalf("fields = %+v ok=%v, want version 4", fields, ok)
+	if !ok || fields.Version != identity.RecipeVersion {
+		t.Fatalf("fields = %+v ok=%v, want version %d", fields, ok, identity.RecipeVersion)
+	}
+}
+
+// Row 85: the override fingerprint is part of the identity of ISSUE-406 and ISSUE-409, so
+// two findings that differ only by override content are two issues (and one dismissal
+// never covers both).
+func TestIdentity_Row85_OverrideFingerprintKeysTheOverrideCodes(t *testing.T) {
+	for _, code := range []string{"ISSUE-406", "ISSUE-409"} {
+		a := identity.Finding{Code: code, File: ".gitlab-ci.yml", Data: map[string]any{"templatePath": "t", "componentPath": "c", "overrideFingerprint": "aaaaaaaaaaaaaaaa"}}
+		b := identity.Finding{Code: code, File: ".gitlab-ci.yml", Data: map[string]any{"templatePath": "t", "componentPath": "c", "overrideFingerprint": "bbbbbbbbbbbbbbbb"}}
+		ha, _, _ := identity.PlatformHash(a)
+		hb, _, _ := identity.PlatformHash(b)
+		if ha == hb {
+			t.Fatalf("%s: a different override content must be a different identity", code)
+		}
+	}
+	if identity.RecipeVersion != 5 {
+		t.Fatalf("row 85 is a deliberate re-key: RecipeVersion must be 5, got %d", identity.RecipeVersion)
 	}
 }

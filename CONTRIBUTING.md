@@ -459,7 +459,7 @@ Skip if your rule only reads fields the IR already exposes (jobs, scripts, trigg
       ControlName: "<controlName>", // MUST match .plumber.yaml key + registry.go entry
   },
   ```
-- [ ] **Identity declaration** — `finding/identity/declarations.go`. Add one entry mapping your ISSUE code to the ordered list of fields that identify a finding of that code across runs; its fingerprint is the hash of exactly these fields (recipe v4, see `docs/FINGERPRINT.md`). **The parity test (`finding/identity/parity_test.go`) fails the build if a registered code has no declaration**, so this is not optional, benched or not. Choose the fields by what the finding is *about* and what stays stable:
+- [ ] **Identity declaration** — `finding/identity/declarations.go`. Add one entry mapping your ISSUE code to the ordered list of fields that identify a finding of that code across runs; its fingerprint is the hash of exactly these fields (recipe v5, see `docs/FINGERPRINT.md`). **The parity test (`finding/identity/parity_test.go`) fails the build if a registered code has no declaration**, so this is not optional, benched or not. Choose the fields by what the finding is *about* and what stays stable:
   ```go
   var declarations = map[string][]string{
       // ...
