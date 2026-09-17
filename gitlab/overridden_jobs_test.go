@@ -110,22 +110,40 @@ func TestForbiddenOverrides_DedupsRepeatedKey(t *testing.T) {
 			map[interface{}]interface{}{"when": "always"},
 		},
 	}
-	keys, values := forbiddenOverrides(job)
+	keys, block := forbiddenOverrides(job)
 	sort.Strings(keys)
 	want := []string{"rules", "script", "when"}
 	if !reflect.DeepEqual(keys, want) {
 		t.Errorf("keys = %v, want %v", keys, want)
 	}
-	if !reflect.DeepEqual(values["script"], []interface{}{"a", "b"}) {
-		t.Errorf("values[script] = %#v, want [a b]", values["script"])
+	// The block comes back whole and JSON-ready: the nested "when" values
+	// travel inside "rules", where the fingerprint picks them up.
+	wantBlock := map[string]any{
+		"script": []interface{}{"a", "b"},
+		"rules": []interface{}{
+			map[string]interface{}{"when": "manual"},
+			map[string]interface{}{"when": "always"},
+		},
 	}
-	if values["rules"] == nil {
-		t.Error("values[rules] = nil, want the job's rules block")
+	if !reflect.DeepEqual(block, wantBlock) {
+		t.Errorf("block = %#v, want the whole local job map %#v", block, wantBlock)
 	}
-	// "when" is only nested inside "rules": it is reported as an overridden
-	// key, and its content travels with the enclosing top-level key.
-	if _, ok := values["when"]; ok {
-		t.Errorf("values[when] = %#v, want no top-level value", values["when"])
+}
+
+// Row 85 (platform QUESTIONS, 2026-09-16): a forbidden keyword that only ever
+// appears NESTED under a key the regex does not match still gets the whole local
+// block carried, so the include's fingerprint moves when its value changes.
+func TestForbiddenOverrides_NestedOnlyKeyword_Row85(t *testing.T) {
+	job := map[interface{}]interface{}{
+		"variables": map[interface{}]interface{}{"image": "alpine:3"},
+	}
+	keys, block := forbiddenOverrides(job)
+	if !reflect.DeepEqual(keys, []string{"image"}) {
+		t.Errorf("keys = %v, want [image]", keys)
+	}
+	wantBlock := map[string]any{"variables": map[string]interface{}{"image": "alpine:3"}}
+	if !reflect.DeepEqual(block, wantBlock) {
+		t.Fatalf("block = %#v, want the whole local job map %#v", block, wantBlock)
 	}
 }
 
@@ -182,5 +200,36 @@ func TestBuildIncludes_OverrideFingerprint_Row85(t *testing.T) {
 	}
 	if changed[0].OverrideFingerprint == includes[0].OverrideFingerprint {
 		t.Error("a changed script must move the include's override fingerprint")
+	}
+}
+
+// Row 85 (platform QUESTIONS, 2026-09-16): the include's fingerprint follows the
+// whole overriding block, so it moves on a value the override regex never matches
+// at the job's top level (here "image", nested under "variables").
+func TestBuildIncludes_OverrideFingerprint_NestedOnly_Row85(t *testing.T) {
+	originData := func(image string) *GitlabPipelineOriginData {
+		full := fullWithJobs(GitlabPipelineJobData{Name: "build", IsOverridden: true})
+		full.OriginType = "component"
+		full.GitlabIncludeOrigin.Location = "templates/build.yml"
+		return &GitlabPipelineOriginData{
+			Origins: []GitlabPipelineOriginDataFull{*full},
+			JobHardcodedContent: map[string]interface{}{
+				"build": map[interface{}]interface{}{
+					"variables": map[interface{}]interface{}{"image": image},
+				},
+			},
+		}
+	}
+
+	three := buildIncludes(originData("alpine:3"), ".gitlab-ci.yml")
+	four := buildIncludes(originData("alpine:4"), ".gitlab-ci.yml")
+	if len(three) != 1 || len(four) != 1 {
+		t.Fatalf("got %d and %d includes, want 1 each", len(three), len(four))
+	}
+	if three[0].OverrideFingerprint == "" {
+		t.Fatal("a nested-only overridden keyword must still give the include a fingerprint")
+	}
+	if three[0].OverrideFingerprint == four[0].OverrideFingerprint {
+		t.Error("a change to a nested-only value must move the include's override fingerprint")
 	}
 }
