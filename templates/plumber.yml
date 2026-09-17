@@ -241,3 +241,9 @@ spec:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
     - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
     - if: $CI_COMMIT_TAG
+    # Issue #476: a branch pipeline whose commit has an open merge request, and any plumber/
+    # branch (the onboarding MR's own branch), so the job runs before the adopting MR merges. A
+    # project running both branch and MR pipelines sees the job twice on such a commit; see the
+    # README's workflow:rules snippet to keep a single pipeline.
+    - if: $CI_OPEN_MERGE_REQUESTS
+    - if: $CI_COMMIT_BRANCH =~ /^plumber\//
