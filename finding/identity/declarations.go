@@ -138,12 +138,18 @@ var declarations = map[string][]string{
 	"ISSUE-404": {"file", "job", "includePath"},
 	// Missing required template: keyed on the template path.
 	"ISSUE-405": {"file", "job", "templatePath"},
-	// Forbidden override of a required template: keyed on the template path.
-	"ISSUE-406": {"file", "job", "templatePath"},
+	// Forbidden override of a required template: keyed on the template path and
+	// on the override fingerprint (row 85), the digest of the override content.
+	// The path alone made every override of one template the same issue forever,
+	// so a decision taken on one override silently carried over to whatever the
+	// override became next. With the fingerprint in the key, the identity moves
+	// exactly when the overriding content moves, and only then.
+	"ISSUE-406": {"file", "job", "templatePath", "overrideFingerprint"},
 	// Missing required component: keyed on the component path.
 	"ISSUE-408": {"file", "job", "componentPath"},
-	// Forbidden override of a required component: keyed on the component path.
-	"ISSUE-409": {"file", "job", "componentPath"},
+	// Forbidden override of a required component: keyed on the component path and
+	// on the override fingerprint (row 85), for the reason given on ISSUE-406.
+	"ISSUE-409": {"file", "job", "componentPath", "overrideFingerprint"},
 	// Security job weakened: keyed on the weakening token (detail = allow_failure / when_manual / rules_override), a stable token, NOT the prose reason.
 	"ISSUE-410": {"file", "job", "detail"},
 	// Unverified script execution: keyed on the script line.

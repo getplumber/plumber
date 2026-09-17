@@ -89,7 +89,10 @@ import (
 //	   variableName / condition / ecosystem) or on canonical coordinates alone
 //	   ({file, job}, {file}, or the {} singleton). message survives only as
 //	   the backstop for an undeclared code. See docs/FINGERPRINT.md.
-const RecipeVersion = 4
+//	5  (2026-09-16, row 85): ISSUE-406 and ISSUE-409 gain the override
+//	   fingerprint, so a dismissal covers only the override content it was made
+//	   on; every 406/409 finding re-keys.
+const RecipeVersion = 5
 
 // fingerprintLength is how many hex characters of the digest the short
 // fingerprint keeps. 16 hex chars (64 bits) is short enough to read in a CSV
