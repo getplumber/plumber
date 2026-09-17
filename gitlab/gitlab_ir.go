@@ -445,21 +445,25 @@ func CollectOverriddenJobs(o *GitlabPipelineOriginDataFull, data *GitlabPipeline
 			continue
 		}
 		seen[job.Name] = true
-		keys, values := forbiddenOverrides(data.JobHardcodedContent[job.Name])
+		keys, block := forbiddenOverrides(data.JobHardcodedContent[job.Name])
 		if len(keys) == 0 {
 			continue
 		}
-		out = append(out, ir.OverriddenJob{Name: job.Name, Keys: keys, Values: values})
+		out = append(out, ir.OverriddenJob{Name: job.Name, Keys: keys, Values: block})
 	}
 	return out
 }
 
 // forbiddenOverrides returns the forbidden CI/CD keys the job redefines
-// and the values it declares for them. The key match runs over the whole
-// marshalled job, so a key nested inside another one (for instance "when"
-// inside "rules") is reported too; only keys the job declares at its top
-// level carry a value, and a nested key's content still moves the override
-// fingerprint through the enclosing top-level key.
+// and the local job block itself. The key match runs over the whole
+// marshalled job, so a keyword nested inside another key (for instance
+// "when" inside "rules", or "image" inside "variables") is reported too.
+//
+// The block is returned whole, not reduced to the matched keys: it feeds
+// the override fingerprint, which must move on ANY change to the
+// overriding job, whether or not the changed value sits behind a matched
+// keyword at the job's top level. Keys stays the regex-derived list, and
+// it is the only part of this that a finding ever shows.
 func forbiddenOverrides(job interface{}) ([]string, map[string]any) {
 	if job == nil {
 		return nil, nil
@@ -473,10 +477,8 @@ func forbiddenOverrides(job interface{}) ([]string, map[string]any) {
 	if len(matches) == 0 {
 		return nil, nil
 	}
-	top, _ := serializable.(map[string]interface{})
 	seen := make(map[string]bool)
 	var keys []string
-	var values map[string]any
 	for _, m := range matches {
 		key := string(m[1])
 		if seen[key] {
@@ -484,16 +486,11 @@ func forbiddenOverrides(job interface{}) ([]string, map[string]any) {
 		}
 		seen[key] = true
 		keys = append(keys, key)
-		value, ok := top[key]
-		if !ok {
-			continue
-		}
-		if values == nil {
-			values = make(map[string]any, len(matches))
-		}
-		values[key] = value
 	}
-	return keys, values
+	// convertOverrideSerializable already built a fresh, JSON-ready copy,
+	// so handing it out shares nothing with the collector's own data.
+	block, _ := serializable.(map[string]any)
+	return keys, block
 }
 
 func convertOverrideSerializable(input interface{}) interface{} {

@@ -3089,12 +3089,16 @@ func TestIssue409_ComponentOverridden(t *testing.T) {
 			},
 		},
 	}
+	// Values is the whole local job block: the keys the override regex
+	// matched AND the ones it did not ("variables" here). None of it may
+	// reach the finding.
 	overridden := []ir.OverriddenJob{{
 		Name: "sast",
 		Keys: []string{"script", "rules"},
 		Values: map[string]any{
-			"script": []any{"./deploy-to-prod.sh"},
-			"rules":  []any{map[string]any{"when": "always"}},
+			"script":    []any{"./deploy-to-prod.sh"},
+			"rules":     []any{map[string]any{"when": "always"}},
+			"variables": map[string]any{"TARGET": "deploy-to-prod"},
 		},
 	}}
 	pipeline := &ir.NormalizedPipeline{
@@ -3231,8 +3235,13 @@ func TestIssue406_TemplateOverridden(t *testing.T) {
 			},
 		},
 	}
+	// Values is the whole local job block, matched keys and unmatched ones
+	// alike; the finding carries the names and the keys, never the content.
 	overridden := []ir.OverriddenJob{
-		{Name: "build", Keys: []string{"script"}, Values: map[string]any{"script": []any{"make"}}},
+		{Name: "build", Keys: []string{"script"}, Values: map[string]any{
+			"script":    []any{"make"},
+			"variables": map[string]any{"BUILD_CMD": "make release"},
+		}},
 	}
 	pipeline := &ir.NormalizedPipeline{
 		Provider: ir.ProviderGitLab,

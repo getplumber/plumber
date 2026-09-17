@@ -472,12 +472,15 @@ type Include struct {
 type OverriddenJob struct {
 	Name string   `json:"name"`
 	Keys []string `json:"keys,omitempty"`
-	// Values holds the overridden keys' values exactly as the user's own
-	// job block declares them. It exists to feed the override
-	// fingerprint and is never serialised: this IR is the policy engine's
-	// input and can be dumped, so the user's job content must not travel
-	// with it. What leaves the CLI about an override is the fingerprint,
-	// the job name and the key names, never the content behind them.
+	// Values holds the whole local job block exactly as the user's own
+	// configuration declares it, Keys being only the CI/CD keywords the
+	// override regex matched inside it. It exists to feed the override
+	// fingerprint, which digests the block as a whole so that any change
+	// to the overriding job moves it, and is never serialised: this IR is
+	// the policy engine's input and can be dumped, so the user's job
+	// content must not travel with it. What leaves the CLI about an
+	// override is the fingerprint, the job name and the key names, never
+	// the content behind them.
 	Values map[string]any `json:"-"`
 }
 
