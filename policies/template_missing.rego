@@ -14,21 +14,34 @@ deny contains finding if {
 	groups := input.config.pipelineMustIncludeTemplate.requiredGroups
 	count(groups) > 0
 	not _any_group_satisfied(groups)
-	some i, j
-	group := groups[i]
-	required := group[j]
-	not _template_present(required)
+	missing := [_missing_in_group(group) | some group in groups]
 	finding := {
 		"code":     "ISSUE-405",
 		"severity": "high",
-		"message":  sprintf("required template %q is missing from the pipeline (group %d)", [required, i]),
-		# No "job": a missing template is not a job. templatePath names what
-		# this finding is about and is what the identity recipe selects
-		# (finding/identity). The group index stays out: it moves whenever the
-		# user reorders requiredGroups, which is not a new finding.
-		"templatePath": required,
+		"message":  sprintf("no required template group is satisfied: %s", [_groups_text(missing)]),
+		# One finding per evaluation, not one per missing path: the policy that
+		# failed is "include one of these groups", and the paths are what it is
+		# still waiting for. They travel as data, one list per alternative in
+		# config order, so a reader sees every way out of the finding at once.
+		# No "job" and no "file": a missing template is neither, and no single
+		# path names this finding.
+		"missingGroups": missing,
 	}
 }
+
+# The entries of one alternative the pipeline does not include, config order kept.
+_missing_in_group(group) := [required |
+	some required in group
+	not _template_present(required)
+]
+
+# _groups_text renders `group 0 missing "a", "b"; group 1 missing "c"`.
+_groups_text(missing) := concat("; ", [text |
+	some i in numbers.range(0, count(missing) - 1)
+	text := sprintf("group %d missing %s", [i, _entries_text(missing[i])])
+])
+
+_entries_text(entries) := concat(", ", [sprintf("%q", [entry]) | some entry in entries])
 
 # DNF: only emit findings when no group is fully satisfied.
 _any_group_satisfied(groups) if {

@@ -2,9 +2,8 @@
 # component required by the user's
 # pipelineMustIncludeComponent.requiredGroups policy. The list is in
 # DNF (Disjunctive Normal Form): a group is an AND, the outer slice is
-# an OR. One finding is emitted per missing component per group so the
-# report explains exactly which slot stayed empty — the Go control
-# behaves the same way.
+# an OR. One finding is emitted per evaluation, carrying every group's
+# missing components, so the report shows each way out of it at once.
 package component_missing
 
 import rego.v1
@@ -14,21 +13,33 @@ deny contains finding if {
 	groups := input.config.pipelineMustIncludeComponent.requiredGroups
 	count(groups) > 0
 	not _any_group_satisfied(groups)
-	some i, j
-	group := groups[i]
-	required := group[j]
-	not _component_present(required)
+	missing := [_missing_in_group(group) | some group in groups]
 	finding := {
 		"code":     "ISSUE-408",
 		"severity": "high",
-		"message":  sprintf("required component %q is missing from the pipeline (group %d)", [required, i]),
-		# No "job": a missing component is not a job. componentPath names what
-		# this finding is about and is what the identity recipe selects
-		# (finding/identity). The group index stays out: it moves whenever the
-		# user reorders requiredGroups, which is not a new finding.
-		"componentPath": required,
+		"message":  sprintf("no required component group is satisfied: %s", [_groups_text(missing)]),
+		# One finding per evaluation, not one per missing component: the policy
+		# that failed is "include one of these groups", and the components are
+		# what it is still waiting for. They travel as data, one list per
+		# alternative in config order. No "job" and no "file": a missing
+		# component is neither, and no single path names this finding.
+		"missingGroups": missing,
 	}
 }
+
+# The entries of one alternative the pipeline does not include, config order kept.
+_missing_in_group(group) := [required |
+	some required in group
+	not _component_present(required)
+]
+
+# _groups_text renders `group 0 missing "a", "b"; group 1 missing "c"`.
+_groups_text(missing) := concat("; ", [text |
+	some i in numbers.range(0, count(missing) - 1)
+	text := sprintf("group %d missing %s", [i, _entries_text(missing[i])])
+])
+
+_entries_text(entries) := concat(", ", [sprintf("%q", [entry]) | some entry in entries])
 
 # A DNF group is satisfied when every required component in it is
 # present. The whole policy is satisfied as soon as ANY group is —

@@ -2141,6 +2141,82 @@ func assertNoJob(t *testing.T, findings []opaengine.Finding, code string) {
 	}
 }
 
+// missingGroupsOf reads the `missingGroups` payload the three "a required thing
+// is missing" rules carry (ISSUE-405, ISSUE-408, ISSUE-417; row 107 of the
+// platform QUESTIONS queue, 2026-09-18): one list per DNF alternative, in
+// config order, holding that alternative's missing entries. Rego hands it over
+// as a list of lists of strings, so the conversion is the assertion's first
+// guard.
+func missingGroupsOf(t *testing.T, f opaengine.Finding) [][]string {
+	t.Helper()
+	raw, ok := f.Data["missingGroups"].([]any)
+	if !ok {
+		t.Fatalf("%s: missingGroups = %#v, want a list of groups", f.Code, f.Data["missingGroups"])
+	}
+	groups := make([][]string, 0, len(raw))
+	for i, group := range raw {
+		inner, ok := group.([]any)
+		if !ok {
+			t.Fatalf("%s: missingGroups[%d] = %#v, want a list of entries", f.Code, i, group)
+		}
+		entries := make([]string, 0, len(inner))
+		for j, entry := range inner {
+			value, ok := entry.(string)
+			if !ok {
+				t.Fatalf("%s: missingGroups[%d][%d] = %#v, want a string", f.Code, i, j, entry)
+			}
+			entries = append(entries, value)
+		}
+		groups = append(groups, entries)
+	}
+	return groups
+}
+
+// assertOneMissingGroupsFinding pins what a "no required group is satisfied"
+// rule emits (row 107): exactly ONE finding per rule evaluation, whatever the
+// number of missing entries, those entries carried as data in config order, and
+// a message naming all of them. absentKeys are the per-entry subject keys the
+// rules used to emit one finding each for: they must be gone, because a single
+// finding covering the whole policy has no single subject. file and job stay
+// empty, a missing template, component or action being neither.
+func assertOneMissingGroupsFinding(t *testing.T, findings []opaengine.Finding, code, wantMessage string, wantGroups [][]string, absentKeys ...string) {
+	t.Helper()
+	matched := make([]opaengine.Finding, 0, 1)
+	for _, f := range findings {
+		if f.Code == code {
+			matched = append(matched, f)
+		}
+	}
+	if len(matched) != 1 {
+		t.Fatalf("%s: got %d findings, want exactly 1 for the whole rule: %+v", code, len(matched), matched)
+	}
+	f := matched[0]
+	if f.Message != wantMessage {
+		t.Errorf("%s: message =\n\t%q\nwant\n\t%q", code, f.Message, wantMessage)
+	}
+	if f.Severity != "high" {
+		t.Errorf("%s: severity = %q, want high", code, f.Severity)
+	}
+	got := missingGroupsOf(t, f)
+	if len(got) != len(wantGroups) {
+		t.Fatalf("%s: missingGroups = %v, want %v", code, got, wantGroups)
+	}
+	for i := range wantGroups {
+		if !slices.Equal(got[i], wantGroups[i]) {
+			t.Errorf("%s: missingGroups[%d] = %v, want %v", code, i, got[i], wantGroups[i])
+		}
+	}
+	for _, key := range absentKeys {
+		if value, present := f.Data[key]; present {
+			t.Errorf("%s: data still carries %q = %#v; one finding per rule has no single subject", code, key, value)
+		}
+	}
+	if f.File != "" {
+		t.Errorf("%s: file = %q, want empty: this finding is not about a file", code, f.File)
+	}
+	assertNoJob(t, findings, code)
+}
+
 // assertOverrideEvidence pins what an overridden-include finding says about the
 // override (row 85, platform QUESTIONS, 2026-09-16): the fingerprint of the
 // override content, so a consumer can tell the same override from a changed
@@ -3027,10 +3103,11 @@ func stringSlicesEqual(a, b []string) bool {
 	return true
 }
 
-// TestIssue408_ComponentMissing flags DNF groups whose required
-// components are missing from the resolved include list. The Go
-// control behaviour is to emit one finding per missing component per
-// group — the Rego port does the same.
+// TestIssue408_ComponentMissing pins row 107 (platform QUESTIONS,
+// 2026-09-18): when no requiredGroups alternative is satisfied, the rule emits
+// ONE finding for the whole policy, carrying every still-missing component as
+// data (one list per alternative, in config order), the way v1 reported it. A
+// satisfied group keeps the rule silent.
 func TestIssue408_ComponentMissing(t *testing.T) {
 	engine := opaengine.New()
 	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
@@ -3044,35 +3121,64 @@ func TestIssue408_ComponentMissing(t *testing.T) {
 			},
 		},
 	}
-	pipeline := &ir.NormalizedPipeline{
-		Provider: ir.ProviderGitLab,
-		Includes: []ir.Include{
-			{Kind: "component", Source: "gitlab.example.com/components/sast/sast@1.0.0", Path: "components/sast/sast"},
-		},
-	}
-	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
-	if err != nil {
-		t.Fatalf("evaluate: %v", err)
-	}
-	hits := map[string]bool{}
-	for _, f := range findings {
-		if f.Code == "ISSUE-408" {
-			name, _ := f.Data["componentPath"].(string)
-			hits[name] = true
+
+	t.Run("no group satisfied names every missing component once", func(t *testing.T) {
+		pipeline := &ir.NormalizedPipeline{
+			Provider: ir.ProviderGitLab,
+			Includes: []ir.Include{
+				{Kind: "project", Source: "group/templates/ci.yml", Path: "group/templates/ci.yml"},
+			},
 		}
-	}
-	if !hits["components/secret-detection/secret-detection"] {
-		t.Fatalf("expected secret-detection flagged, got %v", hits)
-	}
-	if !hits["your-org/full-security/full-security"] {
-		t.Fatalf("expected full-security flagged, got %v", hits)
-	}
-	if hits["components/sast/sast"] {
-		t.Fatalf("unexpected flag on present component: %v", hits)
-	}
-	assertSubjectKey(t, findings, "ISSUE-408", "componentPath",
-		[]string{"components/secret-detection/secret-detection", "your-org/full-security/full-security"})
-	assertNoJob(t, findings, "ISSUE-408")
+		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		assertOneMissingGroupsFinding(t, findings, "ISSUE-408",
+			`no required component group is satisfied: group 0 missing "components/sast/sast", "components/secret-detection/secret-detection"; group 1 missing "your-org/full-security/full-security"`,
+			[][]string{
+				{"components/sast/sast", "components/secret-detection/secret-detection"},
+				{"your-org/full-security/full-security"},
+			},
+			"componentPath")
+	})
+
+	t.Run("a half-satisfied group reports only what it still misses", func(t *testing.T) {
+		pipeline := &ir.NormalizedPipeline{
+			Provider: ir.ProviderGitLab,
+			Includes: []ir.Include{
+				{Kind: "component", Source: "gitlab.example.com/components/sast/sast@1.0.0", Path: "components/sast/sast"},
+			},
+		}
+		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		assertOneMissingGroupsFinding(t, findings, "ISSUE-408",
+			`no required component group is satisfied: group 0 missing "components/secret-detection/secret-detection"; group 1 missing "your-org/full-security/full-security"`,
+			[][]string{
+				{"components/secret-detection/secret-detection"},
+				{"your-org/full-security/full-security"},
+			},
+			"componentPath")
+	})
+
+	t.Run("a satisfied group silences the rule", func(t *testing.T) {
+		pipeline := &ir.NormalizedPipeline{
+			Provider: ir.ProviderGitLab,
+			Includes: []ir.Include{
+				{Kind: "component", Source: "gitlab.example.com/your-org/full-security/full-security@2.0.0", Path: "your-org/full-security/full-security"},
+			},
+		}
+		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		for _, f := range findings {
+			if f.Code == "ISSUE-408" {
+				t.Errorf("second group satisfied; the rule must stay silent, got %+v", f)
+			}
+		}
+	})
 }
 
 // TestIssue409_ComponentOverridden flags required components whose
@@ -3176,10 +3282,11 @@ func TestIssue409_ComponentOverridden(t *testing.T) {
 	})
 }
 
-// TestIssue405_TemplateMissing flags DNF groups whose required
-// templates are missing. Template includes (project/remote/local/
-// template) are considered; components and hardcoded origins are
-// ignored.
+// TestIssue405_TemplateMissing pins row 107 (platform QUESTIONS, 2026-09-18):
+// a pipeline that satisfies no required-template alternative produces ONE
+// finding for the rule, carrying every missing template as data, one list per
+// alternative in config order. Template includes (project/remote/local/
+// template) are considered; components and hardcoded origins are ignored.
 func TestIssue405_TemplateMissing(t *testing.T) {
 	engine := opaengine.New()
 	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
@@ -3189,36 +3296,70 @@ func TestIssue405_TemplateMissing(t *testing.T) {
 		"pipelineMustIncludeTemplate": map[string]any{
 			"requiredGroups": []any{
 				[]any{"templates/go/go", "templates/trivy/trivy"},
+				[]any{"templates/full-security/full-security"},
 			},
 		},
 	}
-	pipeline := &ir.NormalizedPipeline{
-		Provider: ir.ProviderGitLab,
-		Includes: []ir.Include{
-			{Kind: "project", Source: "group/templates/templates/go/go.yml", Path: "group/templates/templates/go/go.yml", AltPath: "templates/go/go"},
-			// a component should NOT satisfy a template requirement
-			{Kind: "component", Source: "gitlab.example.com/components/trivy/trivy@1.0.0", Path: "components/trivy/trivy"},
-		},
-	}
-	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
-	if err != nil {
-		t.Fatalf("evaluate: %v", err)
-	}
-	hits := map[string]bool{}
-	for _, f := range findings {
-		if f.Code == "ISSUE-405" {
-			path, _ := f.Data["templatePath"].(string)
-			hits[path] = true
+
+	t.Run("no group satisfied names every missing template once", func(t *testing.T) {
+		pipeline := &ir.NormalizedPipeline{
+			Provider: ir.ProviderGitLab,
+			Includes: []ir.Include{
+				// a component must NOT satisfy a template requirement
+				{Kind: "component", Source: "gitlab.example.com/components/trivy/trivy@1.0.0", Path: "components/trivy/trivy"},
+			},
 		}
-	}
-	if !hits["templates/trivy/trivy"] {
-		t.Fatalf("expected trivy template flagged, got %v", hits)
-	}
-	if hits["templates/go/go"] {
-		t.Fatalf("unexpected flag on present template: %v", hits)
-	}
-	assertSubjectKey(t, findings, "ISSUE-405", "templatePath", []string{"templates/trivy/trivy"})
-	assertNoJob(t, findings, "ISSUE-405")
+		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		assertOneMissingGroupsFinding(t, findings, "ISSUE-405",
+			`no required template group is satisfied: group 0 missing "templates/go/go", "templates/trivy/trivy"; group 1 missing "templates/full-security/full-security"`,
+			[][]string{
+				{"templates/go/go", "templates/trivy/trivy"},
+				{"templates/full-security/full-security"},
+			},
+			"templatePath")
+	})
+
+	t.Run("a half-satisfied group reports only what it still misses", func(t *testing.T) {
+		pipeline := &ir.NormalizedPipeline{
+			Provider: ir.ProviderGitLab,
+			Includes: []ir.Include{
+				{Kind: "project", Source: "group/templates/templates/go/go.yml", Path: "group/templates/templates/go/go.yml", AltPath: "templates/go/go"},
+				{Kind: "component", Source: "gitlab.example.com/components/trivy/trivy@1.0.0", Path: "components/trivy/trivy"},
+			},
+		}
+		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		assertOneMissingGroupsFinding(t, findings, "ISSUE-405",
+			`no required template group is satisfied: group 0 missing "templates/trivy/trivy"; group 1 missing "templates/full-security/full-security"`,
+			[][]string{
+				{"templates/trivy/trivy"},
+				{"templates/full-security/full-security"},
+			},
+			"templatePath")
+	})
+
+	t.Run("a satisfied group silences the rule", func(t *testing.T) {
+		pipeline := &ir.NormalizedPipeline{
+			Provider: ir.ProviderGitLab,
+			Includes: []ir.Include{
+				{Kind: "project", Source: "group/templates/full-security.yml", Path: "group/templates/full-security.yml", AltPath: "templates/full-security/full-security"},
+			},
+		}
+		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		for _, f := range findings {
+			if f.Code == "ISSUE-405" {
+				t.Errorf("second group satisfied; the rule must stay silent, got %+v", f)
+			}
+		}
+	})
 }
 
 // TestIssue406_TemplateOverridden flags required templates whose
@@ -5781,11 +5922,14 @@ func TestIssue107_DockerfileUnpinnedBase(t *testing.T) {
 }
 
 // TestIssue416_RequiredActionMissing covers the GitHub counterpart
-// of ISSUE-408: one finding per missing required action / reusable
-// workflow per DNF group. Verifies (a) step-level uses, (b) job-
-// level reusable workflow uses, (c) ref-agnostic match,
-// (d) slash-guard against accidental prefix collisions, and
-// (e) the outer-OR satisfaction short-circuit.
+// of ISSUE-408 and pins row 107 (platform QUESTIONS, 2026-09-18):
+// when no requiredGroups alternative is satisfied the rule emits ONE
+// finding for the whole policy, carrying every missing action or
+// reusable workflow as data (one list per alternative, in config
+// order). Verifies (a) step-level uses, (b) job-level reusable
+// workflow uses, (c) ref-agnostic match, (d) slash-guard against
+// accidental prefix collisions, and (e) the outer-OR satisfaction
+// short-circuit.
 func TestIssue416_RequiredActionMissing(t *testing.T) {
 	engine := opaengine.New()
 	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
@@ -5801,7 +5945,9 @@ func TestIssue416_RequiredActionMissing(t *testing.T) {
 		},
 	}
 
-	t.Run("missing entries from every group surface as findings", func(t *testing.T) {
+	const allMissing = `no required action or reusable workflow group is satisfied: group 0 missing "myorg/sast-scan", "myorg/policy/.github/workflows/policy.yml"; group 1 missing "myorg/full-security"`
+
+	t.Run("no group satisfied names every missing entry once", func(t *testing.T) {
 		pipeline := &ir.NormalizedPipeline{
 			Provider: ir.ProviderGitHub,
 			Jobs: []ir.Job{
@@ -5815,24 +5961,35 @@ func TestIssue416_RequiredActionMissing(t *testing.T) {
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
-		hits := map[string]bool{}
-		for _, f := range findings {
-			if f.Code == "ISSUE-417" {
-				requiredAction, _ := f.Data["requiredAction"].(string)
-				hits[requiredAction] = true
-			}
+		assertOneMissingGroupsFinding(t, findings, "ISSUE-417", allMissing,
+			[][]string{
+				{"myorg/sast-scan", "myorg/policy/.github/workflows/policy.yml"},
+				{"myorg/full-security"},
+			},
+			"requiredAction", "required", "groupIndex")
+	})
+
+	t.Run("a half-satisfied group reports only what it still misses", func(t *testing.T) {
+		pipeline := &ir.NormalizedPipeline{
+			Provider: ir.ProviderGitHub,
+			Jobs: []ir.Job{
+				{
+					Name: "ci/security",
+					Uses: []ir.Action{{Uses: "myorg/sast-scan@v2"}},
+				},
+			},
 		}
-		for _, want := range []string{"myorg/sast-scan", "myorg/policy/.github/workflows/policy.yml", "myorg/full-security"} {
-			if !hits[want] {
-				t.Errorf("expected ISSUE-417 finding for %q; got hits=%v", want, hits)
-			}
+		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
 		}
-		assertSubjectKey(t, findings, "ISSUE-417", "requiredAction", []string{
-			"myorg/sast-scan",
-			"myorg/policy/.github/workflows/policy.yml",
-			"myorg/full-security",
-		})
-		assertNoJob(t, findings, "ISSUE-417")
+		assertOneMissingGroupsFinding(t, findings, "ISSUE-417",
+			`no required action or reusable workflow group is satisfied: group 0 missing "myorg/policy/.github/workflows/policy.yml"; group 1 missing "myorg/full-security"`,
+			[][]string{
+				{"myorg/policy/.github/workflows/policy.yml"},
+				{"myorg/full-security"},
+			},
+			"requiredAction", "required", "groupIndex")
 	})
 
 	t.Run("step-level uses with pinned SHA satisfies ref-agnostic match", func(t *testing.T) {
@@ -5905,15 +6062,14 @@ func TestIssue416_RequiredActionMissing(t *testing.T) {
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
-		matched := false
-		for _, f := range findings {
-			if f.Code == "ISSUE-417" && f.Data["requiredAction"] == "myorg/sast-scan" {
-				matched = true
-			}
-		}
-		if !matched {
-			t.Errorf("expected myorg/sast-scan to be flagged missing despite a lookalike fork ref, got findings %+v", findings)
-		}
+		// The lookalike fork satisfies nothing, so myorg/sast-scan stays in the
+		// first group's missing list.
+		assertOneMissingGroupsFinding(t, findings, "ISSUE-417", allMissing,
+			[][]string{
+				{"myorg/sast-scan", "myorg/policy/.github/workflows/policy.yml"},
+				{"myorg/full-security"},
+			},
+			"requiredAction", "required", "groupIndex")
 	})
 
 	t.Run("any satisfied group short-circuits the whole policy", func(t *testing.T) {

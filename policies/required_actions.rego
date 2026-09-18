@@ -5,8 +5,8 @@
 # is in DNF (Disjunctive Normal Form), where each inner group is
 # an AND and the outer slice is an OR. The whole policy is
 # satisfied as soon as ANY group is fully present. One finding is
-# emitted per missing entry per group so the report explains
-# exactly which slot is empty.
+# emitted per evaluation, carrying every group's missing entries,
+# so the report shows each way out of it at once.
 #
 # GitHub has two ways to "include" something external in a
 # workflow, and this rule covers both transparently so the user
@@ -42,23 +42,33 @@ deny contains finding if {
 	groups := input.config.workflowMustIncludeRequiredActions.requiredGroups
 	count(groups) > 0
 	not _any_group_satisfied(groups)
-	some i, j
-	group := groups[i]
-	required := group[j]
-	not _required_present(required)
+	missing := [_missing_in_group(group) | some group in groups]
 	finding := {
 		"code":     "ISSUE-417",
 		"severity": "high",
-		"message":  sprintf("required action or reusable workflow %q is not referenced by any workflow (group %d)", [required, i]),
-		# No "job": a missing required action is not a job. requiredAction names
-		# what this finding is about and is what the identity recipe selects
-		# (finding/identity). groupIndex stays as payload: it moves whenever the
-		# user reorders requiredGroups, which is not a new finding.
-		"requiredAction": required,
-		"required":       required,
-		"groupIndex":     i,
+		"message":  sprintf("no required action or reusable workflow group is satisfied: %s", [_groups_text(missing)]),
+		# One finding per evaluation, not one per missing entry: the policy that
+		# failed is "reference one of these groups", and the entries are what it
+		# is still waiting for. They travel as data, one list per alternative in
+		# config order. No "job" and no "file": a missing action is neither, and
+		# no single entry names this finding.
+		"missingGroups": missing,
 	}
 }
+
+# The entries of one alternative no workflow references, config order kept.
+_missing_in_group(group) := [required |
+	some required in group
+	not _required_present(required)
+]
+
+# _groups_text renders `group 0 missing "a", "b"; group 1 missing "c"`.
+_groups_text(missing) := concat("; ", [text |
+	some i in numbers.range(0, count(missing) - 1)
+	text := sprintf("group %d missing %s", [i, _entries_text(missing[i])])
+])
+
+_entries_text(entries) := concat(", ", [sprintf("%q", [entry]) | some entry in entries])
 
 # Outer-OR satisfied when at least one inner-AND is.
 _any_group_satisfied(groups) if {
