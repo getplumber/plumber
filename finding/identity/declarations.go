@@ -136,8 +136,10 @@ var declarations = map[string][]string{
 	"ISSUE-403": {"file", "job", "includePath"},
 	// Forbidden include version: keyed on the include path.
 	"ISSUE-404": {"file", "job", "includePath"},
-	// Missing required template: keyed on the template path.
-	"ISSUE-405": {"file", "job", "templatePath"},
+	// Missing required template: ONE finding per rule evaluation (row 107), the code alone is the
+	// identity; the missing entries travel as data (missingGroups, one list per alternative) and
+	// never re-key the issue, so a dismissal survives changes to the missing set.
+	"ISSUE-405": {},
 	// Forbidden override of a required template: keyed on the template path and
 	// on the override fingerprint (row 85), the digest of the override content.
 	// The path alone made every override of one template the same issue forever,
@@ -145,8 +147,10 @@ var declarations = map[string][]string{
 	// override became next. With the fingerprint in the key, the identity moves
 	// exactly when the overriding content moves, and only then.
 	"ISSUE-406": {"file", "job", "templatePath", "overrideFingerprint"},
-	// Missing required component: keyed on the component path.
-	"ISSUE-408": {"file", "job", "componentPath"},
+	// Missing required component: ONE finding per rule evaluation (row 107), the code alone is the
+	// identity; the missing entries travel as data (missingGroups, one list per alternative) and
+	// never re-key the issue, so a dismissal survives changes to the missing set.
+	"ISSUE-408": {},
 	// Forbidden override of a required component: keyed on the component path and
 	// on the override fingerprint (row 85), for the reason given on ISSUE-406.
 	"ISSUE-409": {"file", "job", "componentPath", "overrideFingerprint"},
@@ -158,8 +162,10 @@ var declarations = map[string][]string{
 	"ISSUE-412": {"file", "job", "serviceImage"},
 	// Docker-in-Docker with an insecure daemon: one finding per job, keyed on the job (detail was prose; the finding is one-per-job so it needs no discriminator).
 	"ISSUE-413": {"file", "job"},
-	// Required action/workflow missing: keyed on the required action.
-	"ISSUE-417": {"file", "job", "requiredAction"},
+	// Required action/workflow missing: ONE finding per rule evaluation (row 107), the code alone is
+	// the identity; the missing entries travel as data (missingGroups, one list per alternative) and
+	// never re-key the issue, so a dismissal survives changes to the missing set.
+	"ISSUE-417": {},
 	// Workflow has no `concurrency:` block: one finding per workflow file, keyed on the file (benched, not yet live: declaration provisional, revisit on unbench).
 	"ISSUE-418": {"file"},
 	// Known misfeature pattern (checkout dir uploaded as artefact): one per job, keyed on the job (benched, not yet live: declaration provisional, revisit on unbench).
