@@ -36,7 +36,7 @@ The two sides never have to agree on a hash, only on the selection.
 
 ### The recipe version
 
-`identity.RecipeVersion` is currently **5**. Store it next to anything you key
+`identity.RecipeVersion` is currently **6**. Store it next to anything you key
 off the selection.
 
 It tracks identity **outcomes**, not just the code in the package, so it moves
@@ -65,6 +65,7 @@ signal.
 | 3 | `file` is normalized to a repository-relative path before hashing. It was previously the collector's absolute path, so the same finding carried a different identity depending on whether it was scanned on a laptop or on a runner. Every finding whose file was recorded absolutely is re-keyed once. |
 | 4 | Per-code declarations (`finding/identity/declarations.go`) replace the global subject-key priority list: every registered code now names its own ordered identity fields instead of the recipe picking one field by priority at hash time. The canonical form is uniformly `key=value` per declared field, where v3 rendered `code` / `file` / `job` / `step` bare and only the subject as `key=value`; every fingerprint value changed at this bump, even for the codes whose selected fields did not change. No registered code keys on its prose: the 29 GitHub controls that measured onto `message` were moved onto the subject their rule emits (`uses`, `variableName`, `condition`, `ecosystem`) or onto canonical coordinates alone (`{file, job}`, `{file}`, or the `{}` per-repository singleton) where the finding is inherently one per job, per file, or per repository. The `message` fallback remains only as the backstop for an undeclared code, which the parity test makes unreachable. |
 | 5 | ISSUE-406 and ISSUE-409 (the forbidden override of a required template / component) gain `overrideFingerprint`, the digest the collector computes over the override content. Their identity was the required path alone, so every override of one template was the same issue forever and a decision taken on one override silently carried over to whatever the override became next. With the fingerprint in the key, the identity moves exactly when the overriding content moves, and only then: a dismissal covers only the override content it was made on. Every ISSUE-406 and ISSUE-409 finding re-keys once at this bump. |
+| 6 | ISSUE-405, ISSUE-408 and ISSUE-417 (missing required template / component / action) become singletons (`{}`): one finding per rule evaluation, the code alone is the identity. The missing entries now travel as data (`missingGroups`, one list per alternative) instead of shaping the identity, so a dismissal survives changes to the missing set. Every ISSUE-405, ISSUE-408 and ISSUE-417 finding re-keys once at this bump. |
 
 The SARIF `partialFingerprints["plumber/v1"]` key is the name of that SARIF
 entry, not the recipe version. It stays at `v1` across bumps, because renaming
@@ -301,13 +302,17 @@ forbidden-include-version (ISSUE-404) and required-actions (ISSUE-417) emit
 plus ISSUE-403 emit `includePath`. The remaining two of the eleven,
 ISSUE-501 and ISSUE-505, already had `branchName` as their subject before this
 version; they only dropped `job`, so they are not part of the nine. Every one
-of these keys is still what its code declares under v5.
+of these keys is still what its code declares under v5, except ISSUE-405,
+ISSUE-408 and ISSUE-417: recipe version 6 retires their `templatePath` /
+`componentPath` / `requiredAction` key in favor of the `{}` singleton (see the
+version table above).
 
-Four collapses were introduced along the way, each dropping one input from
-identity on purpose:
+Three collapses were introduced along the way, each dropping one input from
+identity on purpose (a fourth, the DNF group index of ISSUE-405 / ISSUE-408 /
+ISSUE-417, was retired at recipe version 6: those three codes are singletons
+now, one finding per rule evaluation, and `missingGroups` travels as data
+rather than shaping the identity):
 
-- The DNF group index (ISSUE-405 / ISSUE-408 / ISSUE-417), which shifts
-  whenever a user reorders `requiredGroups`.
 - The forbidden `ref` (ISSUE-404), since the same include drifting from one
   forbidden version to another is the same unresolved problem.
 - The ref (ISSUE-403 and the ISSUE-402 GitLab block): identity is now

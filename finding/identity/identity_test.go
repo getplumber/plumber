@@ -348,15 +348,15 @@ func TestDeclarations_EveryCodeFingerprintIsPinned(t *testing.T) {
 		"ISSUE-402": "574564223df032be",
 		"ISSUE-403": "9c0211f37dbdd777",
 		"ISSUE-404": "6d22a43975ac3476",
-		"ISSUE-405": "de90ff665182fa46",
+		"ISSUE-405": "14e1d331e2698a24",
 		"ISSUE-406": "501661c23ef116a0",
-		"ISSUE-408": "303554d7d0a1f66a",
+		"ISSUE-408": "5d6adc6fe8df41e0",
 		"ISSUE-409": "f7bd5ed732e20b1b",
 		"ISSUE-410": "7ec575989260503a",
 		"ISSUE-411": "00a582d1c7ce3b61",
 		"ISSUE-412": "a7e4aba60a34a04a",
 		"ISSUE-413": "1388ae7203cc3eb8",
-		"ISSUE-417": "9be7e2421e979408",
+		"ISSUE-417": "84dd72a018932a2e",
 		"ISSUE-418": "b7d95784db1eafc2",
 		"ISSUE-419": "6147e752a7f298fb",
 		"ISSUE-420": "ac3048041dde8446",
@@ -609,7 +609,7 @@ func TestIdentity_Row85_OverrideFingerprintKeysTheOverrideCodes(t *testing.T) {
 			t.Fatalf("%s: a different override content must be a different identity", code)
 		}
 	}
-	if identity.RecipeVersion != 5 {
-		t.Fatalf("row 85 is a deliberate re-key: RecipeVersion must be 5, got %d", identity.RecipeVersion)
+	if identity.RecipeVersion != 6 {
+		t.Fatalf("row 107 is a deliberate re-key: RecipeVersion must be 6, got %d", identity.RecipeVersion)
 	}
 }

@@ -92,7 +92,9 @@ import (
 //	5  (2026-09-16, row 85): ISSUE-406 and ISSUE-409 gain the override
 //	   fingerprint, so a dismissal covers only the override content it was made
 //	   on; every 406/409 finding re-keys.
-const RecipeVersion = 5
+//	6  (2026-09-18, row 107): ISSUE-405, ISSUE-408 and ISSUE-417 became
+//	   singletons (one finding per rule evaluation).
+const RecipeVersion = 6
 
 // fingerprintLength is how many hex characters of the digest the short
 // fingerprint keeps. 16 hex chars (64 bits) is short enough to read in a CSV
