@@ -1,3 +1,16 @@
+## [0.5.2](https://github.com/getplumber/plumber/compare/v0.5.1...v0.5.2) (2026-09-18)
+
+
+### ✨ Features
+
+* **identity:** recipe version 6, one identity per rule for ISSUE-405, ISSUE-408 and ISSUE-417 ([b4f43ed](https://github.com/getplumber/plumber/commit/b4f43eda2f2620ef77942c42cc62119b276ced99))
+* **policies:** one finding per rule for missing required templates, components and actions (row 107) ([50f6cf7](https://github.com/getplumber/plumber/commit/50f6cf7cd78c635c79eff0a10c87930adecb57d7))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.5.1 refs [skip ci] ([0648860](https://github.com/getplumber/plumber/commit/06488605dca5221678e74826a9c88e60c79f578b))
+
 ## [0.5.1](https://github.com/getplumber/plumber/compare/v0.5.0...v0.5.1) (2026-09-17)
 
 
