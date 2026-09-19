@@ -924,6 +924,65 @@ func TestOwnCollectionGaps_PlatformObservationMissing(t *testing.T) {
 	})
 }
 
+// TestOwnCollectionGaps_VersionObservationMissing covers the version-fact
+// counterpart of TestOwnCollectionGaps_PlatformObservationMissing: a
+// component catalogue listing, or a versioned project include's tag
+// listing, that the platform never served (as opposed to one this run
+// attempted and failed). An operator told "upstream probe failed" for a
+// fact nobody asked the source project for is sent to check a token and a
+// permission that were never involved.
+func TestOwnCollectionGaps_VersionObservationMissing(t *testing.T) {
+	t.Run("marks only includesMustBeUpToDate, nothing else", func(t *testing.T) {
+		result := &AnalysisResult{
+			CiValid: true,
+			PipelineOriginData: &gitlab.GitlabPipelineOriginData{
+				VersionObservationsMissing: []string{"vendor/comp"},
+			},
+		}
+
+		MarkOwnCollectionGaps(result, nil)
+
+		if got := result.NotEvaluable["includesMustBeUpToDate"]; got != ReasonPlatformObservationMissing {
+			t.Errorf("includesMustBeUpToDate = %q, want %q", got, ReasonPlatformObservationMissing)
+		}
+		if len(result.NotEvaluable) != 1 {
+			t.Errorf("expected only includesMustBeUpToDate marked, got %v", result.NotEvaluable)
+		}
+	})
+
+	t.Run("wins over a genuinely failed lookup on the same control", func(t *testing.T) {
+		result := &AnalysisResult{
+			CiValid: true,
+			PipelineOriginData: &gitlab.GitlabPipelineOriginData{
+				VersionObservationsMissing: []string{"vendor/comp"},
+				VersionLookupsFailed:       []string{"vendor/other-comp"},
+			},
+		}
+
+		MarkOwnCollectionGaps(result, nil)
+
+		if got := result.NotEvaluable["includesMustBeUpToDate"]; got != ReasonPlatformObservationMissing {
+			t.Errorf("includesMustBeUpToDate = %q, want the more specific %q", got, ReasonPlatformObservationMissing)
+		}
+	})
+
+	t.Run("a control the operator disabled stays skipped", func(t *testing.T) {
+		result := &AnalysisResult{
+			CiValid: true,
+			PipelineOriginData: &gitlab.GitlabPipelineOriginData{
+				VersionObservationsMissing: []string{"vendor/comp"},
+			},
+		}
+		entries := []ControlEntry{{ControlName: "includesMustBeUpToDate", Skipped: true}}
+
+		MarkOwnCollectionGaps(result, entries)
+
+		if _, marked := result.NotEvaluable["includesMustBeUpToDate"]; marked {
+			t.Error("a control the operator turned off was not unevaluated, it was turned off")
+		}
+	})
+}
+
 // TestMarkFailedCollections pins the branch-protection collection-failure
 // path (re-raised #431 review thread): an unreadable protection listing is
 // indistinguishable from a project that protects nothing, which is the

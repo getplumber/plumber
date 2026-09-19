@@ -670,17 +670,21 @@ func TestFailedUpstreamProbeDegradesRefConfusion(t *testing.T) {
 // be completed therefore leaves the control reporting a clean pass over
 // includes it never compared against anything.
 //
-// Both lookups hit the include's SOURCE project, so a token scoped to the
-// analyzed project loses them first, and a tokenless run loses all of them.
+// This is the STANDALONE half: a token scoped to the analyzed project loses
+// both lookups first, because they hit the include's SOURCE project, and a
+// tokenless run loses all of them. In a linked run the platform makes both
+// queries instead, so an unserved one is a platform gap rather than a
+// failed probe - see TestLinkedRunVersionObservationMissingDegradesUpToDate.
 func TestFailedVersionLookupDegradesUpToDate(t *testing.T) {
-	conf := confWithControls(platformRun(platform.SourceSnapshot, "stages: [build]", oneInclude()))
-
 	failed := &AnalysisResult{
+		CiValid: true,
 		PipelineOriginData: &gitlab.GitlabPipelineOriginData{
 			VersionLookupsFailed: []string{"vendor/components"},
 		},
 	}
-	markPlatformLaneGaps(failed, conf)
+	// No PlatformRun: this is the mode where the CLI makes the lookup
+	// itself and it can genuinely fail.
+	MarkOwnCollectionGaps(failed, nil)
 
 	reason, marked := failed.NotEvaluable["includesMustBeUpToDate"]
 	if !marked {
@@ -691,5 +695,34 @@ func TestFailedVersionLookupDegradesUpToDate(t *testing.T) {
 	}
 	if _, marked := failed.NotEvaluable["externalRefsMustNotCollide"]; marked {
 		t.Error("a failed version lookup says nothing about whether a ref is ambiguous")
+	}
+}
+
+// TestLinkedRunVersionObservationMissingDegradesUpToDate is
+// TestFailedVersionLookupDegradesUpToDate's linked-mode counterpart. In this
+// mode the catalogue query and the tag listing are the PLATFORM's to make,
+// against a source project this job holds no credential for; when the
+// platform does not serve one, nothing was attempted and nothing failed, so
+// the reason must name the platform rather than send an operator to check a
+// token that was never involved.
+func TestLinkedRunVersionObservationMissingDegradesUpToDate(t *testing.T) {
+	conf := confWithControls(platformRun(platform.SourceSnapshot, "stages: [build]", oneInclude()))
+
+	failed := &AnalysisResult{
+		PipelineOriginData: &gitlab.GitlabPipelineOriginData{
+			VersionObservationsMissing: []string{"vendor/components"},
+		},
+	}
+	markPlatformLaneGaps(failed, conf)
+
+	reason, marked := failed.NotEvaluable["includesMustBeUpToDate"]
+	if !marked {
+		t.Fatal("an include whose latest version the platform never served must not be reported up to date")
+	}
+	if reason != ReasonPlatformObservationMissing {
+		t.Errorf("reason = %q, want %q", reason, ReasonPlatformObservationMissing)
+	}
+	if _, marked := failed.NotEvaluable["externalRefsMustNotCollide"]; marked {
+		t.Error("a missing version observation says nothing about whether a ref is ambiguous")
 	}
 }

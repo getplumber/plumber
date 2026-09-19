@@ -111,6 +111,19 @@ type GitlabPipelineOriginData struct {
 	// SOURCE project, so they are among the first to fail for a token scoped
 	// to the analyzed project.
 	VersionLookupsFailed []string
+	// VersionObservationsMissing names the includes' SOURCE projects whose
+	// version fact - the component catalogue listing, or the tag listing on
+	// a versioned project include - the platform did not serve for this
+	// run.
+	//
+	// Distinct from VersionLookupsFailed: that list is a check this run
+	// ATTEMPTED and could not complete. This one names a fact nobody asked
+	// for, because in platform mode the query hits the include's SOURCE
+	// project and a pipeline job holding only its own project's credentials
+	// cannot make it - so it is never attempted, and nothing failed. The
+	// two send an operator to different places, which is why they are kept
+	// apart rather than folded into one "we don't know" list.
+	VersionObservationsMissing []string
 	// RawConfigUnavailable records that the project's own UNMERGED CI file
 	// could not be read, while the merged pipeline was obtained anyway.
 	//
@@ -329,18 +342,20 @@ func shouldProbeRefAmbiguity(version string) bool {
 // and there is no observation carrying it: the tag query is skipped rather
 // than sent, because a pipeline job holding no credential for another
 // project can only turn a missing listing into a 401 and an error line. The
-// caller treats a listing that was not established the same either way -
-// with no tags there is no latest version, and the up-to-date control
-// abstains instead of reporting a pin it never compared.
+// caller treats a listing that was not established the same either way for
+// the up-to-date comparison itself - with no tags there is no latest
+// version - but observationMissing tells the two apart for the reason an
+// operator sees: a platform run that never asked reads differently from a
+// standalone run whose own query failed.
 func searchSourceProjectTags(
 	sourceProject, token string,
 	conf *configuration.Configuration,
 	l *logrus.Entry,
-) (tags []string, known bool) {
+) (tags []string, known bool, observationMissing bool) {
 	if conf.PlatformRun.Engaged() {
 		l.WithField("sourceProject", sourceProject).
 			Debug("No tag listing served for this include's source project; its latest version is unknown")
-		return nil, false
+		return nil, false, true
 	}
 	tags, errPlatform, err := SearchTags(sourceProject, token, conf.GitlabURL, conf)
 	if err != nil || errPlatform != nil {
@@ -348,9 +363,9 @@ func searchSourceProjectTags(
 			"err":         err,
 			"errPlatform": errPlatform,
 		}).Debug("Could not fetch tags from source project")
-		return nil, false
+		return nil, false, false
 	}
-	return tags, true
+	return tags, true, false
 }
 
 // appendUnique adds label to list unless it is already there. An include can
@@ -680,12 +695,14 @@ func (dc *GitlabPipelineOriginDataCollection) Run(project *ProjectInfo, token st
 		// the host's lane on a run it supplies. It served no listing for
 		// this one, and a pipeline job holding no credential for that
 		// project would only turn the missing listing into a 401 and an
-		// error line. Recorded exactly as a failed lookup is: with no
-		// listing there is no known latest version, and the up-to-date rule
-		// skips an include it has nothing to compare against - which would
-		// read as "this component is current".
+		// error line. Recorded as a platform gap, not a failed lookup:
+		// nothing was attempted, because in platform mode this project's
+		// query is the platform's to make and it did not make this one. The
+		// up-to-date rule still skips an include it has nothing to compare
+		// against, but the reason sent to the operator names the platform
+		// rather than a token or a permission this run never used.
 		if !catalogTried[project] && conf.PlatformRun.Engaged() {
-			data.VersionLookupsFailed = append(data.VersionLookupsFailed, project)
+			data.VersionObservationsMissing = appendUnique(data.VersionObservationsMissing, project)
 			l.WithField("project", project).Debug("No catalogue served for this component; its latest version is unknown")
 			catalogTried[project] = true
 		}
@@ -1012,13 +1029,20 @@ func (dc *GitlabPipelineOriginDataCollection) Run(project *ProjectInfo, token st
 								"currentVersion": currentVersion,
 							}).Debug("Fetching tags to check for outdated version")
 
-							tags, tagsKnown := searchSourceProjectTags(include.Extra.Project, token, conf, lInclude)
+							tags, tagsKnown, tagsObservationMissing := searchSourceProjectTags(include.Extra.Project, token, conf, lInclude)
 							if !tagsKnown {
 								// Same reasoning as the catalogue lookup above:
 								// no tag listing means no latest version, and
 								// no latest version means the include is
-								// skipped rather than judged.
-								data.VersionLookupsFailed = append(data.VersionLookupsFailed, include.Extra.Project)
+								// skipped rather than judged. A platform run
+								// that never asked for this listing names the
+								// platform; a standalone run whose own query
+								// failed names the failed lookup instead.
+								if tagsObservationMissing {
+									data.VersionObservationsMissing = appendUnique(data.VersionObservationsMissing, include.Extra.Project)
+								} else {
+									data.VersionLookupsFailed = append(data.VersionLookupsFailed, include.Extra.Project)
+								}
 							} else {
 								// Find all tags matching the prefix and extract versions
 								var matchingVersions []string
