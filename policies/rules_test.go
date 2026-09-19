@@ -3362,6 +3362,73 @@ func TestIssue405_TemplateMissing(t *testing.T) {
 	})
 }
 
+// TestIssue405_TemplateMissing_MatchesByTemplateIdentity covers the
+// repository layout where the template's file path in its source project has
+// nothing to do with the name its version tags are pinned under:
+// `project: bigtech-150/templates/hub, ref: gitleaks@1.2.2, file: /jobs/gitleaks/gitleaks.yml`.
+// GitLab serves the include's location as `jobs/gitleaks/gitleaks.yml`, so
+// neither Path nor its extension-less AltPath ever equals the required
+// template name "gitleaks" - only the include's own TemplatePath (the
+// identity the collector reads off the ref) does.
+func TestIssue405_TemplateMissing_MatchesByTemplateIdentity(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	include := ir.Include{
+		Kind:         "project",
+		Source:       "jobs/gitleaks/gitleaks.yml",
+		Path:         "jobs/gitleaks/gitleaks.yml",
+		AltPath:      "jobs/gitleaks/gitleaks",
+		TemplatePath: "gitleaks",
+	}
+
+	t.Run("the required template's own identity satisfies the group", func(t *testing.T) {
+		cfg := map[string]any{
+			"pipelineMustIncludeTemplate": map[string]any{
+				"requiredGroups": []any{
+					[]any{"gitleaks"},
+				},
+			},
+		}
+		pipeline := &ir.NormalizedPipeline{
+			Provider: ir.ProviderGitLab,
+			Includes: []ir.Include{include},
+		}
+		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		for _, f := range findings {
+			if f.Code == "ISSUE-405" {
+				t.Errorf("the template's own identity satisfies the group; the rule must stay silent, got %+v", f)
+			}
+		}
+	})
+
+	t.Run("a different required template still reports missing", func(t *testing.T) {
+		cfg := map[string]any{
+			"pipelineMustIncludeTemplate": map[string]any{
+				"requiredGroups": []any{
+					[]any{"other"},
+				},
+			},
+		}
+		pipeline := &ir.NormalizedPipeline{
+			Provider: ir.ProviderGitLab,
+			Includes: []ir.Include{include},
+		}
+		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		assertOneMissingGroupsFinding(t, findings, "ISSUE-405",
+			`no required template group is satisfied: group 0 missing "other"`,
+			[][]string{{"other"}},
+			"templatePath")
+	})
+}
+
 // TestIssue406_TemplateOverridden flags required templates whose
 // jobs were overridden locally.
 func TestIssue406_TemplateOverridden(t *testing.T) {
@@ -3455,6 +3522,48 @@ func TestIssue406_TemplateOverridden(t *testing.T) {
 		}
 		if hits != 1 {
 			t.Fatalf("expected 1 ISSUE-406 finding on an include without override evidence, got %d", hits)
+		}
+	})
+
+	// Same repository layout as TestIssue405_TemplateMissing_MatchesByTemplateIdentity:
+	// the required template's file path has nothing to do with the name its
+	// tags are pinned under, so only TemplatePath (the include's own
+	// identity) can match the required name.
+	t.Run("matches by template identity when the file path does not", func(t *testing.T) {
+		idCfg := map[string]any{
+			"pipelineMustIncludeTemplate": map[string]any{
+				"requiredGroups": []any{
+					[]any{"gitleaks"},
+				},
+			},
+		}
+		idOverridden := []ir.OverriddenJob{{Name: "scan", Keys: []string{"image"}}}
+		idPipeline := &ir.NormalizedPipeline{
+			Provider: ir.ProviderGitLab,
+			Includes: []ir.Include{
+				{
+					Kind:                "project",
+					Source:              "jobs/gitleaks/gitleaks.yml",
+					Path:                "jobs/gitleaks/gitleaks.yml",
+					AltPath:             "jobs/gitleaks/gitleaks",
+					TemplatePath:        "gitleaks",
+					OverriddenJobs:      idOverridden,
+					OverrideFingerprint: ir.OverrideFingerprint(idOverridden),
+				},
+			},
+		}
+		idFindings, err := engine.Evaluate(context.Background(), idPipeline, idCfg)
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		hits := 0
+		for _, f := range idFindings {
+			if f.Code == "ISSUE-406" {
+				hits++
+			}
+		}
+		if hits != 1 {
+			t.Fatalf("expected 1 ISSUE-406 finding matched by template identity, got %d", hits)
 		}
 	})
 }

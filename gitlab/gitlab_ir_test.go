@@ -370,3 +370,55 @@ func TestBuildIncludesCarriesTemplateIdentityWithoutALatestVersion(t *testing.T)
 		t.Errorf("expected the template identity (templates/trivy/trivy) in Path or AltPath, got Path=%q AltPath=%q", inc.Path, inc.AltPath)
 	}
 }
+
+// TestBuildIncludesExposesTemplateIdentityWhenFilePathDiffersFromTheTagName
+// covers the repository layout that TestBuildIncludesCarriesTemplateIdentityWithoutALatestVersion
+// does not: a template whose file path in its source project has nothing to
+// do with the name its tags are pinned under. Here the include is
+// `project: bigtech-150/templates/hub, ref: gitleaks@1.2.2, file: /jobs/gitleaks/gitleaks.yml`,
+// which GitLab serves back with the location `jobs/gitleaks/gitleaks.yml`.
+// Neither Path (`jobs/gitleaks/gitleaks.yml`) nor its extension-less AltPath
+// (`jobs/gitleaks/gitleaks`) equals the template's own identity (`gitleaks`),
+// so a policy requiring the template `gitleaks` has nothing to match against
+// unless the identity is exposed on its own field.
+func TestBuildIncludesExposesTemplateIdentityWhenFilePathDiffersFromTheTagName(t *testing.T) {
+	origin := &GitlabPipelineOriginData{
+		Origins: []GitlabPipelineOriginDataFull{
+			{
+				GitlabPipelineOriginDataGeneric: GitlabPipelineOriginDataGeneric{
+					OriginType:  originProject,
+					FromPlumber: true,
+					PlumberOrigin: GitlabPipelineJobPlumberOrigin{
+						Path: "gitleaks",
+					},
+					GitlabIncludeOrigin: IncludeOriginWithoutRef{
+						Location: "jobs/gitleaks/gitleaks.yml",
+						Type:     glOriginProject,
+						Project:  "bigtech-150/templates/hub",
+					},
+				},
+				GitlabPipelineOriginDataProjectSpecific: GitlabPipelineOriginDataProjectSpecific{
+					Version: "1.2.2",
+				},
+			},
+		},
+	}
+
+	got := buildIncludes(origin, ".gitlab-ci.yml")
+	if len(got) != 1 {
+		t.Fatalf("expected exactly one include, got %d", len(got))
+	}
+	inc := got[0]
+
+	// The file-location forms are unaffected by this fix: they still read
+	// the include's actual path in its source project.
+	if inc.Path != "jobs/gitleaks/gitleaks.yml" {
+		t.Errorf("Path = %q, want %q (unaffected by the identity fix)", inc.Path, "jobs/gitleaks/gitleaks.yml")
+	}
+	if inc.AltPath != "jobs/gitleaks/gitleaks" {
+		t.Errorf("AltPath = %q, want %q (unaffected by the identity fix)", inc.AltPath, "jobs/gitleaks/gitleaks")
+	}
+	if inc.TemplatePath != "gitleaks" {
+		t.Errorf("TemplatePath = %q, want %q (the template's own identity, from the ref)", inc.TemplatePath, "gitleaks")
+	}
+}

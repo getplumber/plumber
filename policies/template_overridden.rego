@@ -66,3 +66,8 @@ _paths_match(inc, required) if {
 	inc.source != ""
 	inc.source == required
 }
+
+_paths_match(inc, required) if {
+	inc.templatePath != ""
+	inc.templatePath == required
+}
