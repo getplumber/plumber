@@ -1,3 +1,18 @@
+## [0.5.3](https://github.com/getplumber/plumber/compare/v0.5.2...v0.5.3) (2026-09-19)
+
+
+### 🐛 Bug Fixes
+
+* **gitlab:** a required template matches its identity from the ref, not only its file path ([056e7c8](https://github.com/getplumber/plumber/commit/056e7c8a1b1f7add4efb94ce62d10862d705bc38))
+* **gitlab:** a versioned template include keeps its template identity when the tag listing fails ([724aa10](https://github.com/getplumber/plumber/commit/724aa109314e2ef0a98b0f5f5fee5af7c0d999b0))
+* **platform:** a linked run never calls GitLab for an include the platform served without its observation ([d990b31](https://github.com/getplumber/plumber/commit/d990b31821a4aa31b471ff9e1dbd9c741fcf39fb))
+* **platform:** a version fact the platform did not serve reads as platform_observation_missing, not as a failed probe ([52e1c47](https://github.com/getplumber/plumber/commit/52e1c475b86ea131d6bdae02b996ee464146f5f9))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.5.2 refs [skip ci] ([cd7ef86](https://github.com/getplumber/plumber/commit/cd7ef86a1f0b0ac42a794a2b6638d83805e85516))
+
 ## [0.5.2](https://github.com/getplumber/plumber/compare/v0.5.1...v0.5.2) (2026-09-18)
 
 
