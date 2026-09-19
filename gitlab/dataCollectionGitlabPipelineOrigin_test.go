@@ -322,8 +322,14 @@ func TestPipelineOrigin_LinkedRunKeepsVersionedProjectIncludeIdentityWithoutList
 	if origin.PlumberOrigin.LatestVersion != "" {
 		t.Errorf("LatestVersion = %q, want empty (the listing is never attempted in platform mode)", origin.PlumberOrigin.LatestVersion)
 	}
-	if !containsString(data.VersionLookupsFailed, sourceProject) {
-		t.Errorf("expected %q in VersionLookupsFailed (platform mode never lists tags), got %v", sourceProject, data.VersionLookupsFailed)
+	// Platform mode never lists tags at all - the query is the platform's
+	// to make and it did not make this one - so this reads as a fact the
+	// platform did not serve, not as a probe this run attempted and failed.
+	if !containsString(data.VersionObservationsMissing, sourceProject) {
+		t.Errorf("expected %q in VersionObservationsMissing (platform mode never lists tags), got %v", sourceProject, data.VersionObservationsMissing)
+	}
+	if containsString(data.VersionLookupsFailed, sourceProject) {
+		t.Errorf("nothing failed: the platform did not serve the listing, and the two must not read the same; got %v", data.VersionLookupsFailed)
 	}
 	// The served include carries no ref-existence observation, so the
 	// ref-confusion probe (a separate concern from the version lookup) also

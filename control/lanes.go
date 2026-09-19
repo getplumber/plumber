@@ -359,6 +359,14 @@ func MarkOwnCollectionGaps(result *AnalysisResult, entries []ControlEntry) {
 	if observationsMissing(result) {
 		result.markIncludeControls(entries, ReasonPlatformObservationMissing)
 	}
+	// Same reasoning, narrower scope: a version fact (component catalogue
+	// listing, or a versioned project include's tag listing) the platform
+	// never served affects includesMustBeUpToDate alone, and checked before
+	// versionLookupsFailed below so it wins - the platform not serving a
+	// fact is not the same event as this run asking for it and failing.
+	if versionObservationsMissing(result) {
+		markOne("includesMustBeUpToDate", ReasonPlatformObservationMissing)
+	}
 	if upstreamProbesFailed(result) {
 		markOne("externalRefsMustNotCollide", ReasonUpstreamProbeFailed)
 	}
@@ -423,6 +431,18 @@ func versionLookupsFailed(result *AnalysisResult) bool {
 	return result != nil &&
 		result.PipelineOriginData != nil &&
 		len(result.PipelineOriginData.VersionLookupsFailed) > 0
+}
+
+// versionObservationsMissing reports whether the platform served this run's
+// configuration without a version fact for an include's source project -
+// the component catalogue listing, or the tag listing on a versioned
+// project include. Nothing failed: the platform served this run and simply
+// did not carry that fact, which a pipeline job holding only its own
+// project's credentials cannot go and fetch for itself.
+func versionObservationsMissing(result *AnalysisResult) bool {
+	return result != nil &&
+		result.PipelineOriginData != nil &&
+		len(result.PipelineOriginData.VersionObservationsMissing) > 0
 }
 
 // includesFailedToResolve reports whether this run dropped an include it

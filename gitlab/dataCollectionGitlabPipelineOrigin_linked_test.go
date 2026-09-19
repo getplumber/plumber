@@ -95,6 +95,84 @@ func TestPipelineOrigin_LinkedRunWithAnUnobservedInclude(t *testing.T) {
 	}
 }
 
+// TestPipelineOrigin_LinkedRunComponentVersionObservationMissing covers the
+// version-fact counterpart of TestPipelineOrigin_LinkedRunWithAnUnobservedInclude:
+// a component include the platform served WITH its job attribution and ref
+// observation, but WITHOUT the source project's catalogue listing. Unlike an
+// unobserved include, nothing here is missing except a version fact - the
+// component still resolves, its ref is still checked, and only the
+// catalogue query (which the platform makes, not this job) went unanswered.
+// That must read as a platform gap (VersionObservationsMissing), not as a
+// failed lookup (VersionLookupsFailed) or an unobserved include
+// (ObservationsMissing) - the three send an operator to three different
+// places, and only one of them is right here.
+func TestPipelineOrigin_LinkedRunComponentVersionObservationMissing(t *testing.T) {
+	hook := captureLogrus(t)
+	srv := refusingServer(t)
+
+	const includeLocation = "gitlab.com/vendor/comp/build@1.0.0"
+	// ParseGitlabComponentPath only strips the instance prefix when it
+	// matches conf.GitlabURL; against this httptest instance it does not,
+	// so the resolved project keeps the "gitlab.com/" the include's
+	// location was written with.
+	const sourceProject = "gitlab.com/vendor/comp"
+	refExists := false
+
+	served, err := json.Marshal(MergedCIConfResponseInclude{
+		Location:       includeLocation,
+		Type:           glOriginComponent,
+		ContextProject: "my/project",
+		// Job attribution IS served: this include contributes no jobs of
+		// its own here, and that fact is known, not missing.
+		JobsKnown: true,
+		Jobs:      []string{},
+		// The ref-existence observation IS served too: a clean pin, neither
+		// a tag nor a branch match, so no ambiguity.
+		RefExistsAsTag:    &refExists,
+		RefExistsAsBranch: &refExists,
+		// No SourceCatalog: the one fact the platform did not serve.
+	})
+	if err != nil {
+		t.Fatalf("marshal the served include: %v", err)
+	}
+
+	conf := linkedConf(srv.URL)
+	conf.PlatformRun.Context.Snapshot = platform.Snapshot{Data: &platform.SnapshotData{
+		SchemaVersion: "2",
+		Includes:      []json.RawMessage{served},
+	}}
+	conf.PlatformRun.Config.MergedYAML = "stages:\n  - build\nbuild-job:\n  stage: build\n  script:\n    - echo built\n"
+	conf.LocalCIConfigContent = []byte("include:\n  - component: " + includeLocation + "\n")
+
+	dc := &GitlabPipelineOriginDataCollection{}
+	data, _, err := dc.Run(&ProjectInfo{
+		ID:                  42,
+		Path:                "my/project",
+		DefaultBranch:       "main",
+		AnalyzeBranch:       "main",
+		CiConfPath:          ".gitlab-ci.yml",
+		LatestHeadCommitSha: "1111111111111111111111111111111111111111",
+	}, "", conf)
+	if err != nil {
+		t.Fatalf("collection: %v", err)
+	}
+
+	if !containsString(data.VersionObservationsMissing, sourceProject) {
+		t.Errorf("expected %q in VersionObservationsMissing, got %v", sourceProject, data.VersionObservationsMissing)
+	}
+	if containsString(data.VersionLookupsFailed, sourceProject) {
+		t.Errorf("nothing failed: the platform did not serve the catalogue, and the two must not read the same; got %v", data.VersionLookupsFailed)
+	}
+	if containsString(data.ObservationsMissing, includeLocation) {
+		t.Errorf("job attribution and the ref observation were both served; the include itself must not read as unobserved, got %v", data.ObservationsMissing)
+	}
+	for _, entry := range hook.AllEntries() {
+		if entry.Level <= logrus.WarnLevel {
+			t.Errorf("a gap in what the platform served is not this job's fault to report: %s %q", entry.Level, entry.Message)
+		}
+	}
+}
+
 func containsString(haystack []string, needle string) bool {
 	for _, s := range haystack {
 		if strings.TrimSpace(s) == needle {
