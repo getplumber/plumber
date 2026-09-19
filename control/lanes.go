@@ -65,6 +65,20 @@ const (
 	// clean answer - "this ref is not ambiguous" - that nothing established.
 	ReasonUpstreamProbeFailed = "upstream_probe_failed"
 
+	// ReasonPlatformObservationMissing: the platform served this run's
+	// configuration, and served an include in it WITHOUT the facts about
+	// that include - which jobs it contributed, whether its ref resolves
+	// upstream as both a tag and a branch.
+	//
+	// Distinct from ReasonUpstreamProbeFailed, which names a check this run
+	// made and could not complete. Nothing was attempted here: those facts
+	// come from the include's SOURCE project, which the platform reads and a
+	// pipeline job holding only its own credentials cannot. The two reasons
+	// send an operator to different places - a token and a permission for
+	// one, what the platform has collected for the other - so collapsing
+	// them costs the message its only useful half.
+	ReasonPlatformObservationMissing = "platform_observation_missing"
+
 	// ReasonRawConfigUnavailable: the project's own UNMERGED CI file could
 	// not be read, though the merged pipeline was obtained anyway.
 	//
@@ -337,6 +351,14 @@ func MarkOwnCollectionGaps(result *AnalysisResult, entries []ControlEntry) {
 		}
 		result.MarkNotEvaluable(name, reason)
 	}
+	// First, because it is the most specific explanation available and
+	// MarkNotEvaluable keeps the first reason. An include the platform
+	// served without its observations degrades the same controls a failed
+	// probe does, and an operator told "upstream probe failed" would go
+	// looking at a token and a permission that were never involved.
+	if observationsMissing(result) {
+		result.markIncludeControls(entries, ReasonPlatformObservationMissing)
+	}
 	if upstreamProbesFailed(result) {
 		markOne("externalRefsMustNotCollide", ReasonUpstreamProbeFailed)
 	}
@@ -374,6 +396,16 @@ func upstreamProbesFailed(result *AnalysisResult) bool {
 	return result != nil &&
 		result.PipelineOriginData != nil &&
 		len(result.PipelineOriginData.RefProbesFailed) > 0
+}
+
+// observationsMissing reports whether the platform served an include in this
+// run's configuration without the facts about it. The collector records each
+// one; nothing failed, and nothing this run could have done would have
+// supplied them.
+func observationsMissing(result *AnalysisResult) bool {
+	return result != nil &&
+		result.PipelineOriginData != nil &&
+		len(result.PipelineOriginData.ObservationsMissing) > 0
 }
 
 // rawConfigUnavailable reports whether the project's own unmerged CI file

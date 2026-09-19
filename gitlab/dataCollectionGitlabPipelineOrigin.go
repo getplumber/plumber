@@ -86,6 +86,19 @@ type GitlabPipelineOriginData struct {
 	// mark the control not_evaluable instead of certifying a ref it never
 	// managed to look up.
 	RefProbesFailed []string
+	// ObservationsMissing names the includes a host served WITHOUT the facts
+	// about them: which jobs the include contributed, whether its ref
+	// resolves upstream as both a tag and a branch.
+	//
+	// It is not a failure, which is why it is recorded apart from the two
+	// lists above. Nothing was attempted and nothing went wrong: the host
+	// serving this run's configuration had not collected those facts yet,
+	// and a pipeline job holding no credential for the include's source
+	// project cannot collect them either. The controls that read them
+	// abstain, and the reason they carry says where the gap is - so an
+	// operator looks at what the host has collected rather than at a token
+	// that was never the problem.
+	ObservationsMissing []string
 	// VersionLookupsFailed names the includes whose LATEST upstream version
 	// could not be looked up - the component catalogue query, or the tag
 	// listing on a versioned project include.
@@ -307,6 +320,61 @@ func shouldProbeRefAmbiguity(version string) bool {
 		return false
 	}
 	return !isFullCommitSHA(strings.TrimSpace(version))
+}
+
+// searchSourceProjectTags lists the tags of an include's SOURCE project, and
+// reports whether the listing was established at all.
+//
+// On a run whose data a host supplies, that listing is the host's to collect
+// and there is no observation carrying it: the tag query is skipped rather
+// than sent, because a pipeline job holding no credential for another
+// project can only turn a missing listing into a 401 and an error line. The
+// caller treats a listing that was not established the same either way -
+// with no tags there is no latest version, and the up-to-date control
+// abstains instead of reporting a pin it never compared.
+func searchSourceProjectTags(
+	sourceProject, token string,
+	conf *configuration.Configuration,
+	l *logrus.Entry,
+) (tags []string, known bool) {
+	if conf.PlatformRun.Engaged() {
+		l.WithField("sourceProject", sourceProject).
+			Debug("No tag listing served for this include's source project; its latest version is unknown")
+		return nil, false
+	}
+	tags, errPlatform, err := SearchTags(sourceProject, token, conf.GitlabURL, conf)
+	if err != nil || errPlatform != nil {
+		l.WithFields(logrus.Fields{
+			"err":         err,
+			"errPlatform": errPlatform,
+		}).Debug("Could not fetch tags from source project")
+		return nil, false
+	}
+	return tags, true
+}
+
+// appendUnique adds label to list unless it is already there. An include can
+// be short of more than one observation, and the list is read as the set of
+// includes nothing was served about, so naming one of them twice would make
+// the report look like two.
+func appendUnique(list []string, label string) []string {
+	for _, existing := range list {
+		if existing == label {
+			return list
+		}
+	}
+	return append(list, label)
+}
+
+// includeLabel names an include for the diagnostic lists, falling back to its
+// source project when GitLab returned no location for it. It is what an
+// operator reads to find the include in their own CI file, so it must never
+// come out empty.
+func includeLabel(include MergedCIConfResponseInclude) string {
+	if loc := strings.TrimSpace(include.Location); loc != "" {
+		return loc
+	}
+	return include.Extra.Project
 }
 
 // latestSemver returns the newest version from versions using semantic-version
@@ -608,6 +676,19 @@ func (dc *GitlabPipelineOriginDataCollection) Run(project *ProjectInfo, token st
 			catalogCache[project] = inc.SourceCatalog
 			catalogTried[project] = true
 		}
+		// The catalogue query hits the component's SOURCE project, which is
+		// the host's lane on a run it supplies. It served no listing for
+		// this one, and a pipeline job holding no credential for that
+		// project would only turn the missing listing into a 401 and an
+		// error line. Recorded exactly as a failed lookup is: with no
+		// listing there is no known latest version, and the up-to-date rule
+		// skips an include it has nothing to compare against - which would
+		// read as "this component is current".
+		if !catalogTried[project] && conf.PlatformRun.Engaged() {
+			data.VersionLookupsFailed = append(data.VersionLookupsFailed, project)
+			l.WithField("project", project).Debug("No catalogue served for this component; its latest version is unknown")
+			catalogTried[project] = true
+		}
 		if !catalogTried[project] {
 			r, qerr := GetGitlabCIComponentResource(project, token, conf.GitlabURL, conf)
 			if qerr != nil {
@@ -864,8 +945,10 @@ func (dc *GitlabPipelineOriginDataCollection) Run(project *ProjectInfo, token st
 				// the flag and wrong for the report, so it is recorded
 				// separately and the caller withholds the control's verdict.
 				if shouldProbeRefAmbiguity(version) {
-					tagExists, branchExists, known := refExistence(include, project, version, token, conf, lInclude)
+					tagExists, branchExists, known, observationMissing := refExistence(include, project, version, token, conf, lInclude)
 					switch {
+					case observationMissing:
+						data.ObservationsMissing = appendUnique(data.ObservationsMissing, includeLabel(include))
 					case !known:
 						data.RefProbesFailed = append(data.RefProbesFailed, project+"@"+version)
 					case tagExists && branchExists:
@@ -888,8 +971,10 @@ func (dc *GitlabPipelineOriginDataCollection) Run(project *ProjectInfo, token st
 				// with a probe that could not be completed recorded rather
 				// than folded into "unambiguous" (see the component case).
 				if include.Extra.Project != "" && shouldProbeRefAmbiguity(include.Extra.Ref) {
-					tagExists, branchExists, known := refExistence(include, include.Extra.Project, include.Extra.Ref, token, conf, lInclude)
+					tagExists, branchExists, known, observationMissing := refExistence(include, include.Extra.Project, include.Extra.Ref, token, conf, lInclude)
 					switch {
+					case observationMissing:
+						data.ObservationsMissing = appendUnique(data.ObservationsMissing, includeLabel(include))
 					case !known:
 						data.RefProbesFailed = append(data.RefProbesFailed, include.Extra.Project+"@"+include.Extra.Ref)
 					case tagExists && branchExists:
@@ -917,17 +1002,13 @@ func (dc *GitlabPipelineOriginDataCollection) Run(project *ProjectInfo, token st
 								"currentVersion": currentVersion,
 							}).Debug("Fetching tags to check for outdated version")
 
-							tags, errPlatform, err := SearchTags(include.Extra.Project, token, conf.GitlabURL, conf)
-							if err != nil || errPlatform != nil {
+							tags, tagsKnown := searchSourceProjectTags(include.Extra.Project, token, conf, lInclude)
+							if !tagsKnown {
 								// Same reasoning as the catalogue lookup above:
 								// no tag listing means no latest version, and
 								// no latest version means the include is
 								// skipped rather than judged.
 								data.VersionLookupsFailed = append(data.VersionLookupsFailed, include.Extra.Project)
-								lInclude.WithFields(logrus.Fields{
-									"err":         err,
-									"errPlatform": errPlatform,
-								}).Debug("Could not fetch tags from source project")
 							} else {
 								// Find all tags matching the prefix and extract versions
 								var matchingVersions []string
@@ -1019,14 +1100,20 @@ func (dc *GitlabPipelineOriginDataCollection) Run(project *ProjectInfo, token st
 			// fire on them.
 			jobsFromInclude := includeJobs[i].Jobs
 			if !includeJobs[i].Known {
+				if includeJobs[i].ObservationMissing {
+					// Served without its attribution, on a run where
+					// collecting it is not this job's to do. Nothing failed
+					// and nothing is wrong with the pipeline, so this is a
+					// note rather than an error: the controls that need the
+					// attribution report not_evaluable and name the gap.
+					lInclude.Debug("Include observation not served; the controls needing it are not evaluable")
+					data.ObservationsMissing = appendUnique(data.ObservationsMissing, includeLabel(include))
+					continue
+				}
 				lInclude.Error("Unable to resolve include; its attribution is unknown")
 				// Record the dropped include so the caller can flag the run
 				// degraded: its jobs are missing from the analysis (#220).
-				loc := include.Location
-				if loc == "" {
-					loc = include.Extra.Project
-				}
-				data.IncludesFailed = append(data.IncludesFailed, loc)
+				data.IncludesFailed = append(data.IncludesFailed, includeLabel(include))
 				// If we cannot retrieve the include, next
 				continue
 			}

@@ -75,6 +75,17 @@ type IncludeJobs struct {
 	// this project. Its jobs are attributed to the include that pulled it in,
 	// so it contributes none at this level: an empty Jobs with Known true.
 	Nested bool
+
+	// ObservationMissing marks an include a host served WITHOUT the
+	// attribution that goes with it, on a run where that attribution is the
+	// host's to supply. It is a Known false with a cause: the question was
+	// never asked rather than asked and refused.
+	//
+	// The caller needs the two apart to say anything useful about it. An
+	// unresolved include points at this run's own credentials; an
+	// unobserved one points at what the host has collected so far, and no
+	// change to the runner's token would alter it.
+	ObservationMissing bool
 }
 
 // DeriveIncludeJobs answers "which jobs did each include contribute" for every
@@ -143,6 +154,23 @@ func DeriveIncludeJobs(req IncludeJobsRequest) ([]IncludeJobs, error) {
 				jobs = []string{}
 			}
 			out[i] = IncludeJobs{Jobs: jobs, Known: true}
+			continue
+		}
+
+		// The host that served this configuration owns the attribution that
+		// belongs to it, and served this include without it. Resolving the
+		// include here is not a second chance at the same answer: the run
+		// this path exists for is a pipeline job whose token reaches its own
+		// project and nothing else, so the config-merge request answers 401
+		// and the attribution ends exactly as unknown as it started - after
+		// a call nobody asked for and an error nobody can act on. Record the
+		// gap instead, and let the controls that need it abstain.
+		//
+		// A standalone run keeps the fallback in full: there the CLI is the
+		// only one who could have asked.
+		if req.Conf != nil && req.Conf.PlatformRun.Engaged() {
+			lInclude.Debug("Include served without its job attribution; the controls that need it are not evaluable")
+			out[i] = IncludeJobs{Known: false, ObservationMissing: true}
 			continue
 		}
 
