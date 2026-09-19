@@ -430,12 +430,20 @@ type Image struct {
 // behaviour was overridden locally with one of the CI/CD keys that
 // meaningfully change semantics (script, image, rules, …).
 type Include struct {
-	Kind          string `json:"kind"`
-	Source        string `json:"source"`
-	Ref           string `json:"ref,omitempty"`
-	Current       string `json:"current,omitempty"`
-	Path          string `json:"path,omitempty"`
-	AltPath       string `json:"altPath,omitempty"`
+	Kind    string `json:"kind"`
+	Source  string `json:"source"`
+	Ref     string `json:"ref,omitempty"`
+	Current string `json:"current,omitempty"`
+	Path    string `json:"path,omitempty"`
+	AltPath string `json:"altPath,omitempty"`
+	// TemplatePath is the template's own identity, read from its pinned
+	// ref rather than from where its file happens to live. A template
+	// repository can tag a file under a name that has nothing to do with
+	// its file path (a template "gitleaks" served from
+	// jobs/gitleaks/gitleaks.yml, say), in which case neither Path nor
+	// AltPath ever equals what a policy requires - only this field does.
+	// Empty when the collector could not establish it.
+	TemplatePath  string `json:"templatePath,omitempty"`
 	Nested        bool   `json:"nested,omitempty"`
 	ComponentName string `json:"componentName,omitempty"`
 	// RefIsAmbiguous is set by the collector when the include's

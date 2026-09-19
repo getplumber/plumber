@@ -306,6 +306,16 @@ func buildIncludes(origin *GitlabPipelineOriginData, ciConfigPath string) []ir.I
 				inc.AltPath = o.PlumberOrigin.Path
 			}
 		}
+		if o.FromPlumber && o.PlumberOrigin.Path != "" {
+			// The template's own identity, independent of Path/AltPath: a
+			// template repository can tag a file under a name that has
+			// nothing to do with its file location (a template "gitleaks"
+			// served from jobs/gitleaks/gitleaks.yml, say), in which case
+			// the block above never reaches it. Always exposed alongside
+			// the file-location forms rather than instead of them, so a
+			// policy can match on either.
+			inc.TemplatePath = o.PlumberOrigin.Path
+		}
 		inc.OverriddenJobs = CollectOverriddenJobs(o, origin)
 		inc.OverrideFingerprint = ir.OverrideFingerprint(inc.OverriddenJobs)
 		// Attach the source-file pointer last so it covers Source,
