@@ -115,6 +115,59 @@ func TestEnrichForbiddenVersion404IssueMaps_OriginFields(t *testing.T) {
 	}
 }
 
+// TestEnrichForbiddenVersion404IssueMaps_TemplateIdentityWithoutALatestVersion
+// covers a versioned template include whose source project's tag listing
+// failed: FromPlumber is still true (the identity is a fact of the ref), so
+// plumberOriginPath and plumberTemplateName must still be reported, while
+// latestVersion stays absent because no upstream version was ever resolved.
+func TestEnrichForbiddenVersion404IssueMaps_TemplateIdentityWithoutALatestVersion(t *testing.T) {
+	t.Parallel()
+	result := &control.AnalysisResult{
+		PipelineOriginData: &gitlab.GitlabPipelineOriginData{
+			Origins: []gitlab.GitlabPipelineOriginDataFull{
+				{
+					GitlabPipelineOriginDataGeneric: gitlab.GitlabPipelineOriginDataGeneric{
+						OriginType:  "project",
+						FromPlumber: true,
+						PlumberOrigin: gitlab.GitlabPipelineJobPlumberOrigin{
+							Path:          "templates/trivy/trivy",
+							LatestVersion: "", // the tag listing failed
+						},
+						GitlabIncludeOrigin: gitlab.IncludeOriginWithoutRef{
+							Location: "templates/trivy/trivy.yml",
+							Type:     "file",
+							Project:  "my-org/templates",
+						},
+						OriginHash: 7,
+					},
+					GitlabPipelineOriginDataProjectSpecific: gitlab.GitlabPipelineOriginDataProjectSpecific{
+						Version: "0.1.0",
+					},
+				},
+			},
+		},
+	}
+	issues := []map[string]any{{
+		"code":        string(control.CodeIncludeForbiddenVersion),
+		"docUrl":      "x",
+		"includePath": "templates/trivy/trivy.yml",
+	}}
+	enrichForbiddenVersion404IssueMaps(issues, result)
+	iss := issues[0]
+	if iss["version"] != "0.1.0" {
+		t.Fatalf("version: got %v", iss["version"])
+	}
+	if iss["plumberOriginPath"] != "templates/trivy/trivy" {
+		t.Fatalf("plumberOriginPath: got %v, want the identity carried from the ref alone", iss["plumberOriginPath"])
+	}
+	if iss["plumberTemplateName"] != "trivy" {
+		t.Fatalf("plumberTemplateName: got %v", iss["plumberTemplateName"])
+	}
+	if _, ok := iss["latestVersion"]; ok {
+		t.Fatalf("latestVersion: got %v, want absent (the listing never resolved one)", iss["latestVersion"])
+	}
+}
+
 // TestBuildForbiddenVersionsBlock_EnrichmentSurvivesRealFindings is the
 // regression guard the job-field-semantics change was missing: it is the
 // only test that runs the OPA engine over an ISSUE-404 fixture and pipes the
