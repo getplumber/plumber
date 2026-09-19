@@ -8,9 +8,29 @@ import (
 	"time"
 
 	"github.com/getplumber/plumber/configuration"
+	"github.com/getplumber/plumber/internal/platform"
 )
 
 func boolPtr(b bool) *bool { return &b }
+
+// linkedConf builds a configuration whose platform run is ENGAGED: a context
+// was fetched, so the platform owns the lanes it serves. gitlabURL points at
+// the server a test expects never to be contacted.
+func linkedConf(gitlabURL string) *configuration.Configuration {
+	return &configuration.Configuration{
+		HTTPClientTimeout: 5 * time.Second,
+		GitlabURL:         gitlabURL,
+		PlatformRun: &platform.RunContext{
+			Endpoint:    "https://platform.example.com",
+			ProjectPath: "my/project",
+			Context:     &platform.ProjectContext{},
+			Config: &platform.ConfigResolution{
+				Source: platform.SourceSnapshot,
+				Valid:  true,
+			},
+		},
+	}
+}
 
 // refusingServer fails the test if it is ever contacted. Several tests below
 // assert an absence of traffic rather than a returned value: the point of a
@@ -42,7 +62,7 @@ func TestSuppliedRefExistenceAnswersWithoutAsking(t *testing.T) {
 		RefExistsAsTag:    boolPtr(true),
 		RefExistsAsBranch: boolPtr(true),
 	}
-	tag, branch, known := refExistence(inc, "group/proj", "v1", "", conf, l)
+	tag, branch, known, _ := refExistence(inc, "group/proj", "v1", "", conf, l)
 	if !known {
 		t.Fatal("a supplied pair must be known")
 	}
@@ -67,7 +87,7 @@ func TestSuppliedFalseIsAnAnswer(t *testing.T) {
 		RefExistsAsTag:    boolPtr(true),
 		RefExistsAsBranch: boolPtr(false),
 	}
-	tag, branch, known := refExistence(inc, "group/proj", "v1", "", conf, l)
+	tag, branch, known, _ := refExistence(inc, "group/proj", "v1", "", conf, l)
 	if !known {
 		t.Fatal("a determined false is still an answer; known must be true")
 	}
@@ -110,7 +130,7 @@ func TestPartialRefObservationIsIgnored(t *testing.T) {
 		"only branch": {RefExistsAsBranch: boolPtr(true)},
 	} {
 		t.Run(name, func(t *testing.T) {
-			tag, branch, known := refExistence(inc, "group/proj", "v1", "", conf, l)
+			tag, branch, known, _ := refExistence(inc, "group/proj", "v1", "", conf, l)
 			if !known {
 				t.Fatal("the fallback probe answered, so the pair is known")
 			}
@@ -137,7 +157,7 @@ func TestUnreachableUpstreamIsUnknownNotFalse(t *testing.T) {
 	}
 	l := logger.WithField("test", t.Name())
 
-	_, _, known := refExistence(MergedCIConfResponseInclude{}, "group/proj", "v1", "", conf, l)
+	_, _, known, _ := refExistence(MergedCIConfResponseInclude{}, "group/proj", "v1", "", conf, l)
 	if known {
 		t.Fatal("an unreachable source project must be unknown, not a determined false")
 	}
@@ -165,7 +185,7 @@ func TestAbsentObservationsStillProbeUpstream(t *testing.T) {
 	}
 	l := logger.WithField("test", t.Name())
 
-	tag, branch, known := refExistence(MergedCIConfResponseInclude{}, "group/proj", "v1", "", conf, l)
+	tag, branch, known, _ := refExistence(MergedCIConfResponseInclude{}, "group/proj", "v1", "", conf, l)
 	if hits == 0 {
 		t.Fatal("with nothing supplied the CLI must ask upstream itself")
 	}
@@ -280,4 +300,35 @@ func TestSourceCatalogThreeStates(t *testing.T) {
 			t.Fatal("an omitted key must decode as nil so the CLI knows it was never answered")
 		}
 	})
+}
+
+// TestRefExistence_Linked_AbsentObservationNeverProbes covers the run this
+// whole seam exists for: a pipeline on a branch nobody onboarded, whose job
+// holds no credential for anything but its own project.
+//
+// The platform served this include and did not serve the ref observation
+// with it. The fallback probe is then not a second chance, it is a request
+// carrying an empty token: it answers 401, logs an error the operator cannot
+// act on, and ends where it started - unknown. The question belongs to the
+// lane the platform owns, so the CLI records that it went unanswered and
+// asks nobody.
+func TestRefExistence_Linked_AbsentObservationNeverProbes(t *testing.T) {
+	srv := refusingServer(t)
+	conf := linkedConf(srv.URL)
+	l := logger.WithField("test", t.Name())
+
+	tag, branch, known, observationMissing := refExistence(MergedCIConfResponseInclude{
+		Location: "gitlab.com/vendor/comp/build@1.0.0",
+		Type:     glOriginComponent,
+	}, "vendor/comp", "1.0.0", "", conf, l)
+
+	if known {
+		t.Fatal("an observation the platform did not serve must be unknown, never a determined answer")
+	}
+	if tag || branch {
+		t.Fatalf("nothing was established, so nothing may be reported: tag=%v branch=%v", tag, branch)
+	}
+	if !observationMissing {
+		t.Fatal("the caller must be able to tell an unserved observation from a probe that failed")
+	}
 }

@@ -257,3 +257,38 @@ func TestDeriveIncludeJobsStillDetectsGenuineNesting(t *testing.T) {
 		t.Fatal("a genuinely different project is still nested")
 	}
 }
+
+// TestDeriveIncludeJobs_Linked_MissingObservationNeverDials pins the rule
+// for a run whose configuration came from the platform: attribution is the
+// platform's lane, and an include served without it is an unanswered
+// question, not a request to make.
+//
+// The fallback resolve is a config-merge call, which a pipeline running on a
+// branch nobody onboarded cannot make: it has no token for it, so the call
+// answers 401, prints an error naming an API the operator never asked the
+// job to reach, and leaves the attribution exactly as unknown as before.
+// Recording the gap costs the same verdict and none of the noise.
+func TestDeriveIncludeJobs_Linked_MissingObservationNeverDials(t *testing.T) {
+	srv := refusingServer(t)
+	conf := linkedConf(srv.URL)
+
+	got, err := DeriveIncludeJobs(IncludeJobsRequest{
+		Includes: []MergedCIConfResponseInclude{
+			// Served by the platform, but without jobs_known: the
+			// attribution never came with it.
+			{Location: "gitlab.com/vendor/comp/build@1.0.0", Type: glOriginComponent, ContextProject: "my/project"},
+		},
+		ProjectPath: "my/project",
+		APIURL:      srv.URL,
+		Conf:        conf,
+	})
+	if err != nil {
+		t.Fatalf("derive: %v", err)
+	}
+	if got[0].Known {
+		t.Fatal("an include served without its attribution is unknown, not an include that contributed nothing")
+	}
+	if !got[0].ObservationMissing {
+		t.Fatal("the caller must be able to tell an unserved attribution from an include this run could not resolve")
+	}
+}

@@ -856,6 +856,74 @@ func TestOwnCollectionGapsStaySilentWhenNothingFailed(t *testing.T) {
 	}
 }
 
+// TestOwnCollectionGaps_PlatformObservationMissing covers the include the
+// platform served without the observation that goes with it.
+//
+// The distinction is worth its own reason. "upstream probe failed" sends an
+// operator to look at their token and the source project's permissions;
+// nothing was probed here, and nothing about this run's credentials would
+// change the answer. What is missing is a fact the platform collects, so the
+// reason has to name the platform for the message to lead anywhere.
+func TestOwnCollectionGaps_PlatformObservationMissing(t *testing.T) {
+	t.Run("the include-reasoning controls report the platform gap", func(t *testing.T) {
+		result := &AnalysisResult{
+			CiValid: true,
+			PipelineOriginData: &gitlab.GitlabPipelineOriginData{
+				ObservationsMissing: []string{"gitlab.com/vendor/comp/build@1.0.0"},
+			},
+		}
+
+		MarkOwnCollectionGaps(result, nil)
+
+		for _, name := range controlsRequiringIncludeAttribution {
+			if got := result.NotEvaluable[name]; got != ReasonPlatformObservationMissing {
+				t.Errorf("%s = %q, want %q", name, got, ReasonPlatformObservationMissing)
+			}
+		}
+	})
+
+	t.Run("a control the operator disabled stays skipped", func(t *testing.T) {
+		result := &AnalysisResult{
+			CiValid: true,
+			PipelineOriginData: &gitlab.GitlabPipelineOriginData{
+				ObservationsMissing: []string{"gitlab.com/vendor/comp/build@1.0.0"},
+			},
+		}
+		entries := []ControlEntry{
+			{ControlName: "includesMustBeUpToDate", Skipped: true},
+			{ControlName: "externalRefsMustNotCollide"},
+		}
+
+		MarkOwnCollectionGaps(result, entries)
+
+		if _, marked := result.NotEvaluable["includesMustBeUpToDate"]; marked {
+			t.Error("a control the operator turned off was not unevaluated, it was turned off")
+		}
+		if got := result.NotEvaluable["externalRefsMustNotCollide"]; got != ReasonPlatformObservationMissing {
+			t.Errorf("externalRefsMustNotCollide = %q, want %q", got, ReasonPlatformObservationMissing)
+		}
+	})
+
+	t.Run("the first reason wins over the broader upstream one", func(t *testing.T) {
+		result := &AnalysisResult{
+			CiValid: true,
+			PipelineOriginData: &gitlab.GitlabPipelineOriginData{
+				ObservationsMissing:  []string{"gitlab.com/vendor/comp/build@1.0.0"},
+				VersionLookupsFailed: []string{"vendor/comp"},
+				RefProbesFailed:      []string{"vendor/comp@1.0.0"},
+			},
+		}
+
+		MarkOwnCollectionGaps(result, nil)
+
+		for _, name := range []string{"includesMustBeUpToDate", "externalRefsMustNotCollide"} {
+			if got := result.NotEvaluable[name]; got != ReasonPlatformObservationMissing {
+				t.Errorf("%s = %q, want the more specific %q", name, got, ReasonPlatformObservationMissing)
+			}
+		}
+	})
+}
+
 // TestMarkFailedCollections pins the branch-protection collection-failure
 // path (re-raised #431 review thread): an unreadable protection listing is
 // indistinguishable from a project that protects nothing, which is the

@@ -538,15 +538,6 @@ func TestGitLabCallInventory(t *testing.T) {
 	//     the project's OWN (unmerged) CI file, which hardcoded-job
 	//     detection compares the merged pipeline against. A run with a
 	//     checkout reads it from disk instead; this fixture has none.
-	//   getCiConfig (per-include merge)
-	//     ONE PER INCLUDE. Attribution of jobs to the include that
-	//     contributed them is derived by re-merging each include on its
-	//     own. The snapshot's includes[] says which includes exist, not
-	//     which jobs each one brought.
-	//   getCIComponentResource, /repository/tags/:ref, /repository/branches/:ref
-	//     per component: the upstream latest version (ISSUE-401) and
-	//     whether the pinned ref is both a tag and a branch (ISSUE-402).
-	//     Both query the include's SOURCE project, not this one.
 	//
 	// The variable-VALUE reads are gone: inside CI the job's own
 	// environment already holds them, reduced across every scope and
@@ -554,14 +545,21 @@ func TestGitLabCallInventory(t *testing.T) {
 	// NAMES and the job supplying the values is sufficient. A reference
 	// that still does not resolve is marked and the image rules abstain on
 	// it rather than judging a placeholder.
+	//
+	// Everything aimed at an include's SOURCE project is gone too, and this
+	// fixture is the case that shows why it had to be: the snapshot names
+	// the includes and carries no observations about them. The per-include
+	// merge, the catalogue lookup and the tag/branch probe all query a
+	// project the scanned one has no rights to, so on the run this mode
+	// exists for - a pipeline job holding only its own credentials - every
+	// one of them answered 401 and printed an error naming an API nobody
+	// asked the job to reach. The facts belong to the lane the platform
+	// owns; an include served without them is recorded as unobserved and
+	// the controls that read them abstain, saying so.
 	wantPlatform := []string{
 		"1x GET /api/v4/projects/:id",
-		"1x GET /api/v4/projects/:id/repository/branches/:ref",
 		"1x GET /api/v4/projects/:id/repository/commits",
 		"1x GET /api/v4/projects/:id/repository/files/:file/raw",
-		"1x GET /api/v4/projects/:id/repository/tags/:ref",
-		"1x POST /api/graphql getCIComponentResource",
-		"1x POST /api/graphql getCiConfig (per-include merge)",
 	}
 	if diff := ledgerDiff(wantPlatform, platformRun); diff != "" {
 		t.Errorf("platform-mode call inventory changed:\n%s", diff)
@@ -574,16 +572,15 @@ func TestGitLabCallInventory(t *testing.T) {
 // thing that fails when the score changes.
 //
 // The remaining requests are NOT a rounding error: they are the project
-// identity read, the project's own CI file, and the per-include and
-// variable-value enrichment. The first two are closable inside the CLI
-// (predefined CI variables, the job checkout); the rest need the platform
-// to serve data it does not serve today.
+// identity read, its commit lookup and the project's own CI file. All three
+// are closable inside the CLI, from the predefined CI variables and the job
+// checkout, which is what the tokenless run below shows.
 func TestPlatformModeRemovesMostGitLabRequests(t *testing.T) {
 	standalone := totalRequests(runInventory(t, false))
 	platformRun := totalRequests(runInventory(t, true))
 
 	const wantStandaloneTotal = 17
-	const wantPlatformTotal = 7
+	const wantPlatformTotal = 3
 
 	if standalone != wantStandaloneTotal || platformRun != wantPlatformTotal {
 		t.Errorf("GitLab request totals changed: standalone %d (want %d), platform %d (want %d).\n"+
@@ -966,9 +963,14 @@ func TestDegradedNewLanesAbstainEndToEnd(t *testing.T) {
 }
 
 // TestTokenlessCIRunMakesFewRequests records what a CI job still asks GitLab
-// for. Everything here is blocked on the platform serving data it does not
-// serve yet (see message-platform-snapshot-gaps.md); when it does, this
-// number goes to zero and the run needs no GitLab access whatsoever.
+// for, and the answer is now nothing at all: a pipeline job in platform mode
+// completes its analysis without a single request, on credentials it does
+// not have.
+//
+// That is the whole point of the mode, and the number is the only honest way
+// to state it. A line appearing here is a collection that came back, and it
+// comes back as a 401 on the runs that matter: the job's token reaches its
+// own project, and every remaining call was aimed somewhere else.
 func TestTokenlessCIRunMakesFewRequests(t *testing.T) {
 	rec := &gitlabRecorder{sha: "0123456789abcdef0123456789abcdef01234567"}
 	srv := httptest.NewServer(rec)
@@ -986,15 +988,11 @@ func TestTokenlessCIRunMakesFewRequests(t *testing.T) {
 	t.Logf("platform-mode-in-CI GitLab requests (%d):\n  %s", totalRequests(got), strings.Join(got, "\n  "))
 
 	// The project lookup, its commit lookup and the raw-file read are gone:
-	// the job's own environment and its checkout answer all three. What is
-	// left is per-include work against OTHER projects, which only the
-	// platform can pre-collect.
-	want := []string{
-		"1x GET /api/v4/projects/:id/repository/branches/:ref",
-		"1x GET /api/v4/projects/:id/repository/tags/:ref",
-		"1x POST /api/graphql getCIComponentResource",
-		"1x POST /api/graphql getCiConfig (per-include merge)",
-	}
+	// the job's own environment and its checkout answer all three. The
+	// per-include work against OTHER projects is gone as well - it is the
+	// platform's to collect, and a job with no credential for those
+	// projects records what was not served rather than asking.
+	var want []string
 	if diff := ledgerDiff(want, got); diff != "" {
 		t.Errorf("tokenless CI call inventory changed:\n%s", diff)
 	}
@@ -1291,18 +1289,22 @@ func TestExternalCIConfigPathIsNotFetched(t *testing.T) {
 }
 
 // TestSuppliedObservationsRemoveTheUpstreamProbes measures the aggregator
-// boundary (#368). The three requests that leave are the only ones in the run
+// boundary (#368). The requests that leave are the only ones in the run
 // aimed at a project OTHER than the one being scanned: the include's source.
 //
 // That is what makes them different in kind. Every other call can be answered
 // by a CI job's own credentials, or read from the checkout. These cannot, so a
 // tokenless runner either receives them from a host that could ask, or the two
 // include controls have no evidence.
+//
+// The baseline is a STANDALONE run, because it is now the only run that
+// probes at all: a CLI holding its own token asks these questions itself, and
+// that is the behaviour the served observations replace.
 func TestSuppliedObservationsRemoveTheUpstreamProbes(t *testing.T) {
-	probed := runInventory(t, true)
+	probed := runInventory(t, false)
 	observed := runInventoryWithObservations(t)
 
-	t.Logf("platform, probing upstream (%d):\n  %s", totalRequests(probed), strings.Join(probed, "\n  "))
+	t.Logf("standalone, probing upstream (%d):\n  %s", totalRequests(probed), strings.Join(probed, "\n  "))
 	t.Logf("platform, observations served (%d):\n  %s", totalRequests(observed), strings.Join(observed, "\n  "))
 
 	// What remains is the scanned project's own identity and its unmerged CI
@@ -1339,11 +1341,17 @@ func TestSuppliedObservationsRemoveTheUpstreamProbes(t *testing.T) {
 // that matters more: fewer requests are worthless if they were bought by
 // abstaining.
 //
-// The same includes, judged from supplied observations and from live probes,
-// must produce the same findings and the same not-evaluable set. They do
-// because the JUDGEMENT is the same code either way - only the source of the
-// facts changed. That is the property the aggregator boundary buys, and it is
-// exactly what a host serving conclusions instead cannot guarantee.
+// The same includes, judged from supplied observations and from the live
+// probes a standalone run makes with its own token, must produce the same
+// findings and the same not-evaluable set. They do because the JUDGEMENT is
+// the same code either way - only the source of the facts changed. That is
+// the property the aggregator boundary buys, and it is exactly what a host
+// serving conclusions instead cannot guarantee.
+//
+// The standalone run is the baseline because it is the one that still
+// probes. A platform-mode run served no observations does not fall back to
+// asking upstream itself: it has no credential for those projects, so it
+// records what was not served and the include controls abstain.
 func TestObservationsReachTheSameVerdictAsProbing(t *testing.T) {
 	verdicts := func(observed bool) (map[string]int, map[string]string) {
 		rec := &gitlabRecorder{sha: "0123456789abcdef0123456789abcdef01234567"}
@@ -1353,8 +1361,6 @@ func TestObservationsReachTheSameVerdictAsProbing(t *testing.T) {
 		conf := inventoryConf(t, srv.URL)
 		if observed {
 			conf.PlatformRun = platformSnapshotWithObservations(t, rec.sha)
-		} else {
-			conf.PlatformRun = platformSnapshot(t, rec.sha)
 		}
 		result, err := RunAnalysis(conf)
 		if err != nil {
@@ -1404,6 +1410,13 @@ func TestSuppliedAmbiguityIsActedOnWithoutProbing(t *testing.T) {
 		// The collision: the pin resolves upstream as a tag AND a branch.
 		"ref_exists_as_tag":    true,
 		"ref_exists_as_branch": true,
+
+		// Served with its attribution too, which is what keeps this test
+		// about the ambiguity. An include served without it is a gap the
+		// run records, and every include-reasoning control abstains on it -
+		// including the one whose own observation did arrive.
+		"jobs":       []any{"component_job"},
+		"jobs_known": true,
 	})
 	if err != nil {
 		t.Fatalf("marshaling the ambiguous include: %v", err)

@@ -22,8 +22,11 @@ import (
 // of the control logic, and two copies of a judgement agree only by
 // coincidence.
 //
-// Everything here is additive. When no observation is supplied the CLI does
-// exactly what it did before: it asks upstream itself.
+// A standalone run is unchanged: with no observation supplied it does
+// exactly what it did before and asks upstream itself. Under a host, an
+// observation that was not served is recorded as unanswered rather than
+// asked for directly - the credential to ask with is precisely what such a
+// run does not have, and the controls that read it abstain, saying so.
 
 // refExistence reports whether ref names an existing tag, and an existing
 // branch, in project - the pair the ref-confusion rule (ISSUE-402) needs.
@@ -37,25 +40,45 @@ import (
 // answer, and the caller must record that rather than consuming the zero
 // values: a ref that could not be checked is not an unambiguous ref, and
 // collapsing those two is the silent pass this control exists to catch.
+//
+// The fourth separates the two ways an answer fails to arrive. A probe that
+// was made and failed is about this run's credentials; an observation the
+// host never served is about what the host has collected, and the operator
+// reading the report has a different thing to do about each.
 func refExistence(
 	inc MergedCIConfResponseInclude,
 	project, ref, token string,
 	conf *configuration.Configuration,
 	l *logrus.Entry,
-) (tagExists bool, branchExists bool, known bool) {
+) (tagExists bool, branchExists bool, known bool, observationMissing bool) {
 	// BOTH halves are required. A host that determined one and not the other
 	// has not answered the question, because ambiguity needs both to be true
 	// and the missing half could be either. Taking the known half and
 	// defaulting the other is how a determined "false" gets manufactured.
 	if inc.RefExistsAsTag != nil && inc.RefExistsAsBranch != nil {
-		return *inc.RefExistsAsTag, *inc.RefExistsAsBranch, true
+		return *inc.RefExistsAsTag, *inc.RefExistsAsBranch, true, false
+	}
+
+	// With a host supplying this run's data, the probe is the host's to make
+	// and it did not make this one. Asking here would be a request against
+	// the include's SOURCE project from a pipeline job whose token reaches
+	// only its own: it answers 401, prints an error about an API the
+	// operator never asked this job to reach, and leaves the ref exactly as
+	// unchecked as before. The honest record is that nobody looked.
+	//
+	// A run with no host behind it still probes, exactly as it always has:
+	// there the CLI is the only one who could.
+	if conf != nil && conf.PlatformRun.Engaged() {
+		l.WithFields(logrus.Fields{"project": project, "ref": ref}).
+			Debug("Include served without its ref observation; the ref was not checked for ambiguity")
+		return false, false, false, true
 	}
 
 	tagExists, branchExists, err := RefResolvesAsTagAndBranch(project, ref, token, conf.GitlabURL, conf)
 	if err != nil {
 		l.WithError(err).WithFields(logrus.Fields{"project": project, "ref": ref}).
 			Debug("Could not probe ref for ambiguity")
-		return false, false, false
+		return false, false, false, false
 	}
-	return tagExists, branchExists, true
+	return tagExists, branchExists, true, false
 }
