@@ -192,8 +192,12 @@ func (g *Generator) processIncludes(originData *gitlab.GitlabPipelineOriginData)
 			Nested:   origin.Nested,
 		}
 
-		// Add version info if available
-		if origin.FromPlumber {
+		// Add version info if available. FromPlumber only says the include's
+		// template identity is known from its ref; a version comparison
+		// needs the upstream listing too, which can fail (a private source
+		// project) independently of the identity. Gate on LatestVersion so
+		// a failed listing reports "unknown", not a fabricated verdict.
+		if origin.FromPlumber && origin.PlumberOrigin.LatestVersion != "" {
 			inc.LatestVersion = origin.PlumberOrigin.LatestVersion
 			if !g.suppressVerdicts {
 				upToDate := origin.UpToDate

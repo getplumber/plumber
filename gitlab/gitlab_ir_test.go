@@ -325,3 +325,48 @@ func TestBuildMRSettings(t *testing.T) {
 		t.Error("RemoveSourceBranchAfterMerge = true, want false (mapped from the wrong field?)")
 	}
 }
+
+// TestBuildIncludesCarriesTemplateIdentityWithoutALatestVersion covers a
+// versioned project include whose source project's tag listing could not be
+// read (private repository, insufficient rights): the collector still sets
+// FromPlumber and PlumberOrigin.Path from the ref alone, and buildIncludes
+// must carry that identity into Path or AltPath so template-matching rules
+// (pipelineMustIncludeTemplate) still recognise the include - even though no
+// Current (latest) version is known.
+func TestBuildIncludesCarriesTemplateIdentityWithoutALatestVersion(t *testing.T) {
+	origin := &GitlabPipelineOriginData{
+		Origins: []GitlabPipelineOriginDataFull{
+			{
+				GitlabPipelineOriginDataGeneric: GitlabPipelineOriginDataGeneric{
+					OriginType:  originProject,
+					FromPlumber: true,
+					PlumberOrigin: GitlabPipelineJobPlumberOrigin{
+						Path:          "templates/trivy/trivy",
+						LatestVersion: "", // the tag listing failed
+					},
+					GitlabIncludeOrigin: IncludeOriginWithoutRef{
+						Location: "templates/trivy/trivy.yml",
+						Type:     glOriginProject,
+						Project:  "my-org/templates",
+					},
+				},
+				GitlabPipelineOriginDataProjectSpecific: GitlabPipelineOriginDataProjectSpecific{
+					Version: "0.1.0",
+				},
+			},
+		},
+	}
+
+	got := buildIncludes(origin, ".gitlab-ci.yml")
+	if len(got) != 1 {
+		t.Fatalf("expected exactly one include, got %d", len(got))
+	}
+	inc := got[0]
+
+	if inc.Current != "" {
+		t.Errorf("Current = %q, want empty (the latest version could not be determined)", inc.Current)
+	}
+	if inc.Path != "templates/trivy/trivy" && inc.AltPath != "templates/trivy/trivy" {
+		t.Errorf("expected the template identity (templates/trivy/trivy) in Path or AltPath, got Path=%q AltPath=%q", inc.Path, inc.AltPath)
+	}
+}

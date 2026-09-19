@@ -995,6 +995,16 @@ func (dc *GitlabPipelineOriginDataCollection) Run(project *ProjectInfo, token st
 							currentVersion := parts[1]
 							originData.Version = currentVersion
 
+							// The template identity is a fact of the ref itself, not of
+							// whether the tag listing below succeeds: a private source
+							// project answers the listing with a 403, and that must
+							// degrade only the up-to-date verdict, never drop the
+							// include's identity (it would otherwise read as an
+							// unrelated, unversioned include everywhere the identity is
+							// used - job attribution, forbidden-version reporting).
+							originData.PlumberOrigin.Path = prefix[:len(prefix)-1] // Remove trailing @
+							originData.FromPlumber = true
+
 							// Fetch tags from the source project
 							lInclude.WithFields(logrus.Fields{
 								"sourceProject":  include.Extra.Project,
@@ -1034,11 +1044,6 @@ func (dc *GitlabPipelineOriginDataCollection) Run(project *ProjectInfo, token st
 
 									latestVersion := matchingVersions[0]
 									originData.PlumberOrigin.LatestVersion = latestVersion
-									originData.PlumberOrigin.Path = prefix[:len(prefix)-1] // Remove trailing @
-
-									// Mark as "Plumber" origin so the control picks it up for outdated checking
-									// This includes any versioned project include where we can determine latest version
-									originData.FromPlumber = true
 
 									// Check if up to date
 									originData.UpToDate = IsUpToDate(currentVersion, latestVersion, latestRefs)
@@ -1271,8 +1276,15 @@ func (dc *GitlabPipelineOriginDataCollection) Run(project *ProjectInfo, token st
 			metrics.OriginGitLabCatalog++
 		}
 
-		// Count outdated origins (those that are not up to date)
-		if (origin.FromPlumber || origin.FromGitlabCatalog) && !origin.UpToDate {
+		// Count outdated origins (those that are not up to date). FromPlumber
+		// alone only says the include's identity is known from its ref; a
+		// Plumber-origin include with no LatestVersion resolved was never
+		// compared against anything (its upstream tag listing failed), so
+		// it must not be counted as outdated on the strength of the
+		// zero-valued UpToDate field.
+		plumberOutdated := origin.FromPlumber && origin.PlumberOrigin.LatestVersion != "" && !origin.UpToDate
+		catalogOutdated := origin.FromGitlabCatalog && !origin.UpToDate
+		if plumberOutdated || catalogOutdated {
 			metrics.OriginOutdated++
 		}
 	}
