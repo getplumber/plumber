@@ -1,3 +1,15 @@
+## [0.5.4](https://github.com/getplumber/plumber/compare/v0.5.3...v0.5.4) (2026-09-21)
+
+
+### ✨ Features
+
+* **catalog:** export toggle semantics for behavior-switch booleans ([46c5014](https://github.com/getplumber/plumber/commit/46c501409e513599fd4c1a9e3374570ab9364690))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.5.3 refs [skip ci] ([a36dcb4](https://github.com/getplumber/plumber/commit/a36dcb482be211466d0c1f6cdb23c4e4f9531930))
+
 ## [0.5.3](https://github.com/getplumber/plumber/compare/v0.5.2...v0.5.3) (2026-09-19)
 
 
