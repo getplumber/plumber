@@ -24,11 +24,22 @@ import (
 // recursion structFields already does for Optional. A pointer-typed slice
 // element or map value is out of scope: Elem never carries Nullable, only
 // the field that holds the slice or map itself can.
+// Toggle marks a boolean whose unset state simply takes the documented
+// default: a behavior switch (turn a check or a trust rule on or off),
+// never an expectation about the scanned project. Its counterpart is the
+// expectation boolean, where unset is a real third state ("assert nothing
+// about this setting"). Both are nullable pointers in Go, so Nullable
+// alone cannot tell them apart; a form renders a toggle as a two-state
+// switch (seeded from Default) and a nullable non-toggle boolean as a
+// three-state expectation. Toggle is true structurally for every field
+// named `enabled` (any nesting depth), and by authorship (FieldDoc.Toggle)
+// for the other behavior switches.
 type SchemaField struct {
 	Name        string        `json:"name,omitempty"`
 	Type        string        `json:"type"`
 	Optional    bool          `json:"optional"`
 	Nullable    bool          `json:"nullable,omitempty"`
+	Toggle      bool          `json:"toggle,omitempty"`
 	Description string        `json:"description,omitempty"`
 	Elem        *SchemaField  `json:"elem,omitempty"`
 	Fields      []SchemaField `json:"fields,omitempty"`
@@ -109,6 +120,13 @@ func structFields(t reflect.Type) []SchemaField {
 			sf.Nullable = true
 		} else if yamlOmitempty(f) {
 			sf.Optional = true
+		}
+		// Structural rule: `enabled` turns something on or off, at every
+		// nesting depth (a control's own switch, a sub-check's switch).
+		// It can never be an expectation about the scanned project, so no
+		// authored entry is needed and none can forget it.
+		if sf.Name == "enabled" && sf.Type == "bool" {
+			sf.Toggle = true
 		}
 		fields = append(fields, sf)
 	}
