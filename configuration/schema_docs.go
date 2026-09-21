@@ -7,6 +7,11 @@ type FieldDoc struct {
 	Description string
 	Enum        []string
 	Default     string
+	// Toggle marks a behavior switch (see SchemaField.Toggle): unset just
+	// takes the documented default, so a form offers on/off, never a
+	// third "not checked" state. Fields named `enabled` get it
+	// structurally in schema.go and need no entry here.
+	Toggle bool
 }
 
 // controlFieldDocs is keyed by dotted field path: "control.field",
@@ -25,6 +30,7 @@ var controlFieldDocs = map[string]FieldDoc{
 	},
 	"containerImageMustNotUseForbiddenTags.containerImagesMustBePinnedByDigest": {
 		Description: "When true, all images must use immutable digest references, taking precedence over the forbidden tags list.",
+		Toggle:      true,
 	},
 	"containerImageMustComeFromAuthorizedSources.enabled": {
 		Description: "Turns the control on; when false or absent the control is skipped.",
@@ -34,10 +40,12 @@ var controlFieldDocs = map[string]FieldDoc{
 	},
 	"containerImageMustComeFromAuthorizedSources.trustDockerHubOfficialImages": {
 		Description: "Trusts official Docker Hub images, such as nginx or alpine.",
+		Toggle:      true,
 	},
 	"containerImageMustComeFromAuthorizedSources.includePlumberDefaults": {
 		Description: "In overlay mode, unions Plumber's curated default trusted list with trustedUrls; set false to trust only the listed entries; ignored in legacy mode.",
 		Default:     "true",
+		Toggle:      true,
 	},
 	"branchMustBeProtected.enabled": {
 		Description: "Turns the control on; when false or absent the control is skipped.",
@@ -46,7 +54,8 @@ var controlFieldDocs = map[string]FieldDoc{
 		Description: "List of branch name patterns that must be protected; supports wildcards.",
 	},
 	"branchMustBeProtected.defaultMustBeProtected": {
-		Description: "Requires the default branch to be protected.",
+		Description: "When true, also requires the project's default branch to be protected, in addition to the namePatterns list.",
+		Toggle:      true,
 	},
 	"branchMustBeProtected.allowForcePush": {
 		Description: "When false, force push must be disabled on protected branches.",
@@ -146,6 +155,7 @@ var controlFieldDocs = map[string]FieldDoc{
 	},
 	"includesMustNotUseForbiddenVersions.defaultBranchIsForbiddenVersion": {
 		Description: "When true, adds the project's default branch to the forbidden versions list.",
+		Toggle:      true,
 	},
 	"pipelineMustIncludeComponent.enabled": {
 		Description: "Turns the control on; when false or absent the control is skipped.",
@@ -190,19 +200,22 @@ var controlFieldDocs = map[string]FieldDoc{
 		Description: "Sub-control toggle requiring allow_failure to be false on matched security jobs.",
 	},
 	"securityJobsMustNotBeWeakened.allowFailureMustBeFalse.enabled": {
-		Description: "Turns the control on; when false or absent the control is skipped.",
+		Description: "Turns this sub-check on; on by default when the block is absent.",
+		Default:     "true",
 	},
 	"securityJobsMustNotBeWeakened.rulesMustNotBeRedefined": {
 		Description: "Sub-control toggle requiring rules to not be redefined on matched security jobs.",
 	},
 	"securityJobsMustNotBeWeakened.rulesMustNotBeRedefined.enabled": {
-		Description: "Turns the control on; when false or absent the control is skipped.",
+		Description: "Turns this sub-check on; on by default when the block is absent.",
+		Default:     "true",
 	},
 	"securityJobsMustNotBeWeakened.whenMustNotBeManual": {
 		Description: "Sub-control toggle requiring when to not be set to manual on matched security jobs.",
 	},
 	"securityJobsMustNotBeWeakened.whenMustNotBeManual.enabled": {
-		Description: "Turns the control on; when false or absent the control is skipped.",
+		Description: "Turns this sub-check on; on by default when the block is absent.",
+		Default:     "true",
 	},
 	"pipelineMustNotExecuteUnverifiedScripts.enabled": {
 		Description: "Turns the control on; when false or absent the control is skipped.",
@@ -220,7 +233,9 @@ var controlFieldDocs = map[string]FieldDoc{
 		Description: "Turns the control on; when false or absent the control is skipped.",
 	},
 	"pipelineMustNotUseDockerInDocker.detectInsecureDaemon": {
-		Description: "When true, also flags insecure daemon configuration in jobs that use a Docker-in-Docker service.",
+		Description: "When true, also flags insecure daemon configuration in jobs that use a Docker-in-Docker service; on by default when unset.",
+		Default:     "true",
+		Toggle:      true,
 	},
 	"actionsMustBePinnedByCommitSha.enabled": {
 		Description: "Turns the control on; when false or absent the control is skipped.",
@@ -234,10 +249,12 @@ var controlFieldDocs = map[string]FieldDoc{
 	"githubActionMustComeFromAuthorizedSources.trustGithubOfficialActions": {
 		Description: "Trusts first-party GitHub-owned actions (actions/*, github/*); defaults to true when unset.",
 		Default:     "true",
+		Toggle:      true,
 	},
 	"githubActionMustComeFromAuthorizedSources.trustSameOrgActions": {
 		Description: "Trusts actions whose owner is the same org or user as the scanned repository; defaults to true when unset.",
 		Default:     "true",
+		Toggle:      true,
 	},
 	"githubActionMustComeFromAuthorizedSources.minimumStars": {
 		Description: "When greater than 0, trusts any action whose upstream repository has at least this many GitHub stars; 0 disables the star check.",
@@ -249,6 +266,7 @@ var controlFieldDocs = map[string]FieldDoc{
 	"githubActionMustComeFromAuthorizedSources.includePlumberDefaults": {
 		Description: "In overlay mode, unions Plumber's curated default trusted list with trustedGithubActions; set false to trust only the listed entries; ignored in legacy mode.",
 		Default:     "true",
+		Toggle:      true,
 	},
 	"workflowMustNotInjectUserInputInScripts.enabled": {
 		Description: "Turns the control on; when false or absent the control is skipped.",
@@ -345,6 +363,9 @@ func applyDocs(prefix string, fields []SchemaField) []SchemaField {
 			f.Description = doc.Description
 			f.Enum = append([]string(nil), doc.Enum...)
 			f.Default = doc.Default
+			// Never clears the structural rule: an authored entry can add
+			// toggle-ness, not take it away from an `enabled` field.
+			f.Toggle = f.Toggle || doc.Toggle
 		}
 		if len(f.Fields) > 0 {
 			f.Fields = applyDocs(p, f.Fields)

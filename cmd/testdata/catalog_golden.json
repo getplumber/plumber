@@ -48,6 +48,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -74,6 +75,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
@@ -110,6 +112,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -136,6 +139,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -176,6 +180,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -205,6 +210,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
@@ -222,7 +228,8 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
-            "description": "Requires the default branch to be protected."
+            "toggle": true,
+            "description": "When true, also requires the project's default branch to be protected, in addition to the namePatterns list."
           },
           {
             "name": "allowForcePush",
@@ -277,6 +284,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -304,6 +312,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -330,6 +339,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -371,6 +381,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
@@ -388,6 +399,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Trusts official Docker Hub images, such as nginx or alpine."
           },
           {
@@ -395,6 +407,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "In overlay mode, unions Plumber's curated default trusted list with trustedUrls; set false to trust only the listed entries; ignored in legacy mode.",
             "default": "true"
           }
@@ -423,6 +436,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
@@ -440,6 +454,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "When true, all images must use immutable digest references, taking precedence over the forbidden tags list."
           }
         ]
@@ -524,6 +539,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -550,6 +566,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
@@ -557,6 +574,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Trusts first-party GitHub-owned actions (actions/*, github/*); defaults to true when unset.",
             "default": "true"
           },
@@ -565,6 +583,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Trusts actions whose owner is the same org or user as the scanned repository; defaults to true when unset.",
             "default": "true"
           },
@@ -590,6 +609,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "In overlay mode, unions Plumber's curated default trusted list with trustedGithubActions; set false to trust only the listed entries; ignored in legacy mode.",
             "default": "true"
           }
@@ -632,6 +652,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -659,6 +680,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
@@ -676,6 +698,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "When true, adds the project's default branch to the forbidden versions list."
           }
         ]
@@ -702,6 +725,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -728,6 +752,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
@@ -761,6 +786,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
@@ -827,6 +853,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
@@ -921,6 +948,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
@@ -969,6 +997,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
@@ -1017,6 +1046,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
@@ -1054,6 +1084,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
@@ -1091,6 +1122,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -1118,6 +1150,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
@@ -1155,6 +1188,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
@@ -1162,7 +1196,9 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
-            "description": "When true, also flags insecure daemon configuration in jobs that use a Docker-in-Docker service."
+            "toggle": true,
+            "description": "When true, also flags insecure daemon configuration in jobs that use a Docker-in-Docker service; on by default when unset.",
+            "default": "true"
           }
         ]
       },
@@ -1190,6 +1226,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
@@ -1236,6 +1273,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
@@ -1290,6 +1328,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -1316,6 +1355,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
@@ -1492,6 +1532,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -1519,6 +1560,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
@@ -1543,7 +1585,9 @@
                 "type": "bool",
                 "optional": true,
                 "nullable": true,
-                "description": "Turns the control on; when false or absent the control is skipped."
+                "toggle": true,
+                "description": "Turns this sub-check on; on by default when the block is absent.",
+                "default": "true"
               }
             ]
           },
@@ -1559,7 +1603,9 @@
                 "type": "bool",
                 "optional": true,
                 "nullable": true,
-                "description": "Turns the control on; when false or absent the control is skipped."
+                "toggle": true,
+                "description": "Turns this sub-check on; on by default when the block is absent.",
+                "default": "true"
               }
             ]
           },
@@ -1575,7 +1621,9 @@
                 "type": "bool",
                 "optional": true,
                 "nullable": true,
-                "description": "Turns the control on; when false or absent the control is skipped."
+                "toggle": true,
+                "description": "Turns this sub-check on; on by default when the block is absent.",
+                "default": "true"
               }
             ]
           }
@@ -1631,6 +1679,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           },
           {
@@ -1705,6 +1754,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -1731,6 +1781,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -1771,6 +1822,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -1853,6 +1905,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -1893,6 +1946,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
@@ -1947,6 +2001,7 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
+            "toggle": true,
             "description": "Turns the control on; when false or absent the control is skipped."
           }
         ]
