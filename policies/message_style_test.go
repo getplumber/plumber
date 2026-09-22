@@ -15,6 +15,7 @@ import (
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
+	"github.com/getplumber/plumber/policies"
 )
 
 // The message-style lint. Every GitLab finding message the CLI emits is shown
@@ -145,6 +146,141 @@ var dataArrayKinds = map[string]bool{
 	// the same thing in English (see mr_settings_compliant.rego's _labels).
 	"ISSUE-503.deviatingSettings": false,
 	"ISSUE-506.deviatingSettings": false,
+}
+
+// messageBranches is the render manifest, and the answer to a defect class
+// rather than to one instance of it.
+//
+// Four PR #484 review rounds found the same thing four times: a message
+// branch, a helper arm or a label-map entry that this review rewrote, that no
+// fixture reaches. The lint judges what the corpus renders, so an unrendered
+// branch is not merely untested, it is outside the contract entirely: its
+// wording can regress to a semicolon, an em dash or a line of fix guidance and
+// every check here stays green because none of them ever sees the string.
+//
+// So each one is listed, with a substring that identifies it once rendered,
+// and a full corpus run must produce all of them. Adding a branch to a rule
+// without a fixture is now a failing build, which is the only form of this
+// guarantee that does not depend on a reviewer noticing.
+//
+// marker is matched against the rendered message and against every element of
+// the finding's string arrays (ISSUE-505 publishes its detail lines there, so
+// its reasons are branches like any other).
+//
+// An arm that no input can reach carries unreachable with the argument for
+// why. There is exactly one, and it is a defensive else.
+var messageBranches = []messageBranch{
+	{"ISSUE-101", "untrusted image source", "uses image `", ""},
+	{"ISSUE-102", "forbidden tag", "uses the forbidden tag `", ""},
+	{"ISSUE-103", "no digest", "` without a digest.", ""},
+	{"ISSUE-201", "variable not protected", "is not protected and reaches pipelines", ""},
+	{"ISSUE-202", "variable not masked", "is not masked and its value prints", ""},
+	{"ISSUE-203", "job form", "` sets the debug variable `", ""},
+	{"ISSUE-203", "root variables form", "configuration sets the debug variable `", ""},
+	{"ISSUE-203", "github expression form", "to the expression", ""},
+	{"ISSUE-203", "github env form", "writes the debug variable `", ""},
+	{"ISSUE-204", "unsafe expansion", "expands `$", ""},
+	{"ISSUE-205", "job form", "` overrides the controlled variable `", ""},
+	{"ISSUE-205", "root variables form", "configuration overrides the controlled variable `", ""},
+	{"ISSUE-401", "hardcoded job", "is defined in the project CI configuration", ""},
+	{"ISSUE-402", "github action ref", "whose ref resolves as both a tag", ""},
+	{"ISSUE-402", "gitlab include ref", "` pins the ref `", ""},
+	{"ISSUE-403", "outdated include", "` uses version `", ""},
+	{"ISSUE-404", "forbidden include version", "uses the forbidden version `", ""},
+	{"ISSUE-405", "no template group satisfied", "includes none of the required templates", ""},
+	{"ISSUE-406", "template overridden", "The required template `", ""},
+	{"ISSUE-408", "no component group satisfied", "includes none of the required components", ""},
+	{"ISSUE-409", "component overridden", "The required component `", ""},
+	{"ISSUE-410", "allow_failure", "weakened by `allow_failure: true`", ""},
+	{"ISSUE-410", "when manual", "weakened by `when: manual`", ""},
+	{"ISSUE-410", "rules overridden", "weakened by an overridden `rules:` block", ""},
+	{"ISSUE-411", "unverified script", "runs a script fetched from the network", ""},
+	{"ISSUE-412", "dind service", "uses the Docker-in-Docker service `", ""},
+	{"ISSUE-413", "tls disabled only", "variable is empty, so TLS is off", ""},
+	{"ISSUE-413", "tls disabled and host", "is empty and `DOCKER_HOST` uses", ""},
+	{"ISSUE-413", "host only", "`DOCKER_HOST` variable uses the non-TLS port", ""},
+	{
+		"ISSUE-413", "no specific signal", "the daemon configuration is insecure",
+		// _insecure_for_job fires only when DOCKER_TLS_CERTDIR is empty or
+		// DOCKER_HOST carries :2375, in the job variables or in the pipeline
+		// globals. _tls_certdir_empty and _docker_host_value read those same
+		// two places, so whenever the rule fires one of the three arms above
+		// resolves and this else cannot be reached. It is kept as a defensive
+		// default, not as a branch a fixture could exercise.
+		"no input reaches it: the guard that admits the finding is the disjunction of the three arms above",
+	},
+	{"ISSUE-501", "branch unprotected", "is not protected.", ""},
+	{"ISSUE-502", "named rule", "The merge request approval rule `", ""},
+	{"ISSUE-502", "unnamed rule", "An unnamed merge request approval rule", ""},
+	{"ISSUE-502", "one approval, singular", "requires 1 approval,", ""},
+	{"ISSUE-502", "several approvals, plural", "approvals, below the configured minimum", ""},
+	{"ISSUE-503", "author clause", "authors can approve their own merge requests", ""},
+	{"ISSUE-503", "committer clause", "committers can approve", ""},
+	{"ISSUE-503", "rule editing clause", "approval rules can be edited per merge request", ""},
+	{"ISSUE-503", "re-authentication clause", "approving does not require re-authentication", ""},
+	{"ISSUE-503", "behaviour label kept", "approvals are kept when a commit is added", ""},
+	{"ISSUE-503", "behaviour label removed for code owners", "expected: removed for code owners", ""},
+	{"ISSUE-503", "behaviour label all removed", "expected: all removed", ""},
+	{"ISSUE-504", "no covering rule", "No merge request approval rule applies to all protected branches", ""},
+	{"ISSUE-505", "headline", "has non-compliant protection settings", ""},
+	{"ISSUE-505", "reason force push", "Force push is allowed", ""},
+	{"ISSUE-505", "reason code owner", "Code owner approval is not required", ""},
+	{"ISSUE-505", "reason merge access level", "Merge access level", ""},
+	{"ISSUE-505", "reason push access level", "Push access level", ""},
+	{"ISSUE-506", "merge method label Merge commit", `"Merge commit"`, ""},
+	{"ISSUE-506", "merge method label Fast-forward merge", `"Fast-forward merge"`, ""},
+	{"ISSUE-506", "merge method label Rebase and merge", `"Rebase and merge"`, ""},
+	{"ISSUE-506", "squash label Never", `"Never"`, ""},
+	{"ISSUE-506", "squash label Always", `"Always"`, ""},
+	{"ISSUE-506", "squash label Allow, on by default", `"Allow, on by default"`, ""},
+	{"ISSUE-506", "squash label Allow, off by default", `"Allow, off by default"`, ""},
+	{"ISSUE-506", "boolean rendered enabled", "(expected enabled)", ""},
+	// One entry per setting ISSUE-506 can name, so the corpus has to render
+	// every subject. Four of these reached no fixture until this round; the
+	// keys are held against the rule's own _labels map by
+	// TestIssue506LabelsMatchTheManifest, so a ninth setting cannot slip past.
+	{"ISSUE-506", "subject mergeMethod", "Merge method is", ""},
+	{"ISSUE-506", "subject squashOption", "Squash is", ""},
+	{"ISSUE-506", "subject mergePipelinesEnabled", "Merged results pipelines are", ""},
+	{"ISSUE-506", "subject mergeTrainsEnabled", "Merge trains are", ""},
+	{"ISSUE-506", "subject allowMergeOnSkippedPipeline", "Merging on a skipped pipeline is", ""},
+	{"ISSUE-506", "subject resolveOutdatedDiffDiscussions", "Resolving outdated diff discussions is", ""},
+	{"ISSUE-506", "subject printingMergeRequestLinkEnabled", "Printing the merge request link on push is", ""},
+	{"ISSUE-506", "subject removeSourceBranchAfterMerge", "Removing the source branch after merge is", ""},
+	{"ISSUE-601", "nothing linked, no expectation", "is linked to this project", ""},
+	{"ISSUE-601", "nothing linked, expectation set", "is linked (expected", ""},
+	{"ISSUE-601", "wrong project, id only", ") is not the expected one (expected id", ""},
+	{"ISSUE-601", "wrong project, with path", ", path `", ""},
+}
+
+// messageBranch is one entry of the manifest above.
+type messageBranch struct {
+	code   string
+	what   string
+	marker string
+	// unreachable, when non-empty, is the argument for why no input can
+	// produce this arm. Such an entry is exempt from the render requirement
+	// and the argument is reviewed like any other claim in this package.
+	unreachable string
+}
+
+func (b messageBranch) key() string { return b.code + " " + b.what }
+
+// issue506SubjectLabels is the authored expectation of the eight settings
+// ISSUE-506 can name, as the message renders each one. It is checked against
+// the rule's own _labels map (TestIssue506LabelsMatchTheManifest) so a ninth
+// setting added to the Rego shows up here, and every entry is required to be
+// rendered by the corpus through the manifest above, so adding one without a
+// fixture fails rather than shipping unverified prose.
+var issue506SubjectLabels = map[string]string{
+	"mergeMethod":                     "Merge method is",
+	"squashOption":                    "Squash is",
+	"mergePipelinesEnabled":           "Merged results pipelines are",
+	"mergeTrainsEnabled":              "Merge trains are",
+	"allowMergeOnSkippedPipeline":     "Merging on a skipped pipeline is",
+	"resolveOutdatedDiffDiscussions":  "Resolving outdated diff discussions is",
+	"printingMergeRequestLinkEnabled": "Printing the merge request link on push is",
+	"removeSourceBranchAfterMerge":    "Removing the source branch after merge is",
 }
 
 // apiOnlyTokens are the raw wire values rule 5 keeps out of user-facing prose.
@@ -467,9 +603,16 @@ var (
 )
 
 // recordMessageStyle is the second half of the FindingsObserver TestMain
-// installs (recordEmissions is the first). Messages are deduplicated per code:
-// the corpus renders the same sentence many times and the lint has nothing to
-// add by reporting it twice.
+// installs (recordEmissions is the first). Emissions are deduplicated per
+// code: the corpus renders the same finding many times and the lint has
+// nothing to add by reporting it twice.
+//
+// The key is the message AND the string arrays it arrived with, not the
+// message alone. Two findings of one code can share a headline and differ
+// entirely in the prose they publish beside it: ISSUE-505 renders
+// "Branch `main` has non-compliant protection settings." both for a
+// force-push violation and for an access-level one, so keying on the message
+// dropped one of the two reason sets on the floor, unchecked and uncounted.
 func recordMessageStyle(fs []opaengine.Finding) {
 	messageStyleMu.Lock()
 	defer messageStyleMu.Unlock()
@@ -478,16 +621,35 @@ func recordMessageStyle(fs []opaengine.Finding) {
 			continue
 		}
 		messageStyleCount++
-		byMessage := messageStyleSeen[f.Code]
-		if byMessage == nil {
-			byMessage = map[string]seenMessage{}
-			messageStyleSeen[f.Code] = byMessage
+		byEmission := messageStyleSeen[f.Code]
+		if byEmission == nil {
+			byEmission = map[string]seenMessage{}
+			messageStyleSeen[f.Code] = byEmission
 		}
-		if _, dup := byMessage[f.Message]; dup {
+		arrays := messageArrays(f)
+		key := emissionKey(f.Message, arrays)
+		if _, dup := byEmission[key]; dup {
 			continue
 		}
-		byMessage[f.Message] = seenMessage{message: f.Message, values: messageValues(f), arrays: messageArrays(f)}
+		byEmission[key] = seenMessage{message: f.Message, values: messageValues(f), arrays: arrays}
 	}
+}
+
+// emissionKey identifies one distinct emission for deduplication: the message
+// plus every string array it publishes, since those are separate text and two
+// findings can share a message without sharing them.
+func emissionKey(msg string, arrays map[string][]string) string {
+	var b strings.Builder
+	b.WriteString(msg)
+	for _, key := range slices.Sorted(maps.Keys(arrays)) {
+		b.WriteString("\x00")
+		b.WriteString(key)
+		for _, element := range arrays[key] {
+			b.WriteString("\x00")
+			b.WriteString(element)
+		}
+	}
+	return b.String()
 }
 
 // verifyMessageStyle is the enforcement point, called from TestMain after
@@ -522,20 +684,40 @@ func verifyMessageStyle(completeness bool) string {
 	// renderedClauses tallies which enum clauses the corpus actually produced,
 	// keyed the way enumClauseAllowlists identifies them.
 	renderedClauses := map[string]bool{}
+	// renderedBranches is the same tally for the manifest of every rewritten
+	// message branch; see messageBranches.
+	renderedBranches := map[string]bool{}
 	for _, code := range codes {
-		messages := make([]string, 0, len(messageStyleSeen[code]))
-		for msg := range messageStyleSeen[code] {
-			messages = append(messages, msg)
+		keys := make([]string, 0, len(messageStyleSeen[code]))
+		for key := range messageStyleSeen[code] {
+			keys = append(keys, key)
 		}
-		sort.Strings(messages)
-		for _, msg := range messages {
-			seen := messageStyleSeen[code][msg]
+		sort.Strings(keys)
+		for _, key := range keys {
+			seen := messageStyleSeen[code][key]
+			msg := seen.message
 			for _, problem := range checkMessageStyle(code, msg, seen.values, seen.arrays) {
 				fmt.Fprintf(&b, "%s: %s\n  message: %q\n", code, problem, msg)
 			}
 			for _, clause := range enumClauseAllowlists {
 				if clause.code == code && strings.Contains(msg, clause.anchor) {
 					renderedClauses[clause.key()] = true
+				}
+			}
+			for _, branch := range messageBranches {
+				if branch.code != code {
+					continue
+				}
+				if strings.Contains(msg, branch.marker) {
+					renderedBranches[branch.key()] = true
+					continue
+				}
+				for _, elements := range seen.arrays {
+					for _, element := range elements {
+						if strings.Contains(element, branch.marker) {
+							renderedBranches[branch.key()] = true
+						}
+					}
 				}
 			}
 		}
@@ -564,6 +746,15 @@ func verifyMessageStyle(completeness bool) string {
 				fmt.Fprintf(&b, "%s: no message in the corpus rendered the %s clause (%q), so its label allowlist asserted nothing; add a fixture that makes that setting deviate\n",
 					clause.code, clause.what, clause.anchor)
 			}
+		}
+
+		// The manifest: a branch nobody renders is a branch nobody checks.
+		for _, branch := range messageBranches {
+			if branch.unreachable != "" || renderedBranches[branch.key()] {
+				continue
+			}
+			fmt.Fprintf(&b, "%s: no message or data array in the corpus rendered the %s branch (%q), so its wording is held to none of these rules; add a fixture that produces it, or mark it unreachable in messageBranches with the argument for why\n",
+				branch.code, branch.what, branch.marker)
 		}
 	}
 	if b.Len() > 0 {
@@ -784,6 +975,81 @@ func TestMessageStyleChecker(t *testing.T) {
 			}
 		})
 	}
+}
+
+// TestIssue506LabelsMatchTheManifest keeps issue506SubjectLabels honest against
+// the rule it describes: the keys must be exactly the _labels map's, and each
+// subject must be the string the rule renders.
+//
+// Without it the manifest could drift into a comfortable fiction. A ninth
+// setting added to mr_settings_compliant.rego would render a subject nothing
+// here asks about, and the render check would pass by simply not knowing the
+// key existed. This test fails instead, which forces the key into
+// issue506SubjectLabels and messageBranches, which in turn forces a fixture
+// that renders it (PR #484 re-review, the fourth report of that same class).
+func TestIssue506LabelsMatchTheManifest(t *testing.T) {
+	source, err := policies.FS.ReadFile("mr_settings_compliant.rego")
+	if err != nil {
+		t.Fatalf("read the rule: %v", err)
+	}
+	labels := regoStringMapEntries(t, string(source), "_labels")
+	if len(labels) == 0 {
+		t.Fatal("no _labels entries parsed: the map moved or changed shape, and this test is now asserting nothing")
+	}
+	for key, subject := range labels {
+		want, known := issue506SubjectLabels[key]
+		if !known {
+			t.Errorf("mr_settings_compliant.rego names the setting %q, which issue506SubjectLabels does not: add it there and to messageBranches, then add a fixture that makes it deviate", key)
+			continue
+		}
+		if want != subject {
+			t.Errorf("setting %q renders as %q, the manifest says %q", key, subject, want)
+		}
+	}
+	for key := range issue506SubjectLabels {
+		if _, ok := labels[key]; !ok {
+			t.Errorf("issue506SubjectLabels names the setting %q, which the rule no longer does", key)
+		}
+	}
+	// Every subject is also a manifest entry, so the corpus has to render it.
+	for key, subject := range issue506SubjectLabels {
+		found := false
+		for _, branch := range messageBranches {
+			if branch.code == "ISSUE-506" && strings.Contains(subject, branch.marker) {
+				found = true
+				break
+			}
+			if branch.code == "ISSUE-506" && strings.Contains(branch.marker, subject) {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Errorf("the subject of %q (%q) is in no messageBranches entry, so nothing requires the corpus to render it", key, subject)
+		}
+	}
+}
+
+// regoStringMapEntries pulls the `"key": "value",` pairs out of a top-level
+// Rego string map. Deliberately textual: loading and evaluating the module to
+// read one constant would make the test depend on the evaluator it is meant to
+// check the source of. Mirrors extractRegoUnsafePatterns in rules_test.go.
+func regoStringMapEntries(t *testing.T, source, name string) map[string]string {
+	t.Helper()
+	start := strings.Index(source, name+" := {")
+	if start < 0 {
+		return nil
+	}
+	end := strings.Index(source[start:], "\n}")
+	if end < 0 {
+		t.Fatalf("%s: no closing brace found", name)
+	}
+	out := map[string]string{}
+	entry := regexp.MustCompile(`"([^"]+)":\s*"([^"]*)"`)
+	for _, m := range entry.FindAllStringSubmatch(source[start:start+end], -1) {
+		out[m[1]] = m[2]
+	}
+	return out
 }
 
 // TestMessageStyleScopeIsComplete pins that the lint covers every issue code
