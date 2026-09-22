@@ -14,7 +14,7 @@ deny contains finding if {
 	finding := {
 		"code":     "ISSUE-401",
 		"severity": "medium",
-		"message":  sprintf("job %q is hardcoded (not sourced from include/component/template)", [job.name]),
+		"message":  sprintf("Job `%s` is defined in the project CI configuration, not in an included template or component.", [job.name]),
 		"job":      job.name,
 		# hardcodedJob names what this finding is about, so its identity is the
 		# job rather than the wording of the message above (finding/identity).

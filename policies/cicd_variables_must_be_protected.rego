@@ -24,7 +24,7 @@ deny contains finding if {
 	finding := {
 		"code":         "ISSUE-201",
 		"severity":     "medium",
-		"message":      sprintf("CI/CD settings variable %q is not protected — it is exposed to pipelines on unprotected branches; mark it protected so it is only injected into pipelines on protected branches and tags", [v.name]),
+		"message":      sprintf("The CI/CD settings variable `%s` is not protected and reaches pipelines on unprotected branches.", [v.name]),
 		"variableName": v.name,
 		"variableType": v.type,
 		"environment":  v.environment,

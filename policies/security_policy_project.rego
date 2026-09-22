@@ -60,32 +60,41 @@ _expected_path(cfg) := object.get(cfg, "expectedProjectPath", "")
 _norm(p) := trim(lower(p), "/")
 
 # ID mode (id set, authoritative): the linked id must equal it.
-_violation(sp, cfg) := _mismatch_msg(sp, sprintf("id %d", [_expected_id(cfg)])) if {
+_violation(sp, cfg) := _mismatch_msg(sp, sprintf("id `%d`", [_expected_id(cfg)])) if {
 	_expected_id(cfg) != 0
 	sp.linkedProjectId != _expected_id(cfg)
 }
 
 # Path mode (no id, path set): the linked path must equal it, normalised.
-_violation(sp, cfg) := _mismatch_msg(sp, sprintf("path %q", [_expected_path(cfg)])) if {
+_violation(sp, cfg) := _mismatch_msg(sp, sprintf("path `%s`", [_expected_path(cfg)])) if {
 	_expected_id(cfg) == 0
 	_expected_path(cfg) != ""
 	_norm(sp.linkedProjectPath) != _norm(_expected_path(cfg))
 }
 
 # Any-linkage mode (neither set): fail only when nothing is linked.
-_violation(sp, cfg) := "no GitLab security policy project is linked to this project" if {
+_violation(sp, cfg) := "No GitLab security policy project is linked to this project." if {
 	_expected_id(cfg) == 0
 	_expected_path(cfg) == ""
 	sp.linkedProjectId == 0
 }
 
-_mismatch_msg(sp, want) := sprintf("no GitLab security policy project is linked (expected %s)", [want]) if {
+_mismatch_msg(sp, want) := sprintf("No GitLab security policy project is linked (expected %s).", [want]) if {
 	sp.linkedProjectId == 0
 }
 
 _mismatch_msg(sp, want) := sprintf(
-	"the linked GitLab security policy project (id %d, path %q) is not the expected project (%s)",
-	[sp.linkedProjectId, sp.linkedProjectPath, want],
+	"%s is not the expected one (expected %s).",
+	[_linked_subject(sp), want],
 ) if {
 	sp.linkedProjectId != 0
 }
+
+# The path is optional on the projection: name it only when it is there, so
+# the sentence never carries an empty pair of backquotes.
+_linked_subject(sp) := sprintf(
+	"The linked GitLab security policy project (id `%d`, path `%s`)",
+	[sp.linkedProjectId, sp.linkedProjectPath],
+) if {
+	sp.linkedProjectPath != ""
+} else := sprintf("The linked GitLab security policy project (id `%d`)", [sp.linkedProjectId])

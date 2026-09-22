@@ -24,7 +24,7 @@ deny contains finding if {
 	finding := {
 		"code":     "ISSUE-103",
 		"severity": "high",
-		"message":  sprintf("job %q uses image without digest pinning: %s", [job.name, _image_ref(job.image)]),
+		"message":  sprintf("Job `%s` uses image `%s` without a digest.", [job.name, _image_ref(job.image)]),
 		"job":      job.name,
 		"link":     _image_ref(job.image),
 		# Identity keys on imageRepo (registry/name, no tag): the subject

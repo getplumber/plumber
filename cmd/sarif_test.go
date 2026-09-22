@@ -342,6 +342,11 @@ func TestBuildSARIF_MessageEscapesBracketsInFindingDetail(t *testing.T) {
 // PR #394 review: a job name reads better as a code span than as quoted prose
 // in the inline comment. The rewrite happens at render time, so the message the
 // fingerprint is computed from (and every non-Markdown output) is unchanged.
+//
+// The messages below are the quoted-prose shape the GitHub rules still emit;
+// every GitLab rule backquotes the job itself since the 2026-09-22
+// issues-page review, which this rewrite leaves alone (see
+// TestBuildSARIF_CodeSpanLeavesAnAlreadySpannedJobAlone).
 func TestBuildSARIF_JobNameRendersAsCodeSpan(t *testing.T) {
 	for _, tc := range []struct{ name, message string }{
 		{"double quoted", `job "wf/injection" writes to $GITHUB_ENV`},
@@ -363,20 +368,35 @@ func TestBuildSARIF_JobNameRendersAsCodeSpan(t *testing.T) {
 	}
 }
 
-// Only the job name is re-quoted. A quoted value that is not the job (an image
-// ref, a variable, a tag) keeps the rule's own punctuation.
+// Only the job name is re-quoted. A quoted value that is not the job (an
+// action ref, an image ref, a variable) keeps the rule's own punctuation.
 func TestBuildSARIF_CodeSpanLeavesOtherQuotedValuesAlone(t *testing.T) {
 	doc := buildSARIF([]opaengine.Finding{
-		{Code: "ISSUE-102", Severity: "high", Job: "wf/build", File: "ci.yml", Line: 3,
-			Message: `job "wf/build" uses forbidden tag 'latest' (image: "alpine:latest")`},
+		{Code: "ISSUE-701", Severity: "high", Job: "wf/build", File: "ci.yml", Line: 3,
+			Message: `job "wf/build" references action "actions/checkout@v4" with a mutable ref 'v4'`},
 	}, ".plumber.yaml", "github")
 
 	msg := doc.Runs[0].Results[0].Message.Text
 	if !strings.Contains(msg, "`wf/build`") {
 		t.Errorf("message %q does not render the job name as a code span", msg)
 	}
-	if !strings.Contains(msg, `'latest'`) || !strings.Contains(msg, `"alpine:latest"`) {
+	if !strings.Contains(msg, `'v4'`) || !strings.Contains(msg, `"actions/checkout@v4"`) {
 		t.Errorf("message %q rewrote a quoted value that is not the job name", msg)
+	}
+}
+
+// Every GitLab rule backquotes its own technical tokens since the 2026-09-22
+// issues-page review, so there is no quoted job left for this rewrite to find:
+// it must pass the message through byte for byte rather than double-span it.
+func TestBuildSARIF_CodeSpanLeavesAnAlreadySpannedJobAlone(t *testing.T) {
+	const message = "Job `deploy` uses the forbidden tag `latest` of image `alpine:latest`."
+	doc := buildSARIF([]opaengine.Finding{
+		{Code: "ISSUE-102", Severity: "high", Job: "deploy", File: ".gitlab-ci.yml", Line: 3,
+			Message: message},
+	}, ".plumber.yaml", "gitlab")
+
+	if msg := doc.Runs[0].Results[0].Message.Text; !strings.HasSuffix(msg, ": "+message) {
+		t.Errorf("message %q altered a message whose tokens the rule already backquoted", msg)
 	}
 }
 

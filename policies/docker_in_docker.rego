@@ -23,7 +23,7 @@ deny contains finding if {
 	finding := {
 		"code":         "ISSUE-412",
 		"severity":     "high",
-		"message":      sprintf("job %q uses Docker-in-Docker service %q", [job.name, _image_ref(dind)]),
+		"message":      sprintf("Job `%s` uses the Docker-in-Docker service `%s`.", [job.name, _image_ref(dind)]),
 		"job":          job.name,
 		"serviceImage": _image_ref(dind),
 	}

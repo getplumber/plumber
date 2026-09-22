@@ -59,8 +59,8 @@ deny contains finding if {
 		"code": "ISSUE-503",
 		"severity": "high",
 		"message": sprintf(
-			"merge request approval settings can be weakened at the project level, overriding any approval rule: %s",
-			[concat("; ", clauses)],
+			"Merge request approval settings do not match the policy: %s.",
+			[concat(", ", clauses)],
 		),
 		"deviatingSettings": deviations,
 		"behaviorWhenCommitIsAdded": settings.behaviorWhenCommitIsAdded,
@@ -73,18 +73,39 @@ deny contains finding if {
 # their unsafe state (configured true, projected false), so each clause is
 # fixed; behaviorWhenCommitIsAdded carries the project's actual rung and the
 # configured minimum off the strictness ladder.
-_deviation_clause("preventApprovalByAuthor", _, _) := "authors can approve their own merge requests (should be prevented)"
+_deviation_clause("preventApprovalByAuthor", _, _) := "authors can approve their own merge requests"
 
-_deviation_clause("preventApprovalsByCommitters", _, _) := "users who added commits can approve (should be prevented)"
+_deviation_clause("preventApprovalsByCommitters", _, _) := "committers can approve"
 
-_deviation_clause("preventEditingApprovalRulesInMR", _, _) := "approval rules can be overridden per merge request (should be locked)"
+_deviation_clause("preventEditingApprovalRulesInMR", _, _) := "approval rules can be edited per merge request"
 
-_deviation_clause("requireReAuthToApprove", _, _) := "approving does not require re-authentication (should be required)"
+_deviation_clause("requireReAuthToApprove", _, _) := "approving does not require re-authentication"
 
 _deviation_clause("behaviorWhenCommitIsAdded", settings, cfg) := sprintf(
-	"approvals are %q when a commit is added (should be at least %q)",
-	[settings.behaviorWhenCommitIsAdded, object.get(cfg, "behaviorWhenCommitIsAdded", "")],
+	"approvals are %s when a commit is added (expected: %s)",
+	[
+		_behavior_label(settings.behaviorWhenCommitIsAdded),
+		_behavior_label(object.get(cfg, "behaviorWhenCommitIsAdded", "")),
+	],
 )
+
+# The API values of the strictness ladder are wire tokens, not English: the
+# issues page shows this message verbatim, so each rung is rendered as the
+# behaviour it describes.
+#
+# An unknown rung cannot reach this clause at all: _deviations below reads
+# _behavior_rank[settings.behaviorWhenCommitIsAdded], which is undefined for a
+# value outside the ladder, so the deviation never enters the set and no
+# clause renders. The fallback to the raw value therefore never fires in
+# practice, and exists only so an unmapped rung would read as itself rather
+# than be silently mapped to a behaviour it is not.
+_behavior_labels := {
+	"keep_approvals": "kept",
+	"remove_approvals_by_code_owners": "removed for code owners",
+	"remove_all_approvals": "all removed",
+}
+
+_behavior_label(value) := object.get(_behavior_labels, value, value)
 
 # _deviations returns the sorted list of expectation names the project fails:
 # the boolean expectations configured true whose projected setting is false,

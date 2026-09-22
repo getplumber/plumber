@@ -26,7 +26,7 @@ deny contains finding if {
 	finding := {
 		"code":            "ISSUE-203",
 		"severity":        "critical",
-		"message":         sprintf("%s = %q (job %q)", [k, v, job.name]),
+		"message":         sprintf("Job `%s` sets the debug variable `%s` to %q.", [job.name, k, v]),
 		"job":             job.name,
 		"variableName":    k,
 		"value":           v,
@@ -47,11 +47,16 @@ deny contains finding if {
 	finding := {
 		"code":            "ISSUE-203",
 		"severity":        "critical",
-		"message":         sprintf("%s = %q (global variables)", [k, v]),
+		"message":         sprintf("The root `variables:` keyword of the CI configuration sets the debug variable `%s` to %q.", [k, v]),
 		"variableName":    k,
 		"value":           v,
 		"valueProvenance": "ci_file",
-		"location":        "global",
+		# root_variables, not "global": the root `variables:` keyword of the CI
+		# file is what this finding points at, and "global" read on the issues
+		# page as a scope rather than a place (2026-09-22 review, ruling R5).
+		# R5 names the concept, a root `variables:` override, so ISSUE-205's
+		# root form carries the identical value.
+		"location":        "root_variables",
 	}
 }
 
@@ -78,7 +83,7 @@ deny contains finding if {
 	finding := {
 		"code":            "ISSUE-203",
 		"severity":        "critical",
-		"message":         sprintf("%s uses a GitHub expression %q (job %q) — debug logging cannot be verified off statically", [k, v, job.name]),
+		"message":         sprintf("Job `%s` sets the debug variable `%s` to the expression %q, which cannot be verified off statically.", [job.name, k, v]),
 		"job":             job.name,
 		"variableName":    k,
 		"value":           v,
@@ -102,7 +107,7 @@ deny contains finding if {
 	finding := {
 		"code":         "ISSUE-203",
 		"severity":     "critical",
-		"message":      sprintf("job %q writes %q to $GITHUB_ENV — enables runner debug logging for subsequent steps", [job.name, var_name]),
+		"message":      sprintf("Job `%s` writes the debug variable `%s` to `$GITHUB_ENV`.", [job.name, var_name]),
 		"job":          job.name,
 		"variableName": var_name,
 		"location":     job.name,

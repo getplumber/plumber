@@ -24,7 +24,7 @@ deny contains finding if {
 	finding := {
 		"code":            "ISSUE-205",
 		"severity":        "critical",
-		"message":         sprintf("%s = %q (job %q)", [var_name, job.localVariables[var_name], job.name]),
+		"message":         sprintf("Job `%s` overrides the controlled variable `%s` with %q.", [job.name, var_name, job.localVariables[var_name]]),
 		"job":             job.name,
 		"variableName":    var_name,
 		"value":           job.localVariables[var_name],
@@ -45,11 +45,14 @@ deny contains finding if {
 	finding := {
 		"code":            "ISSUE-205",
 		"severity":        "critical",
-		"message":         sprintf("%s = %q (global variables)", [var_name, input.pipeline.localGlobalVariables[var_name]]),
+		"message":         sprintf("The root `variables:` keyword of the CI configuration overrides the controlled variable `%s` with %q.", [var_name, input.pipeline.localGlobalVariables[var_name]]),
 		"variableName":    var_name,
 		"value":           input.pipeline.localGlobalVariables[var_name],
 		"valueProvenance": "ci_file",
-		"location":        "global",
+		# root_variables, not "global": the root `variables:` keyword of the CI
+		# file is what this finding points at, and "global" read on the issues
+		# page as a scope rather than a place (2026-09-22 review, ruling R5).
+		"location":        "root_variables",
 	}
 }
 

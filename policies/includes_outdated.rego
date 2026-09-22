@@ -20,7 +20,7 @@ deny contains finding if {
 	finding := {
 		"code":                  "ISSUE-403",
 		"severity":              "medium",
-		"message":               sprintf("%s uses version '%s' (latest: %s)", [inc.source, inc.ref, inc.current]),
+		"message":               sprintf("The include `%s` uses version `%s` while the latest is `%s`.", [inc.source, inc.ref, inc.current]),
 		# No "job": an include is not a job. includePath names what this finding
 		# is about (finding/identity). componentName stays as payload: it is a
 		# bare name, empty for any include that is not a component.

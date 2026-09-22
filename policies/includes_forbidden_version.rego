@@ -23,7 +23,7 @@ deny contains finding if {
 	finding := {
 		"code":     "ISSUE-404",
 		"severity": "medium",
-		"message":  sprintf("%s uses forbidden version '%s'", [inc.source, inc.ref]),
+		"message":  sprintf("The include `%s` uses the forbidden version `%s`.", [inc.source, inc.ref]),
 		# No "job": an include is not a job. includePath names what this finding
 		# is about and is what the identity recipe selects (finding/identity).
 		# The ref stays out: the same include drifting from one forbidden

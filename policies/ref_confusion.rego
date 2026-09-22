@@ -25,7 +25,7 @@ deny contains finding if {
 	finding := {
 		"code":     "ISSUE-402",
 		"severity": "medium",
-		"message":  sprintf("job %q references %q — the ref name resolves as both a tag AND a branch upstream, which revision runs is ambiguous", [job.name, action.uses]),
+		"message":  sprintf("Job `%s` references `%s`, whose ref resolves as both a tag and a branch upstream.", [job.name, action.uses]),
 		"job":      job.name,
 		"uses":     action.uses,
 		"line":     object.get(action, "line", 0),
@@ -41,7 +41,7 @@ deny contains finding if {
 	finding := {
 		"code":                  "ISSUE-402",
 		"severity":              "medium",
-		"message":               sprintf("%s pins ref '%s' — it resolves as both a tag AND a branch in the source project, so which revision runs is ambiguous; pin to a commit SHA to disambiguate", [inc.source, inc.ref]),
+		"message":               sprintf("The include `%s` pins the ref `%s`, which resolves as both a tag and a branch in the source project.", [inc.source, inc.ref]),
 		# No "job": an include is not a job. includePath names what this finding
 		# is about (finding/identity). componentName stays as payload.
 		"includePath":           inc.source,

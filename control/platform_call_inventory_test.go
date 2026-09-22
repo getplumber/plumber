@@ -873,8 +873,11 @@ func TestSnapshotLanesEvaluateMergeSettingsAndSecurityPolicy(t *testing.T) {
 	// The finding has to carry the SNAPSHOT's values, or it was computed
 	// somewhere else. The clause names the served merge method against the
 	// configured expectation, and only the snapshot carries the former: the
-	// fake GitLab's project payload has no merge settings at all.
-	const wantClause = "merge method is merge (expected ff)"
+	// fake GitLab's project payload has no merge settings at all. The values
+	// read as the labels GitLab shows ("merge" -> Merge commit, "ff" ->
+	// Fast-forward merge) since the 2026-09-22 issues-page review, message
+	// rule 5: no API enum value reaches a reader.
+	const wantClause = `Merge method is "Merge commit" (expected "Fast-forward merge")`
 	for _, f := range result.Findings {
 		if f.Code == "ISSUE-506" && !strings.Contains(f.Message, wantClause) {
 			t.Errorf("ISSUE-506 does not report the served merge method (%q): %q", wantClause, f.Message)
