@@ -1550,6 +1550,64 @@ func TestIssue506_MRSettingsCompliant(t *testing.T) {
 		}
 	}
 
+	// Every subject label and every enum value the rule can render, in one
+	// projection where all eight settings deviate at once. Four of the eight
+	// subjects (merged results pipelines, merging on a skipped pipeline,
+	// resolving outdated diff discussions, printing the merge request link)
+	// and three of the seven enum labels (Rebase and merge, Always, Allow, on
+	// by default) reached no fixture before this case, so their wording was
+	// never held to the message rules (PR #484 re-review). The lint's
+	// messageBranches manifest keeps it that way: each of these is an entry
+	// there, and an entry the corpus stops rendering is a failure.
+	allCfg := map[string]any{
+		"mergeRequestSettingsMustBeCompliant": map[string]any{
+			"mergeMethod":                     "ff",
+			"squashOption":                    "default_on",
+			"mergePipelinesEnabled":           true,
+			"mergeTrainsEnabled":              true,
+			"allowMergeOnSkippedPipeline":     true,
+			"resolveOutdatedDiffDiscussions":  true,
+			"printingMergeRequestLinkEnabled": true,
+			"removeSourceBranchAfterMerge":    true,
+		},
+	}
+	allDeviating := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitLab,
+		MRSettings: &ir.MRSettings{
+			MergeMethod:  "rebase_merge",
+			SquashOption: "always",
+			// Every boolean false against a configured true. None of these
+			// carries omitempty in the IR, so each one reaches the projection
+			// and deviates rather than being dropped.
+		},
+	}
+	allFindings, err := engine.Evaluate(context.Background(), allDeviating, allCfg)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if got := countCode(allFindings, "ISSUE-506"); got != 1 {
+		t.Fatalf("expected 1 ISSUE-506 finding for the all-settings deviation, got %d", got)
+	}
+	for _, f := range allFindings {
+		if f.Code != "ISSUE-506" {
+			continue
+		}
+		for _, want := range []string{
+			`Merge method is "Rebase and merge" (expected "Fast-forward merge")`,
+			`Squash is "Always" (expected "Allow, on by default")`,
+			"Merged results pipelines are disabled (expected enabled)",
+			"Merge trains are disabled (expected enabled)",
+			"Merging on a skipped pipeline is disabled (expected enabled)",
+			"Resolving outdated diff discussions is disabled (expected enabled)",
+			"Printing the merge request link on push is disabled (expected enabled)",
+			"Removing the source branch after merge is disabled (expected enabled)",
+		} {
+			if !strings.Contains(f.Message, want) {
+				t.Errorf("missing clause %q in %q", want, f.Message)
+			}
+		}
+	}
+
 	// Negative: every configured expectation matches -> no finding.
 	compliant := &ir.NormalizedPipeline{
 		Provider: ir.ProviderGitLab,
@@ -4678,6 +4736,13 @@ func TestIssue601_SecurityPolicyProject(t *testing.T) {
 	}
 	if got := count601(gl(&ir.SecurityPolicyProjectState{Known: true, LinkedProjectID: 9}), expect9); got != 0 {
 		t.Fatalf("expected id 9, linked 9: expected 0 ISSUE-601, got %d", got)
+	}
+
+	// Expectation set and nothing linked at all: _mismatch_msg's other form,
+	// which no fixture reached before this round. It must name what was
+	// expected without inventing a linked project to compare it against.
+	if got := oneMessage601(gl(&ir.SecurityPolicyProjectState{Known: true, LinkedProjectID: 0}), expect9); got != "No GitLab security policy project is linked (expected id `9`)." {
+		t.Errorf("an unlinked project under an id expectation must name the expectation alone: %q", got)
 	}
 
 	// Path mode: expectedProjectPath, compared case-insensitively.
