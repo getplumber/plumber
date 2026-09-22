@@ -1,3 +1,26 @@
+## [0.5.6](https://github.com/getplumber/plumber/compare/v0.5.5...v0.5.6) (2026-09-22)
+
+
+### 🐛 Bug Fixes
+
+* **catalog:** the control catalog names the gitlab tier a control or a field requires (ask 56) ([8130a2c](https://github.com/getplumber/plumber/commit/8130a2ceb4b264c47d261c0e48873c39ed339af7))
+* **configuration,policies:** the default branch is a forbidden include version by default, mr fields lose descriptions ([50a60b0](https://github.com/getplumber/plumber/commit/50a60b01f1286e84ce91bc0d88db936e83412d88))
+* **control,configuration:** CTRL-102 is named container images must not use forbidden reference, the name copies agree ([7ebbb6a](https://github.com/getplumber/plumber/commit/7ebbb6af275276329ac83d8624c87e3938fb2c6b))
+* **policies:** every gitlab finding message reads as one clear sentence with its technical tokens quoted ([c298ed0](https://github.com/getplumber/plumber/commit/c298ed0958fa593c4f0fa805aa3112877f9f2493))
+
+
+### ✅ Tests
+
+* **policies:** every rewritten label and message branch is rendered by the corpus, ISSUE-506 labels are complete ([18d0215](https://github.com/getplumber/plumber/commit/18d021539c2536ec8150ede597ad1778f1edd3e5))
+* **policies:** the ISSUE-502 and ISSUE-601 message branches are asserted, the lint rejects empty backquotes ([9abef9a](https://github.com/getplumber/plumber/commit/9abef9a62efe6966b0a9d4251c74e3bb3645596b)), closes [#484](https://github.com/getplumber/plumber/issues/484)
+* **policies:** the ISSUE-505 reasons are asserted and every string array in finding data passes the lint ([c684a76](https://github.com/getplumber/plumber/commit/c684a76b460293376a83c4498bc4867301732871))
+* **policies:** the squash clause of ISSUE-506 and every ISSUE-413 detail branch render through the lint ([3ec811e](https://github.com/getplumber/plumber/commit/3ec811e52381faf3b4d0ce6ac1c0abbfdcd58449))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.5.5 refs [skip ci] ([d874910](https://github.com/getplumber/plumber/commit/d874910d8fac9471959cbdfe74224e9c5378ae9f))
+
 ## [0.5.5](https://github.com/getplumber/plumber/compare/v0.5.4...v0.5.5) (2026-09-22)
 
 
