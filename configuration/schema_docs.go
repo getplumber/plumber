@@ -110,33 +110,21 @@ var controlFieldDocs = map[string]FieldDoc{
 		Description: "Turns the control on; when false or absent the control is skipped.",
 	},
 	"mergeRequestSettingsMustBeCompliant.mergeMethod": {
-		Description: "Expected merge method; any other value fails config validation.",
-		Enum:        []string{"merge", "ff", "rebase_merge"},
+		Enum: []string{"merge", "ff", "rebase_merge"},
 	},
 	"mergeRequestSettingsMustBeCompliant.squashOption": {
-		Description: "Expected squash policy; any other value fails config validation.",
-		Enum:        []string{"never", "always", "default_on", "default_off"},
+		Enum: []string{"never", "always", "default_on", "default_off"},
 	},
 	"mergeRequestSettingsMustBeCompliant.mergePipelinesEnabled": {
-		Description: "Expected merged-results-pipelines setting.",
-		Tier:        TierPremium,
+		Tier: TierPremium,
 	},
 	"mergeRequestSettingsMustBeCompliant.mergeTrainsEnabled": {
-		Description: "Expected merge-trains setting.",
-		Tier:        TierPremium,
+		Tier: TierPremium,
 	},
-	"mergeRequestSettingsMustBeCompliant.allowMergeOnSkippedPipeline": {
-		Description: "Expected allow-merge-when-pipeline-is-skipped setting.",
-	},
-	"mergeRequestSettingsMustBeCompliant.resolveOutdatedDiffDiscussions": {
-		Description: "Expected auto-resolve-outdated-discussions setting.",
-	},
-	"mergeRequestSettingsMustBeCompliant.printingMergeRequestLinkEnabled": {
-		Description: "Expected print-merge-request-link-on-push setting.",
-	},
-	"mergeRequestSettingsMustBeCompliant.removeSourceBranchAfterMerge": {
-		Description: "Expected delete-source-branch-after-merge default.",
-	},
+	"mergeRequestSettingsMustBeCompliant.allowMergeOnSkippedPipeline":     {},
+	"mergeRequestSettingsMustBeCompliant.resolveOutdatedDiffDiscussions":  {},
+	"mergeRequestSettingsMustBeCompliant.printingMergeRequestLinkEnabled": {},
+	"mergeRequestSettingsMustBeCompliant.removeSourceBranchAfterMerge":    {},
 	"projectMustHaveSecurityPolicySource.enabled": {
 		Description: "Turns the control on; when false or absent the control is skipped.",
 	},
@@ -162,7 +150,8 @@ var controlFieldDocs = map[string]FieldDoc{
 		Description: "List of version patterns considered forbidden, such as latest, main, or HEAD.",
 	},
 	"includesMustNotUseForbiddenVersions.defaultBranchIsForbiddenVersion": {
-		Description: "When true, adds the project's default branch to the forbidden versions list.",
+		Description: "Adds the project's default branch to the forbidden versions list; set false to allow includes pinned to it.",
+		Default:     "true",
 		Toggle:      true,
 	},
 	"pipelineMustIncludeComponent.enabled": {

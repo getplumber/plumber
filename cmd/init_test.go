@@ -319,6 +319,35 @@ func TestToPlumberConfigRequiredInclusions(t *testing.T) {
 	}
 }
 
+// Ruling R6 of the 2026-09-22 issues-page review: the default branch is a
+// forbidden include version unless the operator says otherwise. The wizard
+// is the third config-emitting surface (beside the shipped .plumber.yaml
+// and the schema default), so an operator who presses Enter through it
+// must get the same reading as one who copies the shipped config. The
+// constant is the wizard's Enter-through answer: it seeds the state and is
+// the Confirm's Default, so the two can never disagree.
+func TestToPlumberConfigDefaultBranchIsForbiddenOnTheEnterThroughPath(t *testing.T) {
+	if !initDefaultBranchIsForbiddenVersion {
+		t.Fatal("the wizard's Enter-through answer is false; ruling R6 makes the default branch forbidden by default")
+	}
+	st := &initWizardState{
+		Providers:                       []string{"gitlab"},
+		Categories:                      []string{catComposition},
+		CompositionChoices:              []string{compForbidden},
+		DefaultBranchIsForbiddenVersion: initDefaultBranchIsForbiddenVersion,
+	}
+	c := st.toPlumberConfig().GitLab.Controls.IncludesMustNotUseForbiddenVersions
+	if c == nil {
+		t.Fatal("the wizard emitted no includesMustNotUseForbiddenVersions block")
+	}
+	if c.DefaultBranchIsForbiddenVersion == nil || !*c.DefaultBranchIsForbiddenVersion {
+		t.Errorf("generated defaultBranchIsForbiddenVersion = %v, want true", c.DefaultBranchIsForbiddenVersion)
+	}
+	if !c.IsDefaultBranchForbidden() {
+		t.Error("the generated config does not treat the default branch as a forbidden version")
+	}
+}
+
 func TestToPlumberConfigRequiredSkippedWhenEmpty(t *testing.T) {
 	st := &initWizardState{
 		Providers:          []string{"gitlab"},

@@ -559,13 +559,12 @@ func buildEngineConfig(controls *configuration.ControlsConfig) map[string]any {
 	}
 
 	if c := controls.IncludesMustNotUseForbiddenVersions; c != nil {
-		defaultForbidden := false
-		if c.DefaultBranchIsForbiddenVersion != nil {
-			defaultForbidden = *c.DefaultBranchIsForbiddenVersion
-		}
+		// The EFFECTIVE value, not the raw pointer: unset means true
+		// (ruling R6 of the 2026-09-22 issues-page review), and the rule
+		// reads an absent key the same way.
 		cfg["includesForbiddenVersions"] = map[string]any{
 			"forbiddenVersions":               c.ForbiddenVersions,
-			"defaultBranchIsForbiddenVersion": defaultForbidden,
+			"defaultBranchIsForbiddenVersion": c.IsDefaultBranchForbidden(),
 		}
 	}
 

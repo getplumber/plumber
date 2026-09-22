@@ -104,6 +104,15 @@ func isInteractiveInit() bool {
 	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
 }
 
+// initDefaultBranchIsForbiddenVersion is the wizard's Enter-through answer
+// for defaultBranchIsForbiddenVersion, and the value a state that was never
+// asked carries. It restates ruling R6 of the 2026-09-22 issues-page review
+// (the decision itself lives in
+// configuration.IncludesForbiddenVersionsControlConfig.IsDefaultBranchForbidden)
+// so a generated .plumber.yaml reads like the shipped one instead of
+// writing the opposite of the documented default.
+const initDefaultBranchIsForbiddenVersion = true
+
 // initWizardState collects answers from the survey.
 type initWizardState struct {
 	// Providers carries the selected target platforms ("gitlab",
@@ -158,7 +167,10 @@ type initWizardState struct {
 	RequireTemplates      bool
 	RequiredTemplatesExpr string
 
-	// includesMustNotUseForbiddenVersions (when compForbidden selected)
+	// includesMustNotUseForbiddenVersions (when compForbidden selected).
+	// DefaultBranchIsForbiddenVersion is seeded from
+	// initDefaultBranchIsForbiddenVersion so a state built without asking
+	// reads the same way as one the operator pressed Enter through.
 	ForbiddenVersionsMultiline      string
 	DefaultBranchIsForbiddenVersion bool
 
@@ -393,7 +405,7 @@ func (st *initWizardState) askCompositionFirstHalf() error {
 		}
 		if err := survey.AskOne(&survey.Confirm{
 			Message: "Also treat the project's default branch name as a forbidden ref?",
-			Default: false,
+			Default: initDefaultBranchIsForbiddenVersion,
 		}, &st.DefaultBranchIsForbiddenVersion); err != nil {
 			return err
 		}
@@ -658,7 +670,7 @@ func runInitWizard(skipAnalyzePrompt bool) (*initWizardState, error) {
 	fmt.Fprintln(os.Stderr, "Press Enter to accept defaults, Space to toggle, and Ctrl-C to quit.")
 	fmt.Fprintln(os.Stderr)
 
-	st := &initWizardState{}
+	st := &initWizardState{DefaultBranchIsForbiddenVersion: initDefaultBranchIsForbiddenVersion}
 
 	// Step 0 — provider selection. Drives every downstream filter:
 	// which areas are offered, which questions appear inside each

@@ -700,7 +700,8 @@
             "optional": true,
             "nullable": true,
             "toggle": true,
-            "description": "When true, adds the project's default branch to the forbidden versions list."
+            "description": "Adds the project's default branch to the forbidden versions list; set false to allow includes pinned to it.",
+            "default": "true"
           }
         ]
       },
@@ -865,7 +866,6 @@
             "type": "string",
             "optional": true,
             "nullable": true,
-            "description": "Expected merge method; any other value fails config validation.",
             "enum": [
               "merge",
               "ff",
@@ -877,7 +877,6 @@
             "type": "string",
             "optional": true,
             "nullable": true,
-            "description": "Expected squash policy; any other value fails config validation.",
             "enum": [
               "never",
               "always",
@@ -890,7 +889,6 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
-            "description": "Expected merged-results-pipelines setting.",
             "tier": "premium"
           },
           {
@@ -898,36 +896,31 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
-            "description": "Expected merge-trains setting.",
             "tier": "premium"
           },
           {
             "name": "allowMergeOnSkippedPipeline",
             "type": "bool",
             "optional": true,
-            "nullable": true,
-            "description": "Expected allow-merge-when-pipeline-is-skipped setting."
+            "nullable": true
           },
           {
             "name": "resolveOutdatedDiffDiscussions",
             "type": "bool",
             "optional": true,
-            "nullable": true,
-            "description": "Expected auto-resolve-outdated-discussions setting."
+            "nullable": true
           },
           {
             "name": "printingMergeRequestLinkEnabled",
             "type": "bool",
             "optional": true,
-            "nullable": true,
-            "description": "Expected print-merge-request-link-on-push setting."
+            "nullable": true
           },
           {
             "name": "removeSourceBranchAfterMerge",
             "type": "bool",
             "optional": true,
-            "nullable": true,
-            "description": "Expected delete-source-branch-after-merge default."
+            "nullable": true
           }
         ]
       },

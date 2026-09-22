@@ -449,8 +449,9 @@ gitlab:
         # - dev
         # - develop
         # - staging
-      # When true, adds the project's default branch to forbidden versions
-      defaultBranchIsForbiddenVersion: false
+      # Adds the project's default branch to forbidden versions (defaults to true;
+      # set false to allow includes pinned to the default branch)
+      defaultBranchIsForbiddenVersion: true
     # ============================================================================
     # Pipeline must include component
     # ============================================================================
