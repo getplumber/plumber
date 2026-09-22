@@ -43,26 +43,18 @@ deny contains finding if {
 	_has_shell_reparse(trimmed)
 	some var_name in _dangerous_variables_in_line(line)
 	not _is_allowed(line)
-	block := _script_block(job, j)
 	finding := {
 		"code":         "ISSUE-204",
 		"severity":     "high",
-		"message":      sprintf("$%s in job '%s' %s: %s", [var_name, job.name, block, trimmed]),
+		"message":      sprintf("Job `%s` expands `$%s` in a script line: `%s`.", [job.name, var_name, trimmed]),
 		"job":          job.name,
 		"variableName": var_name,
-		"scriptLine":   trimmed,
-		"scriptBlock":  block,
+		# No scriptBlock: it is not part of the identity, it named a YAML
+		# keyword rather than anything the reader acts on, and the issues page
+		# rendered it as a column of its own (2026-09-22 review, item 5).
+		"scriptLine": trimmed,
 	}
 }
-
-# _script_block returns the block label ("before_script", "script",
-# "after_script") for the script line at index `j`. Falls back to
-# "script" when the collector did not populate ScriptBlocks (older
-# fixtures, non-GitLab providers).
-_script_block(job, j) := block if {
-	block := job.scriptBlocks[j]
-	block != ""
-} else := "script"
 
 _has_shell_reparse(line) if {
 	regex.match(shell_reparse_patterns[_], line)

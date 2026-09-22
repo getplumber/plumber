@@ -28,18 +28,46 @@ package mr_settings_compliant
 
 import rego.v1
 
-# The settings the control can check, mapping each key to a human-readable
-# label used in the finding message. Listed once so the deviation set and the
-# message cannot drift apart.
+# The settings the control can check, mapping each key to the subject of its
+# clause in the finding message: the setting named the way GitLab's own merge
+# request settings page names it, with the verb that agrees with it. Listed
+# once so the deviation set and the message cannot drift apart.
 _labels := {
-	"mergeMethod": "merge method",
-	"squashOption": "squash option",
-	"mergePipelinesEnabled": "merged results pipelines",
-	"mergeTrainsEnabled": "merge trains",
-	"allowMergeOnSkippedPipeline": "allow merge on skipped pipeline",
-	"resolveOutdatedDiffDiscussions": "resolve outdated diff discussions",
-	"printingMergeRequestLinkEnabled": "print merge request link on push",
-	"removeSourceBranchAfterMerge": "remove source branch after merge",
+	"mergeMethod": "Merge method is",
+	"squashOption": "Squash is",
+	"mergePipelinesEnabled": "Merged results pipelines are",
+	"mergeTrainsEnabled": "Merge trains are",
+	"allowMergeOnSkippedPipeline": "Merging on a skipped pipeline is",
+	"resolveOutdatedDiffDiscussions": "Resolving outdated diff discussions is",
+	"printingMergeRequestLinkEnabled": "Printing the merge request link on push is",
+	"removeSourceBranchAfterMerge": "Removing the source branch after merge is",
+}
+
+# The two enum settings travel as GitLab API tokens, meaningless to a reader
+# of the issues page, which shows this message verbatim. Each value is
+# rendered as the label GitLab itself shows for it.
+#
+# The maps cover every token GitLab defines today. Config validation rejects
+# an unknown one on the EXPECTED side at load time; the ACTUAL side comes from
+# the API and is never validated, so a token GitLab adds later arrives here
+# unmapped and the fallback renders it verbatim rather than mapping it to
+# something it is not. That is caught, not merely tolerated: the message-style
+# lint (policies/message_style_test.go, enumClauseAllowlists) asserts that the
+# text rendered on BOTH sides of these clauses is one of the labels below, so
+# an unmapped token fails the build the first time a fixture renders it. That
+# is the maintenance contract: a new merge method or squash option in GitLab
+# means a new entry here, and the lint is what says so.
+_merge_method_labels := {
+	"merge": "Merge commit",
+	"ff": "Fast-forward merge",
+	"rebase_merge": "Rebase and merge",
+}
+
+_squash_labels := {
+	"never": "Never",
+	"always": "Always",
+	"default_on": "Allow, on by default",
+	"default_off": "Allow, off by default",
 }
 
 deny contains finding if {
@@ -53,8 +81,8 @@ deny contains finding if {
 		"code": "ISSUE-506",
 		"severity": "medium",
 		"message": sprintf(
-			"merge request settings do not match the configured expectations: %s",
-			[concat("; ", clauses)],
+			"Merge request settings do not match the policy: %s.",
+			[concat(", ", clauses)],
 		),
 		"deviatingSettings": deviations,
 	}
@@ -69,9 +97,25 @@ _deviations(settings, cfg) := sort([name |
 	expected != actual
 ])
 
-# _clause renders one deviation as a human-readable "<label> is <actual>
-# (expected <expected>)" phrase.
+# _clause renders one deviation as a human-readable "<subject> <actual>
+# (expected <expected>)" phrase, e.g. `Merge method is "Merge commit"
+# (expected "Fast-forward merge")` or `Merge trains are disabled (expected
+# enabled)`.
 _clause(name, settings, cfg) := sprintf(
-	"%s is %v (expected %v)",
-	[_labels[name], settings[name], cfg[name]],
+	"%s %s (expected %s)",
+	[_labels[name], _value_text(name, settings[name]), _value_text(name, cfg[name])],
 )
+
+# _value_text renders one setting value as a reader sees it in GitLab: the two
+# enums as their quoted labels, every other setting (all booleans) as enabled
+# or disabled. The last fallback exists only so an unexpected shape renders as
+# something rather than making the whole clause undefined.
+_value_text(name, value) := sprintf("%q", [object.get(_merge_method_labels, value, value)]) if {
+	name == "mergeMethod"
+} else := sprintf("%q", [object.get(_squash_labels, value, value)]) if {
+	name == "squashOption"
+} else := "enabled" if {
+	value == true
+} else := "disabled" if {
+	value == false
+} else := sprintf("%v", [value])

@@ -52,7 +52,7 @@ deny contains finding if {
 	finding := {
 		"code":                 "ISSUE-502",
 		"severity":             "high",
-		"message":              sprintf("merge request approval rule %q requires %d approval(s), below the configured minimum of %d — a protected branch can be merged with too little review", [name, rule.approvalsRequired, minimum]),
+		"message":              sprintf("%s requires %s, below the configured minimum of %d.", [_rule_subject(name), _approvals(rule.approvalsRequired), minimum]),
 		"approvalRuleId":       rule.id,
 		"ruleName":             name,
 		"approvalsRequired":    rule.approvalsRequired,
@@ -67,3 +67,16 @@ deny contains finding if {
 _covers_all_protected_branches(rule) if rule.appliesToAllProtectedBranches
 
 _covers_all_protected_branches(rule) if rule.protectedBranchCount == 0
+
+# _rule_subject opens the finding sentence with the rule the finding is about.
+# A GitLab approval rule can carry no name at all (API-created rules), and a
+# sentence that opens on an empty pair of backquotes names nothing, so the
+# unnamed case gets its own subject.
+_rule_subject(name) := sprintf("The merge request approval rule `%s`", [name]) if {
+	name != ""
+} else := "An unnamed merge request approval rule"
+
+# _approvals keeps the count reading as English rather than "1 approvals".
+_approvals(count) := "1 approval" if {
+	count == 1
+} else := sprintf("%d approvals", [count])

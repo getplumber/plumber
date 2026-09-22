@@ -18,7 +18,7 @@ deny contains finding if {
 	finding := {
 		"code":     "ISSUE-405",
 		"severity": "high",
-		"message":  sprintf("no required template group is satisfied: %s", [_groups_text(missing)]),
+		"message":  "The pipeline includes none of the required templates.",
 		# One finding per evaluation, not one per missing path: the policy that
 		# failed is "include one of these groups", and the paths are what it is
 		# still waiting for. They travel as data, one list per alternative in
@@ -34,14 +34,6 @@ _missing_in_group(group) := [required |
 	some required in group
 	not _template_present(required)
 ]
-
-# _groups_text renders `group 0 missing "a", "b"; group 1 missing "c"`.
-_groups_text(missing) := concat("; ", [text |
-	some i in numbers.range(0, count(missing) - 1)
-	text := sprintf("group %d missing %s", [i, _entries_text(missing[i])])
-])
-
-_entries_text(entries) := concat(", ", [sprintf("%q", [entry]) | some entry in entries])
 
 # DNF: only emit findings when no group is fully satisfied.
 _any_group_satisfied(groups) if {

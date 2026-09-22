@@ -38,7 +38,7 @@ deny contains finding if {
 	finding := {
 		"code":     "ISSUE-505",
 		"severity": "high",
-		"message":  sprintf("Branch '%s' has non-compliant protection settings", [branch.name]),
+		"message":  sprintf("Branch `%s` has non-compliant protection settings.", [branch.name]),
 		# No "job": a branch is not a job. branchName names what this finding is
 		# about and is what the identity recipe selects (finding/identity).
 		"type":                          "non_compliant",
@@ -70,7 +70,7 @@ _branch_in_protection_scope(name) if {
 
 # Set of human-readable detail lines (one ISSUE-505 groups them under a
 # single headline in the CLI).
-_non_compliant_reasons[branch.name] contains "Force push is allowed (should be disabled)" if {
+_non_compliant_reasons[branch.name] contains "Force push is allowed" if {
 	branch := input.pipeline.branches[_]
 	input.config.branchMustBeProtected.allowForcePush == false
 	branch.allowForcePush == true
@@ -91,7 +91,7 @@ _non_compliant_reasons[branch.name] contains reason if {
 	cur != 0
 	min := object.get(input.config.branchMustBeProtected, "minMergeAccessLevel", 0)
 	_access_level_violates(min, cur)
-	reason := sprintf("Merge access level is too low (%d, minimum: %d)", [cur, min])
+	reason := sprintf("Merge access level %d is more permissive than the configured %d", [cur, min])
 }
 
 # Push access level: same shape, separate reason so one branch can produce both.
@@ -101,7 +101,7 @@ _non_compliant_reasons[branch.name] contains reason if {
 	cur != 0
 	min := object.get(input.config.branchMustBeProtected, "minPushAccessLevel", 0)
 	_access_level_violates(min, cur)
-	reason := sprintf("Push access level is too low (%d, minimum: %d)", [cur, min])
+	reason := sprintf("Push access level %d is more permissive than the configured %d", [cur, min])
 }
 
 # Policy = 0 ("No one allowed") is the strictest setting; any non-zero branch

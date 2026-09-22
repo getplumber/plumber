@@ -30,7 +30,7 @@ deny contains finding if {
 	finding := {
 		"code":         "ISSUE-202",
 		"severity":     "medium",
-		"message":      sprintf("CI/CD settings variable %q is not masked — its value prints in job logs; enable masking (GitLab requires a value of at least 8 characters)", [v.name]),
+		"message":      sprintf("The CI/CD settings variable `%s` is not masked and its value prints in job logs.", [v.name]),
 		"variableName": v.name,
 		"variableType": v.type,
 		"environment":  v.environment,

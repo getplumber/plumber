@@ -45,7 +45,7 @@ deny contains finding if {
 	finding := {
 		"code":       "ISSUE-411",
 		"severity":   "high",
-		"message":    sprintf("Job '%s' script: %s", [job.name, trim_space(line)]),
+		"message":    sprintf("Job `%s` runs a script fetched from the network: `%s`.", [job.name, trim_space(line)]),
 		"job":        job.name,
 		"scriptLine": line,
 	}

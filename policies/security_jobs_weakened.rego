@@ -26,11 +26,10 @@ deny contains finding if {
 	_is_security_job(job.name)
 	input.config.securityJobsWeakened.allowFailureMustBeFalse == true
 	job.allowFailure == true
-	reason := "allow_failure: true masks scan failures"
 	finding := {
 		"code":     "ISSUE-410",
 		"severity": "high",
-		"message":  sprintf("security job %q is weakened: %s", [job.name, reason]),
+		"message":  sprintf("Security job `%s` is weakened by `allow_failure: true`, which masks scan failures.", [job.name]),
 		"job":      job.name,
 		# detail is the identity discriminator (a job can be weakened in
 		# several ways at once). It is a stable token, NOT the prose reason:
@@ -46,11 +45,10 @@ deny contains finding if {
 	_is_security_job(job.name)
 	input.config.securityJobsWeakened.whenMustNotBeManual == true
 	job.when == "manual"
-	reason := "when: manual prevents the scan from running automatically"
 	finding := {
 		"code":     "ISSUE-410",
 		"severity": "high",
-		"message":  sprintf("security job %q is weakened: %s", [job.name, reason]),
+		"message":  sprintf("Security job `%s` is weakened by `when: manual`, which stops the scan from running automatically.", [job.name]),
 		"job":      job.name,
 		"detail":   "when_manual",
 	}
@@ -75,7 +73,7 @@ deny contains finding if {
 	finding := {
 		"code":     "ISSUE-410",
 		"severity": "high",
-		"message":  sprintf("security job %q is weakened: rules overridden so the job will not run", [job.name]),
+		"message":  sprintf("Security job `%s` is weakened by an overridden `rules:` block that stops the job from running.", [job.name]),
 		"job":      job.name,
 		# One finding per job for the rules case: the weakening is "the
 		# rules block neutralises the scan", so the specific when: value

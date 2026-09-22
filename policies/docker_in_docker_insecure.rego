@@ -23,7 +23,7 @@ deny contains finding if {
 	finding := {
 		"code":     "ISSUE-413",
 		"severity": "critical",
-		"message":  sprintf("Job '%s': %s", [job.name, detail]),
+		"message":  sprintf("Job `%s` runs Docker-in-Docker with an insecure daemon: %s.", [job.name, detail]),
 		"job":      job.name,
 		"detail":   detail,
 	}
@@ -67,21 +67,22 @@ _vars_insecure(vars) if {
 	contains(v, ":2375")
 }
 
-# _insecure_detail builds the human-readable clause string for a DinD
-# finding. When both insecure conditions are present (DOCKER_HOST on
-# port 2375 AND DOCKER_TLS_CERTDIR empty), v0.2.x reported both —
-# joined with `; ` and DOCKER_TLS_CERTDIR first — so downstream
-# consumers could see the full picture. Mirror that order/wording.
+# _insecure_detail builds the second half of the finding sentence. When both
+# insecure conditions are present (DOCKER_HOST on port 2375 AND
+# DOCKER_TLS_CERTDIR empty), v0.2.x reported both, DOCKER_TLS_CERTDIR first,
+# so downstream consumers could see the full picture. The order is kept; the
+# two clauses are joined into one sentence rather than stapled with a
+# semicolon (2026-09-22 review, message rule 3).
 _insecure_detail(job) := detail if {
 	_tls_certdir_empty(job)
 	host_value := _docker_host_value(job)
-	detail := sprintf("DOCKER_TLS_CERTDIR is empty (TLS disabled); DOCKER_HOST uses non-TLS port 2375 (%s)", [host_value])
-} else := "DOCKER_TLS_CERTDIR is empty (TLS disabled)" if {
+	detail := sprintf("the `DOCKER_TLS_CERTDIR` variable is empty and `DOCKER_HOST` uses the non-TLS port 2375 (`%s`)", [host_value])
+} else := "the `DOCKER_TLS_CERTDIR` variable is empty, so TLS is off" if {
 	_tls_certdir_empty(job)
 } else := detail if {
 	host_value := _docker_host_value(job)
-	detail := sprintf("DOCKER_HOST uses non-TLS port 2375 (%s)", [host_value])
-} else := "insecure daemon configuration detected"
+	detail := sprintf("the `DOCKER_HOST` variable uses the non-TLS port 2375 (`%s`)", [host_value])
+} else := "the daemon configuration is insecure"
 
 # _docker_host_value returns the DOCKER_HOST value referencing :2375
 # from the job's own variables, falling back to pipeline globals.

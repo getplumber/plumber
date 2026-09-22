@@ -17,7 +17,7 @@ deny contains finding if {
 	finding := {
 		"code":     "ISSUE-408",
 		"severity": "high",
-		"message":  sprintf("no required component group is satisfied: %s", [_groups_text(missing)]),
+		"message":  "The pipeline includes none of the required components.",
 		# One finding per evaluation, not one per missing component: the policy
 		# that failed is "include one of these groups", and the components are
 		# what it is still waiting for. They travel as data, one list per
@@ -32,14 +32,6 @@ _missing_in_group(group) := [required |
 	some required in group
 	not _component_present(required)
 ]
-
-# _groups_text renders `group 0 missing "a", "b"; group 1 missing "c"`.
-_groups_text(missing) := concat("; ", [text |
-	some i in numbers.range(0, count(missing) - 1)
-	text := sprintf("group %d missing %s", [i, _entries_text(missing[i])])
-])
-
-_entries_text(entries) := concat(", ", [sprintf("%q", [entry]) | some entry in entries])
 
 # A DNF group is satisfied when every required component in it is
 # present. The whole policy is satisfied as soon as ANY group is —

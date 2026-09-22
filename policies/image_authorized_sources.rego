@@ -32,7 +32,7 @@ deny contains finding if {
 	finding := {
 		"code":     "ISSUE-101",
 		"severity": "critical",
-		"message":  sprintf("job %q uses image from untrusted source: %s", [job.name, _full_ref(job.image)]),
+		"message":  sprintf("Job `%s` uses image `%s` from an unauthorized source.", [job.name, _full_ref(job.image)]),
 		"job":      job.name,
 		"link":     _full_ref(job.image),
 		# Identity keys on imageRepo (registry/name, no tag): the subject

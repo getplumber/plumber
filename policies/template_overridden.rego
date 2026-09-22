@@ -23,7 +23,7 @@ deny contains finding if {
 	finding := {
 		"code":     "ISSUE-406",
 		"severity": "high",
-		"message":  sprintf("required template %q is imported but %d of its job(s) are overridden locally", [required, count(inc.overriddenJobs)]),
+		"message":  sprintf("The required template `%s` is imported but the project overrides %d of its jobs.", [required, count(inc.overriddenJobs)]),
 		# No "job": an overridden template is not a job. templatePath names what
 		# this finding is about, so its identity does not depend on the message
 		# above, whose override count moves as jobs are added.

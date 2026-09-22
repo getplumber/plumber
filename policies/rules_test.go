@@ -1306,8 +1306,10 @@ func TestIssue503_MRApprovalSettingsCompliant(t *testing.T) {
 				t.Fatalf("deviatingSettings must include %q, got %v", name, devs)
 			}
 		}
-		// The message reads as current-vs-expected prose, not raw config keys.
-		for _, want := range []string{"authors can approve", "re-authentication", "keep_approvals", "should be at least"} {
+		// The message reads as current-vs-expected prose, not raw config keys,
+		// and the behaviour ladder is rendered as its human labels rather than
+		// the API tokens (2026-09-22 review, message rule 5).
+		for _, want := range []string{"authors can approve", "re-authentication", "approvals are kept when a commit is added (expected: removed for code owners)"} {
 			if !strings.Contains(f.Message, want) {
 				t.Fatalf("message should read as current-vs-expected prose containing %q, got %q", want, f.Message)
 			}
@@ -1428,8 +1430,9 @@ func TestIssue506_MRSettingsCompliant(t *testing.T) {
 		if devKeys["squashOption"] {
 			t.Errorf("squashOption is not configured, must not deviate: %v", f.Data["deviatingSettings"])
 		}
-		// The message reads as current-vs-expected prose.
-		for _, want := range []string{"merge method", "expected"} {
+		// The message reads as current-vs-expected prose with the labels GitLab
+		// itself shows, never the API enum values (2026-09-22 review, rule 5).
+		for _, want := range []string{`Merge method is "Merge commit" (expected "Fast-forward merge")`, "Merge trains are disabled (expected enabled)"} {
 			if !strings.Contains(f.Message, want) {
 				t.Errorf("message should read as current-vs-expected prose containing %q, got %q", want, f.Message)
 			}
@@ -1752,8 +1755,8 @@ func TestIssue505_AccessLevelStrictestPolicy(t *testing.T) {
 	}
 	reasons := toStringSlice(findings[0].Data["reasons"])
 	want := map[string]bool{
-		"Merge access level is too low (40, minimum: 0)": false,
-		"Push access level is too low (40, minimum: 0)":  false,
+		"Merge access level 40 is more permissive than the configured 0": false,
+		"Push access level 40 is more permissive than the configured 0":  false,
 	}
 	for _, r := range reasons {
 		if _, ok := want[r]; ok {
@@ -2540,6 +2543,50 @@ func TestIssue205_JobVariableOverride(t *testing.T) {
 	}, cfg)
 }
 
+// TestIssue205_RootVariablesOverride pins the root `variables:` form of the
+// rule: the finding belongs to no job, it points at the CI file's root block
+// by name, and data.location says root_variables. Before the 2026-09-22
+// issues-page review (item 4, ruling R5) the message read `SAST_DISABLED =
+// "true" (global variables)` and location was "global", which the platform
+// showed verbatim and a reader could not place.
+func TestIssue205_RootVariablesOverride(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	pipeline := &ir.NormalizedPipeline{
+		Provider:             ir.ProviderGitLab,
+		LocalGlobalVariables: map[string]string{"SAST_DISABLED": "true"},
+	}
+	cfg := map[string]any{
+		"jobVariablesOverride": map[string]any{
+			"protectedVariables": []string{"SAST_DISABLED"},
+		},
+	}
+	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if got := countCode(findings, "ISSUE-205"); got != 1 {
+		t.Fatalf("expected 1 ISSUE-205 finding for the root variables block, got %d: %+v", got, findings)
+	}
+	for _, f := range findings {
+		if f.Code != "ISSUE-205" {
+			continue
+		}
+		const want = "The root `variables:` keyword of the CI configuration overrides the controlled variable `SAST_DISABLED` with \"true\"."
+		if f.Message != want {
+			t.Errorf("message =\n\t%q\nwant\n\t%q", f.Message, want)
+		}
+		if f.Job != "" {
+			t.Errorf("job = %q, want empty: the root variables block is not a job", f.Job)
+		}
+		if got := f.Data["location"]; got != "root_variables" {
+			t.Errorf("data.location = %#v, want \"root_variables\" (ruling R5)", got)
+		}
+	}
+}
+
 // TestIssue404_WildcardForbiddenVersion locks in legacy go-wildcard
 // parity: a `v*` pattern in forbiddenVersions must match `v1.0.0`
 // just like the go-wildcard matching the pre-OPA GitLab engine used.
@@ -2860,6 +2907,50 @@ func TestIssue203_TruthyAndCaseInsensitive(t *testing.T) {
 	}
 }
 
+// TestIssue203_RootVariablesDebugTrace pins the root `variables:` form of the
+// rule: the finding belongs to no job, it points at the CI file's root block by
+// name, and data.location says root_variables. The message and the location
+// follow ISSUE-205's root form exactly: ruling R5 of the 2026-09-22 issues-page
+// review names the concept, a root `variables:` override, and both codes
+// carried the same "global" spelling for it.
+func TestIssue203_RootVariablesDebugTrace(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	pipeline := &ir.NormalizedPipeline{
+		Provider:        ir.ProviderGitLab,
+		GlobalVariables: map[string]string{"CI_DEBUG_TRACE": "true"},
+	}
+	cfg := map[string]any{
+		"debugTrace": map[string]any{
+			"forbiddenVariables": []string{"CI_DEBUG_TRACE"},
+		},
+	}
+	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if got := countCode(findings, "ISSUE-203"); got != 1 {
+		t.Fatalf("expected 1 ISSUE-203 finding for the root variables block, got %d: %+v", got, findings)
+	}
+	for _, f := range findings {
+		if f.Code != "ISSUE-203" {
+			continue
+		}
+		const want = "The root `variables:` keyword of the CI configuration sets the debug variable `CI_DEBUG_TRACE` to \"true\"."
+		if f.Message != want {
+			t.Errorf("message =\n\t%q\nwant\n\t%q", f.Message, want)
+		}
+		if f.Job != "" {
+			t.Errorf("job = %q, want empty: the root variables block is not a job", f.Job)
+		}
+		if got := f.Data["location"]; got != "root_variables" {
+			t.Errorf("data.location = %#v, want \"root_variables\" (ruling R5)", got)
+		}
+	}
+}
+
 // TestIssue203_GitHubDebugVariables covers the GitHub side of the
 // shared `pipelineMustNotEnableDebugTrace` rule. The GitHub collector
 // folds workflow / job / step-level `env:` blocks into the per-job
@@ -3134,7 +3225,7 @@ func TestIssue408_ComponentMissing(t *testing.T) {
 			t.Fatalf("evaluate: %v", err)
 		}
 		assertOneMissingGroupsFinding(t, findings, "ISSUE-408",
-			`no required component group is satisfied: group 0 missing "components/sast/sast", "components/secret-detection/secret-detection"; group 1 missing "your-org/full-security/full-security"`,
+			"The pipeline includes none of the required components.",
 			[][]string{
 				{"components/sast/sast", "components/secret-detection/secret-detection"},
 				{"your-org/full-security/full-security"},
@@ -3154,7 +3245,7 @@ func TestIssue408_ComponentMissing(t *testing.T) {
 			t.Fatalf("evaluate: %v", err)
 		}
 		assertOneMissingGroupsFinding(t, findings, "ISSUE-408",
-			`no required component group is satisfied: group 0 missing "components/secret-detection/secret-detection"; group 1 missing "your-org/full-security/full-security"`,
+			"The pipeline includes none of the required components.",
 			[][]string{
 				{"components/secret-detection/secret-detection"},
 				{"your-org/full-security/full-security"},
@@ -3314,7 +3405,7 @@ func TestIssue405_TemplateMissing(t *testing.T) {
 			t.Fatalf("evaluate: %v", err)
 		}
 		assertOneMissingGroupsFinding(t, findings, "ISSUE-405",
-			`no required template group is satisfied: group 0 missing "templates/go/go", "templates/trivy/trivy"; group 1 missing "templates/full-security/full-security"`,
+			"The pipeline includes none of the required templates.",
 			[][]string{
 				{"templates/go/go", "templates/trivy/trivy"},
 				{"templates/full-security/full-security"},
@@ -3335,7 +3426,7 @@ func TestIssue405_TemplateMissing(t *testing.T) {
 			t.Fatalf("evaluate: %v", err)
 		}
 		assertOneMissingGroupsFinding(t, findings, "ISSUE-405",
-			`no required template group is satisfied: group 0 missing "templates/trivy/trivy"; group 1 missing "templates/full-security/full-security"`,
+			"The pipeline includes none of the required templates.",
 			[][]string{
 				{"templates/trivy/trivy"},
 				{"templates/full-security/full-security"},
@@ -3423,7 +3514,7 @@ func TestIssue405_TemplateMissing_MatchesByTemplateIdentity(t *testing.T) {
 			t.Fatalf("evaluate: %v", err)
 		}
 		assertOneMissingGroupsFinding(t, findings, "ISSUE-405",
-			`no required template group is satisfied: group 0 missing "other"`,
+			"The pipeline includes none of the required templates.",
 			[][]string{{"other"}},
 			"templatePath")
 	})

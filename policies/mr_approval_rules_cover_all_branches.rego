@@ -46,7 +46,7 @@ deny contains finding if {
 	finding := {
 		"code":       "ISSUE-504",
 		"severity":   "high",
-		"message":    sprintf("no merge request approval rule applies to all protected branches (%d rule(s) defined) — a protected branch can be merged with no required approval", [count(rules)]),
+		"message":    sprintf("No merge request approval rule applies to all protected branches (%d defined).", [count(rules)]),
 		"totalRules": count(rules),
 	}
 }
