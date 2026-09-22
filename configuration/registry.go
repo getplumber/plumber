@@ -164,7 +164,7 @@ var controlsMeta = map[string]ControlMeta{
 	},
 	"containerImageMustNotUseForbiddenTags": {
 		Providers:      []string{ProviderGitLab, ProviderGitHub},
-		DisplayName:    "Container images must not use forbidden tags",
+		DisplayName:    "Container images must not use forbidden reference",
 		Category:       CategoryContainerImages,
 		ID:             "CTRL-102",
 		Description:    "Flags container images referenced by mutable or forbidden tags (such as latest) and, when configured, requires images to be pinned by digest.",

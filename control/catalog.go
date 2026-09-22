@@ -31,11 +31,11 @@ func GitLabControls(pc *configuration.PlumberConfig) []ControlEntry {
 	c := pc.ControlsFor("gitlab")
 	entries := make([]ControlEntry, 0, 15)
 
-	// Container images must not use forbidden tags
+	// Container images must not use forbidden reference
 	cfgForbiddenTags := c.ContainerImageMustNotUseForbiddenTags
-	name := "Container images must not use forbidden tags"
+	name := "Container images must not use forbidden reference"
 	if cfgForbiddenTags != nil && cfgForbiddenTags.IsPinnedByDigestRequired() {
-		name = "Container images must not use forbidden tags (pinned by digest)"
+		name = "Container images must not use forbidden reference (pinned by digest)"
 	}
 	entries = append(entries, ControlEntry{
 		DisplayName: name,
@@ -165,9 +165,9 @@ func GitHubControls(pc *configuration.PlumberConfig) []ControlEntry {
 	entries := make([]ControlEntry, 0, 23)
 
 	cfgForbiddenTags := c.ContainerImageMustNotUseForbiddenTags
-	name := "Container images must not use forbidden tags"
+	name := "Container images must not use forbidden reference"
 	if cfgForbiddenTags != nil && cfgForbiddenTags.IsPinnedByDigestRequired() {
-		name = "Container images must not use forbidden tags (pinned by digest)"
+		name = "Container images must not use forbidden reference (pinned by digest)"
 	}
 	entries = append(entries, ControlEntry{
 		DisplayName: name,
