@@ -2626,6 +2626,68 @@ func TestIssue404_WildcardForbiddenVersion(t *testing.T) {
 	assertNoJob(t, findings, "ISSUE-404")
 }
 
+// Ruling R6 of the 2026-09-22 issues-page review: a configuration that
+// never mentions defaultBranchIsForbiddenVersion still treats the default
+// branch as a forbidden version. Pinning an include to the branch that
+// moves under you is the thing this control exists to catch, so the
+// operator has to ask for it NOT to be caught.
+func TestIssue404_DefaultBranchIsForbiddenWhenTheKeyIsUnset(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	pipeline := &ir.NormalizedPipeline{
+		Provider:      ir.ProviderGitLab,
+		DefaultBranch: "main",
+		Includes: []ir.Include{
+			{Kind: "component", Source: "plumber/a", Ref: "main"},
+			{Kind: "component", Source: "plumber/b", Ref: "1.0.0"},
+		},
+	}
+	cases := []struct {
+		name string
+		cfg  map[string]any
+		want []string
+	}{
+		{
+			name: "the key is unset",
+			cfg:  map[string]any{"includesForbiddenVersions": map[string]any{"forbiddenVersions": []string{"dev"}}},
+			want: []string{"plumber/a"},
+		},
+		{
+			name: "the operator opted out",
+			cfg: map[string]any{"includesForbiddenVersions": map[string]any{
+				"forbiddenVersions":               []string{"dev"},
+				"defaultBranchIsForbiddenVersion": false,
+			}},
+			want: nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			findings, err := engine.Evaluate(context.Background(), pipeline, tc.cfg)
+			if err != nil {
+				t.Fatalf("evaluate: %v", err)
+			}
+			hits := []string{}
+			for _, f := range findings {
+				if f.Code == "ISSUE-404" {
+					path, _ := f.Data["includePath"].(string)
+					hits = append(hits, path)
+				}
+			}
+			if len(hits) != len(tc.want) {
+				t.Fatalf("flagged %v, want %v", hits, tc.want)
+			}
+			for i := range hits {
+				if hits[i] != tc.want[i] {
+					t.Fatalf("flagged %v, want %v", hits, tc.want)
+				}
+			}
+		})
+	}
+}
+
 // TestIssue204_SourceAndDotSourcing covers the two patterns that were
 // missing from the Rego port: `source script.sh` and `. script.sh`.
 // Both re-parse the file as shell, so a tainted variable used in one

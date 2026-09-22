@@ -928,7 +928,8 @@ type IncludesForbiddenVersionsControlConfig struct {
 	// ForbiddenVersions is a list of version patterns considered forbidden (e.g., latest, main, HEAD)
 	ForbiddenVersions []string `yaml:"forbiddenVersions,omitempty"`
 
-	// DefaultBranchIsForbiddenVersion when true, adds the project's default branch to forbidden versions
+	// DefaultBranchIsForbiddenVersion when true, adds the project's default branch to forbidden versions.
+	// Unset means true (ruling R6): read it through IsDefaultBranchForbidden, never through the pointer.
 	DefaultBranchIsForbiddenVersion *bool `yaml:"defaultBranchIsForbiddenVersion,omitempty"`
 }
 
@@ -1535,6 +1536,20 @@ func (c *IncludesForbiddenVersionsControlConfig) IsEnabled() bool {
 		return false
 	}
 	return *c.Enabled
+}
+
+// IsDefaultBranchForbidden reports whether the project's default branch
+// counts as a forbidden include version. Unset means true (ruling R6 of
+// the 2026-09-22 issues-page review): an include pinned to the branch
+// that moves under you is what this control exists to catch, so the
+// operator opts OUT of it explicitly rather than opting in. This is the
+// one place the default lives; the schema default and the shipped
+// configs only restate it for a reader.
+func (c *IncludesForbiddenVersionsControlConfig) IsDefaultBranchForbidden() bool {
+	if c == nil || c.DefaultBranchIsForbiddenVersion == nil {
+		return true
+	}
+	return *c.DefaultBranchIsForbiddenVersion
 }
 
 // GetPipelineMustIncludeComponentConfig returns the control configuration

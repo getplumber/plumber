@@ -20,6 +20,26 @@ func collectPaths(prefix string, fields []SchemaField, out map[string]bool) {
 	}
 }
 
+// descriptionMayBeEmpty is the CLOSED list of fields allowed to carry no
+// Description: the eight mergeRequestSettingsMustBeCompliant expectations
+// Thomas's 2026-09-22 issues-page review (finding B2) read as noise that
+// says nothing the field name does not, so they were deleted rather than
+// rewritten. The control's own `enabled` keeps its description like every
+// other toggle, and a NINTH field added to this control later must come
+// with one: this is a list, not a prefix. The doc entry itself is still
+// required either way, so parity in the other direction (an entry for
+// every reflected field) is untouched.
+var descriptionMayBeEmpty = map[string]bool{
+	"mergeRequestSettingsMustBeCompliant.mergeMethod":                     true,
+	"mergeRequestSettingsMustBeCompliant.squashOption":                    true,
+	"mergeRequestSettingsMustBeCompliant.mergePipelinesEnabled":           true,
+	"mergeRequestSettingsMustBeCompliant.mergeTrainsEnabled":              true,
+	"mergeRequestSettingsMustBeCompliant.allowMergeOnSkippedPipeline":     true,
+	"mergeRequestSettingsMustBeCompliant.resolveOutdatedDiffDiscussions":  true,
+	"mergeRequestSettingsMustBeCompliant.printingMergeRequestLinkEnabled": true,
+	"mergeRequestSettingsMustBeCompliant.removeSourceBranchAfterMerge":    true,
+}
+
 // The reflected structure and the authored prose are welded together: a
 // struct field without a doc entry fails here, and a doc entry matching no
 // struct field fails here, so the exported schema can never drift from the
@@ -33,6 +53,9 @@ func TestFieldDocsParity(t *testing.T) {
 		doc, ok := controlFieldDocs[path]
 		if !ok {
 			t.Errorf("field %s has no entry in controlFieldDocs; describe it in schema_docs.go", path)
+			continue
+		}
+		if descriptionMayBeEmpty[path] {
 			continue
 		}
 		if strings.TrimSpace(doc.Description) == "" {

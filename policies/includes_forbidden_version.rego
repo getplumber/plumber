@@ -7,9 +7,9 @@
 #   - Hardcoded jobs are skipped (origins without a pinnable version).
 #   - Patterns support wildcard semantics via glob.match (matches the
 #     legacy go-wildcard.Match behaviour: `*` and `?`).
-#   - When defaultBranchIsForbiddenVersion is true, the project's
-#     default branch (carried on the IR pipeline) joins the
-#     forbidden list.
+#   - Unless defaultBranchIsForbiddenVersion is explicitly false, the
+#     project's default branch (carried on the IR pipeline) joins the
+#     forbidden list: the unset key means true (ruling R6).
 package includes_forbidden_version
 
 import rego.v1
@@ -38,7 +38,16 @@ _version_is_forbidden(ref) if {
 }
 
 _version_is_forbidden(ref) if {
-	input.config.includesForbiddenVersions.defaultBranchIsForbiddenVersion == true
+	_default_branch_is_forbidden
 	input.pipeline.defaultBranch != ""
 	ref == input.pipeline.defaultBranch
+}
+
+# Unset means true (ruling R6 of the 2026-09-22 issues-page review): an
+# include pinned to the branch that moves under you is what this control
+# exists to catch, so the operator opts OUT explicitly. The Go projection
+# (control/task.go, IsDefaultBranchForbidden) sends the effective value;
+# this default keeps the rule honest for any other caller.
+_default_branch_is_forbidden if {
+	object.get(input.config.includesForbiddenVersions, "defaultBranchIsForbiddenVersion", true) == true
 }
