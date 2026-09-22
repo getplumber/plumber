@@ -1222,6 +1222,32 @@ func TestIssue502_MRApprovalRulesMinApprovals(t *testing.T) {
 	}
 	assertSubjectKey(t, findings, "ISSUE-502", "approvalRuleId", []string{"10", "20", "50"})
 
+	// The rendered sentence, not merely the count: both message helpers have a
+	// branch this fixture is the only thing that reaches, and neither branch is
+	// observable from the identity keys above (PR #484 review, test coverage).
+	//   - _approvals: rule 10 requires exactly one approval, so the sentence
+	//     has to read "1 approval", not "1 approvals".
+	//   - _rule_subject: rule 50 has no name, so the sentence opens on a
+	//     subject of its own rather than on an empty pair of backquotes. The
+	//     corpus lint cannot see this one: rule 2 skips an empty data value,
+	//     which is exactly the value this branch exists to handle.
+	messageForRule := func(id string) string {
+		t.Helper()
+		for _, f := range findings {
+			if f.Code == "ISSUE-502" && f.Data["approvalRuleId"] == id {
+				return f.Message
+			}
+		}
+		t.Fatalf("no ISSUE-502 finding for approval rule %q", id)
+		return ""
+	}
+	if got := messageForRule("10"); !strings.Contains(got, "requires 1 approval,") {
+		t.Errorf("a rule requiring one approval must read as the singular: %q", got)
+	}
+	if got := messageForRule("50"); !strings.HasPrefix(got, "An unnamed merge request approval rule requires") {
+		t.Errorf("an unnamed rule must open on its own subject, never on an empty backquoted name: %q", got)
+	}
+
 	// Negative: every all-branches rule meets the minimum -> no findings.
 	clean := &ir.NormalizedPipeline{
 		Provider:             ir.ProviderGitLab,
@@ -4495,18 +4521,32 @@ func TestIssue601_SecurityPolicyProject(t *testing.T) {
 	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
 		t.Fatalf("load embedded policies: %v", err)
 	}
-	count601 := func(p *ir.NormalizedPipeline, cfg map[string]any) int {
+	only601 := func(p *ir.NormalizedPipeline, cfg map[string]any) []opaengine.Finding {
+		t.Helper()
 		findings, err := engine.Evaluate(context.Background(), p, cfg)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
-		n := 0
+		var out []opaengine.Finding
 		for _, f := range findings {
 			if f.Code == "ISSUE-601" {
-				n++
+				out = append(out, f)
 			}
 		}
-		return n
+		return out
+	}
+	count601 := func(p *ir.NormalizedPipeline, cfg map[string]any) int {
+		return len(only601(p, cfg))
+	}
+	// oneMessage601 is for the mismatch cases, whose _linked_subject branch is
+	// only observable in the rendered sentence (PR #484 review, test coverage).
+	oneMessage601 := func(p *ir.NormalizedPipeline, cfg map[string]any) string {
+		t.Helper()
+		found := only601(p, cfg)
+		if len(found) != 1 {
+			t.Fatalf("expected exactly 1 ISSUE-601 finding, got %d", len(found))
+		}
+		return found[0].Message
 	}
 	gl := func(sp *ir.SecurityPolicyProjectState) *ir.NormalizedPipeline {
 		return &ir.NormalizedPipeline{Provider: ir.ProviderGitLab, SecurityPolicyProject: sp}
@@ -4522,9 +4562,11 @@ func TestIssue601_SecurityPolicyProject(t *testing.T) {
 		t.Fatalf("require-any, a project linked: expected 0 ISSUE-601, got %d", got)
 	}
 
-	// Expected id: wrong linked -> fires; matching -> passes.
-	if got := count601(gl(&ir.SecurityPolicyProjectState{Known: true, LinkedProjectID: 5}), expect9); got != 1 {
-		t.Fatalf("expected id 9, linked 5: expected 1 ISSUE-601, got %d", got)
+	// Expected id: wrong linked -> fires; matching -> passes. The linkage here
+	// carries no path, so the sentence names the id alone: the path-present
+	// branch of _linked_subject would render an empty pair of backquotes.
+	if got := oneMessage601(gl(&ir.SecurityPolicyProjectState{Known: true, LinkedProjectID: 5}), expect9); !strings.Contains(got, "(id `5`) is not the expected one (expected id `9`)") {
+		t.Errorf("an id-only linkage must name the id alone, with no empty path token: %q", got)
 	}
 	if got := count601(gl(&ir.SecurityPolicyProjectState{Known: true, LinkedProjectID: 9}), expect9); got != 0 {
 		t.Fatalf("expected id 9, linked 9: expected 0 ISSUE-601, got %d", got)
@@ -4535,8 +4577,9 @@ func TestIssue601_SecurityPolicyProject(t *testing.T) {
 	if got := count601(gl(&ir.SecurityPolicyProjectState{Known: true, LinkedProjectID: 5, LinkedProjectPath: "grp/policies"}), expectPath); got != 0 {
 		t.Fatalf("path mode, case-insensitive match: expected 0 ISSUE-601, got %d", got)
 	}
-	if got := count601(gl(&ir.SecurityPolicyProjectState{Known: true, LinkedProjectID: 5, LinkedProjectPath: "grp/other"}), expectPath); got != 1 {
-		t.Fatalf("path mode, mismatch: expected 1 ISSUE-601, got %d", got)
+	// The path-present branch: both the id and the path are named, each quoted.
+	if got := oneMessage601(gl(&ir.SecurityPolicyProjectState{Known: true, LinkedProjectID: 5, LinkedProjectPath: "grp/other"}), expectPath); !strings.Contains(got, "(id `5`, path `grp/other`)") {
+		t.Errorf("a linkage with a path must name both, each backquoted: %q", got)
 	}
 
 	// Precedence: when both id and path are set, the id is authoritative — a
