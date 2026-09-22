@@ -49,12 +49,16 @@ func TestControlCategoriesFollowTheCodeBlocks(t *testing.T) {
 // what the terminal prints, and the two describing one control differently
 // would be exactly the drift #440 exists to end.
 //
-// Two tolerated divergences, each deliberate: the forbidden-tags entry
-// computes its terminal name per run from the configured tags, and a
-// cross-provider control may word its terminal name per provider
-// ("Pipeline must not ..." on GitLab, "Workflows must not ..." on GitHub)
-// while the exported table carries ONE canonical name - which must then be
-// one of the observed wordings, never a third.
+// Two tolerated divergences, each deliberate: the forbidden-reference
+// entry computes its terminal name per run from the configured tags, and
+// a cross-provider control may word its terminal name in the provider's
+// own vocabulary ("Pipeline must not ..." on GitLab, "Workflows must not
+// ..." on GitHub) while the exported table carries ONE canonical name -
+// which must then be one of the observed wordings, never a third. Since
+// the 2026-09-22 issues-page review (spec section 5.2) the second
+// tolerance is a CLOSED list: TestControlDisplayNamesAgreeAcrossEveryCopy
+// names the two entries allowed to carry a flavoured wording and fails on
+// any other.
 func TestCatalogDisplayNamesMatchTheExportedTable(t *testing.T) {
 	pc := &configuration.PlumberConfig{}
 	glEntries := GitLabControls(pc)

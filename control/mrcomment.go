@@ -364,7 +364,7 @@ var mrCommentControlOrder = []struct {
 	controlName string
 	heading     string
 }{
-	{"containerImageMustNotUseForbiddenTags", "Container images must not use forbidden tags"},
+	{"containerImageMustNotUseForbiddenTags", "Container images must not use forbidden reference"},
 	{"containerImageMustComeFromAuthorizedSources", "Container images must come from authorized sources"},
 	{"branchMustBeProtected", "Branch must be protected"},
 	{"projectMustHaveSecurityPolicySource", "Project must have a security policy source"},
@@ -386,11 +386,11 @@ var mrCommentControlOrder = []struct {
 	{"securityJobsMustNotBeWeakened", "Security jobs must not be weakened"},
 	{"pipelineMustNotExecuteUnverifiedScripts", "Pipeline must not execute unverified scripts"},
 	{"pipelineMustNotUseDockerInDocker", "Pipeline must not use Docker-in-Docker"},
-	{"workflowMustNotInjectUserInputInScripts", "Workflow must not inject user input in scripts"},
-	{"workflowMustNotReEnableInsecureCommands", "Workflow must not re-enable insecure commands"},
-	{"checkoutMustNotPersistCredentials", "actions/checkout must not persist credentials"},
-	{"workflowMustNotUseDangerousTriggers", "Workflow must not use dangerous triggers"},
-	{"pullRequestTargetMustNotCheckoutHead", "pull_request_target must not check out the PR head"},
+	{"workflowMustNotInjectUserInputInScripts", "Workflows must not inject user input in scripts"},
+	{"workflowMustNotReEnableInsecureCommands", "Workflows must not re-enable insecure commands"},
+	{"checkoutMustNotPersistCredentials", "Checkout must not persist credentials"},
+	{"workflowMustNotUseDangerousTriggers", "Workflows must not use dangerous triggers"},
+	{"pullRequestTargetMustNotCheckoutHead", "pull_request_target workflows must not check out the PR head"},
 	{"workflowMustNotGrantPermissionsWriteAll", "Workflow must not grant write-all permissions"},
 	{"githubActionMustComeFromAuthorizedSources", "Actions must come from authorized sources"},
 }

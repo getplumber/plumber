@@ -420,7 +420,7 @@
     {
       "id": "CTRL-102",
       "name": "containerImageMustNotUseForbiddenTags",
-      "displayName": "Container images must not use forbidden tags",
+      "displayName": "Container images must not use forbidden reference",
       "category": "CI/CD Container Images",
       "providers": [
         "gitlab",

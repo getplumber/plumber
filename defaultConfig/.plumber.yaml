@@ -34,7 +34,7 @@ version: "2.0"
 gitlab:
   controls:
     # ===========================================
-    # Container images must not use forbidden tags
+    # Container images must not use forbidden reference
     # ===========================================
     # Detects CI/CD jobs using Docker images with forbidden tags.
     # Forbidden tags (like 'latest') can point to different images over time,
@@ -912,7 +912,7 @@ github:
         - homebrew/* # = Homebrew/*
 
     # ===========================================
-    # Container images must not use forbidden tags
+    # Container images must not use forbidden reference
     # ===========================================
     # Same control as GitLab; values are GitHub-side. Pinning by digest
     # protects against tag-retag supply-chain attacks. The forbidden tag
@@ -1031,7 +1031,7 @@ github:
         enabled: true
 
     # ===========================================
-    # Workflow must not inject user input in scripts
+    # Workflows must not inject user input in scripts
     # ===========================================
     # Catches the canonical script-injection class: `${{ github.event.* }}`
     # / `${{ github.head_ref }}` / `${{ github.actor }}` interpolated
@@ -1054,7 +1054,7 @@ github:
       enabled: true
 
     # ===========================================
-    # Workflow must not use dangerous triggers
+    # Workflows must not use dangerous triggers
     # ===========================================
     # Flags `pull_request_target` and `workflow_run` triggers, which run
     # with the base repository's secrets while being influenceable by an
@@ -1065,7 +1065,7 @@ github:
       enabled: true
 
     # ===========================================
-    # pull_request_target must not check out PR head
+    # pull_request_target workflows must not check out the PR head
     # ===========================================
     # Flags a `pull_request_target` workflow that checks out the pull-request
     # head (github.event.pull_request.head.sha or github.head_ref). Base-repo
