@@ -1056,10 +1056,22 @@ func (c *GitHubMetadataClient) tagObjectResolves(owner, repo, ref string) (commi
 	return "", false, false
 }
 
+// branchExists reports whether a branch named EXACTLY ref exists upstream.
+//
+// A 200 from /branches/{ref} is not proof on its own. GitHub keeps a renamed
+// branch's old name as a redirect, and that endpoint follows it: on
+// github/codeql-action, GET /branches/v2 answers 200 with the RENAMED branch
+// ("releases/v2"), while `git ls-remote` shows no refs/heads/v2 at all. Taking
+// that 200 as a branch made ISSUE-402 call `github/codeql-action/init@v2` an
+// ambiguous tag-and-branch ref that a single command disproves (#482), and a
+// policy that pins third-party actions only had no way to clear it short of
+// disabling the control. The name the API returns is compared with the name
+// asked for; a mismatch is a redirect, not a branch of that name - the same
+// guard fetchBranchByName already applies on the protection path.
 func (c *GitHubMetadataClient) branchExists(owner, repo, ref string) bool {
-	var resp json.RawMessage
+	var resp remoteBranchEntry
 	err := c.rest.Get(fmt.Sprintf("repos/%s/%s/branches/%s", owner, repo, ref), &resp)
-	return err == nil
+	return err == nil && resp.Name == ref
 }
 
 // commitResolves reports whether ref resolves to a commit upstream.
