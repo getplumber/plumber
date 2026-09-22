@@ -118,6 +118,7 @@ func DeriveIncludeJobs(req IncludeJobsRequest) ([]IncludeJobs, error) {
 	// correct answer for a project whose includes declare none and a
 	// degraded one for a project whose includes do.
 	inputsByHash := buildIncludeInputsMap(req.RawConfig, req.Conf.GitlabURL, req.ProjectPath)
+	specInputFiles := specIncludeLocalPaths(req.RawConfig)
 
 	for i, inc := range req.Includes {
 		lInclude := l.WithField("location", inc.Location)
@@ -142,6 +143,21 @@ func DeriveIncludeJobs(req IncludeJobsRequest) ([]IncludeJobs, error) {
 		// exported entry point can be handed a path from somewhere else.
 		if !strings.EqualFold(inc.ContextProject, req.ProjectPath) {
 			out[i] = IncludeJobs{Jobs: []string{}, Known: true, Nested: true}
+			continue
+		}
+
+		// A file the project loads through `spec:include` holds input
+		// definitions, not jobs. GitLab still lists it in the merged
+		// response's include list as a plain local include, and re-merging
+		// it on its own reads its top-level `inputs:` key as a job named
+		// "inputs" that the merged pipeline does not have (#471): one
+		// config-merge call nobody needed, then an error log per file for
+		// a phantom job. It is a KNOWN empty contribution, decided here
+		// before any host-served or fetched attribution, so every mode
+		// agrees on it.
+		if inc.Type == glOriginLocal && specInputFiles[normalizeLocalIncludePath(inc.Location)] {
+			lInclude.Debug("spec:include input file; it contributes no jobs")
+			out[i] = IncludeJobs{Jobs: []string{}, Known: true}
 			continue
 		}
 
@@ -191,6 +207,71 @@ func DeriveIncludeJobs(req IncludeJobsRequest) ([]IncludeJobs, error) {
 		out[i] = IncludeJobs{Jobs: jobs, Known: true}
 	}
 	return out, nil
+}
+
+// specIncludeLocalPaths returns the local file paths a raw configuration
+// loads through `spec:include` (#471), normalized with
+// normalizeLocalIncludePath so they compare equal to the merged response's
+// include locations. The raw `spec` is kept as a generic yaml value
+// (GitlabCIConf.Spec, first document wins in a multi-document file), so
+// this walks it defensively: a missing or oddly shaped spec yields an
+// empty set, and every include is then handled exactly as before.
+//
+// Only `local:` entries (and bare string entries, which GitLab reads as
+// local paths) are recognized. A spec:include of another type is left to
+// the ordinary path: it is not the reported shape, and guessing at how
+// GitLab would list it in the merged response is worse than one spurious
+// merge call.
+func specIncludeLocalPaths(raw *GitlabCIConf) map[string]bool {
+	out := map[string]bool{}
+	if raw == nil || raw.Spec == nil {
+		return out
+	}
+	spec := asStringKeyedMap(raw.Spec)
+	entries, ok := spec["include"].([]interface{})
+	if !ok {
+		return out
+	}
+	for _, entry := range entries {
+		switch e := entry.(type) {
+		case string:
+			out[normalizeLocalIncludePath(e)] = true
+		default:
+			if local, ok := asStringKeyedMap(e)["local"].(string); ok {
+				out[normalizeLocalIncludePath(local)] = true
+			}
+		}
+	}
+	return out
+}
+
+// normalizeLocalIncludePath makes a `local:` include path comparable across
+// the two places it appears: the raw file, where GitLab accepts an optional
+// leading "/", and the merged response, where the location is served
+// without it.
+func normalizeLocalIncludePath(p string) string {
+	return strings.TrimPrefix(strings.TrimSpace(p), "/")
+}
+
+// asStringKeyedMap reads a generic yaml mapping whichever map type the
+// decoder produced (yaml.v2 yields map[interface{}]interface{}; a JSON or
+// yaml.v3 round-trip yields map[string]interface{}). Anything else reads
+// as an empty map.
+func asStringKeyedMap(v interface{}) map[string]interface{} {
+	switch m := v.(type) {
+	case map[string]interface{}:
+		return m
+	case map[interface{}]interface{}:
+		out := make(map[string]interface{}, len(m))
+		for k, val := range m {
+			if ks, ok := k.(string); ok {
+				out[ks] = val
+			}
+		}
+		return out
+	default:
+		return map[string]interface{}{}
+	}
 }
 
 // includeOriginHash is the key an include's inputs are stored under.
