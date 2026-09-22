@@ -1,0 +1,12 @@
+# Both insecure daemon signals at once: TLS switched off AND the daemon
+# reachable over plain TCP. This is the combined branch of _insecure_detail,
+# the one whose two clauses used to be stapled together with a semicolon.
+docker-build:
+  image: docker:27
+  services:
+    - docker:27-dind
+  variables:
+    DOCKER_TLS_CERTDIR: ""
+    DOCKER_HOST: tcp://docker:2375
+  script:
+    - docker build .

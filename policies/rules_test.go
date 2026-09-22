@@ -894,12 +894,66 @@ func TestIssue412_DockerInDocker(t *testing.T) {
 	}, nil)
 }
 
-// TestIssue413_DockerInDockerInsecure flags DinD with TLS disabled.
+// TestIssue413_DockerInDockerInsecure flags DinD with an insecure daemon: TLS
+// switched off, the daemon on the plain-TCP port, or both.
+//
+// Each of the three violation fixtures renders a different branch of
+// _insecure_detail, and the rendered sentence is asserted rather than only the
+// job it lands on. The combined branch is the one that historically joined its
+// two clauses with a semicolon, which the message lint's rule 3 now forbids:
+// until these fixtures existed, no message from that branch reached the lint,
+// so a semicolon could have come back unnoticed (PR #484 review). Asserting
+// the sentences here also means all four branches, the fallback included by
+// exhaustion, are accounted for.
 func TestIssue413_DockerInDockerInsecure(t *testing.T) {
 	runGitLabPolicyCases(t, "ISSUE-413", []policyCase{
 		{"violation_tls_disabled.gitlab-ci.yml", []string{"docker-build"}},
+		{"violation_tls_disabled_and_host.gitlab-ci.yml", []string{"docker-build"}},
+		{"violation_host_only.gitlab-ci.yml", []string{"docker-build"}},
 		{"clean_tls_enabled.gitlab-ci.yml", nil},
 	}, nil)
+
+	engine := opaengine.New()
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	for _, tc := range []struct{ fixture, wantMessage string }{
+		{
+			"violation_tls_disabled.gitlab-ci.yml",
+			"Job `docker-build` runs Docker-in-Docker with an insecure daemon: the `DOCKER_TLS_CERTDIR` variable is empty, so TLS is off.",
+		},
+		{
+			"violation_tls_disabled_and_host.gitlab-ci.yml",
+			"Job `docker-build` runs Docker-in-Docker with an insecure daemon: the `DOCKER_TLS_CERTDIR` variable is empty and `DOCKER_HOST` uses the non-TLS port 2375 (`tcp://docker:2375`).",
+		},
+		{
+			"violation_host_only.gitlab-ci.yml",
+			"Job `docker-build` runs Docker-in-Docker with an insecure daemon: the `DOCKER_HOST` variable uses the non-TLS port 2375 (`tcp://docker:2375`).",
+		},
+	} {
+		t.Run(tc.fixture+"/message", func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join("testdata", "ISSUE-413", "gitlab", tc.fixture))
+			if err != nil {
+				t.Fatalf("read fixture: %v", err)
+			}
+			findings, err := engine.Evaluate(context.Background(), parseGitLabCI(t, data), nil)
+			if err != nil {
+				t.Fatalf("evaluate: %v", err)
+			}
+			var got []string
+			for _, f := range findings {
+				if f.Code == "ISSUE-413" {
+					got = append(got, f.Message)
+				}
+			}
+			if len(got) != 1 {
+				t.Fatalf("expected exactly 1 ISSUE-413 finding, got %d: %v", len(got), got)
+			}
+			if got[0] != tc.wantMessage {
+				t.Errorf("message =\n\t%q\nwant\n\t%q", got[0], tc.wantMessage)
+			}
+		})
+	}
 }
 
 // TestIssue203_DebugTrace flags jobs enabling CI_DEBUG_TRACE.
@@ -1462,6 +1516,37 @@ func TestIssue506_MRSettingsCompliant(t *testing.T) {
 			if !strings.Contains(f.Message, want) {
 				t.Errorf("message should read as current-vs-expected prose containing %q, got %q", want, f.Message)
 			}
+		}
+	}
+
+	// The squash clause, which nothing else in the corpus renders: the fixture
+	// above leaves squashOption unconfigured on purpose, so the enum labels
+	// went unchecked until the message-style lint started requiring every
+	// allowlisted clause to be rendered (PR #484 review). Both sides are
+	// GitLab API tokens, and both have to read as the labels GitLab's own
+	// settings page shows: "never" is Never, "default_off" is
+	// Allow, off by default.
+	squashCfg := map[string]any{
+		"mergeRequestSettingsMustBeCompliant": map[string]any{"squashOption": "default_off"},
+	}
+	squashDeviating := &ir.NormalizedPipeline{
+		Provider:   ir.ProviderGitLab,
+		MRSettings: &ir.MRSettings{SquashOption: "never"},
+	}
+	squashFindings, err := engine.Evaluate(context.Background(), squashDeviating, squashCfg)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if got := countCode(squashFindings, "ISSUE-506"); got != 1 {
+		t.Fatalf("expected 1 ISSUE-506 finding for the squash deviation, got %d", got)
+	}
+	for _, f := range squashFindings {
+		if f.Code != "ISSUE-506" {
+			continue
+		}
+		const wantClause = `Squash is "Never" (expected "Allow, off by default")`
+		if !strings.Contains(f.Message, wantClause) {
+			t.Errorf("the squash clause must render both sides as GitLab's own labels, want %q in %q", wantClause, f.Message)
 		}
 	}
 
