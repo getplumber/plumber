@@ -1829,6 +1829,29 @@ func TestIssue505_BranchNonCompliant(t *testing.T) {
 	if len(raw) != 2 {
 		t.Fatalf("expected 2 sub-reasons for main, got %v (Data=%v)", raw, mainF.Data)
 	}
+	// The reason strings themselves, not merely how many there are. These are
+	// prose a reader sees under the headline on the issues page, and the count
+	// does not move when their wording does: the force-push reason lost its
+	// "(should be disabled)" fix guidance in this branch and nothing noticed
+	// (PR #484 re-review). The corpus lint now reads these too, so this
+	// assertion pins the exact text and the lint holds any future wording to
+	// the same sentence rules as a message.
+	wantReasons := map[string]bool{
+		"Force push is allowed":               false,
+		"Code owner approval is not required": false,
+	}
+	for _, r := range toStringSlice(mainF.Data["reasons"]) {
+		if _, known := wantReasons[r]; !known {
+			t.Errorf("unexpected ISSUE-505 reason for main: %q", r)
+			continue
+		}
+		wantReasons[r] = true
+	}
+	for reason, seen := range wantReasons {
+		if !seen {
+			t.Errorf("missing ISSUE-505 reason for main: %q (got %v)", reason, toStringSlice(mainF.Data["reasons"]))
+		}
+	}
 	if hits["compliant"] || hits["unprotected"] {
 		t.Fatalf("unexpected flag on compliant/unprotected: %v", hits)
 	}
