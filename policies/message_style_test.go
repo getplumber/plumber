@@ -257,6 +257,25 @@ func checkMessageStyle(code, msg string, values map[string]string) []string {
 		report("rule 2: %s %q is not backquoted in the message", key, value)
 	}
 
+	// Rule 2's other half, and the one that does not need to know the code: a
+	// backquoted span holding nothing names nothing. It is what a helper
+	// renders when the value it was handed is the empty string, and it is the
+	// regression two helpers in this package exist to prevent (ISSUE-502's
+	// unnamed approval rule, ISSUE-601's linkage with no path). Neither is
+	// reachable through the per-code key check above, which skips an empty
+	// value precisely because most rules legitimately omit one: an empty
+	// value must make the sentence change shape, never quote nothing.
+	// Generalised from the PR #484 review so any future helper that regresses
+	// this way fails the corpus lint rather than one hand-written assertion.
+	if strings.Contains(msg, "``") {
+		report("rule 2: the message carries an empty backquoted token (two consecutive backquotes); a helper quoted a value it does not have")
+	}
+	for _, span := range backquotedSpan.FindAllString(msg, -1) {
+		if inner := strings.Trim(span, "`"); inner != "" && strings.TrimSpace(inner) == "" {
+			report("rule 2: the message backquotes a token that is only whitespace (%q)", span)
+		}
+	}
+
 	template := messageTemplate(msg)
 
 	// Rule 3: no typographic glyph, no semicolon, no dash standing between
@@ -548,6 +567,19 @@ func TestMessageStyleChecker(t *testing.T) {
 			code:     "ISSUE-506",
 			message:  `Merge request settings do not match the policy: Merge method is Merge commit, wanted Fast-forward merge.`,
 			wantRule: "rule 5",
+		},
+		{
+			name:     "an empty backquoted token is caught whatever the code",
+			code:     "ISSUE-601",
+			message:  "The linked GitLab security policy project (id `5`, path ``) is not the expected one (expected id `9`).",
+			wantRule: "rule 2",
+		},
+		{
+			name:     "a backquoted token that is only whitespace is caught too",
+			code:     "ISSUE-501",
+			message:  "Branch ` ` is not protected.",
+			values:   map[string]string{"branchName": " "},
+			wantRule: "rule 2",
 		},
 		{
 			name:    "the ISSUE-503 ladder labels pass",
