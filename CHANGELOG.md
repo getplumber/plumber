@@ -1,3 +1,16 @@
+## [0.5.5](https://github.com/getplumber/plumber/compare/v0.5.4...v0.5.5) (2026-09-22)
+
+
+### 🐛 Bug Fixes
+
+* **github:** a branch rename redirect is not a branch for ISSUE-402 ([ae2d2c2](https://github.com/getplumber/plumber/commit/ae2d2c211a5866495b456937c94b97c7ac9b3f00)), closes [#482](https://github.com/getplumber/plumber/issues/482) [#482](https://github.com/getplumber/plumber/issues/482)
+* **gitlab:** spec:include input files contribute no jobs to attribution ([57d8c82](https://github.com/getplumber/plumber/commit/57d8c8259adc89571c8cdbb7acebb5bff76a72c2)), closes [#471](https://github.com/getplumber/plumber/issues/471) [#471](https://github.com/getplumber/plumber/issues/471)
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.5.4 refs [skip ci] ([5dbcedb](https://github.com/getplumber/plumber/commit/5dbcedb5b4e05f90a9f7ef0e20f0c486c55dd42f))
+
 ## [0.5.4](https://github.com/getplumber/plumber/compare/v0.5.3...v0.5.4) (2026-09-21)
 
 
