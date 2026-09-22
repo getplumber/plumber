@@ -2,6 +2,7 @@ package policies_test
 
 import (
 	"fmt"
+	"maps"
 	"regexp"
 	"slices"
 	"sort"
@@ -110,6 +111,40 @@ var gitLabMessageStyleKeys = map[string][]string{
 	"ISSUE-505": {"branchName"},
 	"ISSUE-506": {},
 	"ISSUE-601": {},
+}
+
+// dataArrayKinds classifies every string array a GitLab finding publishes.
+//
+// A message is not the only text a reader sees: ISSUE-505 puts its detail
+// lines in a `reasons` array rendered under the headline, and the wording
+// cleanup this review performed on them (dropping "(should be disabled)") was
+// caught by nothing, because the lint read `message` alone (PR #484
+// re-review). Those elements are prose and belong under the sentence rules.
+//
+// But an array of strings is one of two things and no amount of looking tells
+// them apart: prose a reader reads, or a machine contract a consumer parses.
+// ISSUE-503 and ISSUE-506 publish `deviatingSettings`, the raw config key
+// names, deliberately kept as the stable contract while the message renders
+// them as human labels. Holding those to rule 1 would demand a capital letter
+// on `mergeMethod`, which would be nonsense.
+//
+// So the classification is authored, and a string array the corpus emits that
+// is listed here under neither kind FAILS the lint. That is what makes this
+// cover "every future array" rather than only today's: a new one cannot ship
+// unclassified, and classifying it is exactly the moment someone decides
+// whether a human reads it. The value is true for prose, false for a contract.
+//
+// Arrays whose elements are not all strings (ISSUE-405 / ISSUE-408
+// `missingGroups`, a list of lists; ISSUE-406 / ISSUE-409 `overriddenJobs`,
+// a list of objects) are not string arrays and need no entry.
+var dataArrayKinds = map[string]bool{
+	// The detail lines under an ISSUE-505 headline: force push, code owner
+	// approval, the two access levels. Shown to a reader, so held to the rules.
+	"ISSUE-505.reasons": true,
+	// The config keys that deviate. A consumer parses these; the message says
+	// the same thing in English (see mr_settings_compliant.rego's _labels).
+	"ISSUE-503.deviatingSettings": false,
+	"ISSUE-506.deviatingSettings": false,
 }
 
 // apiOnlyTokens are the raw wire values rule 5 keeps out of user-facing prose.
@@ -228,61 +263,40 @@ func messageTemplate(msg string) string {
 // checkMessageStyle returns one line per rule the message breaks, empty when
 // it reads the way the spec requires. Kept separate from the reporting so the
 // rules themselves are unit-testable (TestMessageStyleChecker).
-func checkMessageStyle(code, msg string, values map[string]string) []string {
-	var problems []string
-	report := func(format string, args ...any) {
-		problems = append(problems, fmt.Sprintf(format, args...))
-	}
-
-	if msg == "" {
-		return []string{"the message is the empty string"}
-	}
-
-	// Rule 1: a sentence, so it opens like one. A message that opens on a
+// checkSentenceStyle holds one user-facing sentence to the rules that do not
+// need to know which finding it came from: rule 1 (it opens like a sentence),
+// rule 2's empty-backquote half, rule 3 (punctuation) and rule 4 (no fix
+// guidance). The message goes through it, and so does every element of a data
+// array a reader reads (see dataArrayKinds): the ISSUE-505 detail lines are
+// shown under the headline on the issues page, so "Force push is allowed
+// (should be disabled)" is the same defect there as it would be in a message,
+// and until the PR #484 re-review nothing said so.
+func checkSentenceStyle(text string, report func(string, ...any)) {
+	// Rule 1: a sentence, so it opens like one. Text that opens on a
 	// backquoted token or on a shell variable is already naming its subject.
-	first, _ := utf8.DecodeRuneInString(msg)
+	first, _ := utf8.DecodeRuneInString(text)
 	if !unicode.IsUpper(first) && first != '`' && first != '$' {
 		report("rule 1: must start with a capital letter or a backquoted token")
 	}
 
-	// Rule 2: every technical token the finding carries is quoted, so a reader
-	// can tell the data from the prose around it.
-	keys := gitLabMessageStyleKeys[code]
-	for _, key := range keys {
-		value := values[key]
-		if value == "" {
-			continue
-		}
-		if strings.Contains(msg, "`"+value+"`") {
-			continue
-		}
-		// ISSUE-204 names its variable in the shell form it appears in.
-		if code == "ISSUE-204" && key == "variableName" && strings.Contains(msg, "`$"+value+"`") {
-			continue
-		}
-		report("rule 2: %s %q is not backquoted in the message", key, value)
+	// Rule 2's half that does not need to know the code: a backquoted span
+	// holding nothing names nothing. It is what a helper renders when the
+	// value it was handed is the empty string, and it is the regression two
+	// helpers in this package exist to prevent (ISSUE-502's unnamed approval
+	// rule, ISSUE-601's linkage with no path). Neither is reachable through
+	// the per-code key check, which skips an empty value precisely because
+	// most rules legitimately omit one: an empty value must make the sentence
+	// change shape, never quote nothing.
+	if strings.Contains(text, "``") {
+		report("rule 2: carries an empty backquoted token (two consecutive backquotes); a helper quoted a value it does not have")
 	}
-
-	// Rule 2's other half, and the one that does not need to know the code: a
-	// backquoted span holding nothing names nothing. It is what a helper
-	// renders when the value it was handed is the empty string, and it is the
-	// regression two helpers in this package exist to prevent (ISSUE-502's
-	// unnamed approval rule, ISSUE-601's linkage with no path). Neither is
-	// reachable through the per-code key check above, which skips an empty
-	// value precisely because most rules legitimately omit one: an empty
-	// value must make the sentence change shape, never quote nothing.
-	// Generalised from the PR #484 review so any future helper that regresses
-	// this way fails the corpus lint rather than one hand-written assertion.
-	if strings.Contains(msg, "``") {
-		report("rule 2: the message carries an empty backquoted token (two consecutive backquotes); a helper quoted a value it does not have")
-	}
-	for _, span := range backquotedSpan.FindAllString(msg, -1) {
+	for _, span := range backquotedSpan.FindAllString(text, -1) {
 		if inner := strings.Trim(span, "`"); inner != "" && strings.TrimSpace(inner) == "" {
-			report("rule 2: the message backquotes a token that is only whitespace (%q)", span)
+			report("rule 2: backquotes a token that is only whitespace (%q)", span)
 		}
 	}
 
-	template := messageTemplate(msg)
+	template := messageTemplate(text)
 
 	// Rule 3: no typographic glyph, no semicolon, no dash standing between
 	// words. The repo bans the glyphs everywhere; the semicolon and the spaced
@@ -304,6 +318,60 @@ func checkMessageStyle(code, msg string, values map[string]string) []string {
 	for _, marker := range guidanceMarkers {
 		if strings.Contains(lower, marker) {
 			report("rule 4: carries fix guidance (%q)", marker)
+		}
+	}
+}
+
+func checkMessageStyle(code, msg string, values map[string]string, arrays map[string][]string) []string {
+	var problems []string
+	report := func(format string, args ...any) {
+		problems = append(problems, fmt.Sprintf(format, args...))
+	}
+
+	if msg == "" {
+		return []string{"the message is the empty string"}
+	}
+
+	checkSentenceStyle(msg, report)
+
+	// Rule 2: every technical token the finding carries is quoted, so a reader
+	// can tell the data from the prose around it.
+	keys := gitLabMessageStyleKeys[code]
+	for _, key := range keys {
+		value := values[key]
+		if value == "" {
+			continue
+		}
+		if strings.Contains(msg, "`"+value+"`") {
+			continue
+		}
+		// ISSUE-204 names its variable in the shell form it appears in.
+		if code == "ISSUE-204" && key == "variableName" && strings.Contains(msg, "`$"+value+"`") {
+			continue
+		}
+		report("rule 2: %s %q is not backquoted in the message", key, value)
+	}
+
+	// The prose a finding publishes outside its message: the issues page shows
+	// these under the headline, so they are held to the same sentence rules.
+	// An unclassified array is itself a failure, see dataArrayKinds.
+	for _, key := range slices.Sorted(maps.Keys(arrays)) {
+		prose, classified := dataArrayKinds[code+"."+key]
+		if !classified {
+			report("the string array %q is not classified in dataArrayKinds: say whether a reader reads it (prose, held to the sentence rules) or a consumer parses it (a machine contract, left alone)", key)
+			continue
+		}
+		if !prose {
+			continue
+		}
+		for _, element := range arrays[key] {
+			if element == "" {
+				report("data %s[]: the element is the empty string", key)
+				continue
+			}
+			checkSentenceStyle(element, func(format string, args ...any) {
+				report("data %s[] %q: %s", key, element, fmt.Sprintf(format, args...))
+			})
 		}
 	}
 
@@ -352,12 +420,40 @@ func messageValues(f opaengine.Finding) map[string]string {
 	return out
 }
 
+// messageArrays projects the finding's string arrays, the other place a rule
+// publishes text. Only an array whose elements are ALL strings counts: a list
+// of lists (missingGroups) or of objects (overriddenJobs) carries no sentence,
+// and an empty one carries nothing to judge.
+func messageArrays(f opaengine.Finding) map[string][]string {
+	out := map[string][]string{}
+	for key, raw := range f.Data {
+		list, ok := raw.([]any)
+		if !ok || len(list) == 0 {
+			continue
+		}
+		elements := make([]string, 0, len(list))
+		for _, item := range list {
+			s, ok := item.(string)
+			if !ok {
+				elements = nil
+				break
+			}
+			elements = append(elements, s)
+		}
+		if elements != nil {
+			out[key] = elements
+		}
+	}
+	return out
+}
+
 // seenMessage is one distinct message a GitLab rule rendered during the suite,
 // kept with the finding values it was rendered from so a rule-2 failure can
 // name the token that is missing.
 type seenMessage struct {
 	message string
 	values  map[string]string
+	arrays  map[string][]string
 }
 
 var (
@@ -390,7 +486,7 @@ func recordMessageStyle(fs []opaengine.Finding) {
 		if _, dup := byMessage[f.Message]; dup {
 			continue
 		}
-		byMessage[f.Message] = seenMessage{message: f.Message, values: messageValues(f)}
+		byMessage[f.Message] = seenMessage{message: f.Message, values: messageValues(f), arrays: messageArrays(f)}
 	}
 }
 
@@ -434,7 +530,7 @@ func verifyMessageStyle(completeness bool) string {
 		sort.Strings(messages)
 		for _, msg := range messages {
 			seen := messageStyleSeen[code][msg]
-			for _, problem := range checkMessageStyle(code, msg, seen.values) {
+			for _, problem := range checkMessageStyle(code, msg, seen.values, seen.arrays) {
 				fmt.Fprintf(&b, "%s: %s\n  message: %q\n", code, problem, msg)
 			}
 			for _, clause := range enumClauseAllowlists {
@@ -509,6 +605,7 @@ func TestMessageStyleChecker(t *testing.T) {
 		code     string
 		message  string
 		values   map[string]string
+		arrays   map[string][]string
 		wantRule string // the substring of the expected problem; empty = must pass
 	}{
 		{
@@ -614,6 +711,57 @@ func TestMessageStyleChecker(t *testing.T) {
 			message: "Merge request approval settings do not match the policy: approvals are kept when a commit is added (expected: removed for code owners).",
 		},
 		{
+			name:    "the ISSUE-505 reasons pass as sentences",
+			code:    "ISSUE-505",
+			message: "Branch `main` has non-compliant protection settings.",
+			values:  map[string]string{"branchName": "main"},
+			arrays: map[string][]string{
+				"reasons": {"Force push is allowed", "Code owner approval is not required"},
+			},
+		},
+		{
+			name:    "fix guidance in a reasons element is caught, though the message is clean",
+			code:    "ISSUE-505",
+			message: "Branch `main` has non-compliant protection settings.",
+			values:  map[string]string{"branchName": "main"},
+			// The wording this review removed from branch_non_compliant.rego.
+			// The message says nothing about it, which is why only reading the
+			// message let it through for as long as it did.
+			arrays: map[string][]string{
+				"reasons": {"Force push is allowed (should be disabled)"},
+			},
+			wantRule: "rule 4",
+		},
+		{
+			name:    "a lower-case reasons element is caught",
+			code:    "ISSUE-505",
+			message: "Branch `main` has non-compliant protection settings.",
+			values:  map[string]string{"branchName": "main"},
+			arrays: map[string][]string{
+				"reasons": {"force push is allowed"},
+			},
+			wantRule: "rule 1",
+		},
+		{
+			name:    "a machine-contract array is left alone",
+			code:    "ISSUE-506",
+			message: `Merge request settings do not match the policy: Merge method is "Merge commit" (expected "Fast-forward merge").`,
+			// Config key names, not prose: they must not be asked for a capital.
+			arrays: map[string][]string{
+				"deviatingSettings": {"mergeMethod", "mergeTrainsEnabled"},
+			},
+		},
+		{
+			name:    "an unclassified string array is itself a failure",
+			code:    "ISSUE-505",
+			message: "Branch `main` has non-compliant protection settings.",
+			values:  map[string]string{"branchName": "main"},
+			arrays: map[string][]string{
+				"someNewList": {"whatever this is"},
+			},
+			wantRule: "not classified in dataArrayKinds",
+		},
+		{
 			name:     "an unmapped approval rung is caught",
 			code:     "ISSUE-503",
 			message:  "Merge request approval settings do not match the policy: approvals are kept when a commit is added (expected: remove_everything).",
@@ -623,7 +771,7 @@ func TestMessageStyleChecker(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			problems := checkMessageStyle(tc.code, tc.message, tc.values)
+			problems := checkMessageStyle(tc.code, tc.message, tc.values, tc.arrays)
 			joined := strings.Join(problems, " | ")
 			if tc.wantRule == "" {
 				if len(problems) > 0 {
