@@ -60,7 +60,25 @@ type ControlMeta struct {
 	// unconfigured control (not_evaluable vs. a vacuous pass) remains
 	// #459's own decision, not this field's.
 	RequiresConfig bool
+
+	// Tier is the GitLab plan the control needs to assert anything: the
+	// empty string (every plan, including Free), TierPremium or
+	// TierUltimate, a closed set TestControlTier_ClosedSet pins. It is
+	// engine knowledge, exported so a console tells the operator which
+	// controls their plan cannot satisfy instead of curating its own
+	// copy of the mapping (ask 56 of the 2026-09-22 issues-page review).
+	// A control gated only in part (one field needs a plan, the rest
+	// works on Free) leaves this empty and carries the tier on the
+	// field instead: FieldDoc.Tier.
+	Tier string
 }
+
+// The GitLab plans a control or a config field can require. The empty
+// string, the fourth value, means every plan and is never spelled out.
+const (
+	TierPremium  = "premium"
+	TierUltimate = "ultimate"
+)
 
 // providerGitLab and providerGitHub are exported as constants so call
 // sites can reference them by name instead of stringly-typed literals.
@@ -110,6 +128,7 @@ var controlsMeta = map[string]ControlMeta{
 		ID:             "CTRL-502",
 		Description:    "Verifies that every merge request approval rule covering all protected branches requires at least the configured minimum number of approvals.",
 		RequiresConfig: true,
+		Tier:           TierPremium,
 	},
 	"mergeRequestApprovalRulesMustCoverAllProtectedBranches": {
 		Providers:   []string{ProviderGitLab},
@@ -117,6 +136,7 @@ var controlsMeta = map[string]ControlMeta{
 		Category:    CategoryAccessAndAuthorization,
 		ID:          "CTRL-504",
 		Description: "Verifies that at least one merge request approval rule applies to every protected branch, so none can be merged without a required approval.",
+		Tier:        TierPremium,
 	},
 	"mergeRequestApprovalSettingsMustBeCompliant": {
 		Providers:      []string{ProviderGitLab},
@@ -125,6 +145,7 @@ var controlsMeta = map[string]ControlMeta{
 		ID:             "CTRL-503",
 		Description:    "Verifies that the project's merge request approval settings (author and committer approval, rule overrides, re-authentication, approval reset on new commits) meet the configured policy.",
 		RequiresConfig: true,
+		Tier:           TierPremium,
 	},
 	"mergeRequestSettingsMustBeCompliant": {
 		Providers:      []string{ProviderGitLab},
@@ -154,6 +175,7 @@ var controlsMeta = map[string]ControlMeta{
 		Category:    CategorySecuritySource,
 		ID:          "CTRL-601",
 		Description: "Verifies that the project directly links the expected GitLab security policy project.",
+		Tier:        TierUltimate,
 	},
 	"containerImageMustComeFromAuthorizedSources": {
 		Providers:   []string{ProviderGitLab, ProviderGitHub},

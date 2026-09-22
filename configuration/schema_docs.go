@@ -12,6 +12,11 @@ type FieldDoc struct {
 	// third "not checked" state. Fields named `enabled` get it
 	// structurally in schema.go and need no entry here.
 	Toggle bool
+	// Tier is the GitLab plan this field's expectation needs (see
+	// SchemaField.Tier): the empty string, TierPremium or TierUltimate.
+	// Set it when the control itself works on every plan but this one
+	// field asks for a setting only a paid plan exposes (ask 56).
+	Tier string
 }
 
 // controlFieldDocs is keyed by dotted field path: "control.field",
@@ -62,6 +67,7 @@ var controlFieldDocs = map[string]FieldDoc{
 	},
 	"branchMustBeProtected.codeOwnerApprovalRequired": {
 		Description: "When true, code owner approval is required.",
+		Tier:        TierPremium,
 	},
 	"branchMustBeProtected.minMergeAccessLevel": {
 		Description: "Minimum access level required to merge (0 = No one, 30 = Developer, 40 = Maintainer).",
@@ -113,9 +119,11 @@ var controlFieldDocs = map[string]FieldDoc{
 	},
 	"mergeRequestSettingsMustBeCompliant.mergePipelinesEnabled": {
 		Description: "Expected merged-results-pipelines setting.",
+		Tier:        TierPremium,
 	},
 	"mergeRequestSettingsMustBeCompliant.mergeTrainsEnabled": {
 		Description: "Expected merge-trains setting.",
+		Tier:        TierPremium,
 	},
 	"mergeRequestSettingsMustBeCompliant.allowMergeOnSkippedPipeline": {
 		Description: "Expected allow-merge-when-pipeline-is-skipped setting.",
@@ -363,6 +371,7 @@ func applyDocs(prefix string, fields []SchemaField) []SchemaField {
 			f.Description = doc.Description
 			f.Enum = append([]string(nil), doc.Enum...)
 			f.Default = doc.Default
+			f.Tier = doc.Tier
 			// Never clears the structural rule: an authored entry can add
 			// toggle-ness, not take it away from an `enabled` field.
 			f.Toggle = f.Toggle || doc.Toggle

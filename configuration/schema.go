@@ -45,6 +45,12 @@ type SchemaField struct {
 	Fields      []SchemaField `json:"fields,omitempty"`
 	Enum        []string      `json:"enum,omitempty"`
 	Default     string        `json:"default,omitempty"`
+	// Tier is the GitLab plan this field's expectation needs, from the
+	// same closed set as ControlMeta.Tier (the empty string, premium,
+	// ultimate): a field a Free project can never satisfy, on a control
+	// that otherwise works on every plan (ask 56 of the 2026-09-22
+	// issues-page review). Welded on from FieldDoc.Tier, like Description.
+	Tier string `json:"tier,omitempty"`
 }
 
 // ControlConfigSchema is the machine-readable shape of one control's
