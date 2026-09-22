@@ -25,15 +25,21 @@ type CatalogIssueType struct {
 // config schema when the control has a config block, and the ISSUE codes it
 // can emit (#458).
 type CatalogControl struct {
-	ID             string                             `json:"id"`
-	Name           string                             `json:"name"`
-	DisplayName    string                             `json:"displayName"`
-	Category       string                             `json:"category"`
-	Providers      []string                           `json:"providers"`
-	Description    string                             `json:"description"`
-	RequiresConfig bool                               `json:"requiresConfig"`
-	ConfigSchema   *configuration.ControlConfigSchema `json:"configSchema,omitempty"`
-	IssueCodes     []string                           `json:"issueCodes"`
+	ID             string   `json:"id"`
+	Name           string   `json:"name"`
+	DisplayName    string   `json:"displayName"`
+	Category       string   `json:"category"`
+	Providers      []string `json:"providers"`
+	Description    string   `json:"description"`
+	RequiresConfig bool     `json:"requiresConfig"`
+	// RequiresTier is the GitLab plan this control needs (premium or
+	// ultimate), absent when every plan can satisfy it. A control whose
+	// gate is one field only carries nothing here: the tier rides on the
+	// field inside ConfigSchema (ask 56 of the 2026-09-22 issues-page
+	// review).
+	RequiresTier string                             `json:"requiresTier,omitempty"`
+	ConfigSchema *configuration.ControlConfigSchema `json:"configSchema,omitempty"`
+	IssueCodes   []string                           `json:"issueCodes"`
 }
 
 // CatalogDocument is the whole exported catalog in one versioned envelope:
@@ -85,6 +91,7 @@ func Catalog(cliVersion string) CatalogDocument {
 			Providers:      e.Providers,
 			Description:    e.Description,
 			RequiresConfig: e.RequiresConfig,
+			RequiresTier:   e.Tier,
 			IssueCodes:     append([]string{}, codesByControl[e.Name]...),
 		}
 		if s, ok := configuration.ConfigSchemaFor(e.Name); ok {

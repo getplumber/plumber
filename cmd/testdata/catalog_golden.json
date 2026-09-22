@@ -243,7 +243,8 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
-            "description": "When true, code owner approval is required."
+            "description": "When true, code owner approval is required.",
+            "tier": "premium"
           },
           {
             "name": "minMergeAccessLevel",
@@ -717,6 +718,7 @@
       ],
       "description": "Verifies that at least one merge request approval rule applies to every protected branch, so none can be merged without a required approval.",
       "requiresConfig": false,
+      "requiresTier": "premium",
       "configSchema": {
         "control": "mergeRequestApprovalRulesMustCoverAllProtectedBranches",
         "fields": [
@@ -744,6 +746,7 @@
       ],
       "description": "Verifies that every merge request approval rule covering all protected branches requires at least the configured minimum number of approvals.",
       "requiresConfig": true,
+      "requiresTier": "premium",
       "configSchema": {
         "control": "mergeRequestApprovalRulesMustRequireMinimumApprovals",
         "fields": [
@@ -778,6 +781,7 @@
       ],
       "description": "Verifies that the project's merge request approval settings (author and committer approval, rule overrides, re-authentication, approval reset on new commits) meet the configured policy.",
       "requiresConfig": true,
+      "requiresTier": "premium",
       "configSchema": {
         "control": "mergeRequestApprovalSettingsMustBeCompliant",
         "fields": [
@@ -886,14 +890,16 @@
             "type": "bool",
             "optional": true,
             "nullable": true,
-            "description": "Expected merged-results-pipelines setting."
+            "description": "Expected merged-results-pipelines setting.",
+            "tier": "premium"
           },
           {
             "name": "mergeTrainsEnabled",
             "type": "bool",
             "optional": true,
             "nullable": true,
-            "description": "Expected merge-trains setting."
+            "description": "Expected merge-trains setting.",
+            "tier": "premium"
           },
           {
             "name": "allowMergeOnSkippedPipeline",
@@ -1265,6 +1271,7 @@
       ],
       "description": "Verifies that the project directly links the expected GitLab security policy project.",
       "requiresConfig": false,
+      "requiresTier": "ultimate",
       "configSchema": {
         "control": "projectMustHaveSecurityPolicySource",
         "fields": [
