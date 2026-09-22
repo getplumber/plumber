@@ -148,13 +148,7 @@ var apiOnlyTokens = []string{
 // anchor is the clause prefix: a message that carries the anchor but does not
 // match the pattern is reported too, so a change to the clause's shape cannot
 // silently switch this check off.
-var enumClauseAllowlists = []struct {
-	code    string
-	what    string
-	anchor  string
-	pattern *regexp.Regexp // two groups: the actual value, then the expected one
-	allowed []string
-}{
+var enumClauseAllowlists = []enumClause{
 	{
 		code:    "ISSUE-506",
 		what:    "merge method",
@@ -177,6 +171,18 @@ var enumClauseAllowlists = []struct {
 		allowed: []string{"kept", "removed for code owners", "all removed"},
 	},
 }
+
+// enumClause is one such clause. key identifies it for the completeness check
+// below, since one code can render more than one (ISSUE-506 renders two).
+type enumClause struct {
+	code    string
+	what    string
+	anchor  string
+	pattern *regexp.Regexp // two groups: the actual value, then the expected one
+	allowed []string
+}
+
+func (c enumClause) key() string { return c.code + " " + c.what }
 
 // guidanceMarkers are the phrases rule 4 keeps out: a finding message states
 // what is wrong, the control's Remediation states what to do about it.
@@ -417,6 +423,9 @@ func verifyMessageStyle(completeness bool) string {
 		codes = append(codes, code)
 	}
 	sort.Strings(codes)
+	// renderedClauses tallies which enum clauses the corpus actually produced,
+	// keyed the way enumClauseAllowlists identifies them.
+	renderedClauses := map[string]bool{}
 	for _, code := range codes {
 		messages := make([]string, 0, len(messageStyleSeen[code]))
 		for msg := range messageStyleSeen[code] {
@@ -427,6 +436,11 @@ func verifyMessageStyle(completeness bool) string {
 			seen := messageStyleSeen[code][msg]
 			for _, problem := range checkMessageStyle(code, msg, seen.values) {
 				fmt.Fprintf(&b, "%s: %s\n  message: %q\n", code, problem, msg)
+			}
+			for _, clause := range enumClauseAllowlists {
+				if clause.code == code && strings.Contains(msg, clause.anchor) {
+					renderedClauses[clause.key()] = true
+				}
 			}
 		}
 	}
@@ -441,6 +455,19 @@ func verifyMessageStyle(completeness bool) string {
 		sort.Strings(unrendered)
 		for _, code := range unrendered {
 			fmt.Fprintf(&b, "%s: in scope of the message lint but no test in this package rendered a message for it; add a fixture that emits it\n", code)
+		}
+
+		// A code being rendered is not enough: an allowlisted clause the corpus
+		// never produces is an allowlist that asserts nothing. ISSUE-506 was
+		// rendered from its first release of this lint, but only ever through
+		// its merge-method clause, so the squash labels went unchecked
+		// (PR #484 review). Requiring each clause closes that by construction:
+		// a new entry in enumClauseAllowlists is red until a fixture renders it.
+		for _, clause := range enumClauseAllowlists {
+			if !renderedClauses[clause.key()] {
+				fmt.Fprintf(&b, "%s: no message in the corpus rendered the %s clause (%q), so its label allowlist asserted nothing; add a fixture that makes that setting deviate\n",
+					clause.code, clause.what, clause.anchor)
+			}
 		}
 	}
 	if b.Len() > 0 {

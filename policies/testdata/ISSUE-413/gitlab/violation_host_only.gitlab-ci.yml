@@ -1,0 +1,11 @@
+# Only DOCKER_HOST is unsafe: TLS is left at its default (DOCKER_TLS_CERTDIR
+# is not set at all), but the daemon is addressed on the plain-TCP port. This
+# is the host-only branch of _insecure_detail.
+docker-build:
+  image: docker:27
+  services:
+    - docker:27-dind
+  variables:
+    DOCKER_HOST: tcp://docker:2375
+  script:
+    - docker build .
