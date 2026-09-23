@@ -8,12 +8,18 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"unicode/utf8"
+
+	"github.com/sirupsen/logrus"
 
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
 	defaultconfig "github.com/getplumber/plumber/defaultConfig"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
+	"github.com/getplumber/plumber/internal/ir"
+	"github.com/getplumber/plumber/pbom"
 	providerPkg "github.com/getplumber/plumber/provider"
+	"github.com/getplumber/plumber/utils"
 )
 
 // platformSentinelURL is the GitLab CI component's default for its `platform`
@@ -66,6 +72,106 @@ type platformPush struct {
 	// yields exactly one; a multi-policy platform grows this array without
 	// changing the shape of anything else.
 	Results []platformPolicyResult `json:"results"`
+	// BOM is the pipeline's bill of materials: what this pipeline depends on
+	// (includes, container images, per-job services and runner tags). Optional
+	// on the wire, so an older platform ignores it and an older CLI simply
+	// does not send it.
+	//
+	// The CLI is the only parser of CI configuration (invariant I1), which is
+	// why the section exists at all: the platform builds its dependencies
+	// graph from what is pushed here rather than reading the configuration
+	// itself.
+	//
+	// An image reference the run never resolved is left out: a reference that
+	// still held a $VARIABLE was parsed out of a placeholder, and a
+	// placeholder is not a dependency anyone can act on. The platform keys
+	// its resource nodes on the string and computes no verdict of its own
+	// (I1/I2), so pushing one would mint a fleet-wide node named after a
+	// variable with real consumers hanging off it. The same goes for a job
+	// service whose reference is unresolved or empty. The PBOM artifact still
+	// lists them: it is an inventory of what the pipeline declares.
+	//
+	// GitLab pushes only, and only from a run that collected completely. The
+	// platform replaces a project's dependency edges with the pushed bill as
+	// ONE set, so a bill built on a degraded collection would delete the
+	// edges the run merely failed to read. Such a run sends no section at
+	// all, and the platform leaves the project's dependencies as they were,
+	// exactly as a push from an older CLI does. Past any of the section's
+	// bounds the same rule applies, and the bound is named on stderr.
+	BOM *platformBOM `json:"bom,omitempty"`
+}
+
+// The bill-of-materials section, shaped by the dependencies-graph design spec
+// (2026-09-23-dependencies-graph-design section 5). snake_case throughout,
+// like the rest of the contract; the three-state booleans stay pointers so a
+// control nobody evaluated leaves its key out rather than publishing a
+// verdict.
+type platformBOM struct {
+	// Version is the section's own schema version, independent of the push's
+	// schema_version: the section is optional and forward-tolerant, so adding
+	// it did not move the envelope's version.
+	Version int `json:"version"`
+	// The three inventories are ALWAYS emitted, empty as `[]`, never absent.
+	// Everywhere else on this wire absence is a refusal to claim, but inside
+	// the section it has to mean zero: the platform replaces a project's
+	// dependency edges with the pushed bill as one set, so a missing
+	// `includes` key would have to be read as "delete every include edge"
+	// while a missing `bom` key two fields away means "claim nothing".
+	// Emitting all three removes the ambiguity for a few bytes.
+	Includes []platformBOMInclude `json:"includes"`
+	Images   []platformBOMImage   `json:"images"`
+	Jobs     []platformBOMJob     `json:"jobs"`
+}
+
+type platformBOMInclude struct {
+	// Type and Location carry no omitempty, matching pbom.Include: spec 4.1
+	// keys every include node on its type, and an include that somehow
+	// arrives without one must arrive blank rather than vanish, so the
+	// platform can refuse it instead of never seeing it.
+	Type           string                     `json:"type"`
+	Location       string                     `json:"location"`
+	Project        string                     `json:"project,omitempty"`
+	Version        string                     `json:"version,omitempty"`
+	LatestVersion  string                     `json:"latest_version,omitempty"`
+	UpToDate       *bool                      `json:"up_to_date,omitempty"`
+	ComponentName  string                     `json:"component_name,omitempty"`
+	FromCatalog    bool                       `json:"from_catalog,omitempty"`
+	Nested         bool                       `json:"nested,omitempty"`
+	Overridden     bool                       `json:"overridden,omitempty"`
+	OverriddenJobs []platformBOMOverriddenJob `json:"overridden_jobs,omitempty"`
+	Archived       *bool                      `json:"archived,omitempty"`
+	HasCVE         *bool                      `json:"has_cve,omitempty"`
+	Advisories     []string                   `json:"advisories,omitempty"`
+}
+
+type platformBOMOverriddenJob struct {
+	Job  string   `json:"job"`
+	Keys []string `json:"keys,omitempty"`
+}
+
+type platformBOMImage struct {
+	Image        string   `json:"image"`
+	Registry     string   `json:"registry,omitempty"`
+	Name         string   `json:"name,omitempty"`
+	Tag          string   `json:"tag,omitempty"`
+	Digest       string   `json:"digest,omitempty"`
+	Jobs         []string `json:"jobs,omitempty"`
+	Authorized   *bool    `json:"authorized,omitempty"`
+	ForbiddenTag *bool    `json:"forbidden_tag,omitempty"`
+}
+
+type platformBOMJob struct {
+	Name       string                `json:"name"`
+	Services   []platformBOMImageRef `json:"services,omitempty"`
+	RunnerTags []string              `json:"runner_tags,omitempty"`
+}
+
+type platformBOMImageRef struct {
+	Image    string `json:"image"`
+	Registry string `json:"registry,omitempty"`
+	Name     string `json:"name,omitempty"`
+	Tag      string `json:"tag,omitempty"`
+	Digest   string `json:"digest,omitempty"`
 }
 
 // platformProject is the informational project identity carried in the
@@ -357,6 +463,354 @@ func platformPolicyNameFor(configPath string) string {
 	return policyNameFor(configPath)
 }
 
+// platformBOMSchemaVersion is the bill-of-materials section's own schema
+// version. It moves only when the section's shape changes, independently of
+// the push envelope's schema_version.
+const platformBOMSchemaVersion = 1
+
+// The bill of materials' bounds, from the design spec's sizing section
+// (2026-09-23-dependencies-graph-design section 4.4). They are the platform's
+// own limits, restated here so the CLI never builds a bill the platform will
+// refuse with a 400 and lose the whole push over.
+const (
+	bomMaxIncludes         = 500
+	bomMaxImages           = 500
+	bomMaxJobs             = 500
+	bomMaxServicesPerJob   = 64
+	bomMaxRunnerTagsPerJob = 32
+	bomMaxAdvisories       = 50
+	bomMaxStringRunes      = 512
+	// A remote include is addressed by a URL, which is legitimately longer
+	// than any other string in the bill.
+	bomMaxRemoteURLRunes = 1024
+	// The document the platform stores is capped at 256 KiB. Unlike the
+	// bounds above this one cannot be checked by counting: it is a property
+	// of the encoded bytes, so it is checked on the marshalled section.
+	bomMaxDocumentBytes = 256 * 1024
+)
+
+// platformBOMFrom projects the generated bill of materials onto the push's
+// wire shape. The second return value names the bound that refused it, empty
+// when the bill is fine; nil with an empty bound means there was nothing to
+// describe.
+//
+// Nothing is ever truncated. A bill cut down to fit would misreport the
+// estate, and the platform replaces a project's dependency edges with the
+// pushed set in one go, so a short bill silently deletes real dependencies.
+// Past a bound the section is dropped whole and the caller says which bound
+// did it; the push still goes with its results intact, and the platform
+// reports no bill for that run rather than a wrong one.
+//
+// A pure function of the document: it collects nothing and reads no state.
+func platformBOMFrom(doc *pbom.PBOM) (*platformBOM, string) {
+	if doc == nil {
+		return nil, ""
+	}
+	if bound := platformBOMBound(doc); bound != "" {
+		return nil, bound
+	}
+
+	out := &platformBOM{
+		Version:  platformBOMSchemaVersion,
+		Includes: []platformBOMInclude{},
+		Images:   []platformBOMImage{},
+		Jobs:     []platformBOMJob{},
+	}
+	for _, inc := range doc.Includes {
+		entry := platformBOMInclude{
+			Type:          inc.Type,
+			Location:      inc.Location,
+			Project:       inc.Project,
+			Version:       inc.Version,
+			LatestVersion: inc.LatestVersion,
+			UpToDate:      inc.UpToDate,
+			ComponentName: inc.ComponentName,
+			FromCatalog:   inc.FromCatalog,
+			Nested:        inc.Nested,
+			Overridden:    inc.Overridden,
+			Archived:      inc.Archived,
+			HasCVE:        inc.HasCVE,
+			Advisories:    inc.Advisories,
+		}
+		for _, job := range inc.OverriddenJobs {
+			entry.OverriddenJobs = append(entry.OverriddenJobs, platformBOMOverriddenJob{
+				Job:  job.JobName,
+				Keys: job.OverriddenKeys,
+			})
+		}
+		out.Includes = append(out.Includes, entry)
+	}
+	for _, img := range doc.ContainerImages {
+		ref, ok := bomNormalizeRef(img.Image, img.Unresolved)
+		if !ok {
+			continue
+		}
+		out.Images = append(out.Images, platformBOMImage{
+			Image:        ref.Image,
+			Registry:     ref.Registry,
+			Name:         ref.Name,
+			Tag:          ref.Tag,
+			Digest:       ref.Digest,
+			Jobs:         img.Jobs,
+			Authorized:   img.Authorized,
+			ForbiddenTag: img.ForbiddenTag,
+		})
+	}
+	for _, job := range doc.Jobs {
+		entry := platformBOMJob{Name: job.Name, RunnerTags: job.RunnerTags}
+		for _, svc := range job.Services {
+			ref, ok := bomNormalizeRef(svc.Image, svc.Unresolved)
+			if !ok {
+				continue
+			}
+			entry.Services = append(entry.Services, platformBOMImageRef(ref))
+		}
+		// Dropping the placeholders can empty the job out. A job that asks a
+		// runner for nothing this run can name is not listed at all, the same
+		// guard processJobResources applies and for the same reason: the
+		// platform replaces a project's edges with the pushed bill as one set
+		// and keys its nodes on what it receives, so a bare name with no
+		// service and no runner tag under it mints a job node that depends on
+		// nothing. A variable-templated service image with no tags: is a
+		// common enough shape to reach this every day.
+		if len(entry.Services) == 0 && len(entry.RunnerTags) == 0 {
+			continue
+		}
+		out.Jobs = append(out.Jobs, entry)
+	}
+
+	// The spec's ninth bound: the platform stores the document capped at
+	// 256 KiB. A bill can sit inside every count and length bound above and
+	// still be megabytes (500 jobs of 64 services each is inside all of
+	// them), and the platform refuses an oversized push WHOLE, which costs
+	// the run its results, its findings and its score. Checking it here
+	// costs the run only the bill. The marshal is the one the caller is
+	// about to do anyway.
+	raw, err := json.Marshal(out)
+	if err != nil {
+		return nil, "document not serialisable"
+	}
+	if len(raw) > bomMaxDocumentBytes {
+		return nil, "document > 256 KiB"
+	}
+	return out, ""
+}
+
+// bomRef is one image reference as the bill of materials reports it. The
+// field set and the json tags are platformBOMImageRef's, so the two convert
+// directly.
+type bomRef struct {
+	Image    string `json:"image"`
+	Registry string `json:"registry,omitempty"`
+	Name     string `json:"name,omitempty"`
+	Tag      string `json:"tag,omitempty"`
+	Digest   string `json:"digest,omitempty"`
+}
+
+// bomDockerHubRegistry is the canonical Docker Hub host, the same value the
+// image collector defaults an unqualified reference to.
+const bomDockerHubRegistry = "docker.io"
+
+// bomNormalizeRef is the ONE normalisation every reference on the wire goes
+// through, images and job services alike. It returns false when the
+// reference may not be reported at all.
+//
+// It exists because the two collector paths split a reference differently and
+// neither split is what the graph needs. The image collector splits the
+// remainder on a colon and never learns about digests; the
+// merged-configuration services reader splits the WHOLE reference on its last
+// colon and has no notion of a registry at all. So `node@sha256:abc` arrives
+// as the name `node@sha256` with the tag `abc`, `app:1.2@sha256:def` as the
+// name `app` with the tag `1.2@sha256`, and the service
+// `registry.example.com:5000/postgres` as the name `registry.example.com`
+// with the tag `5000/postgres`.
+//
+// The platform keys its resource nodes on `<registry>/<name>` and stores what
+// is pushed verbatim (I1/I2 leave it no room to re-derive anything), so every
+// one of those becomes a wrong node. Deriving all four parts here, from the
+// reference itself, is what makes the same upstream one node however it is
+// written: `postgres` as a job image and `postgres` as a service both key
+// `docker.io/library/postgres`. The reference STRING is never rewritten, so
+// what the CLI collected is still on the wire as it collected it.
+//
+// The rules, all three from the image collector's own parser: the part before
+// the first slash is a registry host when it holds a dot or a colon (so a
+// host keeps its port); a colon separates the tag only after the last slash;
+// an unqualified reference is a Docker Hub one, and Docker Hub's official
+// images live under `library/`.
+func bomNormalizeRef(image string, unresolved bool) (bomRef, bool) {
+	ref := strings.TrimSpace(image)
+	// A reference that still holds a $VARIABLE describes a placeholder, not
+	// an image. The collector's own flag is the authority; the second test
+	// catches the services path, which resolves no variables and so marks
+	// nothing.
+	if ref == "" || unresolved || strings.Contains(ref, "$") {
+		return bomRef{}, false
+	}
+
+	out := bomRef{Image: image}
+	head := ref
+	if at := strings.Index(head, "@"); at >= 0 {
+		out.Digest = head[at+1:]
+		head = head[:at]
+	}
+
+	remainder := head
+	out.Registry = bomDockerHubRegistry
+	if slash := strings.Index(head, "/"); slash > 0 {
+		if host := head[:slash]; strings.Contains(host, ".") || strings.Contains(host, ":") {
+			out.Registry = host
+			remainder = head[slash+1:]
+		}
+	}
+	out.Registry = utils.CanonicalizeDockerHubRegistry(out.Registry)
+
+	out.Name = remainder
+	if colon := strings.LastIndex(remainder, ":"); colon > strings.LastIndex(remainder, "/") {
+		out.Tag = remainder[colon+1:]
+		out.Name = remainder[:colon]
+	}
+	if out.Name == "" {
+		return bomRef{}, false
+	}
+	if out.Registry == bomDockerHubRegistry && !strings.Contains(out.Name, "/") {
+		out.Name = "library/" + out.Name
+	}
+	return out, true
+}
+
+// platformBOMBound returns the bound the document exceeds, empty when it fits.
+// It runs before any copying, so a refused bill costs one walk and no
+// allocation.
+func platformBOMBound(doc *pbom.PBOM) string {
+	if len(doc.Includes) > bomMaxIncludes {
+		return fmt.Sprintf("includes > %d", bomMaxIncludes)
+	}
+	if len(doc.ContainerImages) > bomMaxImages {
+		return fmt.Sprintf("images > %d", bomMaxImages)
+	}
+	if len(doc.Jobs) > bomMaxJobs {
+		return fmt.Sprintf("jobs > %d", bomMaxJobs)
+	}
+	for _, inc := range doc.Includes {
+		if len(inc.Advisories) > bomMaxAdvisories {
+			return fmt.Sprintf("advisories per include > %d", bomMaxAdvisories)
+		}
+		if inc.Type == "remote" {
+			if utf8.RuneCountInString(inc.Location) > bomMaxRemoteURLRunes {
+				return fmt.Sprintf("remote include URL > %d runes", bomMaxRemoteURLRunes)
+			}
+		} else if bound := bomStringBound(inc.Location); bound != "" {
+			return bound
+		}
+		strs := []string{inc.Type, inc.Project, inc.Version, inc.LatestVersion, inc.ComponentName}
+		strs = append(strs, inc.Advisories...)
+		for _, job := range inc.OverriddenJobs {
+			strs = append(strs, job.JobName)
+			strs = append(strs, job.OverriddenKeys...)
+		}
+		if bound := bomStringBound(strs...); bound != "" {
+			return bound
+		}
+	}
+	for _, img := range doc.ContainerImages {
+		strs := append([]string{img.Image, img.Registry, img.Name, img.Tag}, img.Jobs...)
+		if bound := bomStringBound(strs...); bound != "" {
+			return bound
+		}
+	}
+	for _, job := range doc.Jobs {
+		if len(job.Services) > bomMaxServicesPerJob {
+			return fmt.Sprintf("services per job > %d", bomMaxServicesPerJob)
+		}
+		if len(job.RunnerTags) > bomMaxRunnerTagsPerJob {
+			return fmt.Sprintf("runner tags per job > %d", bomMaxRunnerTagsPerJob)
+		}
+		strs := append([]string{job.Name}, job.RunnerTags...)
+		for _, svc := range job.Services {
+			strs = append(strs, svc.Image, svc.Registry, svc.Name, svc.Tag, svc.Digest)
+		}
+		if bound := bomStringBound(strs...); bound != "" {
+			return bound
+		}
+	}
+	return ""
+}
+
+// bomStringBound names the string bound when any of the values exceeds it.
+// Counted in runes, not bytes, because that is how the platform counts.
+func bomStringBound(values ...string) string {
+	for _, v := range values {
+		if utf8.RuneCountInString(v) > bomMaxStringRunes {
+			return fmt.Sprintf("string > %d runes", bomMaxStringRunes)
+		}
+	}
+	return ""
+}
+
+// platformBOMDocument builds the bill of materials the push carries, from the
+// collections this run already made. Nothing is collected twice: the images,
+// the includes and the pipeline model are the ones the analysis produced, and
+// the generator is the same one the --pbom artifact is written from, so the
+// two documents can never disagree about what the pipeline uses.
+//
+// Nil in three cases, each of which would otherwise have the platform replace
+// a project's dependency edges with a wrong set:
+//   - the GitHub path, whose resources the platform does not model (and whose
+//     collections this GitLab generator cannot read anyway),
+//   - a run that collected neither includes nor images, which knows nothing
+//     about the pipeline's dependencies rather than knowing it has none,
+//   - a run whose collection degraded, whose bill would be partial: the
+//     platform replaces the project's edges with the pushed set in one go, so
+//     a partial bill deletes the dependencies the run merely failed to read.
+func platformBOMDocument(p providerPkg.Provider, conf *configuration.Configuration, result *control.AnalysisResult, runs []policyRun) *pbom.PBOM {
+	if p == nil || p.Name() != "gitlab" || result == nil {
+		return nil
+	}
+	if result.DataCollectionDegraded {
+		return nil
+	}
+	if result.PipelineOriginData == nil && result.PipelineImageData == nil {
+		return nil
+	}
+
+	// In platform mode the findings the image flags are read from are the
+	// policy runs' union, never the local configuration's, exactly as the
+	// PBOM artifacts read them.
+	source := result
+	if len(runs) > 0 {
+		source = platformUnionResult(result, runs)
+	}
+	summary := platformPBOMSummary(runs, nil)
+	if summary != nil {
+		summary.ForbiddenTagEvaluated, summary.AuthorizedSourceEvaluated = platformImageControlsEvaluated(p, runs)
+	}
+
+	var gitlabURL, branch string
+	noControls := false
+	if conf != nil {
+		gitlabURL, branch, noControls = conf.GitlabURL, conf.Branch, conf.NoControls
+	}
+	gen := pbom.NewGenerator(result.ProjectPath, result.ProjectID, gitlabURL, branch).
+		WithComplianceData(pbom.ImageComplianceFor(source, noControls, summary)).
+		WithIncludeOverrideData(pbom.BuildIncludeOverrideData(source)).
+		WithJobResources(platformPipelineJobs(result))
+	if noControls {
+		gen = gen.WithoutComplianceVerdicts()
+	}
+	return gen.Generate(result.PipelineImageData, result.PipelineOriginData)
+}
+
+// platformPipelineJobs returns the analyzed pipeline's jobs, which the bill of
+// materials reads for each job's service images and runner tags. Nil when the
+// run produced no normalized pipeline (a missing or invalid CI configuration).
+func platformPipelineJobs(result *control.AnalysisResult) []ir.Job {
+	if result.Pipeline == nil {
+		return nil
+	}
+	return result.Pipeline.Jobs
+}
+
 // buildPlatformPush builds the body POSTed to the platform, matching
 // ingestion.Push field-for-field (see the type doc comments above).
 //
@@ -410,6 +864,15 @@ func buildPlatformPush(p providerPkg.Provider, conf *configuration.Configuration
 		}
 	}
 
+	// The bill of materials is built from what this run already collected,
+	// never from a second pass. A bound that refuses it is named out loud:
+	// the push still goes, and the operator can see why the platform reports
+	// no dependencies for this run.
+	bom, bound := platformBOMFrom(platformBOMDocument(p, conf, result, runs))
+	if bound != "" {
+		logrus.WithField("bound", bound).Warn("platform push: bill of materials omitted")
+	}
+
 	push := platformPush{
 		SchemaVersion: 1,
 		Provider:      p.Name(),
@@ -421,6 +884,7 @@ func buildPlatformPush(p providerPkg.Provider, conf *configuration.Configuration
 		Collection:    platformCollectionFor(conf, result),
 		Evaluation:    evaluation,
 		Results:       results,
+		BOM:           bom,
 	}
 
 	body, err := json.Marshal(push)

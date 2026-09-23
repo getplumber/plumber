@@ -87,48 +87,11 @@ func (p *GitLabProvider) RunRemote(_ *configuration.Configuration) (*control.Ana
 	return nil, ErrNoRemote
 }
 
-// imageComplianceFor returns the per-image compliance flags, or nil when this
-// run may not claim them. The flags are derived from findings, not from the
-// score, so an empty findings slice would otherwise mark every image
-// forbiddenTag:false / authorized:true and assert the very image checks
-// nobody ran, inside the artifact the flag exists to produce. With nil the
-// PBOM records the inventory and claims nothing.
-//
-// Two runs may not claim them. --no-controls evaluated nothing at all. And a
-// platform-mode run whose resolved policies do not enable an image control
-// evaluated it for no policy, which is the same absence of a verdict; the
-// findings it does have come from the policy runs' union, so the flags it
-// CAN claim are the policies' own.
-//
-// The answer is per control, not per pair: the forbidden-tag and the
-// authorized-source controls are independent, and a policy that pins tags
-// without restricting registries would otherwise publish "authorized" for
-// every image on the strength of the OTHER control having run. Dropping the
-// map of a control nobody enabled leaves that field out of every image (the
-// generator's existing tri-state), while the other one is still published.
-//
-// conf is required, as everywhere else on this path (the writers read
+// imageComplianceFor is pbom.ImageComplianceFor with this path's conf read
+// for it. conf is required, as everywhere else on this path (the writers read
 // conf.GitlabURL unconditionally).
 func imageComplianceFor(result *control.AnalysisResult, conf *configuration.Configuration, platform *pbom.PlatformSummary) *pbom.ImageComplianceData {
-	if conf.NoControls {
-		return nil
-	}
-	data := pbom.BuildImageComplianceData(result)
-	if platform == nil {
-		return data
-	}
-	if !platform.ForbiddenTagEvaluated {
-		data.ForbiddenTagImages = nil
-	}
-	if !platform.AuthorizedSourceEvaluated {
-		data.UnauthorizedImages = nil
-	}
-	if data.ForbiddenTagImages == nil && data.UnauthorizedImages == nil {
-		// No image control at all: nil, exactly as before, so the generator
-		// takes its no-compliance-data path rather than an empty one.
-		return nil
-	}
-	return data
+	return pbom.ImageComplianceFor(result, conf.NoControls, platform)
 }
 
 // pipelineJobsOf returns the analyzed pipeline's jobs, which the PBOM reads

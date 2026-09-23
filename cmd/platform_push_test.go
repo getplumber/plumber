@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"reflect"
 	"strconv"
 	"strings"
 	"testing"
@@ -18,10 +19,13 @@ import (
 	"github.com/getplumber/plumber/control"
 	defaultconfig "github.com/getplumber/plumber/defaultConfig"
 	"github.com/getplumber/plumber/finding/identity"
+	"github.com/getplumber/plumber/gitlab"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	"github.com/getplumber/plumber/internal/ir"
 	"github.com/getplumber/plumber/internal/platform"
+	"github.com/getplumber/plumber/pbom"
 	providerPkg "github.com/getplumber/plumber/provider"
+	"github.com/getplumber/plumber/utils"
 )
 
 // --platform implies the push; there is no separate switch.
@@ -1864,5 +1868,1287 @@ func TestBuildPlatformPush_Row63_MarkerAndResultsAreMutuallyExclusive(t *testing
 				t.Fatalf("marker present = %v, want %v", marked, f.wantMarker)
 			}
 		})
+	}
+}
+
+// bomFixture is the bill of materials the push tests map onto the wire: one
+// catalog component include pinned below its latest release, one image used
+// by two jobs, and one job that starts a dind service under a runner tag.
+func bomFixture() *pbom.PBOM {
+	upToDate := false
+	authorized := true
+	forbidden := false
+	return &pbom.PBOM{
+		Includes: []pbom.Include{{
+			Type:           "component",
+			Location:       "gitlab.example.com/components/sast/sast",
+			Project:        "components/sast",
+			Version:        "3.3.0",
+			LatestVersion:  "3.4.0",
+			UpToDate:       &upToDate,
+			ComponentName:  "sast",
+			FromCatalog:    true,
+			Overridden:     true,
+			OverriddenJobs: []utils.OverriddenJobDetail{{JobName: "sast", OverriddenKeys: []string{"script"}}},
+		}},
+		ContainerImages: []pbom.ContainerImage{{
+			Image:        "docker.io/node:20",
+			Registry:     "docker.io",
+			Name:         "node",
+			Tag:          "20",
+			Jobs:         []string{"build", "test"},
+			Authorized:   &authorized,
+			ForbiddenTag: &forbidden,
+		}},
+		Jobs: []pbom.JobResources{{
+			Name: "test",
+			Services: []pbom.ContainerImageRef{{
+				Image: "docker:24.0.5-dind",
+				Name:  "docker",
+				Tag:   "24.0.5-dind",
+			}},
+			RunnerTags: []string{"docker"},
+		}},
+	}
+}
+
+// TestPlatformBOMFrom_WireShape pins the bom section's shape against the
+// design spec (2026-09-23-dependencies-graph-design section 5): schema
+// version 1, snake_case keys throughout, and the three-state booleans
+// carried as pointers so an unevaluated control leaves its key out rather
+// than publishing a verdict nobody computed.
+func TestPlatformBOMFrom_WireShape(t *testing.T) {
+	got, bound := platformBOMFrom(bomFixture())
+	if bound != "" {
+		t.Fatalf("platformBOMFrom refused the fixture on bound %q", bound)
+	}
+	raw, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var doc map[string]any
+	if err := json.Unmarshal(raw, &doc); err != nil {
+		t.Fatalf("bom does not parse as JSON: %v", err)
+	}
+
+	if doc["version"] != float64(1) {
+		t.Errorf("version = %v, want 1", doc["version"])
+	}
+
+	includes, _ := doc["includes"].([]any)
+	if len(includes) != 1 {
+		t.Fatalf("includes = %v, want exactly one", doc["includes"])
+	}
+	inc, _ := includes[0].(map[string]any)
+	for key, want := range map[string]any{
+		"type":           "component",
+		"location":       "gitlab.example.com/components/sast/sast",
+		"project":        "components/sast",
+		"version":        "3.3.0",
+		"latest_version": "3.4.0",
+		"up_to_date":     false,
+		"component_name": "sast",
+		"from_catalog":   true,
+		"overridden":     true,
+	} {
+		if inc[key] != want {
+			t.Errorf("includes[0].%s = %#v, want %#v", key, inc[key], want)
+		}
+	}
+	overridden, _ := inc["overridden_jobs"].([]any)
+	if len(overridden) != 1 {
+		t.Fatalf("includes[0].overridden_jobs = %v, want one entry", inc["overridden_jobs"])
+	}
+	ov, _ := overridden[0].(map[string]any)
+	if ov["job"] != "sast" {
+		t.Errorf("overridden_jobs[0].job = %#v, want sast", ov["job"])
+	}
+	if keys, _ := ov["keys"].([]any); len(keys) != 1 || keys[0] != "script" {
+		t.Errorf("overridden_jobs[0].keys = %#v, want [script]", ov["keys"])
+	}
+	for _, absent := range []string{"archived", "has_cve", "advisories", "nested"} {
+		if _, present := inc[absent]; present {
+			t.Errorf("includes[0].%s is on the wire, want it omitted: nothing determined it", absent)
+		}
+	}
+
+	images, _ := doc["images"].([]any)
+	if len(images) != 1 {
+		t.Fatalf("images = %v, want exactly one", doc["images"])
+	}
+	img, _ := images[0].(map[string]any)
+	for key, want := range map[string]any{
+		"image":         "docker.io/node:20",
+		"registry":      "docker.io",
+		"name":          "library/node",
+		"tag":           "20",
+		"authorized":    true,
+		"forbidden_tag": false,
+	} {
+		if img[key] != want {
+			t.Errorf("images[0].%s = %#v, want %#v", key, img[key], want)
+		}
+	}
+	if jobs, _ := img["jobs"].([]any); len(jobs) != 2 || jobs[0] != "build" || jobs[1] != "test" {
+		t.Errorf("images[0].jobs = %#v, want [build test]", img["jobs"])
+	}
+
+	bomJobs, _ := doc["jobs"].([]any)
+	if len(bomJobs) != 1 {
+		t.Fatalf("jobs = %v, want exactly one", doc["jobs"])
+	}
+	job, _ := bomJobs[0].(map[string]any)
+	if job["name"] != "test" {
+		t.Errorf("jobs[0].name = %#v, want test", job["name"])
+	}
+	services, _ := job["services"].([]any)
+	if len(services) != 1 {
+		t.Fatalf("jobs[0].services = %v, want one entry", job["services"])
+	}
+	svc, _ := services[0].(map[string]any)
+	if svc["image"] != "docker:24.0.5-dind" || svc["name"] != "library/docker" || svc["tag"] != "24.0.5-dind" {
+		t.Errorf("jobs[0].services[0] = %#v, want the dind reference", svc)
+	}
+	if tags, _ := job["runner_tags"].([]any); len(tags) != 1 || tags[0] != "docker" {
+		t.Errorf("jobs[0].runner_tags = %#v, want [docker]", job["runner_tags"])
+	}
+}
+
+// TestPlatformBOMFrom_Bounds covers the sizing rule of the design spec
+// (section 4.4). The platform refuses an oversized bill with a 400 because a
+// truncated one would misreport the estate, so the CLI never truncates
+// either: it drops the whole section and names the bound that refused it.
+// The push itself still goes, with its results intact.
+func TestPlatformBOMFrom_Bounds(t *testing.T) {
+	long := strings.Repeat("a", 513)
+	for _, tc := range []struct {
+		name string
+		doc  *pbom.PBOM
+		want string
+	}{
+		{
+			name: "501 includes",
+			doc:  &pbom.PBOM{Includes: make([]pbom.Include, 501)},
+			want: "includes > 500",
+		},
+		{
+			name: "501 images",
+			doc:  &pbom.PBOM{ContainerImages: make([]pbom.ContainerImage, 501)},
+			want: "images > 500",
+		},
+		{
+			name: "501 jobs",
+			doc:  &pbom.PBOM{Jobs: make([]pbom.JobResources, 501)},
+			want: "jobs > 500",
+		},
+		{
+			name: "65 services on one job",
+			doc:  &pbom.PBOM{Jobs: []pbom.JobResources{{Name: "test", Services: make([]pbom.ContainerImageRef, 65)}}},
+			want: "services per job > 64",
+		},
+		{
+			name: "33 runner tags on one job",
+			doc:  &pbom.PBOM{Jobs: []pbom.JobResources{{Name: "test", RunnerTags: make([]string, 33)}}},
+			want: "runner tags per job > 32",
+		},
+		{
+			name: "51 advisories on one include",
+			doc:  &pbom.PBOM{Includes: []pbom.Include{{Type: "component", Advisories: make([]string, 51)}}},
+			want: "advisories per include > 50",
+		},
+		{
+			name: "a 513-rune include location",
+			doc:  &pbom.PBOM{Includes: []pbom.Include{{Type: "component", Location: long}}},
+			want: "string > 512 runes",
+		},
+		{
+			name: "a 513-rune image name",
+			doc:  &pbom.PBOM{ContainerImages: []pbom.ContainerImage{{Image: long}}},
+			want: "string > 512 runes",
+		},
+		{
+			name: "a 513-rune runner tag",
+			doc:  &pbom.PBOM{Jobs: []pbom.JobResources{{Name: "test", RunnerTags: []string{long}}}},
+			want: "string > 512 runes",
+		},
+		{
+			name: "a 1025-rune remote include URL",
+			doc:  &pbom.PBOM{Includes: []pbom.Include{{Type: "remote", Location: strings.Repeat("u", 1025)}}},
+			want: "remote include URL > 1024 runes",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, bound := platformBOMFrom(tc.doc)
+			if got != nil {
+				t.Errorf("platformBOMFrom returned a section for %s: the bill is dropped whole, never truncated", tc.name)
+			}
+			if bound != tc.want {
+				t.Errorf("bound = %q, want %q", bound, tc.want)
+			}
+		})
+	}
+}
+
+// TestPlatformBOMFrom_RemoteURLGetsTheLongerBound is the control for the
+// remote-include allowance: a 1024-rune URL is accepted where any other
+// string of that length would not be, because a remote include is addressed
+// by a URL and URLs are legitimately long.
+func TestPlatformBOMFrom_RemoteURLGetsTheLongerBound(t *testing.T) {
+	doc := &pbom.PBOM{Includes: []pbom.Include{{Type: "remote", Location: strings.Repeat("u", 1024)}}}
+	got, bound := platformBOMFrom(doc)
+	if bound != "" || got == nil {
+		t.Fatalf("a 1024-rune remote URL was refused on bound %q", bound)
+	}
+	local := &pbom.PBOM{Includes: []pbom.Include{{Type: "local", Location: strings.Repeat("u", 1024)}}}
+	if _, bound := platformBOMFrom(local); bound != "string > 512 runes" {
+		t.Errorf("a 1024-rune LOCAL include location was accepted (bound %q): the longer allowance is the remote URL's alone", bound)
+	}
+}
+
+// TestBuildPlatformPush_CarriesTheBOM covers the wiring: a run whose
+// collections and pipeline model are present pushes a bom built from them,
+// with no second collection pass.
+func TestBuildPlatformPush_CarriesTheBOM(t *testing.T) {
+	conf := &configuration.Configuration{GitlabURL: "https://gitlab.example.com", Branch: "main"}
+	result := &control.AnalysisResult{
+		ProjectPath: "group/app",
+		ProjectID:   7,
+		PipelineImageData: &gitlab.GitlabPipelineImageData{
+			Images: []gitlab.GitlabPipelineImageInfo{
+				{Link: "docker.io/node:20", Registry: "docker.io", Name: "node", Tag: "20", Job: "build"},
+				{Link: "docker.io/node:20", Registry: "docker.io", Name: "node", Tag: "20", Job: "test"},
+			},
+		},
+		PipelineOriginData: &gitlab.GitlabPipelineOriginData{
+			Origins: []gitlab.GitlabPipelineOriginDataFull{{
+				GitlabPipelineOriginDataGeneric: gitlab.GitlabPipelineOriginDataGeneric{
+					OriginType:        "component",
+					FromGitlabCatalog: true,
+					GitlabIncludeOrigin: gitlab.IncludeOriginWithoutRef{
+						Location: "gitlab.example.com/components/sast/sast",
+						Project:  "components/sast",
+					},
+					GitlabComponent: gitlab.GitlabPipelineJobGitlabComponent{
+						ComponentName:          "sast",
+						ComponentLatestVersion: "3.4.0",
+					},
+				},
+				GitlabPipelineOriginDataProjectSpecific: gitlab.GitlabPipelineOriginDataProjectSpecific{
+					Version: "3.3.0",
+				},
+			}},
+		},
+		Pipeline: &ir.NormalizedPipeline{
+			Jobs: []ir.Job{{
+				Name:     "test",
+				Services: []ir.Image{{Name: "docker", Tag: "24.0.5-dind"}},
+				Tags:     []string{"docker"},
+			}},
+		},
+	}
+
+	body, err := buildPlatformPush(testProvider(t), conf, result, nil, ".plumber.yaml", nil)
+	if err != nil {
+		t.Fatalf("buildPlatformPush: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("push does not parse as JSON: %v", err)
+	}
+	bom, ok := raw["bom"].(map[string]any)
+	if !ok {
+		t.Fatalf("the push carries no bom section: %s", body)
+	}
+	if bom["version"] != float64(1) {
+		t.Errorf("bom.version = %v, want 1", bom["version"])
+	}
+	includes, _ := bom["includes"].([]any)
+	if len(includes) != 1 {
+		t.Fatalf("bom.includes = %v, want one component include", bom["includes"])
+	}
+	inc, _ := includes[0].(map[string]any)
+	if inc["version"] != "3.3.0" || inc["latest_version"] != "3.4.0" {
+		t.Errorf("bom.includes[0] versions = %#v / %#v, want 3.3.0 / 3.4.0", inc["version"], inc["latest_version"])
+	}
+	images, _ := bom["images"].([]any)
+	if len(images) != 1 {
+		t.Fatalf("bom.images = %v, want one image", bom["images"])
+	}
+	img, _ := images[0].(map[string]any)
+	if jobs, _ := img["jobs"].([]any); len(jobs) != 2 {
+		t.Errorf("bom.images[0].jobs = %#v, want the two jobs that use it", img["jobs"])
+	}
+	bomJobs, _ := bom["jobs"].([]any)
+	if len(bomJobs) != 1 {
+		t.Fatalf("bom.jobs = %v, want the one job with a service and a tag", bom["jobs"])
+	}
+	job, _ := bomJobs[0].(map[string]any)
+	if tags, _ := job["runner_tags"].([]any); len(tags) != 1 || tags[0] != "docker" {
+		t.Errorf("bom.jobs[0].runner_tags = %#v, want [docker]", job["runner_tags"])
+	}
+}
+
+// TestBuildPlatformPush_OmitsTheBOMWhenABoundIsExceeded covers the refusal on
+// the wire: the section is absent, and everything else about the push is
+// unchanged, so a pipeline too large to describe still reports its results.
+func TestBuildPlatformPush_OmitsTheBOMWhenABoundIsExceeded(t *testing.T) {
+	conf := &configuration.Configuration{GitlabURL: "https://gitlab.example.com", Branch: "main"}
+	origins := make([]gitlab.GitlabPipelineOriginDataFull, 501)
+	for i := range origins {
+		origins[i].OriginType = "local"
+		origins[i].GitlabIncludeOrigin.Location = ".gitlab/ci/" + strconv.Itoa(i) + ".yml"
+	}
+	result := &control.AnalysisResult{
+		ProjectPath:        "group/app",
+		PipelineOriginData: &gitlab.GitlabPipelineOriginData{Origins: origins},
+	}
+
+	body, err := buildPlatformPush(testProvider(t), conf, result, nil, ".plumber.yaml", nil)
+	if err != nil {
+		t.Fatalf("buildPlatformPush: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("push does not parse as JSON: %v", err)
+	}
+	if _, present := raw["bom"]; present {
+		t.Errorf("the push carries a bom section past the includes bound: %v", raw["bom"])
+	}
+	if _, present := raw["results"]; !present {
+		t.Error("the refused bill took the results with it: the push must still report the run")
+	}
+}
+
+// TestBuildPlatformPush_NoBOMWithoutCollections covers the empty case: a push
+// built with no collected data at all carries no bom key rather than an empty
+// one, which would read as a pipeline that depends on nothing.
+func TestBuildPlatformPush_NoBOMWithoutCollections(t *testing.T) {
+	body, err := buildPlatformPush(testProvider(t), nil, nil, nil, ".plumber.yaml", nil)
+	if err != nil {
+		t.Fatalf("buildPlatformPush: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("push does not parse as JSON: %v", err)
+	}
+	if _, present := raw["bom"]; present {
+		t.Errorf("a push with no collected data carries a bom section: %v", raw["bom"])
+	}
+}
+
+// TestBuildPlatformPush_NoBOMOnADegradedCollection covers the honesty rule
+// the whole section rests on: the platform replaces a project's dependency
+// edges with the pushed bill as ONE set, so a partial bill would delete edges
+// for everything the degraded collection failed to read. A run that could not
+// collect completely sends no bill at all and the platform leaves the
+// project's dependencies as they were, exactly as an older CLI does.
+func TestBuildPlatformPush_NoBOMOnADegradedCollection(t *testing.T) {
+	conf := &configuration.Configuration{GitlabURL: "https://gitlab.example.com", Branch: "main"}
+	result := &control.AnalysisResult{
+		ProjectPath:            "group/app",
+		DataCollectionDegraded: true,
+		PipelineImageData: &gitlab.GitlabPipelineImageData{
+			Images: []gitlab.GitlabPipelineImageInfo{
+				{Link: "docker.io/node:20", Registry: "docker.io", Name: "node", Tag: "20", Job: "build"},
+			},
+		},
+	}
+
+	body, err := buildPlatformPush(testProvider(t), conf, result, nil, ".plumber.yaml", nil)
+	if err != nil {
+		t.Fatalf("buildPlatformPush: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("push does not parse as JSON: %v", err)
+	}
+	if _, present := raw["bom"]; present {
+		t.Errorf("a degraded run pushed a partial bill of materials: %v", raw["bom"])
+	}
+}
+
+// TestPlatformBOMFrom_DigestPinnedReferencesAreNormalised covers a defect the
+// platform would store verbatim and key its graph on. The collector splits an
+// image reference on the last colon without knowing about digests, so
+// node@sha256:abc lands as name "node@sha256" with tag "abc". The graph's
+// image key is <registry>/<name>, so a digest-pinned image would appear under
+// a key that names half a digest, and its version edge would carry a bare hex
+// string as a tag.
+//
+// The section reports the parts as they are meant to read: name is the
+// repository alone, digest is the whole sha256:<hex>, and tag is empty unless
+// the reference carried both. The full reference string stays exactly as the
+// collector reported it (invariant I1: the platform stores what the CLI
+// said).
+func TestPlatformBOMFrom_DigestPinnedReferencesAreNormalised(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		// The collector's own split, digests and all.
+		image      pbom.ContainerImage
+		wantName   string
+		wantTag    string
+		wantDigest string
+	}{
+		{
+			name: "digest only",
+			image: pbom.ContainerImage{
+				Image:    "docker.io/library/node@sha256:abc",
+				Registry: "docker.io",
+				Name:     "library/node@sha256",
+				Tag:      "abc",
+			},
+			wantName:   "library/node",
+			wantTag:    "",
+			wantDigest: "sha256:abc",
+		},
+		{
+			name: "tag and digest",
+			image: pbom.ContainerImage{
+				Image:    "registry.example/team/app:1.2@sha256:def",
+				Registry: "registry.example",
+				Name:     "team/app",
+				Tag:      "1.2@sha256",
+			},
+			wantName:   "team/app",
+			wantTag:    "1.2",
+			wantDigest: "sha256:def",
+		},
+		{
+			name: "no digest at all",
+			image: pbom.ContainerImage{
+				Image:    "docker.io/node:20",
+				Registry: "docker.io",
+				Name:     "node",
+				Tag:      "20",
+			},
+			wantName:   "library/node",
+			wantTag:    "20",
+			wantDigest: "",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, bound := platformBOMFrom(&pbom.PBOM{ContainerImages: []pbom.ContainerImage{tc.image}})
+			if bound != "" || got == nil || len(got.Images) != 1 {
+				t.Fatalf("platformBOMFrom refused the fixture on bound %q", bound)
+			}
+			img := got.Images[0]
+			if img.Image != tc.image.Image {
+				t.Errorf("image = %q, want %q: the reference string is reported as the collector said it", img.Image, tc.image.Image)
+			}
+			if img.Registry != tc.image.Registry {
+				t.Errorf("registry = %q, want %q", img.Registry, tc.image.Registry)
+			}
+			if img.Name != tc.wantName {
+				t.Errorf("name = %q, want %q", img.Name, tc.wantName)
+			}
+			if img.Tag != tc.wantTag {
+				t.Errorf("tag = %q, want %q", img.Tag, tc.wantTag)
+			}
+			if img.Digest != tc.wantDigest {
+				t.Errorf("digest = %q, want %q", img.Digest, tc.wantDigest)
+			}
+		})
+	}
+}
+
+// TestPlatformBOMFrom_ServiceDigestIsNormalisedToo applies the same rule to a
+// job's services, which reach the bill through a different collector path
+// (the merged configuration's services: block, split on the last colon with
+// no registry resolved at all) and would otherwise report a repository name
+// ending in @sha256.
+func TestPlatformBOMFrom_ServiceDigestIsNormalisedToo(t *testing.T) {
+	doc := &pbom.PBOM{Jobs: []pbom.JobResources{{
+		Name: "test",
+		Services: []pbom.ContainerImageRef{{
+			Image: "docker@sha256:abc",
+			Name:  "docker@sha256",
+			Tag:   "abc",
+		}},
+	}}}
+	got, bound := platformBOMFrom(doc)
+	if bound != "" || got == nil || len(got.Jobs) != 1 || len(got.Jobs[0].Services) != 1 {
+		t.Fatalf("platformBOMFrom refused the fixture on bound %q", bound)
+	}
+	svc := got.Jobs[0].Services[0]
+	if svc.Image != "docker@sha256:abc" {
+		t.Errorf("service image = %q, want the reference as the collector reported it", svc.Image)
+	}
+	if svc.Name != "library/docker" || svc.Tag != "" || svc.Digest != "sha256:abc" {
+		t.Errorf("service ref = %#v, want name library/docker, no tag, digest sha256:abc", svc)
+	}
+}
+
+// TestPlatformBOMFrom_RegistryPortIsNotADigestTag guards the one shape the
+// normalisation could get wrong: a registry host with a port carries a colon
+// that is not a tag separator.
+func TestPlatformBOMFrom_RegistryPortIsNotADigestTag(t *testing.T) {
+	doc := &pbom.PBOM{ContainerImages: []pbom.ContainerImage{{
+		Image:    "registry.example:5000/team/app@sha256:abc",
+		Registry: "registry.example:5000",
+		Name:     "team/app@sha256",
+		Tag:      "abc",
+	}}}
+	got, bound := platformBOMFrom(doc)
+	if bound != "" || got == nil || len(got.Images) != 1 {
+		t.Fatalf("platformBOMFrom refused the fixture on bound %q", bound)
+	}
+	img := got.Images[0]
+	if img.Name != "team/app" || img.Tag != "" || img.Digest != "sha256:abc" {
+		t.Errorf("image = %#v, want name team/app, no tag, digest sha256:abc", img)
+	}
+}
+
+// TestPlatformBOMFrom_AlwaysEmitsTheThreeArrays pins the one place on this
+// wire where absence means zero rather than unknown. The platform replaces a
+// project's edges with the pushed bill as ONE set, so an absent includes key
+// would have to be read as "delete every include edge" while absence two
+// fields away (the bom key itself, a three-state boolean) means "claim
+// nothing". The three arrays are always present, empty when empty, so the
+// projection never has to guess which convention applies.
+func TestPlatformBOMFrom_AlwaysEmitsTheThreeArrays(t *testing.T) {
+	got, bound := platformBOMFrom(&pbom.PBOM{})
+	if bound != "" || got == nil {
+		t.Fatalf("an empty bill was refused on bound %q", bound)
+	}
+	raw, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	if string(raw) != `{"version":1,"includes":[],"images":[],"jobs":[]}` {
+		t.Errorf("empty bom = %s, want the three arrays present and empty", raw)
+	}
+}
+
+// TestPlatformBOMFrom_TypeAndLocationAreUnconditional matches the PBOM, which
+// emits both without omitempty. An include that arrives with an empty type
+// must arrive blank rather than vanish: a key the platform never sees cannot
+// be validated, and spec 4.1 keys every include node on its type.
+func TestPlatformBOMFrom_TypeAndLocationAreUnconditional(t *testing.T) {
+	got, bound := platformBOMFrom(&pbom.PBOM{Includes: []pbom.Include{{}}})
+	if bound != "" || got == nil {
+		t.Fatalf("refused on bound %q", bound)
+	}
+	raw, err := json.Marshal(got.Includes[0])
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var inc map[string]any
+	if err := json.Unmarshal(raw, &inc); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+	for _, key := range []string{"type", "location"} {
+		if _, present := inc[key]; !present {
+			t.Errorf("%s is absent from an include that has none: %s", key, raw)
+		}
+	}
+}
+
+// TestPlatformBOMFrom_UnresolvedImagesAreOmitted covers the rule that an
+// image reference the run never resolved is not a dependency at all. The
+// collector marks a reference that still held a $VARIABLE after substitution;
+// its registry, name and tag were parsed out of a placeholder. The platform
+// keys its resource nodes on those strings and computes no verdict of its own
+// (I1/I2), so pushing one would mint a fleet-wide node named after a variable
+// with real consumers attached to it.
+//
+// The PBOM artifact still lists them, unchanged: it is an inventory of what
+// the pipeline declares, placeholders included.
+func TestPlatformBOMFrom_UnresolvedImagesAreOmitted(t *testing.T) {
+	doc := &pbom.PBOM{ContainerImages: []pbom.ContainerImage{
+		{Image: "unknown/$CI_REGISTRY_IMAGE:$TAG", Registry: "unknown", Name: "$CI_REGISTRY_IMAGE", Tag: "$TAG", Jobs: []string{"deploy"}, Unresolved: true},
+		{Image: "docker.io/node:20", Registry: "docker.io", Name: "node", Tag: "20", Jobs: []string{"build"}},
+	}}
+	got, bound := platformBOMFrom(doc)
+	if bound != "" || got == nil {
+		t.Fatalf("refused on bound %q", bound)
+	}
+	if len(got.Images) != 1 {
+		t.Fatalf("images = %#v, want the placeholder dropped and the literal kept", got.Images)
+	}
+	if got.Images[0].Name != "library/node" {
+		t.Errorf("images[0].name = %q, want library/node", got.Images[0].Name)
+	}
+}
+
+// TestPlatformBOMFrom_UnresolvedServicesAreOmitted applies the same rule to a
+// job's services, by the flag the pipeline model carries and by the reference
+// itself: the merged-configuration services reader resolves no variables, so
+// an unsubstituted reference reaches the bill looking like a literal.
+//
+// Dropping the service is only half the rule. A job whose ONLY services were
+// placeholders now asks a runner for nothing this run can name, and the
+// section lists a job only when it does ask for something: the platform
+// replaces a project's edges with the pushed bill as one set and keys nodes
+// on what it receives, so a bare {"name":"deploy"} mints a job node with no
+// dependency at all. It is also what the PBOM's own projection does, and the
+// two documents are kept in agreement deliberately.
+//
+// `deploy` is the common shape that makes this reachable: a variable-templated
+// service image and no tags:.
+func TestPlatformBOMFrom_UnresolvedServicesAreOmitted(t *testing.T) {
+	doc := &pbom.PBOM{Jobs: []pbom.JobResources{
+		{Name: "flagged", Services: []pbom.ContainerImageRef{{Image: "$SVC:latest", Name: "$SVC", Tag: "latest", Unresolved: true}}},
+		{Name: "deploy", Services: []pbom.ContainerImageRef{{Image: "$CI_REGISTRY_IMAGE/db:latest", Name: "$CI_REGISTRY_IMAGE/db", Tag: "latest"}}},
+		{Name: "tagged", Services: []pbom.ContainerImageRef{{Image: "$CI_REGISTRY/pg:14", Name: "$CI_REGISTRY/pg", Tag: "14"}}, RunnerTags: []string{"docker"}},
+		{Name: "literal", Services: []pbom.ContainerImageRef{{Image: "postgres:14", Name: "postgres", Tag: "14"}}},
+	}}
+	got, bound := platformBOMFrom(doc)
+	if bound != "" || got == nil {
+		t.Fatalf("refused on bound %q", bound)
+	}
+	byName := map[string]platformBOMJob{}
+	for _, job := range got.Jobs {
+		byName[job.Name] = job
+	}
+
+	// Nothing left to ask for: the job leaves the bill entirely rather than
+	// arriving as a name with no dependency under it.
+	for _, name := range []string{"flagged", "deploy"} {
+		if _, listed := byName[name]; listed {
+			t.Errorf("jobs[%s] = %#v is on the wire although its only services were placeholders", name, byName[name])
+		}
+	}
+
+	// A runner tag is something the job asks a runner for, so the job stays
+	// listed even once its placeholder service is gone, with no service.
+	tagged, listed := byName["tagged"]
+	if !listed {
+		t.Fatalf("jobs = %#v, want the job with a runner tag kept", got.Jobs)
+	}
+	if len(tagged.Services) != 0 {
+		t.Errorf("jobs[tagged].services = %#v, want the placeholder dropped", tagged.Services)
+	}
+	if !reflect.DeepEqual(tagged.RunnerTags, []string{"docker"}) {
+		t.Errorf("jobs[tagged].runner_tags = %#v, want [docker]", tagged.RunnerTags)
+	}
+
+	if len(byName["literal"].Services) != 1 {
+		t.Fatalf("jobs[literal].services = %#v, want the literal kept", byName["literal"].Services)
+	}
+}
+
+// TestPlatformBOMFrom_BareNameGetsTheDockerHubNamespace is the point of
+// putting every reference through one normalisation: `postgres` as a job
+// image and `postgres` as a job service are the same upstream, so they must
+// reach the platform as the same <registry>/<name> key. Docker Hub's official
+// images live under library/, which is what makes the two agree.
+func TestPlatformBOMFrom_BareNameGetsTheDockerHubNamespace(t *testing.T) {
+	doc := &pbom.PBOM{
+		ContainerImages: []pbom.ContainerImage{{Image: "docker.io/postgres:14", Registry: "docker.io", Name: "postgres", Tag: "14", Jobs: []string{"build"}}},
+		Jobs:            []pbom.JobResources{{Name: "test", Services: []pbom.ContainerImageRef{{Image: "postgres:14", Name: "postgres", Tag: "14"}}}},
+	}
+	got, bound := platformBOMFrom(doc)
+	if bound != "" || got == nil {
+		t.Fatalf("refused on bound %q", bound)
+	}
+	img := got.Images[0]
+	svc := got.Jobs[0].Services[0]
+	if img.Registry != "docker.io" || img.Name != "library/postgres" || img.Tag != "14" {
+		t.Errorf("image = %#v, want docker.io + library/postgres + 14", img)
+	}
+	if svc.Registry != "docker.io" || svc.Name != "library/postgres" || svc.Tag != "14" {
+		t.Errorf("service = %#v, want docker.io + library/postgres + 14", svc)
+	}
+	if img.Registry+"/"+img.Name != svc.Registry+"/"+svc.Name {
+		t.Errorf("the job image keys %q and the service keys %q: the same upstream must be one node", img.Registry+"/"+img.Name, svc.Registry+"/"+svc.Name)
+	}
+}
+
+// TestPlatformBOMFrom_ServiceRegistryWithAPortIsKeptWhole covers the shape the
+// services reader gets wrong on its own: it splits on the last colon of the
+// whole reference, so registry.example.com:5000/postgres lands as the name
+// registry.example.com with the tag 5000/postgres. On the wire the host keeps
+// its port and the repository is the repository.
+func TestPlatformBOMFrom_ServiceRegistryWithAPortIsKeptWhole(t *testing.T) {
+	doc := &pbom.PBOM{Jobs: []pbom.JobResources{{
+		Name:     "test",
+		Services: []pbom.ContainerImageRef{{Image: "registry.example.com:5000/postgres", Name: "registry.example.com", Tag: "5000/postgres"}},
+	}}}
+	got, bound := platformBOMFrom(doc)
+	if bound != "" || got == nil {
+		t.Fatalf("refused on bound %q", bound)
+	}
+	svc := got.Jobs[0].Services[0]
+	if svc.Registry != "registry.example.com:5000" || svc.Name != "postgres" || svc.Tag != "" {
+		t.Errorf("service = %#v, want registry.example.com:5000 + postgres and no tag", svc)
+	}
+	if svc.Image != "registry.example.com:5000/postgres" {
+		t.Errorf("service image = %q, want the reference as the collector reported it", svc.Image)
+	}
+}
+
+// TestPlatformBOMFrom_DocumentSizeCap covers the ninth bound of the spec's
+// sizing rule (section 4.4): the stored document is capped at 256 KiB, and a
+// bill can sit inside every count and length bound and still be megabytes.
+// The platform refuses an oversized push whole, which would cost the run its
+// results, its findings and its score; refusing the section here costs it
+// only the bill.
+func TestPlatformBOMFrom_DocumentSizeCap(t *testing.T) {
+	// 500 jobs of 64 services each: inside jobs > 500, inside services per
+	// job > 64, every string far inside 512 runes, and megabytes of JSON.
+	jobs := make([]pbom.JobResources, bomMaxJobs)
+	for i := range jobs {
+		jobs[i].Name = "job-" + strconv.Itoa(i)
+		jobs[i].Services = make([]pbom.ContainerImageRef, bomMaxServicesPerJob)
+		for j := range jobs[i].Services {
+			ref := "registry.example.com/team/service-" + strconv.Itoa(i) + "-" + strconv.Itoa(j) + ":1.0"
+			jobs[i].Services[j] = pbom.ContainerImageRef{Image: ref, Registry: "registry.example.com", Name: "team/service", Tag: "1.0"}
+		}
+	}
+	got, bound := platformBOMFrom(&pbom.PBOM{Jobs: jobs})
+	if got != nil {
+		t.Error("platformBOMFrom returned an oversized section: the bill is dropped whole, never truncated")
+	}
+	if bound != "document > 256 KiB" {
+		t.Errorf("bound = %q, want %q", bound, "document > 256 KiB")
+	}
+}
+
+// imagePolicyRun builds one APPLIED policy run over a configuration written
+// inline, so a test can say exactly which controls the resolved policy
+// enables. That is the only input platformImageControlsEvaluated reads, and
+// it is what decides which per-image booleans the bill may carry.
+func imagePolicyRun(t *testing.T, name, configYAML string) policyRun {
+	t.Helper()
+	pc, _, _, err := configuration.LoadPlumberConfigFromBytes([]byte(configYAML), name)
+	if err != nil {
+		t.Fatalf("load %s: %v", name, err)
+	}
+	return policyRun{
+		Policies: []platform.Policy{{ID: "1111", Name: name, Enforcement: platform.EnforcementReport}},
+		Config:   pc,
+		Result:   &control.AnalysisResult{},
+		Applied:  true,
+	}
+}
+
+// imageBOMResult is a completely collected run carrying one literal image, so
+// the bill has an images[] entry whose flags are the thing under test.
+func imageBOMResult() *control.AnalysisResult {
+	return &control.AnalysisResult{
+		ProjectPath: "group/app",
+		ProjectID:   7,
+		PipelineImageData: &gitlab.GitlabPipelineImageData{
+			Images: []gitlab.GitlabPipelineImageInfo{
+				{Link: "docker.io/node:20", Registry: "docker.io", Name: "node", Tag: "20", Job: "build"},
+			},
+		},
+	}
+}
+
+// pushedBOMImage builds a platform-mode push over the given policy runs and
+// returns the bill's single image, decoded from the RAW wire bytes: the point
+// of the assertion is which KEYS reach the platform, and a decode back into
+// this package's own types would pass on an omitted pointer.
+func pushedBOMImage(t *testing.T, runs []policyRun) map[string]any {
+	t.Helper()
+	conf := &configuration.Configuration{GitlabURL: "https://gitlab.example.com", Branch: "main"}
+	body, err := buildPlatformPush(testProvider(t), conf, imageBOMResult(), nil, ".plumber.yaml", runs)
+	if err != nil {
+		t.Fatalf("buildPlatformPush: %v", err)
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatalf("push does not parse as JSON: %v", err)
+	}
+	bom, ok := raw["bom"].(map[string]any)
+	if !ok {
+		t.Fatalf("the platform-mode push carries no bom section: %s", body)
+	}
+	images, _ := bom["images"].([]any)
+	if len(images) != 1 {
+		t.Fatalf("bom.images = %v, want the one collected image", bom["images"])
+	}
+	img, _ := images[0].(map[string]any)
+	return img
+}
+
+// TestBuildPlatformPush_PlatformModeBOMCarriesOnlyTheEvaluatedImageFlag covers
+// the platform-mode branch of the bill builder, which only runs when the push
+// carries policy runs: the image flags are then the POLICIES' own, gated by
+// which image control any applied policy actually enables.
+//
+// The two flags are two independent claims. A policy that pins tags without
+// restricting registries evaluated the forbidden-tag control and nothing
+// else, so the bill may say whether the tag is forbidden and may NOT say the
+// image is authorized. Publishing authorized:true there would mint a
+// compliance claim no control ever made, on every consumer of the fleet-wide
+// dependency graph, and the platform computes no verdict of its own to catch
+// it (I1/I2).
+func TestBuildPlatformPush_PlatformModeBOMCarriesOnlyTheEvaluatedImageFlag(t *testing.T) {
+	runs := []policyRun{imagePolicyRun(t, "tags-only",
+		"version: \"2.0\"\ngitlab:\n  controls:\n    containerImageMustNotUseForbiddenTags:\n      enabled: true\n      tags:\n        - latest\n")}
+
+	img := pushedBOMImage(t, runs)
+
+	if _, present := img["forbidden_tag"]; !present {
+		t.Errorf("forbidden_tag is absent from the bill although a resolved policy enables that control: %#v", img)
+	}
+	if _, present := img["authorized"]; present {
+		t.Errorf("authorized = %#v reached the bill although no resolved policy enables the authorized-sources control: the bill would claim a verdict nobody computed", img["authorized"])
+	}
+}
+
+// TestBuildPlatformPush_PlatformModeBOMOmitsBothFlagsWhenNoImageControlRan is
+// the other half of the same rule: a policy that enables neither image control
+// evaluated neither claim, so the bill reports the image as inventory alone.
+// Absence here is the honest answer, not a default.
+func TestBuildPlatformPush_PlatformModeBOMOmitsBothFlagsWhenNoImageControlRan(t *testing.T) {
+	runs := []policyRun{imagePolicyRun(t, "branches-only",
+		"version: \"2.0\"\ngitlab:\n  controls:\n    branchMustBeProtected:\n      enabled: true\n")}
+
+	img := pushedBOMImage(t, runs)
+
+	for _, flag := range []string{"forbidden_tag", "authorized"} {
+		if _, present := img[flag]; present {
+			t.Errorf("%s = %#v reached the bill although no resolved policy enables an image control", flag, img[flag])
+		}
+	}
+	// The image itself is still reported: the run collected it, and the
+	// inventory is a fact independent of any verdict.
+	if img["image"] != "docker.io/node:20" {
+		t.Errorf("image = %#v, want the collected reference reported as inventory", img["image"])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// The bill-of-materials branch sweep.
+//
+// Three rounds of PR review found three separate branches of this mapping that
+// no test pinned, each time the same class of gap: a guard that kept a
+// garbage node off the wire, holding by accident rather than by contract. The
+// tables below enumerate every branch of bomNormalizeRef, platformBOMFrom,
+// platformBOMBound, bomStringBound and platformBOMDocument, so the class is
+// closed rather than patched one finding at a time.
+//
+// The one branch not reachable from a test is the marshal failure in
+// platformBOMFrom ("document not serialisable"): every type in the section is
+// a plain struct of strings, bools, pointers to bools and slices of those, so
+// encoding/json cannot fail on it. It is kept as an honest refusal rather
+// than an ignored error.
+// ---------------------------------------------------------------------------
+
+// TestBomNormalizeRef_EveryBranch pins the one normalisation every reference
+// on the wire goes through, branch by branch: the three refusals, the digest
+// split, the registry detection (dot, port, neither, none, leading slash,
+// Docker Hub alias), the tag split, and the library/ namespace rule with each
+// of its three outcomes.
+//
+// The empty-name refusal is the one this table exists for. A service authored
+// as nothing but a tag (`services: [":latest"]`) and an image that is nothing
+// but a registry host with a trailing slash both leave the repository empty
+// after the split; without the guard the Docker Hub branch would prepend
+// `library/` to nothing and the bill would key a fleet-wide node on
+// `docker.io/library/`, which is the node-keyed-on-nothing the whole section
+// is written to prevent.
+func TestBomNormalizeRef_EveryBranch(t *testing.T) {
+	for _, tc := range []struct {
+		name       string
+		image      string
+		unresolved bool
+		wantOK     bool
+		want       bomRef
+	}{
+		{
+			name:   "refused: the reference is empty",
+			image:  "",
+			wantOK: false,
+		},
+		{
+			name:   "refused: the reference is only whitespace",
+			image:  "   ",
+			wantOK: false,
+		},
+		{
+			name:       "refused: the collector marked it unresolved",
+			image:      "unknown/placeholder:1",
+			unresolved: true,
+			wantOK:     false,
+		},
+		{
+			name:   "refused: the reference still holds a variable",
+			image:  "$CI_REGISTRY_IMAGE/db:latest",
+			wantOK: false,
+		},
+		{
+			name:   "refused: nothing but a tag leaves no repository",
+			image:  ":latest",
+			wantOK: false,
+		},
+		{
+			name:   "refused: a registry host with a trailing slash leaves no repository",
+			image:  "registry.internal/",
+			wantOK: false,
+		},
+		{
+			name:   "registry by dot, tag split, library namespace added",
+			image:  "docker.io/node:20",
+			wantOK: true,
+			want:   bomRef{Image: "docker.io/node:20", Registry: "docker.io", Name: "library/node", Tag: "20"},
+		},
+		{
+			name:   "no registry segment at all: Docker Hub, library namespace added",
+			image:  "postgres:14",
+			wantOK: true,
+			want:   bomRef{Image: "postgres:14", Registry: "docker.io", Name: "library/postgres", Tag: "14"},
+		},
+		{
+			name:   "a first segment that is not a host stays part of the repository",
+			image:  "myorg/app:1.2",
+			wantOK: true,
+			want:   bomRef{Image: "myorg/app:1.2", Registry: "docker.io", Name: "myorg/app", Tag: "1.2"},
+		},
+		{
+			name:   "registry by port, no tag",
+			image:  "registry.example.com:5000/postgres",
+			wantOK: true,
+			want:   bomRef{Image: "registry.example.com:5000/postgres", Registry: "registry.example.com:5000", Name: "postgres"},
+		},
+		{
+			name:   "a Docker Hub host alias folds to the canonical host",
+			image:  "index.docker.io/library/redis:7",
+			wantOK: true,
+			want:   bomRef{Image: "index.docker.io/library/redis:7", Registry: "docker.io", Name: "library/redis", Tag: "7"},
+		},
+		{
+			name:   "digest only: no tag, the repository keeps its namespace",
+			image:  "docker.io/library/node@sha256:abc",
+			wantOK: true,
+			want:   bomRef{Image: "docker.io/library/node@sha256:abc", Registry: "docker.io", Name: "library/node", Digest: "sha256:abc"},
+		},
+		{
+			name:   "tag and digest together",
+			image:  "registry.example/team/app:1.2@sha256:def",
+			wantOK: true,
+			want:   bomRef{Image: "registry.example/team/app:1.2@sha256:def", Registry: "registry.example", Name: "team/app", Tag: "1.2", Digest: "sha256:def"},
+		},
+		{
+			name:   "a port in the host is not a tag, digest and all",
+			image:  "registry.example:5000/team/app@sha256:abc",
+			wantOK: true,
+			want:   bomRef{Image: "registry.example:5000/team/app@sha256:abc", Registry: "registry.example:5000", Name: "team/app", Digest: "sha256:abc"},
+		},
+		{
+			name:   "a non-Hub registry never gets the library namespace",
+			image:  "ghcr.io/tool:1",
+			wantOK: true,
+			want:   bomRef{Image: "ghcr.io/tool:1", Registry: "ghcr.io", Name: "tool", Tag: "1"},
+		},
+		{
+			// The reference STRING is reported as the collector gave it,
+			// whitespace included: only the parsing is done on the trimmed
+			// value. Nothing the CLI said is rewritten (I1).
+			name:   "surrounding whitespace is parsed away but not rewritten",
+			image:  " docker.io/node:20 ",
+			wantOK: true,
+			want:   bomRef{Image: " docker.io/node:20 ", Registry: "docker.io", Name: "library/node", Tag: "20"},
+		},
+		{
+			// A leading slash is not a registry segment, so the whole string
+			// is the repository. The image collector's own parser produces
+			// the same shape for this input, and reporting what the CLI
+			// parsed is the rule (I1); it is pinned here so a change to
+			// either side shows up as a diff rather than as a silent
+			// divergence between the two.
+			name:   "a leading slash is kept in the repository, matching the collector",
+			image:  "/postgres",
+			wantOK: true,
+			want:   bomRef{Image: "/postgres", Registry: "docker.io", Name: "/postgres"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := bomNormalizeRef(tc.image, tc.unresolved)
+			if ok != tc.wantOK {
+				t.Fatalf("ok = %v, want %v (ref %#v)", ok, tc.wantOK, got)
+			}
+			if !ok {
+				if got != (bomRef{}) {
+					t.Errorf("a refused reference returned %#v, want the zero value so no caller can use half of it", got)
+				}
+				return
+			}
+			if got != tc.want {
+				t.Errorf("ref = %#v, want %#v", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestPlatformBOMFrom_EmptyNameReferencesAreDropped is the thread's own case,
+// asserted where it matters: through the section rather than on the helper.
+// An image and a service that both normalise to no repository are absent, and
+// the job whose only service was one of them is not listed at all.
+func TestPlatformBOMFrom_EmptyNameReferencesAreDropped(t *testing.T) {
+	doc := &pbom.PBOM{
+		ContainerImages: []pbom.ContainerImage{
+			{Image: "registry.internal/", Name: "", Jobs: []string{"build"}},
+			{Image: "docker.io/node:20", Registry: "docker.io", Name: "node", Jobs: []string{"build"}},
+		},
+		Jobs: []pbom.JobResources{
+			{Name: "tag-only-service", Services: []pbom.ContainerImageRef{{Image: ":latest", Name: ":latest"}}},
+			{Name: "real", Services: []pbom.ContainerImageRef{{Image: "postgres:14", Name: "postgres", Tag: "14"}}},
+		},
+	}
+	got, bound := platformBOMFrom(doc)
+	if bound != "" || got == nil {
+		t.Fatalf("refused on bound %q", bound)
+	}
+	if len(got.Images) != 1 || got.Images[0].Name != "library/node" {
+		t.Errorf("images = %#v, want only the image that names a repository", got.Images)
+	}
+	if len(got.Jobs) != 1 || got.Jobs[0].Name != "real" {
+		t.Errorf("jobs = %#v, want only the job left with a service that names a repository", got.Jobs)
+	}
+}
+
+// TestPlatformBOMFrom_NilDocument pins the one remaining early return: no
+// document is no bill, and it is NOT a bound refusal, so the caller stays
+// silent rather than warning about a limit nothing exceeded.
+func TestPlatformBOMFrom_NilDocument(t *testing.T) {
+	got, bound := platformBOMFrom(nil)
+	if got != nil || bound != "" {
+		t.Errorf("platformBOMFrom(nil) = %#v, %q, want nil and no bound", got, bound)
+	}
+}
+
+// TestPlatformBOMFrom_TriStateBooleansOnTheWire pins each of the five
+// pointer-valued flags in both states. They are the section's only three-state
+// fields: a flag no control determined must be ABSENT, never false, because
+// false is a verdict and absence is the refusal to give one.
+func TestPlatformBOMFrom_TriStateBooleansOnTheWire(t *testing.T) {
+	yes, no := true, false
+	doc := &pbom.PBOM{
+		Includes: []pbom.Include{
+			{Type: "component", Location: "a", UpToDate: &no, Archived: &yes, HasCVE: &no},
+			{Type: "component", Location: "b"},
+		},
+		ContainerImages: []pbom.ContainerImage{
+			{Image: "docker.io/a:1", Authorized: &yes, ForbiddenTag: &no},
+			{Image: "docker.io/b:1"},
+		},
+	}
+	got, bound := platformBOMFrom(doc)
+	if bound != "" || got == nil {
+		t.Fatalf("refused on bound %q", bound)
+	}
+	raw, err := json.Marshal(got)
+	if err != nil {
+		t.Fatalf("marshal: %v", err)
+	}
+	var decoded struct {
+		Includes []map[string]any `json:"includes"`
+		Images   []map[string]any `json:"images"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatalf("unmarshal: %v", err)
+	}
+
+	determined, undetermined := decoded.Includes[0], decoded.Includes[1]
+	for key, want := range map[string]any{"up_to_date": false, "archived": true, "has_cve": false} {
+		if determined[key] != want {
+			t.Errorf("includes[0].%s = %#v, want %#v", key, determined[key], want)
+		}
+		if _, present := undetermined[key]; present {
+			t.Errorf("includes[1].%s = %#v is on the wire although nothing determined it", key, undetermined[key])
+		}
+	}
+
+	flagged, unflagged := decoded.Images[0], decoded.Images[1]
+	for key, want := range map[string]any{"authorized": true, "forbidden_tag": false} {
+		if flagged[key] != want {
+			t.Errorf("images[0].%s = %#v, want %#v", key, flagged[key], want)
+		}
+		if _, present := unflagged[key]; present {
+			t.Errorf("images[1].%s = %#v is on the wire although no control evaluated it", key, unflagged[key])
+		}
+	}
+}
+
+// TestPlatformBOMFrom_OverriddenJobsShapeAndAbsence pins both sides of the
+// one nested array: an include that names overridden jobs carries them under
+// the spec's own keys, and one that names none carries no key at all.
+func TestPlatformBOMFrom_OverriddenJobsShapeAndAbsence(t *testing.T) {
+	doc := &pbom.PBOM{Includes: []pbom.Include{
+		{Type: "component", Location: "a", Overridden: true, OverriddenJobs: []utils.OverriddenJobDetail{{JobName: "sast", OverriddenKeys: []string{"script", "image"}}}},
+		{Type: "component", Location: "b"},
+	}}
+	got, bound := platformBOMFrom(doc)
+	if bound != "" || got == nil {
+		t.Fatalf("refused on bound %q", bound)
+	}
+	if len(got.Includes[0].OverriddenJobs) != 1 {
+		t.Fatalf("includes[0].overridden_jobs = %#v, want one entry", got.Includes[0].OverriddenJobs)
+	}
+	ov := got.Includes[0].OverriddenJobs[0]
+	if ov.Job != "sast" || !reflect.DeepEqual(ov.Keys, []string{"script", "image"}) {
+		t.Errorf("overridden_jobs[0] = %#v, want sast with its two keys", ov)
+	}
+	if got.Includes[1].OverriddenJobs != nil {
+		t.Errorf("includes[1].overridden_jobs = %#v, want nil so the key stays off the wire", got.Includes[1].OverriddenJobs)
+	}
+}
+
+// TestPlatformBOMBound_EveryStringField walks the string bound over every
+// field the section puts on the wire. The bound exists so the platform never
+// refuses a whole push over one long string, which means it has to cover
+// EVERY string, not the three the earlier tests happened to name: a field
+// added to the walker without its check is exactly the gap that costs a run
+// its results.
+func TestPlatformBOMBound_EveryStringField(t *testing.T) {
+	long := strings.Repeat("a", bomMaxStringRunes+1)
+	const wantString = "string > 512 runes"
+
+	for _, tc := range []struct {
+		name string
+		doc  *pbom.PBOM
+	}{
+		{"include type", &pbom.PBOM{Includes: []pbom.Include{{Type: long}}}},
+		{"include location", &pbom.PBOM{Includes: []pbom.Include{{Type: "local", Location: long}}}},
+		{"include project", &pbom.PBOM{Includes: []pbom.Include{{Type: "project", Project: long}}}},
+		{"include version", &pbom.PBOM{Includes: []pbom.Include{{Type: "component", Version: long}}}},
+		{"include latest version", &pbom.PBOM{Includes: []pbom.Include{{Type: "component", LatestVersion: long}}}},
+		{"include component name", &pbom.PBOM{Includes: []pbom.Include{{Type: "component", ComponentName: long}}}},
+		{"include advisory", &pbom.PBOM{Includes: []pbom.Include{{Type: "component", Advisories: []string{long}}}}},
+		{"overridden job name", &pbom.PBOM{Includes: []pbom.Include{{Type: "component", OverriddenJobs: []utils.OverriddenJobDetail{{JobName: long}}}}}},
+		{"overridden job key", &pbom.PBOM{Includes: []pbom.Include{{Type: "component", OverriddenJobs: []utils.OverriddenJobDetail{{JobName: "a", OverriddenKeys: []string{long}}}}}}},
+		{"image reference", &pbom.PBOM{ContainerImages: []pbom.ContainerImage{{Image: long}}}},
+		{"image registry", &pbom.PBOM{ContainerImages: []pbom.ContainerImage{{Image: "a", Registry: long}}}},
+		{"image name", &pbom.PBOM{ContainerImages: []pbom.ContainerImage{{Image: "a", Name: long}}}},
+		{"image tag", &pbom.PBOM{ContainerImages: []pbom.ContainerImage{{Image: "a", Tag: long}}}},
+		{"image job name", &pbom.PBOM{ContainerImages: []pbom.ContainerImage{{Image: "a", Jobs: []string{long}}}}},
+		{"job name", &pbom.PBOM{Jobs: []pbom.JobResources{{Name: long, RunnerTags: []string{"docker"}}}}},
+		{"runner tag", &pbom.PBOM{Jobs: []pbom.JobResources{{Name: "test", RunnerTags: []string{long}}}}},
+		{"service reference", &pbom.PBOM{Jobs: []pbom.JobResources{{Name: "test", Services: []pbom.ContainerImageRef{{Image: long}}}}}},
+		{"service registry", &pbom.PBOM{Jobs: []pbom.JobResources{{Name: "test", Services: []pbom.ContainerImageRef{{Image: "a", Registry: long}}}}}},
+		{"service name", &pbom.PBOM{Jobs: []pbom.JobResources{{Name: "test", Services: []pbom.ContainerImageRef{{Image: "a", Name: long}}}}}},
+		{"service tag", &pbom.PBOM{Jobs: []pbom.JobResources{{Name: "test", Services: []pbom.ContainerImageRef{{Image: "a", Tag: long}}}}}},
+		{"service digest", &pbom.PBOM{Jobs: []pbom.JobResources{{Name: "test", Services: []pbom.ContainerImageRef{{Image: "a", Digest: long}}}}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, bound := platformBOMFrom(tc.doc)
+			if got != nil {
+				t.Error("an over-long string still produced a section: the bill is dropped whole, never truncated")
+			}
+			if bound != wantString {
+				t.Errorf("bound = %q, want %q", bound, wantString)
+			}
+		})
+	}
+}
+
+// TestPlatformBOMBound_CountsAreInclusive pins the bounds at their own edge.
+// The spec says "at most 500", so exactly 500 is legal, and an off-by-one in
+// either direction is a real failure: one way the CLI drops bills the
+// platform would have taken, the other way it sends bills the platform
+// refuses and the run loses everything.
+func TestPlatformBOMBound_CountsAreInclusive(t *testing.T) {
+	services := make([]pbom.ContainerImageRef, bomMaxServicesPerJob)
+	for i := range services {
+		services[i] = pbom.ContainerImageRef{Image: "docker.io/svc-" + strconv.Itoa(i) + ":1"}
+	}
+	for _, tc := range []struct {
+		name string
+		doc  *pbom.PBOM
+	}{
+		{"exactly 500 includes", &pbom.PBOM{Includes: make([]pbom.Include, bomMaxIncludes)}},
+		{"exactly 500 images", &pbom.PBOM{ContainerImages: make([]pbom.ContainerImage, bomMaxImages)}},
+		{"exactly 500 jobs", &pbom.PBOM{Jobs: make([]pbom.JobResources, bomMaxJobs)}},
+		{"exactly 64 services on one job", &pbom.PBOM{Jobs: []pbom.JobResources{{Name: "test", Services: services}}}},
+		{"exactly 32 runner tags on one job", &pbom.PBOM{Jobs: []pbom.JobResources{{Name: "test", RunnerTags: make([]string, bomMaxRunnerTagsPerJob)}}}},
+		{"exactly 50 advisories on one include", &pbom.PBOM{Includes: []pbom.Include{{Type: "component", Advisories: make([]string, bomMaxAdvisories)}}}},
+		{"exactly 512 runes", &pbom.PBOM{Includes: []pbom.Include{{Type: "local", Location: strings.Repeat("a", bomMaxStringRunes)}}}},
+		{"exactly 1024 runes of remote URL", &pbom.PBOM{Includes: []pbom.Include{{Type: "remote", Location: strings.Repeat("u", bomMaxRemoteURLRunes)}}}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, bound := platformBOMFrom(tc.doc)
+			if bound != "" || got == nil {
+				t.Errorf("a document exactly at the bound was refused on %q", bound)
+			}
+		})
+	}
+}
+
+// TestPlatformBOMBound_CountsRunesNotBytes pins the unit. A location of 512
+// multi-byte runes is 1536 bytes and is legal; counting bytes would refuse a
+// bill that fits, and the platform counts runes.
+func TestPlatformBOMBound_CountsRunesNotBytes(t *testing.T) {
+	wide := strings.Repeat("éè", bomMaxStringRunes/2) // 512 runes, 1024 bytes
+	if _, bound := platformBOMFrom(&pbom.PBOM{Includes: []pbom.Include{{Type: "local", Location: wide}}}); bound != "" {
+		t.Errorf("512 multi-byte runes were refused on %q: the bound counts runes, not bytes", bound)
+	}
+	over := wide + "é"
+	if _, bound := platformBOMFrom(&pbom.PBOM{Includes: []pbom.Include{{Type: "local", Location: over}}}); bound != "string > 512 runes" {
+		t.Errorf("513 multi-byte runes were accepted (bound %q)", bound)
+	}
+}
+
+// TestPlatformBOMDocument_EveryRefusal pins the guards that decide whether a
+// run may describe its dependencies at all. Each of them exists because the
+// platform replaces a project's edges with the pushed bill as ONE set, so a
+// bill built on nothing, on half a collection, or on a provider this generator
+// cannot read would delete real edges.
+func TestPlatformBOMDocument_EveryRefusal(t *testing.T) {
+	collected := func() *control.AnalysisResult {
+		return &control.AnalysisResult{
+			ProjectPath: "group/app",
+			PipelineImageData: &gitlab.GitlabPipelineImageData{
+				Images: []gitlab.GitlabPipelineImageInfo{{Link: "docker.io/node:20", Registry: "docker.io", Name: "node", Tag: "20", Job: "build"}},
+			},
+		}
+	}
+	conf := &configuration.Configuration{GitlabURL: "https://gitlab.example.com", Branch: "main"}
+
+	if doc := platformBOMDocument(nil, conf, collected(), nil); doc != nil {
+		t.Error("a nil provider produced a bill: there is no pipeline to describe")
+	}
+	if p, ok := providerPkg.Get("github"); ok {
+		if doc := platformBOMDocument(p, conf, collected(), nil); doc != nil {
+			t.Error("the GitHub path produced a bill: the platform models no GitHub resource and this generator reads GitLab collections")
+		}
+	}
+	if doc := platformBOMDocument(testProvider(t), conf, nil, nil); doc != nil {
+		t.Error("a nil result produced a bill")
+	}
+	degraded := collected()
+	degraded.DataCollectionDegraded = true
+	if doc := platformBOMDocument(testProvider(t), conf, degraded, nil); doc != nil {
+		t.Error("a degraded run produced a bill: a partial bill deletes the edges the run failed to read")
+	}
+	if doc := platformBOMDocument(testProvider(t), conf, &control.AnalysisResult{ProjectPath: "group/app"}, nil); doc != nil {
+		t.Error("a run with no collection at all produced a bill: it knows nothing about the pipeline rather than knowing it depends on nothing")
+	}
+
+	// The accepting case, with a nil conf: the bill does not read the
+	// project stamp, so a caller without one still gets its dependencies.
+	if doc := platformBOMDocument(testProvider(t), nil, collected(), nil); doc == nil {
+		t.Error("a collected run with no conf produced no bill")
+	}
+}
+
+// TestPlatformBOMDocument_NoControlsClaimsNoVerdict pins the --no-controls
+// path through the bill: nothing was evaluated, so the inventory is reported
+// and not one per-image flag is.
+func TestPlatformBOMDocument_NoControlsClaimsNoVerdict(t *testing.T) {
+	result := &control.AnalysisResult{
+		ProjectPath: "group/app",
+		PipelineImageData: &gitlab.GitlabPipelineImageData{
+			Images: []gitlab.GitlabPipelineImageInfo{{Link: "docker.io/node:20", Registry: "docker.io", Name: "node", Tag: "20", Job: "build"}},
+		},
+	}
+	conf := &configuration.Configuration{GitlabURL: "https://gitlab.example.com", Branch: "main", NoControls: true}
+
+	doc := platformBOMDocument(testProvider(t), conf, result, nil)
+	if doc == nil {
+		t.Fatal("--no-controls produced no bill: the inventory is a collected fact, independent of any control")
+	}
+	got, bound := platformBOMFrom(doc)
+	if bound != "" || got == nil {
+		t.Fatalf("refused on bound %q", bound)
+	}
+	if len(got.Images) != 1 {
+		t.Fatalf("images = %#v, want the collected image", got.Images)
+	}
+	if got.Images[0].Authorized != nil || got.Images[0].ForbiddenTag != nil {
+		t.Errorf("image = %#v, want both flags nil under --no-controls: nothing was evaluated", got.Images[0])
 	}
 }
