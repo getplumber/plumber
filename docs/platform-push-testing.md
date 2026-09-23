@@ -37,6 +37,30 @@ Because there is no Go type standing between the assertion and the bytes,
 a tag or shape regression fails this test even when it would silently
 decode clean into `platformPush`.
 
+The optional `bom` section (the pipeline's bill of materials) is asserted the
+same way, in `TestPlatformBOMFrom_WireShape` and
+`TestBuildPlatformPush_CarriesTheBOM`: its own `version`, snake_case keys
+throughout (`latest_version`, `up_to_date`, `component_name`, `from_catalog`,
+`overridden_jobs[].job`, `forbidden_tag`, `runner_tags`), and the three-state
+booleans omitted rather than defaulted when no control determined them.
+`TestPlatformBOMFrom_Bounds` covers the sizing rule: past any bound the whole
+section is dropped and the bound is named, never truncated, because the
+platform replaces a project's dependency edges with the pushed set in one go
+and a short bill would delete real dependencies. The last of those bounds is
+the 256 KiB document cap, which is a property of the encoded bytes rather than
+of a count, so it is checked on the marshalled section.
+
+Two shape rules inside the section are asserted for the same reason:
+`includes`, `images` and `jobs` are ALWAYS present (`[]` when empty), so the
+projection never has to guess whether an absent key means zero or unknown
+(`TestPlatformBOMFrom_AlwaysEmitsTheThreeArrays`), and every reference on the
+wire goes through one normalisation, so the same upstream written as a job
+image and as a service reaches the platform as one `<registry>/<name>` key
+(`TestPlatformBOMFrom_BareNameGetsTheDockerHubNamespace`). A reference the run
+never resolved is left out of the section entirely
+(`TestPlatformBOMFrom_UnresolvedImagesAreOmitted` and its services sibling);
+the PBOM artifact still lists it.
+
 ## Capturing the bytes that actually go over the wire
 
 The rest of `platform_push_test.go` (`TestMaybePushPlatform_PostsThePush`
