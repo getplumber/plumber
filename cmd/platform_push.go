@@ -473,9 +473,15 @@ const platformBOMSchemaVersion = 1
 // own limits, restated here so the CLI never builds a bill the platform will
 // refuse with a 400 and lose the whole push over.
 const (
-	bomMaxIncludes         = 500
-	bomMaxImages           = 500
-	bomMaxJobs             = 500
+	bomMaxIncludes = 500
+	bomMaxImages   = 500
+	bomMaxJobs     = 500
+	// bomMaxJobsPerImage is the platform's own ceiling on the jobs one image
+	// may name (bom_image_jobs). The design spec's sizing section does not
+	// list it: an image shared by a thousand jobs sits inside every bound
+	// the spec does name, and the platform refuses that push whole, so the
+	// run would lose its results over a bill nobody bounded.
+	bomMaxJobsPerImage     = 500
 	bomMaxServicesPerJob   = 64
 	bomMaxRunnerTagsPerJob = 32
 	bomMaxAdvisories       = 50
@@ -505,9 +511,6 @@ const (
 func platformBOMFrom(doc *pbom.PBOM) (*platformBOM, string) {
 	if doc == nil {
 		return nil, ""
-	}
-	if bound := platformBOMBound(doc); bound != "" {
-		return nil, bound
 	}
 
 	out := &platformBOM{
@@ -577,6 +580,27 @@ func platformBOMFrom(doc *pbom.PBOM) (*platformBOM, string) {
 			continue
 		}
 		out.Jobs = append(out.Jobs, entry)
+	}
+
+	// Every bound is measured HERE, on the finished section, never on the
+	// document it was built from. The loops above drop unresolved references
+	// and the jobs those empty out, so a document over a bound routinely
+	// emits a section inside it: 501 jobs of which one is a placeholder-only
+	// job is a 500-job section, which the platform accepts. Measuring the
+	// document instead refused that bill, and refusing is not a harmless
+	// extra caution, because the push still goes: the platform then keeps the
+	// project's stale dependency edges instead of the bill this run collected.
+	//
+	// The same reason applies to the strings. The normalisation can make one
+	// longer than the collector's (the Docker Hub namespace adds eight
+	// runes), and the platform counts what it receives.
+	//
+	// The cost is that a refused bill is built before it is refused. That is
+	// the right trade here: the input is this run's own collection of its own
+	// pipeline, not an untrusted body, and the byte cap below has to marshal
+	// the finished section anyway.
+	if bound := platformBOMBound(out); bound != "" {
+		return nil, bound
 	}
 
 	// The spec's ninth bound: the platform stores the document capped at
@@ -679,20 +703,25 @@ func bomNormalizeRef(image string, unresolved bool) (bomRef, bool) {
 	return out, true
 }
 
-// platformBOMBound returns the bound the document exceeds, empty when it fits.
-// It runs before any copying, so a refused bill costs one walk and no
-// allocation.
-func platformBOMBound(doc *pbom.PBOM) string {
-	if len(doc.Includes) > bomMaxIncludes {
+// platformBOMBound returns the bound the SECTION exceeds, empty when it fits.
+// The single place every count and length bound lives, and it is handed the
+// emitted shape rather than the document behind it, so what is measured is
+// exactly what the platform will receive and count. See the call site for why
+// that ordering is the whole point.
+//
+// The byte cap is the one bound not here: it is a property of the encoded
+// bytes rather than of the section's fields, so it is checked on the marshal.
+func platformBOMBound(out *platformBOM) string {
+	if len(out.Includes) > bomMaxIncludes {
 		return fmt.Sprintf("includes > %d", bomMaxIncludes)
 	}
-	if len(doc.ContainerImages) > bomMaxImages {
+	if len(out.Images) > bomMaxImages {
 		return fmt.Sprintf("images > %d", bomMaxImages)
 	}
-	if len(doc.Jobs) > bomMaxJobs {
+	if len(out.Jobs) > bomMaxJobs {
 		return fmt.Sprintf("jobs > %d", bomMaxJobs)
 	}
-	for _, inc := range doc.Includes {
+	for _, inc := range out.Includes {
 		if len(inc.Advisories) > bomMaxAdvisories {
 			return fmt.Sprintf("advisories per include > %d", bomMaxAdvisories)
 		}
@@ -706,20 +735,23 @@ func platformBOMBound(doc *pbom.PBOM) string {
 		strs := []string{inc.Type, inc.Project, inc.Version, inc.LatestVersion, inc.ComponentName}
 		strs = append(strs, inc.Advisories...)
 		for _, job := range inc.OverriddenJobs {
-			strs = append(strs, job.JobName)
-			strs = append(strs, job.OverriddenKeys...)
+			strs = append(strs, job.Job)
+			strs = append(strs, job.Keys...)
 		}
 		if bound := bomStringBound(strs...); bound != "" {
 			return bound
 		}
 	}
-	for _, img := range doc.ContainerImages {
-		strs := append([]string{img.Image, img.Registry, img.Name, img.Tag}, img.Jobs...)
+	for _, img := range out.Images {
+		if len(img.Jobs) > bomMaxJobsPerImage {
+			return fmt.Sprintf("jobs per image > %d", bomMaxJobsPerImage)
+		}
+		strs := append([]string{img.Image, img.Registry, img.Name, img.Tag, img.Digest}, img.Jobs...)
 		if bound := bomStringBound(strs...); bound != "" {
 			return bound
 		}
 	}
-	for _, job := range doc.Jobs {
+	for _, job := range out.Jobs {
 		if len(job.Services) > bomMaxServicesPerJob {
 			return fmt.Sprintf("services per job > %d", bomMaxServicesPerJob)
 		}
