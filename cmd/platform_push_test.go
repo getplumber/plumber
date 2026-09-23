@@ -2209,6 +2209,14 @@ func TestPlatformBOMFrom_EdgeBound(t *testing.T) {
 // TestBuildPlatformPush_CarriesTheBOM covers the wiring: a run whose
 // collections and pipeline model are present pushes a bom built from them,
 // with no second collection pass.
+//
+// The component include's origin below is shaped as the collector records it
+// (dataCollectionGitlabPipelineOrigin.go: the component path split into a
+// project and a component name), project included. That project is half the
+// key the platform builds a component node on (dependencies-graph design spec
+// 4.1), so it is asserted on the wire: a component include that reached the
+// platform without it was skipped as unkeyable and the component graph came
+// back empty.
 func TestBuildPlatformPush_CarriesTheBOM(t *testing.T) {
 	conf := &configuration.Configuration{GitlabURL: "https://gitlab.example.com", Branch: "main"}
 	result := &control.AnalysisResult{
@@ -2270,6 +2278,10 @@ func TestBuildPlatformPush_CarriesTheBOM(t *testing.T) {
 	inc, _ := includes[0].(map[string]any)
 	if inc["version"] != "3.3.0" || inc["latest_version"] != "3.4.0" {
 		t.Errorf("bom.includes[0] versions = %#v / %#v, want 3.3.0 / 3.4.0", inc["version"], inc["latest_version"])
+	}
+	if inc["project"] != "components/sast" || inc["component_name"] != "sast" {
+		t.Errorf("bom.includes[0] key = %#v / %#v, want components/sast / sast: the platform keys a component node on both",
+			inc["project"], inc["component_name"])
 	}
 	images, _ := bom["images"].([]any)
 	if len(images) != 1 {
