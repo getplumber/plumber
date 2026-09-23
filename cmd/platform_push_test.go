@@ -2206,6 +2206,98 @@ func TestPlatformBOMFrom_EdgeBound(t *testing.T) {
 	}
 }
 
+// TestPlatformBOMFrom_EdgeBoundCountsServicesAndRunnerTags covers the other
+// two terms of the projection's arithmetic. The bound above is driven entirely
+// by images naming jobs, so dropping either job-side term from
+// bomProjectedEdges leaves it green while the platform, which counts one edge
+// per service and one per runner tag of a job (ingestion.projectedEdges),
+// refuses the push whole. Each term is taken over the bound on its own here:
+// one more service, then one more runner tag, on a bill sitting exactly on it.
+//
+// The fixture pays for most of the bound in runner tags rather than services
+// because the two cost very different numbers of bytes. A service is an object
+// with an image, a registry and a name; ten thousand of them serialise well
+// past the 256 KiB document cap, which is checked after this bound and would
+// refuse the accepted bill for the wrong reason. Runner tags are short
+// strings, so the bill below stays a bill the platform would really take.
+func TestPlatformBOMFrom_EdgeBoundCountsServicesAndRunnerTags(t *testing.T) {
+	const (
+		serviceJobs    = 40
+		servicesPerJob = 50
+		tagJobs        = 400
+		tagsPerJob     = 20
+	)
+	if serviceJobs*servicesPerJob+tagJobs*tagsPerJob != bomMaxEdges {
+		t.Fatalf("the fixture projects %d edges, not the %d the bound names",
+			serviceJobs*servicesPerJob+tagJobs*tagsPerJob, bomMaxEdges)
+	}
+	// Every other count bound stays respected, with room to spare for the one
+	// extra edge each case adds: the refusal under test has to be bom_edges
+	// and nothing else.
+	if serviceJobs+tagJobs > bomMaxJobs || servicesPerJob >= bomMaxServicesPerJob || tagsPerJob >= bomMaxRunnerTagsPerJob {
+		t.Fatalf("the fixture sits on a count bound rather than the product bound: %d jobs, %d services, %d tags",
+			serviceJobs+tagJobs, servicesPerJob, tagsPerJob)
+	}
+
+	// extraServices and extraTags land on the first job of each kind, which
+	// is what takes the bill one edge over without touching any other count.
+	bill := func(extraServices, extraTags int) *pbom.PBOM {
+		doc := &pbom.PBOM{}
+		for i := 0; i < serviceJobs; i++ {
+			n := servicesPerJob
+			if i == 0 {
+				n += extraServices
+			}
+			services := make([]pbom.ContainerImageRef, n)
+			for s := range services {
+				services[s] = pbom.ContainerImageRef{Image: "svc/s" + strconv.Itoa(s)}
+			}
+			doc.Jobs = append(doc.Jobs, pbom.JobResources{
+				Name:     "s" + strconv.Itoa(i),
+				Services: services,
+			})
+		}
+		for i := 0; i < tagJobs; i++ {
+			n := tagsPerJob
+			if i == 0 {
+				n += extraTags
+			}
+			tags := make([]string, n)
+			for k := range tags {
+				tags[k] = "t" + strconv.Itoa(k)
+			}
+			doc.Jobs = append(doc.Jobs, pbom.JobResources{
+				Name:       "r" + strconv.Itoa(i),
+				RunnerTags: tags,
+			})
+		}
+		return doc
+	}
+
+	got, bound := platformBOMFrom(bill(0, 0))
+	if got == nil || bound != "" {
+		t.Fatalf("a bill projecting exactly %d edges was refused on bound %q: the platform accepts it", bomMaxEdges, bound)
+	}
+
+	for _, tc := range []struct {
+		name                     string
+		extraServices, extraTags int
+	}{
+		{name: "one service over", extraServices: 1},
+		{name: "one runner tag over", extraTags: 1},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, bound := platformBOMFrom(bill(tc.extraServices, tc.extraTags))
+			if got != nil {
+				t.Error("platformBOMFrom returned a section the platform would refuse on bom_edges: the bill is dropped whole, never truncated")
+			}
+			if bound != "edges > 10000" {
+				t.Errorf("bound = %q, want %q", bound, "edges > 10000")
+			}
+		})
+	}
+}
+
 // TestBuildPlatformPush_CarriesTheBOM covers the wiring: a run whose
 // collections and pipeline model are present pushes a bom built from them,
 // with no second collection pass.
