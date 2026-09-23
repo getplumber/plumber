@@ -93,7 +93,8 @@ Top-level keys are emitted in this order (human-readable flow: context → aggre
   "summary": { ... },
   "plumberScore": { ... },
   "containerImages": [ ... ],
-  "includes": [ ... ]
+  "includes": [ ... ],
+  "jobs": [ ... ]
 }
 ```
 
@@ -108,6 +109,7 @@ Top-level keys are emitted in this order (human-readable flow: context → aggre
 | `plumberScore` | object | Always present. Letter score (A–E), points (0–100), and severity counts (see below; per-code detail is exposed in the JSON `--output` only). The score has been emitted unconditionally since #218; `--score` is a deprecated no-op and `--score-point` only adds the per-code breakdown to stdout and the MR comment. |
 | `containerImages` | array | All container images used in the pipeline |
 | `includes` | array | All includes (components, templates, local, remote, project) |
+| `jobs` | array | GitLab only. Per-job service images and runner tags. Omitted entirely when the run produced no pipeline model to read. |
 
 ### `project` Object
 
@@ -153,6 +155,7 @@ Each entry represents a Docker/OCI image used in a pipeline job.
 | `name` | string | Image name without registry/tag (e.g., `golang`, `security-products/sobelow`) |
 | `tag` | string | Image tag (e.g., `1.22`, `latest`). Omitted if no tag specified. |
 | `jobs` | string[] | Pipeline jobs using this image |
+| `unresolved` | bool | `true` when the reference still held a `$VARIABLE` after substitution (`image: $CI_REGISTRY_IMAGE:$TAG`), so `registry`, `name` and `tag` describe a placeholder rather than an image. Omitted when the reference resolved. The entry is still listed: the pipeline does declare it. Controls already abstain on such an image, which is why `authorized` and `forbiddenTag` are absent from it. |
 | `authorized` | bool | Whether the image passes the authorized sources control. Only present when the control is enabled. |
 | `forbiddenTag` | bool | Whether the image uses a forbidden tag. Only present when the control is enabled. |
 
@@ -266,6 +269,47 @@ Each entry in `overriddenJobs[]`:
   "version": "v1.2.0"
 }
 ```
+
+### `jobs[]` Array
+
+**GitLab only.** One entry per job that asks a runner for something of its own: a service image started alongside the job, a runner tag that decides which runner picks the job up, or both. Jobs that carry neither are not listed, and the whole key is omitted (never an empty array) when the run produced no pipeline model to read - an empty array would read as "this pipeline uses no service and no runner tag", which is a claim a run that never looked cannot make.
+
+Entries are sorted by job name, so two runs over the same pipeline produce the same document.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | The job name, exactly as the pipeline declares it |
+| `services` | array | The job's `services:` images, each split the way `containerImages[]` is (see below). A blank entry (`services: [""]`, `services: [{name: ""}]`) names nothing and is skipped. Omitted when the job declares none. |
+| `runnerTags` | string[] | The job's `tags:` keyword, read off the merged configuration (so a tag inherited from `default:` counts), trimmed, de-duplicated and sorted. Omitted when the job names no tag. |
+
+Each entry in `services[]` is an image reference with no compliance verdict attached (the `authorized` / `forbiddenTag` flags live on `containerImages[]`, which is pipeline-level):
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `image` | string | The full reference, rebuilt from the parts below |
+| `registry` | string | Registry host, when the collector resolved one |
+| `name` | string | Image name |
+| `tag` | string | Tag, when the reference carries one |
+| `digest` | string | Digest, when the reference is pinned by one |
+| `unresolved` | bool | Same meaning as on `containerImages[]`: the reference held a `$VARIABLE`. Omitted when it resolved. |
+
+**Example:**
+
+```json
+{
+  "name": "integration-test",
+  "services": [
+    {
+      "image": "docker:24.0.5-dind",
+      "name": "docker",
+      "tag": "24.0.5-dind"
+    }
+  ],
+  "runnerTags": ["docker", "linux"]
+}
+```
+
+The CycloneDX export does not carry `jobs[]`: a runner tag is not a component, and a service image is already published as one through the pipeline's container images.
 
 ### `summary` Object
 

@@ -2,9 +2,11 @@ package pbom
 
 import (
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/getplumber/plumber/gitlab"
+	"github.com/getplumber/plumber/internal/ir"
 	"github.com/getplumber/plumber/utils"
 )
 
@@ -37,6 +39,21 @@ type Generator struct {
 	githubData       *GitHubComplianceData
 	commitSHA        string
 	ref              string
+	// jobs is the analyzed pipeline's job list, attached by WithJobResources.
+	// nil when the caller never attached one, which is what keeps the jobs
+	// key out of the document entirely.
+	jobs []ir.Job
+}
+
+// WithJobResources attaches the analyzed pipeline's jobs so the document can
+// name each job's service images and runner tags.
+//
+// The jobs come from the normalized pipeline model, already parsed: the CLI
+// is the one parser of CI configuration (invariant I1), and nothing here
+// reads YAML or splits an image reference a second time.
+func (g *Generator) WithJobResources(jobs []ir.Job) *Generator {
+	g.jobs = jobs
+	return g
 }
 
 // WithCommit attaches the resolved analyzed commit and its branch/tag so the
@@ -115,10 +132,95 @@ func (g *Generator) Generate(
 		pbom.Includes = g.processIncludes(originData)
 	}
 
+	// Per-job resources (services, runner tags). Read off the pipeline model
+	// rather than the collections above, because neither collection carries
+	// them: images are pipeline-level and includes are not jobs.
+	pbom.Jobs = g.processJobResources()
+
 	// Calculate summary
 	pbom.Summary = g.calculateSummary(pbom)
 
 	return pbom
+}
+
+// processJobResources projects the attached pipeline jobs onto the document's
+// per-job entries, keeping only the jobs that actually carry a service or a
+// runner tag: a job that asks for neither is not a dependency of anything and
+// would only pad the bill of materials.
+//
+// Sorted by name so two runs over the same pipeline produce the same
+// document, which is what lets a consumer replace a project's entries as one
+// set without seeing a spurious change.
+func (g *Generator) processJobResources() []JobResources {
+	if len(g.jobs) == 0 {
+		return nil
+	}
+	out := make([]JobResources, 0, len(g.jobs))
+	for _, j := range g.jobs {
+		if len(j.Services) == 0 && len(j.Tags) == 0 {
+			continue
+		}
+		entry := JobResources{Name: j.Name}
+		for _, svc := range j.Services {
+			ref := containerImageRefFrom(svc)
+			// A blank services: entry (an empty string, or a {name: ""} map)
+			// reaches here as a zero-valued image. It names no dependency,
+			// and a consumer that keys a resource on the reference would key
+			// one on nothing at all. The GitHub path already skips such a
+			// reference; so does this one.
+			if ref.Image == "" {
+				continue
+			}
+			entry.Services = append(entry.Services, ref)
+		}
+		if len(j.Tags) > 0 {
+			entry.RunnerTags = append([]string(nil), j.Tags...)
+		}
+		// The job may have had nothing but blank services, in which case it
+		// is back to carrying nothing and is not listed.
+		if len(entry.Services) == 0 && len(entry.RunnerTags) == 0 {
+			continue
+		}
+		out = append(out, entry)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// containerImageRefFrom projects one pipeline-model image onto the document's
+// reference shape. Registry, name, tag and digest are copied as the collector
+// parsed them; Image joins them back so a consumer has the whole reference
+// without having to join them itself.
+//
+// The registry is prefixed only when the name does not already carry it,
+// which is what keeps a reference the collector already normalised from
+// growing a duplicated host.
+func containerImageRefFrom(img ir.Image) ContainerImageRef {
+	out := ContainerImageRef{
+		Registry:   img.Registry,
+		Name:       img.Name,
+		Tag:        img.Tag,
+		Digest:     img.Digest,
+		Unresolved: img.Unresolved,
+	}
+	if img.Name == "" {
+		return out
+	}
+	ref := img.Name
+	if img.Registry != "" && !strings.HasPrefix(ref, img.Registry+"/") {
+		ref = img.Registry + "/" + ref
+	}
+	switch {
+	case img.Digest != "":
+		ref += "@" + img.Digest
+	case img.Tag != "":
+		ref += ":" + img.Tag
+	}
+	out.Image = ref
+	return out
 }
 
 // processImages extracts container image information from the image data collection
@@ -147,11 +249,12 @@ func (g *Generator) processImages(imageData *gitlab.GitlabPipelineImageData) []C
 		jobs := imageJobMap[link]
 		info := imageInfoMap[link]
 		img := ContainerImage{
-			Image:    link,
-			Registry: info.Registry,
-			Name:     info.Name,
-			Tag:      info.Tag,
-			Jobs:     uniqueSortedStrings(jobs),
+			Image:      link,
+			Registry:   info.Registry,
+			Name:       info.Name,
+			Tag:        info.Tag,
+			Jobs:       uniqueSortedStrings(jobs),
+			Unresolved: info.Unresolved,
 		}
 
 		// Enrich with compliance data if available

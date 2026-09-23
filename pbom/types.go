@@ -40,6 +40,45 @@ type PBOM struct {
 
 	ContainerImages []ContainerImage `json:"containerImages"`
 	Includes        []Include        `json:"includes"`
+
+	// Jobs names the per-job resources the pipeline asks a runner for: the
+	// service images started alongside the job, and the runner tags that
+	// decide which runner picks it up. Only the jobs carrying at least one
+	// of the two are listed, sorted by name.
+	//
+	// Absent, not empty, when the generator was never handed the pipeline
+	// model: an empty list would read as "this pipeline has no service and
+	// no runner tag" for a run that simply never looked.
+	Jobs []JobResources `json:"jobs,omitempty"`
+}
+
+// JobResources is one job's share of the bill of materials. Name is the job
+// name as the pipeline declares it; nothing about it is re-authored.
+type JobResources struct {
+	Name       string              `json:"name"`
+	Services   []ContainerImageRef `json:"services,omitempty"`
+	RunnerTags []string            `json:"runnerTags,omitempty"`
+}
+
+// ContainerImageRef is a container image named without any compliance
+// verdict attached: the inventory fact alone. ContainerImage below is the
+// pipeline-level entry, which additionally carries the jobs that use the
+// image and the flags the controls produced for it.
+//
+// The split into registry, name, tag and digest is the pipeline model's own.
+// The CLI parses an image reference exactly once, at collection (invariant
+// I1); Image is those parts joined back into one string for a consumer that
+// wants the reference whole.
+type ContainerImageRef struct {
+	Image    string `json:"image"`
+	Registry string `json:"registry,omitempty"`
+	Name     string `json:"name"`
+	Tag      string `json:"tag,omitempty"`
+	Digest   string `json:"digest,omitempty"`
+	// Unresolved reports that the reference still held a $VARIABLE when it
+	// was parsed, so the fields above describe a placeholder rather than an
+	// image. See ContainerImage.Unresolved: same signal, same reason.
+	Unresolved bool `json:"unresolved,omitempty"`
 }
 
 // PlumberScoreSummary mirrors control.PlumberScoreResult for JSON consumers (PBOM / SBOM).
@@ -136,6 +175,17 @@ type ContainerImage struct {
 
 	// Usage context
 	Jobs []string `json:"jobs"`
+
+	// Unresolved reports that the reference still held a $VARIABLE after
+	// substitution, so Registry, Name and Tag above were parsed out of a
+	// placeholder rather than out of an image reference. The collector knows
+	// this and the compliance enrichment already honours it (an unresolved
+	// image claims no verdict); carrying it here lets a consumer that keys a
+	// resource on the reference refuse to key one on a variable name.
+	//
+	// The inventory still LISTS the entry: the pipeline does declare it, and
+	// the document's job is to say what the pipeline declares.
+	Unresolved bool `json:"unresolved,omitempty"`
 
 	// Compliance status (from analysis, if available)
 	Authorized   *bool `json:"authorized,omitempty"`

@@ -1,7 +1,10 @@
 package gitlab
 
 import (
+	"reflect"
 	"testing"
+
+	"gopkg.in/yaml.v2"
 
 	"github.com/getplumber/plumber/internal/ir"
 	glab "gitlab.com/gitlab-org/api/client-go"
@@ -420,5 +423,73 @@ func TestBuildIncludesExposesTemplateIdentityWhenFilePathDiffersFromTheTagName(t
 	}
 	if inc.TemplatePath != "gitleaks" {
 		t.Errorf("TemplatePath = %q, want %q (the template's own identity, from the ref)", inc.TemplatePath, "gitleaks")
+	}
+}
+
+// TestBuildJobs_RunnerTags covers the dependencies-graph requirement that the
+// pipeline model carries each job's runner tags (design spec
+// 2026-09-23-dependencies-graph-design section 5: the push's `bom` names a
+// job's runner_tags, and the CLI is the only parser of CI configuration).
+//
+// The merged YAML is what is read, so a `tags:` inherited from `default:` is
+// already applied by GitLab and counts like a job-level one. The list is
+// de-duplicated and sorted so the wire order never depends on authoring
+// order, and a job with no `tags:` keeps a nil slice rather than an empty
+// one, which is what keeps the key out of the JSON.
+func TestBuildJobs_RunnerTags(t *testing.T) {
+	const merged = `
+build:
+  image: node:20
+  tags: [docker, linux, docker]
+lint:
+  image: node:20
+`
+	var conf GitlabCIConf
+	if err := yaml.Unmarshal([]byte(merged), &conf); err != nil {
+		t.Fatalf("merged fixture does not parse: %v", err)
+	}
+	origin := &GitlabPipelineOriginData{
+		JobMap: map[string]*GitlabPipelineJobData{
+			"build": {Name: "build"},
+			"lint":  {Name: "lint"},
+		},
+		MergedConf: &conf,
+	}
+
+	byName := map[string]ir.Job{}
+	for _, j := range buildJobs(origin, nil, ".gitlab-ci.yml", nil) {
+		byName[j.Name] = j
+	}
+
+	if got, want := byName["build"].Tags, []string{"docker", "linux"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("build.Tags = %#v, want %#v (de-duplicated and sorted)", got, want)
+	}
+	if got := byName["lint"].Tags; got != nil {
+		t.Errorf("lint.Tags = %#v, want nil: a job with no tags: keyword claims no runner tag", got)
+	}
+}
+
+// TestExtractGitLabTags covers the polymorphic `tags:` keyword: GitLab accepts
+// a list of strings, and authors reach the parser with a bare string or a list
+// holding a non-string entry. Nothing is invented and nothing panics: entries
+// are trimmed, empties dropped, non-strings skipped.
+func TestExtractGitLabTags(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   any
+		want []string
+	}{
+		{"nil", nil, nil},
+		{"bare string", "docker", []string{"docker"}},
+		{"blank string", "   ", nil},
+		{"list", []any{" linux ", "docker", "docker"}, []string{"docker", "linux"}},
+		{"list with a non-string", []any{"docker", 42, nil, ""}, []string{"docker"}},
+		{"not a tags value", map[any]any{"a": "b"}, nil},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := extractGitLabTags(tc.in); !reflect.DeepEqual(got, tc.want) {
+				t.Errorf("extractGitLabTags(%#v) = %#v, want %#v", tc.in, got, tc.want)
+			}
+		})
 	}
 }

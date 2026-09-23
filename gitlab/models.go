@@ -240,6 +240,7 @@ type GitlabJob struct {
 	Stage        string                 `yaml:"stage,omitempty"`
 	Image        interface{}            `yaml:"image,omitempty"`
 	Services     interface{}            `yaml:"services,omitempty"` // Can be both a list of string or a list of Serive
+	Tags         interface{}            `yaml:"tags,omitempty"`     // Runner tags: a list of strings, occasionally authored as a bare string
 	Only         interface{}            `yaml:"only,omitempty"`
 	Except       interface{}            `yaml:"except,omitempty"`
 	Variables    map[string]interface{} `yaml:"variables,omitempty"`
