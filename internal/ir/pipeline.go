@@ -198,10 +198,17 @@ type DependabotConfig struct {
 
 // Job is a single pipeline unit of work.
 type Job struct {
-	Name     string   `json:"name"`
-	Image    *Image   `json:"image,omitempty"`
-	Services []Image  `json:"services,omitempty"`
-	Scripts  []string `json:"scripts,omitempty"`
+	Name     string  `json:"name"`
+	Image    *Image  `json:"image,omitempty"`
+	Services []Image `json:"services,omitempty"`
+	// Tags are the job's runner tags (GitLab's `tags:` keyword), read off
+	// the merged configuration so a tag inherited from `default:` counts
+	// exactly as a job-level one does. Sorted and de-duplicated, so the
+	// order never depends on how the pipeline was authored. Empty for a job
+	// that names no tag, which is the honest answer: the job runs on
+	// whichever runner the instance picks, and no tag is claimed for it.
+	Tags    []string `json:"tags,omitempty"`
+	Scripts []string `json:"scripts,omitempty"`
 	// ScriptBlocks names the source block ("before_script", "script",
 	// "after_script") for each entry of Scripts, in the same order.
 	// Lets script-scanning policies surface where the offending line

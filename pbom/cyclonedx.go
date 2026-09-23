@@ -11,6 +11,12 @@ import (
 // CycloneDX spec version we're generating
 const CycloneDXSpecVersion = "1.5"
 
+// The CycloneDX export deliberately carries no per-job entry. PBOM.Jobs
+// (service images and runner tags) has no CycloneDX component type that fits:
+// a runner tag is not a component, and a service image is already published
+// as one through the pipeline's container images. Leaving it out keeps this
+// export's contract exactly as it was for every existing consumer.
+
 // CycloneDX represents a CycloneDX SBOM
 // Spec: https://cyclonedx.org/docs/1.5/json/
 // Struct field order matches a natural read path: BOM header, identifiers,

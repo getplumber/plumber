@@ -746,6 +746,9 @@ func enrichFromMergedConf(job *ir.Job, name string, conf *GitlabCIConf) {
 	if svc := extractGitLabServices(parsed.Services); len(svc) > 0 {
 		job.Services = svc
 	}
+	if tags := extractGitLabTags(parsed.Tags); len(tags) > 0 {
+		job.Tags = tags
+	}
 	if vars := extractGitLabVariables(parsed.Variables); len(vars) > 0 {
 		job.Variables = vars
 	}
@@ -854,6 +857,50 @@ func extractGitLabServices(v any) []ir.Image {
 			}
 		}
 	}
+	return out
+}
+
+// extractGitLabTags normalizes the polymorphic `tags:` keyword into the
+// sorted, de-duplicated runner-tag list the pipeline model carries.
+//
+// GitLab documents a list of strings, and real pipelines also reach here with
+// a bare string (a single tag written without a dash) or a list holding a
+// non-string entry (an anchor a merge left behind). Nothing is invented for
+// those: a non-string entry is skipped and the rest of the list still counts,
+// because dropping the whole keyword would understate what the job asked for.
+// Entries are trimmed and blanks dropped, so a trailing space never becomes a
+// second runner tag on the dependencies graph.
+func extractGitLabTags(v any) []string {
+	var raw []string
+	switch t := v.(type) {
+	case string:
+		raw = []string{t}
+	case []any:
+		for _, item := range t {
+			if s, ok := item.(string); ok {
+				raw = append(raw, s)
+			}
+		}
+	default:
+		return nil
+	}
+	seen := make(map[string]struct{}, len(raw))
+	out := make([]string, 0, len(raw))
+	for _, s := range raw {
+		s = strings.TrimSpace(s)
+		if s == "" {
+			continue
+		}
+		if _, dup := seen[s]; dup {
+			continue
+		}
+		seen[s] = struct{}{}
+		out = append(out, s)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	sort.Strings(out)
 	return out
 }
 

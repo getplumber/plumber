@@ -8,6 +8,7 @@ import (
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
 	glabCI "github.com/getplumber/plumber/gitlab"
+	"github.com/getplumber/plumber/internal/ir"
 	"github.com/getplumber/plumber/pbom"
 	"github.com/spf13/cobra"
 )
@@ -130,12 +131,24 @@ func imageComplianceFor(result *control.AnalysisResult, conf *configuration.Conf
 	return data
 }
 
+// pipelineJobsOf returns the analyzed pipeline's jobs, which the PBOM reads
+// for each job's service images and runner tags. Nil when the run produced no
+// normalized pipeline (a missing or invalid CI configuration), so the
+// document leaves the jobs key out rather than claiming an empty pipeline.
+func pipelineJobsOf(result *control.AnalysisResult) []ir.Job {
+	if result == nil || result.Pipeline == nil {
+		return nil
+	}
+	return result.Pipeline.Jobs
+}
+
 func (p *GitLabProvider) WritePBOM(result *control.AnalysisResult, conf *configuration.Configuration, filePath string, score *control.PlumberScoreResult, scoreMode bool, platform *pbom.PlatformSummary) error {
 	complianceData := imageComplianceFor(result, conf, platform)
 	overrideData := pbom.BuildIncludeOverrideData(result)
 	gen := pbom.NewGenerator(result.ProjectPath, result.ProjectID, conf.GitlabURL, conf.Branch).
 		WithComplianceData(complianceData).
 		WithIncludeOverrideData(overrideData).
+		WithJobResources(pipelineJobsOf(result)).
 		WithCommit(result.ArtifactCommitSHA, result.ArtifactRef)
 	if conf.NoControls {
 		gen = gen.WithoutComplianceVerdicts()
@@ -160,6 +173,7 @@ func (p *GitLabProvider) WritePBOMCycloneDX(result *control.AnalysisResult, conf
 	gen := pbom.NewGenerator(result.ProjectPath, result.ProjectID, conf.GitlabURL, conf.Branch).
 		WithComplianceData(complianceData).
 		WithIncludeOverrideData(overrideData).
+		WithJobResources(pipelineJobsOf(result)).
 		WithCommit(result.ArtifactCommitSHA, result.ArtifactRef)
 	if conf.NoControls {
 		gen = gen.WithoutComplianceVerdicts()
