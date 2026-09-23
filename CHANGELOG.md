@@ -1,3 +1,17 @@
+## [0.5.7](https://github.com/getplumber/plumber/compare/v0.5.6...v0.5.7) (2026-09-23)
+
+
+### 🐛 Bug Fixes
+
+* **cmd:** the bill's bounds are measured on the wire section, an image naming more than 500 jobs omits the bill ([91a74d9](https://github.com/getplumber/plumber/commit/91a74d9edd2a549f8fbbc7dfb09323a3d865f35f))
+* **cmd:** the platform push carries the pipeline bill of materials (bom, schema 1, bounded) ([c0f1a21](https://github.com/getplumber/plumber/commit/c0f1a2156b09ebc5360d710b388a80bea4222645))
+* **ir,gitlab,pbom:** a job carries its runner tags, the bill of materials names each job's services and tags ([1d3c9a6](https://github.com/getplumber/plumber/commit/1d3c9a634d256d38616b7e4bf51f3239167b3c5e))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.5.6 refs [skip ci] ([ab18ada](https://github.com/getplumber/plumber/commit/ab18adac56e4df973feac470ec9c20751b1a2f90))
+
 ## [0.5.6](https://github.com/getplumber/plumber/compare/v0.5.5...v0.5.6) (2026-09-22)
 
 
