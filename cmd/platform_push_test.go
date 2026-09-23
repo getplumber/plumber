@@ -2118,6 +2118,94 @@ func TestPlatformBOMFrom_RemoteURLGetsTheLongerBound(t *testing.T) {
 	}
 }
 
+// TestPlatformBOMFrom_StringByteBound covers the BYTE companion the platform
+// puts beside its rune bound (bom_string_bytes). The rune bound alone admits
+// 512 CJK runes, which are 1536 bytes, and the platform refuses those whole:
+// its projected key is a composite of two such strings bound into a unique
+// btree index, which Postgres caps at 2704 bytes. A bill inside every rune
+// bound and over the byte one would cost the run its results, its findings
+// and its score, so the CLI drops the section instead of sending it.
+func TestPlatformBOMFrom_StringByteBound(t *testing.T) {
+	// 512 runes of a 3-byte rune: exactly ON the rune bound, 1536 bytes over
+	// the byte one.
+	cjk := strings.Repeat("文", bomMaxStringRunes)
+	got, bound := platformBOMFrom(&pbom.PBOM{Includes: []pbom.Include{{Type: "component", ComponentName: cjk}}})
+	if got != nil {
+		t.Error("platformBOMFrom returned a section the platform would refuse on bom_string_bytes: the bill is dropped whole, never truncated")
+	}
+	if bound != "string > 1024 bytes" {
+		t.Errorf("bound = %q, want %q", bound, "string > 1024 bytes")
+	}
+
+	// The control: the same 512 runes in ASCII are 512 bytes, inside both
+	// halves of the bound, and the bill goes.
+	ascii := strings.Repeat("a", bomMaxStringRunes)
+	got, bound = platformBOMFrom(&pbom.PBOM{Includes: []pbom.Include{{Type: "component", ComponentName: ascii}}})
+	if got == nil || bound != "" {
+		t.Fatalf("a 512-rune ASCII component name was refused on bound %q: the byte bound is the multi-byte string's alone", bound)
+	}
+}
+
+// TestPlatformBOMFrom_RemoteURLByteBound is the same companion on the wider
+// URL bound (bom_url_bytes). A remote include's location is a node key on its
+// own, so the platform gives it 2048 bytes where an ordinary string gets
+// 1024, and a 1024-rune URL written in 3-byte runes is inside the rune
+// allowance and over that.
+func TestPlatformBOMFrom_RemoteURLByteBound(t *testing.T) {
+	url := strings.Repeat("文", bomMaxRemoteURLRunes) // 1024 runes, 3072 bytes
+	got, bound := platformBOMFrom(&pbom.PBOM{Includes: []pbom.Include{{Type: "remote", Location: url}}})
+	if got != nil {
+		t.Error("platformBOMFrom returned a section the platform would refuse on bom_url_bytes: the bill is dropped whole, never truncated")
+	}
+	if bound != "url > 2048 bytes" {
+		t.Errorf("bound = %q, want %q", bound, "url > 2048 bytes")
+	}
+}
+
+// TestPlatformBOMFrom_EdgeBound covers the product bound (bom_edges). Every
+// count bound of the section can be respected and the product still be
+// enormous: twenty images naming five hundred jobs each is inside images >
+// 500 and inside jobs per image > 500, and it projects ten thousand edges,
+// which is exactly what the platform is willing to write in one ingest
+// transaction. One more edge and the platform refuses the push whole.
+func TestPlatformBOMFrom_EdgeBound(t *testing.T) {
+	const images = 20
+	if images*bomMaxJobsPerImage != bomMaxEdges {
+		t.Fatalf("the fixture projects %d edges, not the %d the bound names", images*bomMaxJobsPerImage, bomMaxEdges)
+	}
+	// One edge per (image, job) pair, one per include: the platform's own
+	// arithmetic, so the include is what takes this bill one edge over.
+	bill := func(includes int) *pbom.PBOM {
+		doc := &pbom.PBOM{}
+		for i := 0; i < images; i++ {
+			jobs := make([]string, bomMaxJobsPerImage)
+			for j := range jobs {
+				jobs[j] = "j" + strconv.Itoa(j)
+			}
+			doc.ContainerImages = append(doc.ContainerImages, pbom.ContainerImage{
+				Image: "docker.io/team/app-" + strconv.Itoa(i) + ":1.0",
+				Jobs:  jobs,
+			})
+		}
+		for i := 0; i < includes; i++ {
+			doc.Includes = append(doc.Includes, pbom.Include{Type: "local", Location: "local.yml"})
+		}
+		return doc
+	}
+
+	got, bound := platformBOMFrom(bill(0))
+	if got == nil || bound != "" {
+		t.Fatalf("a bill projecting exactly %d edges was refused on bound %q: the platform accepts it", bomMaxEdges, bound)
+	}
+	got, bound = platformBOMFrom(bill(1))
+	if got != nil {
+		t.Error("platformBOMFrom returned a section the platform would refuse on bom_edges: the bill is dropped whole, never truncated")
+	}
+	if bound != "edges > 10000" {
+		t.Errorf("bound = %q, want %q", bound, "edges > 10000")
+	}
+}
+
 // TestBuildPlatformPush_CarriesTheBOM covers the wiring: a run whose
 // collections and pipeline model are present pushes a bom built from them,
 // with no second collection pass.
@@ -2664,17 +2752,25 @@ func TestPlatformBOMFrom_ServiceRegistryWithAPortIsKeptWhole(t *testing.T) {
 
 // TestPlatformBOMFrom_DocumentSizeCap covers the ninth bound of the spec's
 // sizing rule (section 4.4): the stored document is capped at 256 KiB, and a
-// bill can sit inside every count and length bound and still be megabytes.
+// bill can sit inside every count, length and product bound and still be
+// megabytes.
 // The platform refuses an oversized push whole, which would cost the run its
 // results, its findings and its score; refusing the section here costs it
 // only the bill.
 func TestPlatformBOMFrom_DocumentSizeCap(t *testing.T) {
-	// 500 jobs of 64 services each: inside jobs > 500, inside services per
-	// job > 64, every string far inside 512 runes, and megabytes of JSON.
+	// 500 jobs of 19 services each: inside jobs > 500, inside services per
+	// job > 64, every string far inside 512 runes, 9500 edges so inside the
+	// product bound too, and megabytes of JSON. The service count is picked
+	// to leave the edge bound untripped on purpose: this test is about the
+	// one bound that cannot be reached by counting anything.
+	const servicesPerJob = 19
+	if bomMaxJobs*servicesPerJob > bomMaxEdges {
+		t.Fatalf("the fixture projects %d edges, over the %d the product bound allows: it would trip that bound instead", bomMaxJobs*servicesPerJob, bomMaxEdges)
+	}
 	jobs := make([]pbom.JobResources, bomMaxJobs)
 	for i := range jobs {
 		jobs[i].Name = "job-" + strconv.Itoa(i)
-		jobs[i].Services = make([]pbom.ContainerImageRef, bomMaxServicesPerJob)
+		jobs[i].Services = make([]pbom.ContainerImageRef, servicesPerJob)
 		for j := range jobs[i].Services {
 			ref := "registry.example.com/team/service-" + strconv.Itoa(i) + "-" + strconv.Itoa(j) + ":1.0"
 			jobs[i].Services[j] = pbom.ContainerImageRef{Image: ref, Registry: "registry.example.com", Name: "team/service", Tag: "1.0"}
