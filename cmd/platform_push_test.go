@@ -2032,18 +2032,31 @@ func TestPlatformBOMFrom_Bounds(t *testing.T) {
 			want: "includes > 500",
 		},
 		{
+			// The fixtures below carry real references and real runner tags,
+			// because the bounds measure the EMITTED section: an entry the
+			// filtering would drop cannot push a count over, which is the
+			// whole point of measuring after the filtering.
 			name: "501 images",
-			doc:  &pbom.PBOM{ContainerImages: make([]pbom.ContainerImage, 501)},
+			doc:  &pbom.PBOM{ContainerImages: bomTestImages(501)},
 			want: "images > 500",
 		},
 		{
+			// The platform's own ceiling on the jobs an image may name
+			// (bom_image_jobs). It is not in the design spec's list, and
+			// without it a pipeline with one image shared by a thousand jobs
+			// sits inside every other bound and loses its whole push.
+			name: "an image naming 501 jobs",
+			doc:  &pbom.PBOM{ContainerImages: []pbom.ContainerImage{{Image: "docker.io/node:20", Jobs: make([]string, 501)}}},
+			want: "jobs per image > 500",
+		},
+		{
 			name: "501 jobs",
-			doc:  &pbom.PBOM{Jobs: make([]pbom.JobResources, 501)},
+			doc:  &pbom.PBOM{Jobs: bomTestJobs(501)},
 			want: "jobs > 500",
 		},
 		{
 			name: "65 services on one job",
-			doc:  &pbom.PBOM{Jobs: []pbom.JobResources{{Name: "test", Services: make([]pbom.ContainerImageRef, 65)}}},
+			doc:  &pbom.PBOM{Jobs: []pbom.JobResources{{Name: "test", Services: bomTestServices(65)}}},
 			want: "services per job > 64",
 		},
 		{
@@ -2185,6 +2198,78 @@ func TestBuildPlatformPush_CarriesTheBOM(t *testing.T) {
 	job, _ := bomJobs[0].(map[string]any)
 	if tags, _ := job["runner_tags"].([]any); len(tags) != 1 || tags[0] != "docker" {
 		t.Errorf("bom.jobs[0].runner_tags = %#v, want [docker]", job["runner_tags"])
+	}
+}
+
+// TestBuildPlatformPush_StandaloneImageFlagsComeFromTheFindings pins the
+// non-platform path (no policy runs, the row-63 standalone push): the bill's
+// image flags are the run's own findings-derived verdicts. A forbidden-tag
+// finding on the image's job sets forbidden_tag, an unauthorized-source
+// finding clears authorized, and an image the rules judged without a finding
+// is published as compliant rather than left without flags.
+func TestBuildPlatformPush_StandaloneImageFlagsComeFromTheFindings(t *testing.T) {
+	cases := []struct {
+		name          string
+		findings      []opaengine.Finding
+		wantForbidden bool
+		wantAuth      bool
+	}{
+		{name: "no image finding", wantForbidden: false, wantAuth: true},
+		{
+			name: "forbidden tag and unauthorized source",
+			findings: []opaengine.Finding{
+				{Code: string(control.CodeImageForbiddenTag), Severity: "high", Message: "floating tag", Job: "build"},
+				{Code: string(control.CodeImageUnauthorizedSource), Severity: "high", Message: "untrusted registry", Job: "build"},
+			},
+			wantForbidden: true,
+			wantAuth:      false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			conf := &configuration.Configuration{GitlabURL: "https://gitlab.example.com", Branch: "main"}
+			result := &control.AnalysisResult{
+				ProjectPath: "group/app",
+				ProjectID:   7,
+				PipelineImageData: &gitlab.GitlabPipelineImageData{
+					Images: []gitlab.GitlabPipelineImageInfo{
+						{Link: "docker.io/node:latest", Registry: "docker.io", Name: "node", Tag: "latest", Job: "build"},
+					},
+				},
+				Findings: tc.findings,
+			}
+
+			body, err := buildPlatformPush(testProvider(t), conf, result, nil, ".plumber.yaml", nil)
+			if err != nil {
+				t.Fatalf("buildPlatformPush: %v", err)
+			}
+			var raw struct {
+				BOM struct {
+					Images []map[string]any `json:"images"`
+				} `json:"bom"`
+			}
+			if err := json.Unmarshal(body, &raw); err != nil {
+				t.Fatalf("push does not parse as JSON: %v", err)
+			}
+			if len(raw.BOM.Images) != 1 {
+				t.Fatalf("bom.images = %#v, want the one resolved image", raw.BOM.Images)
+			}
+			img := raw.BOM.Images[0]
+			forbidden, ok := img["forbidden_tag"].(bool)
+			if !ok {
+				t.Fatalf("bom.images[0].forbidden_tag = %#v, want a boolean: the standalone push publishes the run's own verdict", img["forbidden_tag"])
+			}
+			if forbidden != tc.wantForbidden {
+				t.Errorf("bom.images[0].forbidden_tag = %v, want %v", forbidden, tc.wantForbidden)
+			}
+			authorized, ok := img["authorized"].(bool)
+			if !ok {
+				t.Fatalf("bom.images[0].authorized = %#v, want a boolean: the standalone push publishes the run's own verdict", img["authorized"])
+			}
+			if authorized != tc.wantAuth {
+				t.Errorf("bom.images[0].authorized = %v, want %v", authorized, tc.wantAuth)
+			}
+		})
 	}
 }
 
@@ -2994,6 +3079,12 @@ func TestPlatformBOMFrom_OverriddenJobsShapeAndAbsence(t *testing.T) {
 // EVERY string, not the three the earlier tests happened to name: a field
 // added to the walker without its check is exactly the gap that costs a run
 // its results.
+//
+// A reference's registry, name, tag and digest are DERIVED from the reference
+// on the way to the wire, so the long string goes into the reference at the
+// position that lands in the field under test. Putting it in the document's
+// own registry/name/tag fields would test nothing: those values never leave
+// the document.
 func TestPlatformBOMBound_EveryStringField(t *testing.T) {
 	long := strings.Repeat("a", bomMaxStringRunes+1)
 	const wantString = "string > 512 runes"
@@ -3012,17 +3103,18 @@ func TestPlatformBOMBound_EveryStringField(t *testing.T) {
 		{"overridden job name", &pbom.PBOM{Includes: []pbom.Include{{Type: "component", OverriddenJobs: []utils.OverriddenJobDetail{{JobName: long}}}}}},
 		{"overridden job key", &pbom.PBOM{Includes: []pbom.Include{{Type: "component", OverriddenJobs: []utils.OverriddenJobDetail{{JobName: "a", OverriddenKeys: []string{long}}}}}}},
 		{"image reference", &pbom.PBOM{ContainerImages: []pbom.ContainerImage{{Image: long}}}},
-		{"image registry", &pbom.PBOM{ContainerImages: []pbom.ContainerImage{{Image: "a", Registry: long}}}},
-		{"image name", &pbom.PBOM{ContainerImages: []pbom.ContainerImage{{Image: "a", Name: long}}}},
-		{"image tag", &pbom.PBOM{ContainerImages: []pbom.ContainerImage{{Image: "a", Tag: long}}}},
-		{"image job name", &pbom.PBOM{ContainerImages: []pbom.ContainerImage{{Image: "a", Jobs: []string{long}}}}},
+		{"image registry", &pbom.PBOM{ContainerImages: []pbom.ContainerImage{{Image: long + ".io/app:1"}}}},
+		{"image name", &pbom.PBOM{ContainerImages: []pbom.ContainerImage{{Image: "docker.io/" + long + ":1"}}}},
+		{"image tag", &pbom.PBOM{ContainerImages: []pbom.ContainerImage{{Image: "docker.io/app:" + long}}}},
+		{"image digest", &pbom.PBOM{ContainerImages: []pbom.ContainerImage{{Image: "docker.io/app@" + long}}}},
+		{"image job name", &pbom.PBOM{ContainerImages: []pbom.ContainerImage{{Image: "docker.io/app:1", Jobs: []string{long}}}}},
 		{"job name", &pbom.PBOM{Jobs: []pbom.JobResources{{Name: long, RunnerTags: []string{"docker"}}}}},
 		{"runner tag", &pbom.PBOM{Jobs: []pbom.JobResources{{Name: "test", RunnerTags: []string{long}}}}},
 		{"service reference", &pbom.PBOM{Jobs: []pbom.JobResources{{Name: "test", Services: []pbom.ContainerImageRef{{Image: long}}}}}},
-		{"service registry", &pbom.PBOM{Jobs: []pbom.JobResources{{Name: "test", Services: []pbom.ContainerImageRef{{Image: "a", Registry: long}}}}}},
-		{"service name", &pbom.PBOM{Jobs: []pbom.JobResources{{Name: "test", Services: []pbom.ContainerImageRef{{Image: "a", Name: long}}}}}},
-		{"service tag", &pbom.PBOM{Jobs: []pbom.JobResources{{Name: "test", Services: []pbom.ContainerImageRef{{Image: "a", Tag: long}}}}}},
-		{"service digest", &pbom.PBOM{Jobs: []pbom.JobResources{{Name: "test", Services: []pbom.ContainerImageRef{{Image: "a", Digest: long}}}}}},
+		{"service registry", &pbom.PBOM{Jobs: []pbom.JobResources{{Name: "test", Services: []pbom.ContainerImageRef{{Image: long + ".io/app:1"}}}}}},
+		{"service name", &pbom.PBOM{Jobs: []pbom.JobResources{{Name: "test", Services: []pbom.ContainerImageRef{{Image: "docker.io/" + long + ":1"}}}}}},
+		{"service tag", &pbom.PBOM{Jobs: []pbom.JobResources{{Name: "test", Services: []pbom.ContainerImageRef{{Image: "docker.io/app:" + long}}}}}},
+		{"service digest", &pbom.PBOM{Jobs: []pbom.JobResources{{Name: "test", Services: []pbom.ContainerImageRef{{Image: "docker.io/app@" + long}}}}}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			got, bound := platformBOMFrom(tc.doc)
@@ -3042,17 +3134,15 @@ func TestPlatformBOMBound_EveryStringField(t *testing.T) {
 // platform would have taken, the other way it sends bills the platform
 // refuses and the run loses everything.
 func TestPlatformBOMBound_CountsAreInclusive(t *testing.T) {
-	services := make([]pbom.ContainerImageRef, bomMaxServicesPerJob)
-	for i := range services {
-		services[i] = pbom.ContainerImageRef{Image: "docker.io/svc-" + strconv.Itoa(i) + ":1"}
-	}
+	services := bomTestServices(bomMaxServicesPerJob)
 	for _, tc := range []struct {
 		name string
 		doc  *pbom.PBOM
 	}{
 		{"exactly 500 includes", &pbom.PBOM{Includes: make([]pbom.Include, bomMaxIncludes)}},
-		{"exactly 500 images", &pbom.PBOM{ContainerImages: make([]pbom.ContainerImage, bomMaxImages)}},
-		{"exactly 500 jobs", &pbom.PBOM{Jobs: make([]pbom.JobResources, bomMaxJobs)}},
+		{"exactly 500 images", &pbom.PBOM{ContainerImages: bomTestImages(bomMaxImages)}},
+		{"exactly 500 jobs", &pbom.PBOM{Jobs: bomTestJobs(bomMaxJobs)}},
+		{"exactly 500 jobs on one image", &pbom.PBOM{ContainerImages: []pbom.ContainerImage{{Image: "docker.io/node:20", Jobs: make([]string, bomMaxJobsPerImage)}}}},
 		{"exactly 64 services on one job", &pbom.PBOM{Jobs: []pbom.JobResources{{Name: "test", Services: services}}}},
 		{"exactly 32 runner tags on one job", &pbom.PBOM{Jobs: []pbom.JobResources{{Name: "test", RunnerTags: make([]string, bomMaxRunnerTagsPerJob)}}}},
 		{"exactly 50 advisories on one include", &pbom.PBOM{Includes: []pbom.Include{{Type: "component", Advisories: make([]string, bomMaxAdvisories)}}}},
@@ -3151,4 +3241,135 @@ func TestPlatformBOMDocument_NoControlsClaimsNoVerdict(t *testing.T) {
 	if got.Images[0].Authorized != nil || got.Images[0].ForbiddenTag != nil {
 		t.Errorf("image = %#v, want both flags nil under --no-controls: nothing was evaluated", got.Images[0])
 	}
+}
+
+// TestPlatformBOMFrom_BoundsMeasureTheEmittedSection covers the order the
+// bounds and the filtering run in. The bounds exist so the CLI never builds a
+// bill the platform will refuse, which means they have to measure the section
+// that actually goes on the wire: the filtering drops unresolved references
+// and the jobs those emptied out, so a document over a bound can emit a
+// section inside it.
+//
+// Measuring the raw document instead refuses a bill the platform would have
+// taken, and that is not a harmless extra caution: the push still goes, so
+// the platform keeps the project's stale dependency edges rather than the
+// bill this run actually collected.
+func TestPlatformBOMFrom_BoundsMeasureTheEmittedSection(t *testing.T) {
+	t.Run("a placeholder-only job does not push the job count over", func(t *testing.T) {
+		// 500 jobs that reach the wire, plus one whose only service is a
+		// variable-templated reference and which names no runner tag, so the
+		// filtering drops it entirely.
+		jobs := make([]pbom.JobResources, 0, bomMaxJobs+1)
+		for i := 0; i < bomMaxJobs; i++ {
+			jobs = append(jobs, pbom.JobResources{Name: "job-" + strconv.Itoa(i), RunnerTags: []string{"docker"}})
+		}
+		jobs = append(jobs, pbom.JobResources{
+			Name:     "placeholder-only",
+			Services: []pbom.ContainerImageRef{{Image: "$CI_REGISTRY_IMAGE/db", Name: "$CI_REGISTRY_IMAGE/db"}},
+		})
+
+		got, bound := platformBOMFrom(&pbom.PBOM{Jobs: jobs})
+		if bound != "" {
+			t.Fatalf("bound = %q, want none: the emitted section holds %d jobs, which the platform accepts", bound, bomMaxJobs)
+		}
+		if len(got.Jobs) != bomMaxJobs {
+			t.Fatalf("jobs = %d, want %d", len(got.Jobs), bomMaxJobs)
+		}
+	})
+
+	t.Run("an unresolved image does not push the image count over", func(t *testing.T) {
+		images := make([]pbom.ContainerImage, 0, bomMaxImages+1)
+		for i := 0; i < bomMaxImages; i++ {
+			images = append(images, pbom.ContainerImage{Image: "docker.io/team/app-" + strconv.Itoa(i) + ":1.0"})
+		}
+		images = append(images, pbom.ContainerImage{
+			Image:      "unknown/$CI_REGISTRY_IMAGE:$TAG",
+			Name:       "$CI_REGISTRY_IMAGE",
+			Unresolved: true,
+		})
+
+		got, bound := platformBOMFrom(&pbom.PBOM{ContainerImages: images})
+		if bound != "" {
+			t.Fatalf("bound = %q, want none: the emitted section holds %d images, which the platform accepts", bound, bomMaxImages)
+		}
+		if len(got.Images) != bomMaxImages {
+			t.Fatalf("images = %d, want %d", len(got.Images), bomMaxImages)
+		}
+	})
+
+	t.Run("an unresolved service does not push the per-job service count over", func(t *testing.T) {
+		services := make([]pbom.ContainerImageRef, 0, bomMaxServicesPerJob+1)
+		for i := 0; i < bomMaxServicesPerJob; i++ {
+			services = append(services, pbom.ContainerImageRef{Image: "docker.io/team/svc-" + strconv.Itoa(i) + ":1.0"})
+		}
+		services = append(services, pbom.ContainerImageRef{Image: "$SVC:latest", Name: "$SVC"})
+
+		got, bound := platformBOMFrom(&pbom.PBOM{Jobs: []pbom.JobResources{{Name: "test", Services: services}}})
+		if bound != "" {
+			t.Fatalf("bound = %q, want none: the emitted job holds %d services, which the platform accepts", bound, bomMaxServicesPerJob)
+		}
+		if len(got.Jobs[0].Services) != bomMaxServicesPerJob {
+			t.Fatalf("services = %d, want %d", len(got.Jobs[0].Services), bomMaxServicesPerJob)
+		}
+	})
+
+	t.Run("a genuinely oversized section is still refused", func(t *testing.T) {
+		// The control: once the filtering has run, 501 jobs are 501 jobs.
+		jobs := make([]pbom.JobResources, 0, bomMaxJobs+1)
+		for i := 0; i <= bomMaxJobs; i++ {
+			jobs = append(jobs, pbom.JobResources{Name: "job-" + strconv.Itoa(i), RunnerTags: []string{"docker"}})
+		}
+		got, bound := platformBOMFrom(&pbom.PBOM{Jobs: jobs})
+		if got != nil || bound != "jobs > 500" {
+			t.Fatalf("got %#v, bound %q, want nil and %q", got, bound, "jobs > 500")
+		}
+	})
+}
+
+// TestPlatformBOMFrom_StringBoundsMeasureTheNormalisedName is the other half
+// of measuring the emitted section: the normalisation can make a string
+// LONGER than the collector's (the Docker Hub namespace adds eight runes), so
+// a name inside the bound in the document can be over it on the wire. The
+// platform counts what it receives.
+func TestPlatformBOMFrom_StringBoundsMeasureTheNormalisedName(t *testing.T) {
+	// A bare Docker Hub repository of exactly 512 runes becomes
+	// "library/" + 512 = 520 runes once normalised.
+	bare := strings.Repeat("a", bomMaxStringRunes)
+	doc := &pbom.PBOM{ContainerImages: []pbom.ContainerImage{{Image: bare, Name: bare}}}
+	got, bound := platformBOMFrom(doc)
+	if got != nil {
+		t.Errorf("a name that is over the bound once normalised still produced a section: %#v", got.Images)
+	}
+	if bound != "string > 512 runes" {
+		t.Errorf("bound = %q, want %q", bound, "string > 512 runes")
+	}
+}
+
+// bomTestImages, bomTestJobs and bomTestServices build fixtures that SURVIVE
+// the section's filtering, so a count bound is measured against entries that
+// really reach the wire. Zero-valued entries would be dropped before the
+// bounds run and the count would be whatever is left, which is a test that
+// passes without asserting anything.
+func bomTestImages(n int) []pbom.ContainerImage {
+	out := make([]pbom.ContainerImage, 0, n)
+	for i := 0; i < n; i++ {
+		out = append(out, pbom.ContainerImage{Image: "docker.io/team/app-" + strconv.Itoa(i) + ":1.0"})
+	}
+	return out
+}
+
+func bomTestJobs(n int) []pbom.JobResources {
+	out := make([]pbom.JobResources, 0, n)
+	for i := 0; i < n; i++ {
+		out = append(out, pbom.JobResources{Name: "job-" + strconv.Itoa(i), RunnerTags: []string{"docker"}})
+	}
+	return out
+}
+
+func bomTestServices(n int) []pbom.ContainerImageRef {
+	out := make([]pbom.ContainerImageRef, 0, n)
+	for i := 0; i < n; i++ {
+		out = append(out, pbom.ContainerImageRef{Image: "docker.io/team/svc-" + strconv.Itoa(i) + ":1.0"})
+	}
+	return out
 }
