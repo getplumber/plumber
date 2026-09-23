@@ -472,6 +472,13 @@ const platformBOMSchemaVersion = 1
 // (2026-09-23-dependencies-graph-design section 4.4). They are the platform's
 // own limits, restated here so the CLI never builds a bill the platform will
 // refuse with a 400 and lose the whole push over.
+//
+// One for one, these mirror the platform's rejection reasons: bom_includes,
+// bom_images, bom_jobs, bom_image_jobs, bom_services_per_job,
+// bom_runner_tags_per_job, bom_advisories, bom_string_runes, bom_url_runes,
+// bom_string_bytes, bom_url_bytes, bom_edges and bom_bytes. A bound the CLI
+// does not mirror is a push the platform answers with a 422, and that answer
+// costs the run its results, its findings and its score, not just its bill.
 const (
 	bomMaxIncludes = 500
 	bomMaxImages   = 500
@@ -489,6 +496,24 @@ const (
 	// A remote include is addressed by a URL, which is legitimately longer
 	// than any other string in the bill.
 	bomMaxRemoteURLRunes = 1024
+	// bomMaxStringBytes and bomMaxURLBytes are the platform's BYTE companions
+	// to the two rune bounds above (bom_string_bytes, bom_url_bytes). The
+	// rune bounds are counted in runes because a path written in a non-Latin
+	// script is not hostile; the byte bounds exist beside them because the
+	// platform's projected key is a COMPOSITE of two of these strings bound
+	// into a unique btree index, which Postgres refuses above 2704 bytes on
+	// an 8 kB page. Under the rune bounds alone, 512 CJK runes are 1536 bytes
+	// and two of them compose a 3073-byte key: every stated bound respected,
+	// and the push lost inside the platform's ingest transaction.
+	bomMaxStringBytes = 1024
+	bomMaxURLBytes    = 2048
+	// bomMaxEdges is the platform's product bound (bom_edges): one edge per
+	// include, one per (image, job) pair, one per service and one per runner
+	// tag of a job. Every count bound above can be respected and the product
+	// still be enormous (twenty images of five hundred jobs is ten thousand
+	// edges), and the platform refuses the whole push rather than write more
+	// rows than one ingest transaction is willing to spend.
+	bomMaxEdges = 10000
 	// The document the platform stores is capped at 256 KiB. Unlike the
 	// bounds above this one cannot be checked by counting: it is a property
 	// of the encoded bytes, so it is checked on the marshalled section.
@@ -704,10 +729,10 @@ func bomNormalizeRef(image string, unresolved bool) (bomRef, bool) {
 }
 
 // platformBOMBound returns the bound the SECTION exceeds, empty when it fits.
-// The single place every count and length bound lives, and it is handed the
-// emitted shape rather than the document behind it, so what is measured is
-// exactly what the platform will receive and count. See the call site for why
-// that ordering is the whole point.
+// The single place every count, length and product bound lives, and it is
+// handed the emitted shape rather than the document behind it, so what is
+// measured is exactly what the platform will receive and count. See the call
+// site for why that ordering is the whole point.
 //
 // The byte cap is the one bound not here: it is a property of the encoded
 // bytes rather than of the section's fields, so it is checked on the marshal.
@@ -721,6 +746,13 @@ func platformBOMBound(out *platformBOM) string {
 	if len(out.Jobs) > bomMaxJobs {
 		return fmt.Sprintf("jobs > %d", bomMaxJobs)
 	}
+	// The product bound, checked here because it is arithmetic over the
+	// section's own lengths and therefore costs nothing: a bill that would
+	// write more edges than the platform writes in one transaction is refused
+	// before a single one of its strings is walked.
+	if n := bomProjectedEdges(out); n > bomMaxEdges {
+		return fmt.Sprintf("edges > %d", bomMaxEdges)
+	}
 	for _, inc := range out.Includes {
 		if len(inc.Advisories) > bomMaxAdvisories {
 			return fmt.Sprintf("advisories per include > %d", bomMaxAdvisories)
@@ -728,6 +760,9 @@ func platformBOMBound(out *platformBOM) string {
 		if inc.Type == "remote" {
 			if utf8.RuneCountInString(inc.Location) > bomMaxRemoteURLRunes {
 				return fmt.Sprintf("remote include URL > %d runes", bomMaxRemoteURLRunes)
+			}
+			if len(inc.Location) > bomMaxURLBytes {
+				return fmt.Sprintf("url > %d bytes", bomMaxURLBytes)
 			}
 		} else if bound := bomStringBound(inc.Location); bound != "" {
 			return bound
@@ -770,14 +805,36 @@ func platformBOMBound(out *platformBOM) string {
 }
 
 // bomStringBound names the string bound when any of the values exceeds it.
-// Counted in runes, not bytes, because that is how the platform counts.
+// Both halves the platform applies, in the order it applies them: the rune
+// count first, so a string over both reports the bound the spec names rather
+// than the one the platform's index imposes, then the byte length.
 func bomStringBound(values ...string) string {
 	for _, v := range values {
 		if utf8.RuneCountInString(v) > bomMaxStringRunes {
 			return fmt.Sprintf("string > %d runes", bomMaxStringRunes)
 		}
+		if len(v) > bomMaxStringBytes {
+			return fmt.Sprintf("string > %d bytes", bomMaxStringBytes)
+		}
 	}
 	return ""
+}
+
+// bomProjectedEdges counts the edges the platform's projection would write for
+// this section, by arithmetic over its array lengths and nothing else. The
+// platform's own count (ingestion.projectedEdges) one for one: one edge per
+// include, one per (image, job) pair, one per service and one per runner tag
+// of a job. It is an upper bound on both sides, because the projection drops
+// the edges it cannot key, and both sides erring the same way is the point.
+func bomProjectedEdges(out *platformBOM) int {
+	n := len(out.Includes)
+	for _, img := range out.Images {
+		n += len(img.Jobs)
+	}
+	for _, job := range out.Jobs {
+		n += len(job.Services) + len(job.RunnerTags)
+	}
+	return n
 }
 
 // platformBOMDocument builds the bill of materials the push carries, from the
