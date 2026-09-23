@@ -1,3 +1,21 @@
+## [0.5.8](https://github.com/getplumber/plumber/compare/v0.5.7...v0.5.8) (2026-09-23)
+
+
+### 🐛 Bug Fixes
+
+* **cmd:** the bill mirrors the platform's byte and edge bounds, a bill the platform would refuse is omitted whole ([d94a6c0](https://github.com/getplumber/plumber/commit/d94a6c03bc65a30140fc6fbf8361be02b8275ce2))
+* **gitlab,pbom:** a component include carries its project, the bill of materials can key the component ([34480c8](https://github.com/getplumber/plumber/commit/34480c89ad32f2b918b5caad53c959c004bae3ab))
+
+
+### ✅ Tests
+
+* **cmd:** the edge bound is pinned through the services and runner tags terms (review) ([7ba89d7](https://github.com/getplumber/plumber/commit/7ba89d77ed8a3c070b2449f0c8e3ef032be7366d))
+
+
+### 👷 CI/CD
+
+* **release:** pin v0.5.7 refs [skip ci] ([0dd46fb](https://github.com/getplumber/plumber/commit/0dd46fb26659102a3a3f01660d51eb0f06dd2ca0))
+
 ## [0.5.7](https://github.com/getplumber/plumber/compare/v0.5.6...v0.5.7) (2026-09-23)
 
 
