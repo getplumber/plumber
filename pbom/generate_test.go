@@ -288,3 +288,52 @@ func TestJobServiceRefCarriesTheUnresolvedFlag(t *testing.T) {
 		t.Errorf("service ref = %#v, want it marked unresolved", got.Jobs[0].Services[0])
 	}
 }
+
+// TestProcessIncludesCarriesTheComponentProject pins the generator's half of
+// the component node's key (dependencies-graph design spec 4.1: a component
+// node is keyed on project + component_name). The origin below is shaped the
+// way the collector records the catalog-resolved component include of the
+// capture this fix came from, project included, and the PBOM include must
+// carry that project through: Project is not a project-include-only field,
+// and a component that loses it is unkeyable on the platform side.
+func TestProcessIncludesCarriesTheComponentProject(t *testing.T) {
+	originData := &gitlab.GitlabPipelineOriginData{
+		Origins: []gitlab.GitlabPipelineOriginDataFull{
+			{
+				GitlabPipelineOriginDataGeneric: gitlab.GitlabPipelineOriginDataGeneric{
+					OriginType:        "component",
+					FromGitlabCatalog: true,
+					GitlabIncludeOrigin: gitlab.IncludeOriginWithoutRef{
+						Location: "gitlab.com/getplumber/plumber/plumber",
+						Type:     "component",
+						Project:  "getplumber/plumber",
+					},
+					GitlabComponent: gitlab.GitlabPipelineJobGitlabComponent{
+						ComponentName:          "plumber",
+						ComponentLatestVersion: "v0.5.7",
+					},
+				},
+				GitlabPipelineOriginDataProjectSpecific: gitlab.GitlabPipelineOriginDataProjectSpecific{
+					Version: "v0.5.2",
+				},
+			},
+		},
+	}
+
+	g := &Generator{}
+	got := g.processIncludes(originData)
+	if len(got) != 1 {
+		t.Fatalf("expected exactly one include, got %d", len(got))
+	}
+	inc := got[0]
+
+	if inc.Project != "getplumber/plumber" {
+		t.Errorf("Project = %q, want %q", inc.Project, "getplumber/plumber")
+	}
+	if inc.ComponentName != "plumber" {
+		t.Errorf("ComponentName = %q, want %q", inc.ComponentName, "plumber")
+	}
+	if inc.Location != "gitlab.com/getplumber/plumber/plumber" {
+		t.Errorf("Location = %q, want it untouched", inc.Location)
+	}
+}

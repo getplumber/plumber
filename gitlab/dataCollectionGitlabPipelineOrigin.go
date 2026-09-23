@@ -932,6 +932,23 @@ func (dc *GitlabPipelineOriginDataCollection) Run(project *ProjectInfo, token st
 					lInclude.Warning("Component name is empty. It should not happen.")
 					continue
 				}
+
+				// Record the project half of the split. The GraphQL merged
+				// response fills extra.project for a project include only, so
+				// without this a component include travels to the bill of
+				// materials with an empty project, and the platform, which
+				// keys a component node on project + component name, skips it
+				// as unkeyable. Set for EVERY component include, resolved
+				// against the catalogue or not: the key is a fact of the
+				// include's path, not of what the catalogue answered.
+				//
+				// Deliberately AFTER the hash regeneration above: the origin
+				// hash is the identifier findings and per-include inputs are
+				// looked up by, and includeOriginHash (include_jobs.go)
+				// recomputes it from the merged response, where this project
+				// does not exist. Setting it here leaves both byte-identical
+				// (TestComponentIncludeOriginHashIgnoresTheProject).
+				originData.GitlabIncludeOrigin.Project = project
 				latestVersion, webPath, repoName := resolveComponentLatest(include, project, componentName)
 				if latestVersion != "" {
 					originData.FromGitlabCatalog = true
