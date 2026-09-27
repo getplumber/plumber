@@ -28,7 +28,6 @@ Both read it from one place, the public package
 | `identity.Fingerprint(f)` | the short hash of exactly what `Of` selected |
 | `identity.Declared(code)` | a code's declared identity field names, in hash order (see The declared fields below) |
 | `identity.DeclaredCodes()` | every code that has a declaration |
-| `identity.SubjectKeys()` | **deprecated**: the retired v3 subject-key priority list; recipe v5 does not consult it |
 | `identity.RecipeVersion` | the version of the selection |
 | `identity.FromMap(m)` | a finding read back from Plumber's serialized JSON, when that JSON is a whole finding rather than an exported issue entry (see below) |
 
@@ -424,7 +423,7 @@ an edited file as new findings.
   `identity.RecipeVersion` when one changes.
 
 The selection lives in `finding/identity` (`Of`, `Fingerprint`, `Declared`,
-`DeclaredCodes`, `RecipeVersion`, and the deprecated `SubjectKeys`), a public
+`DeclaredCodes`, `RecipeVersion`), a public
 package, so a consumer outside this module derives the same identity Plumber
 does. `internal/engine/opa` reads it through `Finding.Identity()` and
 `StampFingerprints`, which stamps the hash once per run, immediately after

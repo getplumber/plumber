@@ -36,7 +36,6 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
-	"slices"
 	"strings"
 )
 
@@ -103,30 +102,9 @@ const RecipeVersion = 6
 const fingerprintLength = 16
 
 // messageKey is the subject key reported when a rule emits none of the
-// structured keys and identity falls back to its prose message. It is not a
-// member of SubjectKeys: a rule cannot select it, only fall back to it.
+// structured keys and identity falls back to its prose message. A rule cannot
+// select it, only fall back to it.
 const messageKey = "message"
-
-// subjectKeys lists the structured payload keys that say what a finding is
-// ABOUT, in priority order. The first one a finding carries wins and every
-// other is ignored, even when present.
-//
-// The order is deliberate: the most specific value wins. If `tag` outranked
-// `link`, every image tagged `latest` in a project would share the subject
-// `tag=latest`, whereas the full reference keeps `grafana/vale:latest` and
-// `nginx:latest` apart.
-var subjectKeys = []string{
-	"uses", "branchName", "includePath", "templatePath", "componentPath",
-	"requiredAction", "image", "serviceImage", "link", "tag", "variableName",
-	"hardcodedJob", "scriptLine", "detail",
-}
-
-// SubjectKeys returns the v3 subject-key priority list.
-//
-// Deprecated: recipe v4 selects identity from per-code declarations
-// (Declared) and never consults this list. Kept one release for external
-// consumers still reading v3-stamped records; remove after that.
-func SubjectKeys() []string { return slices.Clone(subjectKeys) }
 
 // Finding is the view of a finding the recipe reads. The CLI fills it from its
 // own finding type; anything reading Plumber's serialized output builds it with

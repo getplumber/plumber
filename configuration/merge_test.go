@@ -1,4 +1,3 @@
-// configuration/merge_test.go
 package configuration
 
 import (

@@ -1,4 +1,3 @@
-// configuration/merge.go
 package configuration
 
 // deepMergeYAML returns a new map with overlay applied onto base.

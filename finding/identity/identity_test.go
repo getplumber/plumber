@@ -412,53 +412,8 @@ func TestDeclarations_EveryCodeFingerprintIsPinned(t *testing.T) {
 	}
 }
 
-// The subject-key priority list is part of the published recipe: the platform
-// reads it to know which key it is looking at.
-func TestSubjectKeys_ArePublishedInPriorityOrder(t *testing.T) {
-	keys := identity.SubjectKeys()
-	if len(keys) == 0 {
-		t.Fatalf("SubjectKeys is empty")
-	}
-	if keys[0] != "uses" {
-		t.Errorf("SubjectKeys()[0] = %q, want uses", keys[0])
-	}
-	if slices.Contains(keys, "message") {
-		t.Errorf("message is the fallback, not a subject key: %v", keys)
-	}
-	// The caller gets a copy: a consumer that sorts the slice must not silently
-	// re-key every finding the process computes afterwards.
-	keys[0] = "mutated"
-	if identity.SubjectKeys()[0] != "uses" {
-		t.Errorf("SubjectKeys returned the package's own slice; a caller can mutate the recipe")
-	}
-}
-
-// Every control that names what it is about must have its key in the list, or
-// its findings ride on reformulable prose.
-func TestSubjectKeys_CoverTheStructuredControls(t *testing.T) {
-	keys := identity.SubjectKeys()
-	for _, want := range []string{
-		"uses", "branchName", "includePath", "templatePath", "componentPath",
-		"requiredAction", "hardcodedJob",
-	} {
-		if !slices.Contains(keys, want) {
-			t.Errorf("subject key %q missing from the recipe: %v", want, keys)
-		}
-	}
-}
-
-// componentName is payload, not identity. ISSUE-402 and ISSUE-403 emit it as an
-// empty string for any include that is not a component, and it holds a bare
-// name where includePath holds the full source. Two components named "deploy"
-// in different groups would collide on the bare name.
-func TestSubjectKeys_ExcludesComponentName(t *testing.T) {
-	if slices.Contains(identity.SubjectKeys(), "componentName") {
-		t.Errorf("componentName is payload, not a subject key: %v", identity.SubjectKeys())
-	}
-}
-
 // componentName was never a declared field for ISSUE-403 (see
-// TestSubjectKeys_ExcludesComponentName: it is payload, not a subject key), so
+// componentName is payload, not a subject key), so
 // a finding carrying both keys identifies on includePath alone.
 func TestOf_IncludePathIsSelectedOverComponentName(t *testing.T) {
 	f := identity.Finding{
