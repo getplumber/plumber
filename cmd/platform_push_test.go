@@ -2303,7 +2303,7 @@ func TestPlatformBOMFrom_EdgeBoundCountsServicesAndRunnerTags(t *testing.T) {
 // with no second collection pass.
 //
 // The component include's origin below is shaped as the collector records it
-// (dataCollectionGitlabPipelineOrigin.go: the component path split into a
+// (collect_pipeline_origin.go: the component path split into a
 // project and a component name), project included. That project is half the
 // key the platform builds a component node on (dependencies-graph design spec
 // 4.1), so it is asserted on the wire: a component include that reached the

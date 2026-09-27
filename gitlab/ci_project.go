@@ -43,7 +43,7 @@ const ciProjectPathDefault = ".gitlab-ci.yml"
 // $CI_CONFIG_PATH when set. The platform anchored its own config digest
 // against that value, so digesting against anything else can never match.
 //
-// Only call this in platform mode. GroupIdOnPlatform below is left zero
+// Only call this in platform mode. GroupIDOnPlatform below is left zero
 // because no predefined variable carries a namespace KIND, and the one
 // reader of the ProjectInfo.IsGroup it feeds is a code path platform mode
 // never reaches.
@@ -63,7 +63,7 @@ func ProjectFromCIEnvironment(analyzed, ciConfigPath string) (*Project, bool) {
 	}
 
 	project := &Project{
-		IdOnPlatform:  id,
+		IDOnPlatform:  id,
 		Name:          strings.TrimSpace(os.Getenv("CI_PROJECT_NAME")),
 		Path:          path,
 		DefaultBranch: strings.TrimSpace(os.Getenv("CI_DEFAULT_BRANCH")),
@@ -90,7 +90,7 @@ func ProjectFromCIEnvironment(analyzed, ciConfigPath string) (*Project, bool) {
 		// started, which is the commit being reported on anyway.
 		Archived: false,
 
-		// GroupIdOnPlatform feeds ProjectInfo.IsGroup, whose only reader
+		// GroupIDOnPlatform feeds ProjectInfo.IsGroup, whose only reader
 		// gates the instance-wide CI/CD variable listing - an admin-only
 		// query platform mode does not make, because image references are
 		// expanded from the job's own environment instead. No predefined
@@ -98,7 +98,7 @@ func ProjectFromCIEnvironment(analyzed, ciConfigPath string) (*Project, bool) {
 		// invented; zero at least matches the zero value of a Project that
 		// was never fetched. See this function's own doc: platform mode
 		// only.
-		GroupIdOnPlatform: 0,
+		GroupIDOnPlatform: 0,
 	}
 	return project, true
 }

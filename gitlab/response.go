@@ -2,13 +2,13 @@ package gitlab
 
 import "time"
 
-// GraphQL page info
+// PageInfo is the GraphQL pagination cursor.
 type PageInfo struct {
 	EndCursor   string
 	HasNextPage bool
 }
 
-// Gitlab GraphQL response of query to get all projects of a group with metadata
+// GroupProjectsResponse is the GraphQL response listing the projects of a group with metadata.
 type GroupProjectsResponse struct {
 	Group struct {
 		Projects struct {
@@ -55,7 +55,7 @@ type GroupMetadataNode struct {
 	}
 }
 
-// Gitlab GraphQL response of query to get all projects of an instance with metadata
+// InstanceProjectsResponse is the GraphQL response listing the projects of an instance with metadata.
 type InstanceProjectsResponse struct {
 	Projects struct {
 		Nodes    []ProjectMetadataNode
@@ -63,7 +63,7 @@ type InstanceProjectsResponse struct {
 	}
 }
 
-// Gitlab GraphQL response of query to get all groups of an instance with metadata
+// InstanceGroupsResponse is the GraphQL response listing the groups of an instance with metadata.
 type InstanceGroupsResponse struct {
 	Groups struct {
 		Nodes    []GroupMetadataNode
@@ -71,7 +71,7 @@ type InstanceGroupsResponse struct {
 	}
 }
 
-// Gitlab GrapQL response of query to get all branches of a project
+// ProjectBranchesResponse is the GraphQL response listing the branches of a project.
 type ProjectBranchesResponse struct {
 	Project struct {
 		Repository struct {
@@ -80,7 +80,7 @@ type ProjectBranchesResponse struct {
 	}
 }
 
-// Gitlab GraphQL response of merged CI conf
+// MergedCIConfResponse is the GraphQL response carrying the merged CI configuration.
 type MergedCIConfResponse struct {
 	CiConfig struct {
 		MergedYaml string                        `json:"mergedYaml"`

@@ -271,9 +271,9 @@ func shouldRunControl(controlName string, conf *configuration.Configuration) boo
 }
 
 // reportProgress calls the optional progress callback if configured.
-func reportProgress(conf *configuration.Configuration, step, total int, message string) {
+func reportProgress(conf *configuration.Configuration, step int, message string) {
 	if conf.ProgressFunc != nil {
-		conf.ProgressFunc(step, total, message)
+		conf.ProgressFunc(step, analysisStepCount, message)
 	}
 }
 
@@ -384,8 +384,8 @@ func buildEngineConfig(controls *configuration.ControlsConfig) map[string]any {
 		// the Rego rule treats their absence as "require any linkage", the id as
 		// the authoritative match, and the path as a case-insensitive fallback.
 		entry := map[string]any{}
-		if c.ExpectedProjectId != nil {
-			entry["expectedProjectId"] = *c.ExpectedProjectId
+		if c.ExpectedProjectID != nil {
+			entry["expectedProjectId"] = *c.ExpectedProjectID
 		}
 		if c.ExpectedProjectPath != nil {
 			entry["expectedProjectPath"] = *c.ExpectedProjectPath
@@ -679,7 +679,7 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	///////////////////////
 	// Fetch Project Info from GitLab
 	///////////////////////
-	reportProgress(conf, 1, analysisStepCount, "Fetching project information")
+	reportProgress(conf, 1, "Fetching project information")
 	var project *gitlab.Project
 	identityFromEnvironment := false
 	// In platform mode the project's identity comes from the environment
@@ -718,12 +718,12 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	}
 
 	// Update result with project info
-	result.ProjectID = project.IdOnPlatform
+	result.ProjectID = project.IDOnPlatform
 	result.DefaultBranch = project.DefaultBranch
 	result.HeadCommitSha = project.LatestHeadCommitSha
 
 	l.WithFields(logrus.Fields{
-		"projectID":     project.IdOnPlatform,
+		"projectID":     project.IDOnPlatform,
 		"projectName":   project.Name,
 		"defaultBranch": project.DefaultBranch,
 		"ciConfigPath":  project.CiConfPath,
@@ -854,7 +854,7 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	///////////////////////
 
 	// 1. Run Pipeline Origin data collection
-	reportProgress(conf, 2, analysisStepCount, "Collecting pipeline origins")
+	reportProgress(conf, 2, "Collecting pipeline origins")
 	l.Info("Running Pipeline Origin data collection")
 	originDC := &gitlab.GitlabPipelineOriginDataCollection{}
 	pipelineOriginData, pipelineOriginMetrics, err := originDC.Run(projectInfo, conf.GitlabToken, conf)
@@ -946,7 +946,7 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	}
 
 	// 2. Run Pipeline Image data collection
-	reportProgress(conf, 3, analysisStepCount, "Collecting pipeline images")
+	reportProgress(conf, 3, "Collecting pipeline images")
 	l.Info("Running Pipeline Image data collection")
 	imageDC := &gitlab.GitlabPipelineImageDataCollection{}
 	pipelineImageData, pipelineImageMetrics, err := imageDC.Run(projectInfo, conf.GitlabToken, conf, pipelineOriginData)
@@ -990,7 +990,7 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	var protectionData *gitlab.GitlabProtectionAnalysisData
 	if anyCollectionConfig(conf, protectionDataNeeded) {
 		result.markLaneCollected(laneGitLabProtection)
-		reportProgress(conf, 9, analysisStepCount, "Checking branch protection")
+		reportProgress(conf, 9, "Checking branch protection")
 		if fromSnapshot, served := gitlab.ProtectionFromSnapshot(conf.PlatformRun); served {
 			protectionData = fromSnapshot
 		} else {
@@ -1020,7 +1020,7 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	var variablesData *gitlab.GitlabVariablesAnalysisData
 	if anyCollectionConfig(conf, cicdVariableControlEnabled) {
 		result.markLaneCollected(laneGitLabVariables)
-		reportProgress(conf, 10, analysisStepCount, "Checking CI/CD variables")
+		reportProgress(conf, 10, "Checking CI/CD variables")
 		if fromSnapshot, served := gitlab.VariablesFromSnapshot(conf.PlatformRun); served {
 			variablesData = fromSnapshot
 		} else {
@@ -1114,7 +1114,7 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	// pass either (#459): it is not_evaluable, config_required, same as any other lane gap.
 	MarkUnconfiguredControls(result, GitLabControls(conf.PlumberConfig), conf.PlumberConfig, configuration.ProviderGitLab)
 
-	reportProgress(conf, analysisStepCount, analysisStepCount, "Analysis complete")
+	reportProgress(conf, analysisStepCount, "Analysis complete")
 
 	l.WithFields(logrus.Fields{
 		"ciValid":   result.CiValid,

@@ -9,14 +9,14 @@ import (
 )
 
 // FetchGitlabProject retrieves a project from GitLab using its ID
-func FetchGitlabProject(id int, token string, APIURL string, conf *configuration.Configuration) (*gitlab.Project, error, error) {
+func FetchGitlabProject(id int, token string, apiURL string, conf *configuration.Configuration) (*gitlab.Project, error, error) {
 	l := logger.WithFields(logrus.Fields{
 		"action":          "FetchGitlabProject",
 		"GitlabProjectID": id,
-		"APIURL":          APIURL,
+		"apiURL":          apiURL,
 	})
 
-	glab, err := GetNewGitlabClient(token, APIURL, conf)
+	glab, err := GetNewGitlabClient(token, apiURL, conf)
 	if err != nil {
 		l.WithError(err).Error("Unable to get a Gitlab client")
 		return nil, nil, err
@@ -38,16 +38,16 @@ func FetchGitlabProject(id int, token string, APIURL string, conf *configuration
 }
 
 // FetchGitlabFile retrieves a file from a GitLab project using its path
-func FetchGitlabFile(projectPath string, filePath string, ref string, token string, APIURL string, conf *configuration.Configuration) ([]byte, error, error) {
+func FetchGitlabFile(projectPath string, filePath string, ref string, token string, apiURL string, conf *configuration.Configuration) ([]byte, error, error) {
 	l := logger.WithFields(logrus.Fields{
 		"action":            "FetchGitlabFile",
 		"GitlabProjectPath": projectPath,
 		"filePath":          filePath,
 		"ref":               ref,
-		"APIURL":            APIURL,
+		"apiURL":            apiURL,
 	})
 
-	glab, err := GetNewGitlabClient(token, APIURL, conf)
+	glab, err := GetNewGitlabClient(token, apiURL, conf)
 	if err != nil {
 		l.WithError(err).Error("Unable to get a Gitlab client")
 		return []byte{}, nil, err
@@ -69,16 +69,16 @@ func FetchGitlabFile(projectPath string, filePath string, ref string, token stri
 }
 
 // SearchTags gets all tags of a project
-func SearchTags(projectPath string, token string, APIURL string, conf *configuration.Configuration) ([]string, error, error) {
+func SearchTags(projectPath string, token string, apiURL string, conf *configuration.Configuration) ([]string, error, error) {
 	l := logger.WithFields(logrus.Fields{
 		"action":            "SearchTags",
 		"GitlabProjectPath": projectPath,
-		"APIURL":            APIURL,
+		"apiURL":            apiURL,
 	})
 
 	gTags := []*gitlab.Tag{}
 
-	glab, err := GetNewGitlabClient(token, APIURL, conf)
+	glab, err := GetNewGitlabClient(token, apiURL, conf)
 	if err != nil {
 		l.WithError(err).Error("Unable to get a Gitlab client")
 		return []string{}, nil, err
@@ -100,7 +100,7 @@ func SearchTags(projectPath string, token string, APIURL string, conf *configura
 
 		tags, _, err := glab.Tags.ListTags(projectPath, options)
 		if err != nil {
-			l.WithError(err).Warn("Failed to retreive tags from GitLab API")
+			l.WithError(err).Warn("Failed to retrieve tags from GitLab API")
 			return []string{}, err, nil
 		} else {
 			gTags = append(gTags, tags...)
@@ -125,14 +125,14 @@ func SearchTags(projectPath string, token string, APIURL string, conf *configura
 // tell a non-existent --branch apart from a branch that simply has no
 // .gitlab-ci.yml, so the former fails loudly instead of rendering a
 // confusing limited report (#222).
-func BranchExists(projectID int, branch string, token string, APIURL string, conf *configuration.Configuration) (bool, error) {
+func BranchExists(projectID int, branch string, token string, apiURL string, conf *configuration.Configuration) (bool, error) {
 	l := logger.WithFields(logrus.Fields{
 		"action":    "BranchExists",
 		"projectID": projectID,
 		"branch":    branch,
 	})
 
-	glab, err := GetNewGitlabClient(token, APIURL, conf)
+	glab, err := GetNewGitlabClient(token, apiURL, conf)
 	if err != nil {
 		l.WithError(err).Error("Unable to get a Gitlab client")
 		return false, err
@@ -157,14 +157,14 @@ func BranchExists(projectID int, branch string, token string, APIURL string, con
 // (ISSUE-402) fires only on a confirmed tag-AND-branch collision, so an
 // indeterminate probe (auth, network, rate limit) must never assert
 // ambiguity — the error path leaves both false and surfaces err.
-func RefResolvesAsTagAndBranch(projectPath string, ref string, token string, APIURL string, conf *configuration.Configuration) (tagExists bool, branchExists bool, err error) {
+func RefResolvesAsTagAndBranch(projectPath string, ref string, token string, apiURL string, conf *configuration.Configuration) (tagExists bool, branchExists bool, err error) {
 	l := logger.WithFields(logrus.Fields{
 		"action":      "RefResolvesAsTagAndBranch",
 		"projectPath": projectPath,
 		"ref":         ref,
 	})
 
-	glab, err := GetNewGitlabClient(token, APIURL, conf)
+	glab, err := GetNewGitlabClient(token, apiURL, conf)
 	if err != nil {
 		l.WithError(err).Error("Unable to get a Gitlab client")
 		return false, false, err
@@ -196,14 +196,14 @@ func RefResolvesAsTagAndBranch(projectPath string, ref string, token string, API
 // response), so the caller can classify a 403/404 (feature unavailable / token
 // scope → not-evaluable) apart from a hard failure on the typed status rather
 // than substring-matching the error string.
-func FetchProjectMRApprovalRules(projectID int, token string, APIURL string, conf *configuration.Configuration) ([]*gitlab.ProjectApprovalRule, int, error) {
+func FetchProjectMRApprovalRules(projectID int, token string, apiURL string, conf *configuration.Configuration) ([]*gitlab.ProjectApprovalRule, int, error) {
 	l := logger.WithFields(logrus.Fields{
 		"action":    "FetchProjectMRApprovalRules",
 		"projectID": projectID,
-		"APIURL":    APIURL,
+		"apiURL":    apiURL,
 	})
 
-	glab, err := GetNewGitlabClient(token, APIURL, conf)
+	glab, err := GetNewGitlabClient(token, apiURL, conf)
 	if err != nil {
 		l.WithError(err).Error("Unable to get a Gitlab client")
 		return nil, 0, err
@@ -243,14 +243,14 @@ func FetchProjectMRApprovalRules(projectID int, token string, APIURL string, con
 // The second return is the HTTP status of a failed request (0 when there was no
 // response), so the caller classifies a 403/404 apart from a hard failure on
 // the typed status.
-func FetchProjectMRApprovalSettings(projectID int, token string, APIURL string, conf *configuration.Configuration) (*gitlab.ProjectApprovals, int, error) {
+func FetchProjectMRApprovalSettings(projectID int, token string, apiURL string, conf *configuration.Configuration) (*gitlab.ProjectApprovals, int, error) {
 	l := logger.WithFields(logrus.Fields{
 		"action":    "FetchProjectMRApprovalSettings",
 		"projectID": projectID,
-		"APIURL":    APIURL,
+		"apiURL":    apiURL,
 	})
 
-	glab, err := GetNewGitlabClient(token, APIURL, conf)
+	glab, err := GetNewGitlabClient(token, apiURL, conf)
 	if err != nil {
 		l.WithError(err).Error("Unable to get a Gitlab client")
 		return nil, 0, err
@@ -271,14 +271,14 @@ func FetchProjectMRApprovalSettings(projectID int, token string, APIURL string, 
 }
 
 // FetchProjectBranchData fetches branches and their protection settings
-func FetchProjectBranchData(projectPath string, token string, APIURL string, conf *configuration.Configuration) ([]string, []BranchProtection, error) {
+func FetchProjectBranchData(projectPath string, token string, apiURL string, conf *configuration.Configuration) ([]string, []BranchProtection, error) {
 	l := logger.WithFields(logrus.Fields{
 		"action":      "FetchProjectBranchData",
 		"projectPath": projectPath,
-		"APIURL":      APIURL,
+		"apiURL":      apiURL,
 	})
 
-	glab, err := GetNewGitlabClient(token, APIURL, conf)
+	glab, err := GetNewGitlabClient(token, apiURL, conf)
 	if err != nil {
 		l.WithError(err).Error("Unable to get a Gitlab client")
 		return nil, nil, err

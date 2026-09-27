@@ -25,7 +25,7 @@ func TestProjectFromCIEnvironment_MapsThePredefinedVariables(t *testing.T) {
 	if !ok {
 		t.Fatal("a complete CI environment for the analyzed project must be accepted")
 	}
-	if p.IdOnPlatform != 42 || p.Path != "grp/proj" || p.Name != "proj" ||
+	if p.IDOnPlatform != 42 || p.Path != "grp/proj" || p.Name != "proj" ||
 		p.DefaultBranch != "main" || p.LatestHeadCommitSha != "abc123def" {
 		t.Fatalf("identity mapping mismatch: %+v", p)
 	}

@@ -68,20 +68,20 @@ func (il *IncludeList) UnmarshalYAML(unmarshal func(interface{}) error) error {
 	return nil
 }
 
-// Data of a GitLab group
+// Group is the data of a GitLab group.
 type Group struct {
-	IdOnPlatform      int       `json:"idOnPlatform" validate:"required,number"`
-	GroupIdOnPlatform int       `json:"groupIdOnPlatform" validate:"number"`
+	IDOnPlatform      int       `json:"idOnPlatform" validate:"required,number"`
+	GroupIDOnPlatform int       `json:"groupIdOnPlatform" validate:"number"`
 	Path              string    `json:"path" validate:"required,max=300"`
 	Name              string    `json:"name" validate:"required,max=300"`
 	Visibility        string    `json:"visibility" validate:"required,max=50"`
 	CreatedAt         time.Time `json:"createdAt"`
 }
 
-// Data of a GitLab project
+// Project is the data of a GitLab project.
 type Project struct {
-	IdOnPlatform        int       `json:"idOnPlatform" validate:"required,number"`
-	GroupIdOnPlatform   int       `json:"groupIdOnPlatform" validate:"required,number"`
+	IDOnPlatform        int       `json:"idOnPlatform" validate:"required,number"`
+	GroupIDOnPlatform   int       `json:"groupIdOnPlatform" validate:"required,number"`
 	Path                string    `json:"path" validate:"required,max=300"`
 	Name                string    `json:"name" validate:"required,max=300"`
 	Visibility          string    `json:"visibility" validate:"required,max=50"`
@@ -122,7 +122,7 @@ type ProjectLanguage struct {
 	Share float64 `json:"share"`
 }
 
-// Data of a GitLab branch
+// Branch is the data of a GitLab branch.
 type Branch struct {
 	Name string `json:"name"`
 }
@@ -143,7 +143,7 @@ type BranchProtectionAccessLevel struct {
 }
 
 type SecurityPolicyProject struct {
-	Id       int    `json:"id"`
+	ID       int    `json:"id"`
 	Name     string `json:"name"`
 	FullPath string `json:"fullPath"`
 }
@@ -160,7 +160,7 @@ type IncludeOrigin struct {
 	Ref string `json:"ref"`
 }
 
-// Data of Gitlab projects and groups variables
+// CICDVariable is a project or group CI/CD variable.
 type CICDVariable struct {
 	Name        string `json:"name"`
 	Type        string `json:"type"`
@@ -216,7 +216,7 @@ type CICDVariableConf struct {
 	Masked      bool   `json:"masked"`
 }
 
-// GitLab CI Configuration
+// GitlabCIConf is a GitLab CI configuration file as parsed.
 type GitlabCIConf struct {
 	Image           interface{}            `yaml:"image,omitempty"`
 	GlobalVariables map[string]interface{} `yaml:"variables,omitempty"`

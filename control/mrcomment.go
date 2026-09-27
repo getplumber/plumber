@@ -199,15 +199,16 @@ func generateMRComment(result *AnalysisResult, pc *configuration.PlumberConfig, 
 	b.WriteString("| Control | Status | Issues |\n")
 	b.WriteString("|---------|--------|--------|\n")
 	for _, c := range controls {
-		if c.skipped {
+		switch {
+		case c.skipped:
 			fmt.Fprintf(&b, "| %s | _skipped_ | — |\n", c.name)
-		} else if c.notEvaluable {
+		case c.notEvaluable:
 			// Never a green check: this control was not checked at all, and
 			// a reviewer reading the MR must not take it for a pass.
 			fmt.Fprintf(&b, "| :grey_question: %s | _not evaluated_ | — |\n", c.name)
-		} else if c.issues > 0 {
+		case c.issues > 0:
 			fmt.Fprintf(&b, "| :x: %s | failed | %d |\n", c.name, c.issues)
-		} else {
+		default:
 			fmt.Fprintf(&b, "| :white_check_mark: %s | passed | 0 |\n", c.name)
 		}
 	}

@@ -13,7 +13,7 @@ import (
 )
 
 // loopOriginHash is the origin loop's hash computation, transcribed from
-// dataCollectionGitlabPipelineOrigin.go. It exists so the test can compare the
+// collect_pipeline_origin.go. It exists so the test can compare the
 // exported path against the in-place one rather than against a constant: a
 // constant only catches a change to includeOriginHash, and the failure mode
 // that matters is the two DRIFTING.

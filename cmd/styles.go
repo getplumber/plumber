@@ -2,10 +2,10 @@ package cmd
 
 import "github.com/charmbracelet/lipgloss"
 
-// Palette inspirée du rendu terminal moderne (style trivy / semgrep /
-// osc-policy). Couleurs hex cohérentes, lisibles sur fond sombre comme
-// sur fond clair. Les styles sémantiques (title, muted, …) composent
-// ces couleurs pour rester stables si la palette évolue.
+// Palette inspired by modern terminal scanners (trivy, semgrep, osc-policy):
+// a coherent set of hex colors readable on dark and light backgrounds. The
+// semantic styles (title, muted, and so on) compose these colors so they stay
+// stable when the palette evolves.
 
 // Palette
 var (
@@ -92,7 +92,7 @@ func scoreLetterLipglossColor(letter string) lipgloss.Color {
 // Block-letter ASCII art for Plumber letter grades (A–E). Each entry
 // is 6 lines tall / 8 columns wide, matching the project's existing
 // banner lettering style.
-var scoreLetterAscii = map[string][]string{
+var scoreLetterASCII = map[string][]string{
 	"A": {
 		" █████╗ ",
 		"██╔══██╗",
@@ -135,13 +135,13 @@ var scoreLetterAscii = map[string][]string{
 	},
 }
 
-// scoreLetterAsciiArt returns the block-letter art for the given
+// scoreLetterASCIIArt returns the block-letter art for the given
 // grade, ready-rendered with its tier color. Unknown letters fall
 // back to the E badge.
-func scoreLetterAsciiArt(letter string) string {
-	lines, ok := scoreLetterAscii[letter]
+func scoreLetterASCIIArt(letter string) string {
+	lines, ok := scoreLetterASCII[letter]
 	if !ok {
-		lines = scoreLetterAscii["E"]
+		lines = scoreLetterASCII["E"]
 	}
 	style := lipgloss.NewStyle().Foreground(scoreLetterLipglossColor(letter)).Bold(true)
 	joined := ""

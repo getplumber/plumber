@@ -14,11 +14,7 @@ import (
 func controlProvenance(overlayData []byte) (map[string]string, error) {
 	out := map[string]string{}
 
-	ext, err := yamlTopString(overlayData, "extends")
-	if err != nil {
-		return nil, err
-	}
-	isOverlay := ext == configuration.ExtendsPlumberDefault
+	isOverlay := yamlTopString(overlayData, "extends") == configuration.ExtendsPlumberDefault
 
 	if isOverlay {
 		for _, p := range []string{"gitlab", "github"} {
@@ -59,13 +55,15 @@ func providerControlNames(data []byte, provider string) map[string]struct{} {
 	return names
 }
 
-func yamlTopString(data []byte, key string) (string, error) {
+// yamlTopString returns the string value of a top-level key, or "" when the
+// document does not parse or the key is absent or not a string.
+func yamlTopString(data []byte, key string) string {
 	var raw map[interface{}]interface{}
 	if err := yaml.Unmarshal(data, &raw); err != nil {
-		return "", nil
+		return ""
 	}
 	if s, ok := raw[key].(string); ok {
-		return s, nil
+		return s
 	}
-	return "", nil
+	return ""
 }

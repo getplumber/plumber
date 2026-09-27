@@ -24,9 +24,9 @@ const (
 
 // Behavior when commit is added constants
 const (
-	BehaviorWhenCommitIsAddedKeepApprovalsId = iota + 1
-	BehaviorWhenCommitIsAddedRemoveCodeOwnerApprovalsId
-	BehaviorWhenCommitIsAddedRemoveApprovalsId
+	BehaviorWhenCommitIsAddedKeepApprovalsID = iota + 1
+	BehaviorWhenCommitIsAddedRemoveCodeOwnerApprovalsID
+	BehaviorWhenCommitIsAddedRemoveApprovalsID
 )
 
 // Behavior when commit is added text values

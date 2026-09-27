@@ -295,7 +295,7 @@ func (e *Engine) LoadFromFSFiltered(fsys fs.FS, skip func(filename string, conte
 	return nil
 }
 
-// FindingsObserver, when non-nil, receives every finding slice Evaluate
+// FindingsObserver is the hook that, when non-nil, receives every finding slice Evaluate
 // returns. It exists for the identity harness in policies_test, which must
 // see every emission the test suite produces to prove each control keeps
 // emitting the fields its declared identity depends on. Production code never

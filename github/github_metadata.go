@@ -17,14 +17,14 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-// EnvDisableGitHubAPI, when set to a truthy value, forces every
+// EnvDisableGitHubAPI is the variable that, when set to a truthy value, forces every
 // GitHub API consumer that honors it (the metadata client, the
 // default-branch lookup seam in control) into degraded mode
 // regardless of gh auth state. Set to "1" by the test suites to
 // keep unit tests offline and fast.
 const EnvDisableGitHubAPI = "PLUMBER_DISABLE_GITHUB_API"
 
-// EnvMetadataToken, when set, supplies the token the metadata client uses
+// EnvMetadataToken is the variable that, when set, supplies the token the metadata client uses
 // to resolve third-party action versions. It takes precedence over the
 // go-gh default chain (gh auth, GH_TOKEN, GITHUB_TOKEN) and is the
 // supported way to resolve actions hosted in an org that gates the Actions

@@ -22,12 +22,12 @@ import (
 var ErrProjectVariablesUnreadable = errors.New("project CI/CD variables not readable (insufficient token permissions)")
 
 // GetGitlabProjectInheritedVariables returns all project inherited variables
-func GetGitlabProjectInheritedVariables(fullPath string, token string, instanceUrl string, conf *configuration.Configuration) ([]CICDVariable, error) {
+func GetGitlabProjectInheritedVariables(fullPath string, token string, instanceURL string, conf *configuration.Configuration) ([]CICDVariable, error) {
 	l := logrus.WithFields(logrus.Fields{
 		"platform":        "gitlab",
 		"action":          "GetGitlabProjectInheritedVariables",
 		"projectFullPath": fullPath,
-		"instanceUrl":     instanceUrl,
+		"instanceURL":     instanceURL,
 	})
 
 	variables := []CICDVariable{}
@@ -112,7 +112,7 @@ func GetGitlabProjectInheritedVariables(fullPath string, token string, instanceU
 		} `json:"project"`
 	}
 
-	client := GetGraphQLClient(instanceUrl, conf)
+	client := GetGraphQLClient(instanceURL, conf)
 	req := graphql.NewRequest(request)
 	req.Var("fullPath", fullPath)
 	req.Header.Add("Authorization", "Bearer "+token)
@@ -130,7 +130,7 @@ func GetGitlabProjectInheritedVariables(fullPath string, token string, instanceU
 			newVar := CICDVariable{
 				Name:        v.Key,
 				Value:       v.Value,
-				Type:        string(v.VariableType),
+				Type:        v.VariableType,
 				Protected:   v.Protected,
 				Masked:      v.Masked,
 				Hidden:      v.Hidden,
@@ -148,7 +148,7 @@ func GetGitlabProjectInheritedVariables(fullPath string, token string, instanceU
 				newVar := CICDVariable{
 					Name:        v.Key,
 					Value:       v.Value,
-					Type:        string(v.VariableType),
+					Type:        v.VariableType,
 					Protected:   v.Protected,
 					Masked:      v.Masked,
 					Hidden:      v.Hidden,
@@ -166,7 +166,7 @@ func GetGitlabProjectInheritedVariables(fullPath string, token string, instanceU
 					newVar := CICDVariable{
 						Name:        v.Key,
 						Value:       v.Value,
-						Type:        string(v.VariableType),
+						Type:        v.VariableType,
 						Protected:   v.Protected,
 						Masked:      v.Masked,
 						Hidden:      v.Hidden,
@@ -183,10 +183,10 @@ func GetGitlabProjectInheritedVariables(fullPath string, token string, instanceU
 }
 
 // FetchGitlabMergedCIConf gets merged version of a GitLab CI configuration
-func FetchGitlabMergedCIConf(projectPath string, confContent string, sha string, userToken string, instanceUrl string, conf *configuration.Configuration) (MergedCIConfResponse, error) {
+func FetchGitlabMergedCIConf(projectPath string, confContent string, sha string, userToken string, instanceURL string, conf *configuration.Configuration) (MergedCIConfResponse, error) {
 	l := logrus.WithFields(logrus.Fields{
 		"action":      "FetchGitlabMergedCIConf",
-		"instanceUrl": instanceUrl,
+		"instanceURL": instanceURL,
 		"projectPath": projectPath,
 		"sha":         sha,
 	})
@@ -227,7 +227,7 @@ func FetchGitlabMergedCIConf(projectPath string, confContent string, sha string,
 	}
 	`
 
-	client := GetGraphQLClient(instanceUrl, conf)
+	client := GetGraphQLClient(instanceURL, conf)
 	req := graphql.NewRequest(request)
 	req.Var("projectPath", projectPath)
 	req.Var("content", confContent)
@@ -245,12 +245,12 @@ func FetchGitlabMergedCIConf(projectPath string, confContent string, sha string,
 }
 
 // GetGitlabProjectVariables returns all project variables
-func GetGitlabProjectVariables(fullPath string, token string, instanceUrl string, conf *configuration.Configuration) ([]CICDVariable, error) {
+func GetGitlabProjectVariables(fullPath string, token string, instanceURL string, conf *configuration.Configuration) ([]CICDVariable, error) {
 	l := logrus.WithFields(logrus.Fields{
 		"platform":        "gitlab",
 		"action":          "GetGitlabProjectVariables",
 		"projectFullPath": fullPath,
-		"instanceUrl":     instanceUrl,
+		"instanceURL":     instanceURL,
 	})
 
 	variables := []CICDVariable{}
@@ -306,7 +306,7 @@ func GetGitlabProjectVariables(fullPath string, token string, instanceUrl string
 		} `json:"project"`
 	}
 
-	client := GetGraphQLClient(instanceUrl, conf)
+	client := GetGraphQLClient(instanceURL, conf)
 
 	var allNodes []variable
 	var cursor string
@@ -341,7 +341,7 @@ func GetGitlabProjectVariables(fullPath string, token string, instanceUrl string
 
 	for _, v := range allNodes {
 		newVar := CICDVariable{
-			Name: v.Key,
+			Name:  v.Key,
 			Value: v.Value,
 			// Normalise the GraphQL enum (ENV_VAR / FILE) to the lower-case form
 			// the rest of the pipeline and the REST API use ("env_var" / "file"),
@@ -360,11 +360,11 @@ func GetGitlabProjectVariables(fullPath string, token string, instanceUrl string
 }
 
 // GetGitlabInstanceVariables returns all instance variables
-func GetGitlabInstanceVariables(token string, instanceUrl string, conf *configuration.Configuration) ([]CICDVariable, error) {
+func GetGitlabInstanceVariables(token string, instanceURL string, conf *configuration.Configuration) ([]CICDVariable, error) {
 	l := logrus.WithFields(logrus.Fields{
 		"platform":    "gitlab",
 		"action":      "GetGitlabInstanceVariables",
-		"instanceUrl": instanceUrl,
+		"instanceURL": instanceURL,
 	})
 
 	variables := []CICDVariable{}
@@ -405,7 +405,7 @@ func GetGitlabInstanceVariables(token string, instanceUrl string, conf *configur
 		CiVariables ciVariables `json:"ciVariables"`
 	}
 
-	client := GetGraphQLClient(instanceUrl, conf)
+	client := GetGraphQLClient(instanceURL, conf)
 
 	var allNodes []variable
 	var cursor string
@@ -451,10 +451,10 @@ func GetGitlabInstanceVariables(token string, instanceUrl string, conf *configur
 // pagination roulette). Returns (nil, nil) when no catalog resource exists at
 // fullPath — e.g. a component published only as git tags, or a plain project
 // include — so the caller can fall back to the tags API.
-func GetGitlabCIComponentResource(fullPath string, token string, instanceUrl string, conf *configuration.Configuration) (*CICatalogResource, error) {
+func GetGitlabCIComponentResource(fullPath string, token string, instanceURL string, conf *configuration.Configuration) (*CICatalogResource, error) {
 	l := logrus.WithFields(logrus.Fields{
 		"action":      "GetGitlabCIComponentResource",
-		"instanceUrl": instanceUrl,
+		"instanceURL": instanceURL,
 		"fullPath":    fullPath,
 	})
 
@@ -475,7 +475,7 @@ func GetGitlabCIComponentResource(fullPath string, token string, instanceUrl str
 		}
 	}`
 
-	client := GetGraphQLClient(instanceUrl, conf)
+	client := GetGraphQLClient(instanceURL, conf)
 	req := graphql.NewRequest(query)
 	req.Var("fullPath", fullPath)
 	req.Header.Set("Authorization", fmt.Sprintf("Bearer %s", token))

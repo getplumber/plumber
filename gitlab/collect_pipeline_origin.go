@@ -186,7 +186,7 @@ type GitlabPipelineJobData struct {
 	Name         string   `json:"name"`
 	Extends      []string `json:"extends"`
 	Lines        int      `json:"lines"`
-	IsHardocded  bool     `json:"isHardcoded"`
+	IsHardcoded  bool     `json:"isHardcoded"`
 	IsOverridden bool     `json:"isOverridden"`
 }
 
@@ -819,12 +819,12 @@ func (dc *GitlabPipelineOriginDataCollection) Run(project *ProjectInfo, token st
 			jobData.Name = name
 			jobData.Extends = extends
 			jobData.Lines = jobLines
-			jobData.IsHardocded = false
+			jobData.IsHardcoded = false
 			jobData.IsOverridden = false
 
 			// Check if hardcoded
 			if _, ok := data.JobHardcodedMap[name]; ok {
-				jobData.IsHardocded = true
+				jobData.IsHardcoded = true
 			}
 
 			lJob.Debug("Job added to result list")
@@ -1197,13 +1197,13 @@ func (dc *GitlabPipelineOriginDataCollection) Run(project *ProjectInfo, token st
 						if isLocalInclude {
 							// Local include: keep as hardcoded
 							data.JobHardcodedMap[job] = true
-							data.JobMap[job].IsHardocded = true
+							data.JobMap[job].IsHardcoded = true
 						} else {
 							// External include: not hardcoded
 							data.JobHardcodedMap[job] = false
-							data.JobMap[job].IsHardocded = false
+							data.JobMap[job].IsHardcoded = false
 
-							// Job is overriden
+							// Job is overridden
 							data.JobMap[job].IsOverridden = true
 						}
 					}
@@ -1232,13 +1232,13 @@ func (dc *GitlabPipelineOriginDataCollection) Run(project *ProjectInfo, token st
 				if isLocalInclude {
 					// Local include: mark job as hardcoded
 					data.JobHardcodedMap[job] = true
-					data.JobMap[job].IsHardocded = true
+					data.JobMap[job].IsHardcoded = true
 				} else if _, ok := data.JobHardcodedMap[job]; ok {
 					// External include: not hardcoded, it has overrides
 					data.JobHardcodedMap[job] = false
-					data.JobMap[job].IsHardocded = false
+					data.JobMap[job].IsHardcoded = false
 
-					// Job is overriden
+					// Job is overridden
 					data.JobMap[job].IsOverridden = true
 				}
 

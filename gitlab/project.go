@@ -47,7 +47,7 @@ func FetchProjectDetails(projectPath string, token string, instanceURL string, c
 	}
 
 	// Populate project info from REST API response
-	project.IdOnPlatform = int(gitlabProject.ID)
+	project.IDOnPlatform = int(gitlabProject.ID)
 	project.Name = gitlabProject.Name
 	project.Path = gitlabProject.PathWithNamespace
 	project.DefaultBranch = gitlabProject.DefaultBranch
@@ -79,11 +79,11 @@ func FetchProjectDetails(projectPath string, token string, instanceURL string, c
 
 	// Determine group ID if project is in a group
 	if gitlabProject.Namespace != nil && gitlabProject.Namespace.Kind == "group" {
-		project.GroupIdOnPlatform = int(gitlabProject.Namespace.ID)
+		project.GroupIDOnPlatform = int(gitlabProject.Namespace.ID)
 	}
 
 	// Get the latest commit SHA for the default branch
-	latestSha, err := fetchLatestCommitSha(glab, projectPath, project.DefaultBranch, l)
+	latestSha, err := fetchLatestCommitSha(glab, projectPath, project.DefaultBranch)
 	if err != nil {
 		l.WithError(err).Warn("Unable to fetch latest commit SHA, using HEAD")
 		project.LatestHeadCommitSha = "HEAD"
@@ -92,7 +92,7 @@ func FetchProjectDetails(projectPath string, token string, instanceURL string, c
 	}
 
 	l.WithFields(logrus.Fields{
-		"projectID":       project.IdOnPlatform,
+		"projectID":       project.IDOnPlatform,
 		"projectName":     project.Name,
 		"defaultBranch":   project.DefaultBranch,
 		"ciConfigPath":    project.CiConfPath,
@@ -103,7 +103,7 @@ func FetchProjectDetails(projectPath string, token string, instanceURL string, c
 }
 
 // fetchLatestCommitSha gets the latest commit SHA for a branch
-func fetchLatestCommitSha(glab *gitlab.Client, projectPath string, branch string, l *logrus.Entry) (string, error) {
+func fetchLatestCommitSha(glab *gitlab.Client, projectPath string, branch string) (string, error) {
 	if branch == "" {
 		branch = "main"
 	}
@@ -141,13 +141,13 @@ func FetchLatestCommitSha(token, instanceURL, projectPath, branch string, conf *
 		return "", err
 	}
 
-	return fetchLatestCommitSha(glab, projectPath, branch, l)
+	return fetchLatestCommitSha(glab, projectPath, branch)
 }
 
 // ToProjectInfo converts Project to the simpler ProjectInfo struct used by collectors
 func (p *Project) ToProjectInfo() *ProjectInfo {
 	return &ProjectInfo{
-		ID:                  p.IdOnPlatform,
+		ID:                  p.IDOnPlatform,
 		Path:                p.Path,
 		CiConfPath:          p.CiConfPath,
 		DefaultBranch:       p.DefaultBranch,
@@ -155,6 +155,6 @@ func (p *Project) ToProjectInfo() *ProjectInfo {
 		LatestHeadCommitSha: p.LatestHeadCommitSha,
 		Archived:            p.Archived,
 		NotFound:            false, // If we have a Project struct, it was found
-		IsGroup:             p.GroupIdOnPlatform > 0,
+		IsGroup:             p.GroupIDOnPlatform > 0,
 	}
 }

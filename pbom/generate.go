@@ -74,7 +74,6 @@ func NewGenerator(projectPath string, projectID int, gitlabURL, branch string) *
 	}
 }
 
-// WithComplianceData attaches compliance results so the PBOM includes authorized/forbiddenTag fields
 // WithoutComplianceVerdicts suppresses the include fields that state a
 // CONTROL'S CONCLUSION rather than what was collected. It backs
 // --no-controls.

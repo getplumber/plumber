@@ -2,6 +2,7 @@ package gitlab
 
 import (
 	"fmt"
+	"golang.org/x/oauth2"
 	"io"
 	"net/http"
 	"regexp"
@@ -19,13 +20,13 @@ const (
 )
 
 // GetNewGitlabClient returns a new GitLab client for API requests
-func GetNewGitlabClient(token string, instanceUrl string, conf *configuration.Configuration) (*gitlab.Client, error) {
+func GetNewGitlabClient(token string, instanceURL string, conf *configuration.Configuration) (*gitlab.Client, error) {
 	l := logger.WithFields(logrus.Fields{
 		"action": "GetNewGitlabClient",
 	})
 
 	// Sanitize the instance URL to remove any trailing slashes
-	sanitizedInstance := strings.TrimSuffix(instanceUrl, "/")
+	sanitizedInstance := strings.TrimSuffix(instanceURL, "/")
 
 	// Use the host-injected client when present (ADR-0021 rule J: one shared,
 	// rate-limited/cached client per provider+instance); otherwise build the
@@ -51,7 +52,7 @@ func GetNewGitlabClient(token string, instanceUrl string, conf *configuration.Co
 		}
 	} else {
 		// OAuth Token
-		client, err = gitlab.NewOAuthClient(token, gitlab.WithHTTPClient(httpClient), gitlab.WithBaseURL(sanitizedInstance)) //nolint:staticcheck // requires library upgrade to replace deprecated API
+		client, err = gitlab.NewAuthSourceClient(gitlab.OAuthTokenSource{TokenSource: oauth2.StaticTokenSource(&oauth2.Token{AccessToken: token})}, gitlab.WithHTTPClient(httpClient), gitlab.WithBaseURL(sanitizedInstance))
 		if err != nil {
 			l.WithError(err).Error("Failed to create GitLab OAuth client")
 			return nil, err

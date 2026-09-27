@@ -466,7 +466,7 @@ func TestHandleScorePublishing_NonDefaultBranchStillPublishes(t *testing.T) {
 	conf := &configuration.Configuration{PlumberConfig: &configuration.PlumberConfig{}}
 	result := &control.AnalysisResult{ProjectPath: "group/subgroup/repo", DefaultBranch: "main"}
 
-	handleScorePublishing(p, conf, result, complianceSummary{}, []byte(`{"plumberScore":{"score":"A"}}`))
+	handleScorePublishing(p, conf, result, []byte(`{"plumberScore":{"score":"A"}}`))
 
 	if got := posts.Load(); got != 1 {
 		t.Fatalf("MR-pipeline run POSTed %d times, want exactly 1", got)
@@ -508,7 +508,7 @@ func TestHandleScorePublishing_SkipsDegraded(t *testing.T) {
 	conf := &configuration.Configuration{PlumberConfig: &configuration.PlumberConfig{}}
 	result := &control.AnalysisResult{ProjectPath: "group/repo", DefaultBranch: "main", DataCollectionDegraded: true}
 
-	handleScorePublishing(p, conf, result, complianceSummary{}, []byte(`{"plumberScore":{"score":"A"}}`))
+	handleScorePublishing(p, conf, result, []byte(`{"plumberScore":{"score":"A"}}`))
 
 	if got := posts.Load(); got != 0 {
 		t.Fatalf("degraded run POSTed %d times, want 0", got)
@@ -552,8 +552,8 @@ func TestHandleScorePublishing_PublishesOnce(t *testing.T) {
 	conf := &configuration.Configuration{PlumberConfig: &configuration.PlumberConfig{}}
 	result := &control.AnalysisResult{ProjectPath: "octo/repo", DefaultBranch: "main"}
 
-	handleScorePublishing(p, conf, result, complianceSummary{}, []byte(`{"plumberScore":{"score":"A"}}`))
-	handleScorePublishing(p, conf, result, complianceSummary{}, []byte(`{"plumberScore":{"score":"A"}}`))
+	handleScorePublishing(p, conf, result, []byte(`{"plumberScore":{"score":"A"}}`))
+	handleScorePublishing(p, conf, result, []byte(`{"plumberScore":{"score":"A"}}`))
 
 	if got := posts.Load(); got != 1 {
 		t.Fatalf("score POSTed %d times, want exactly 1", got)
@@ -603,7 +603,7 @@ func TestHandleScorePublishing_PlatformPreemptsScorePush(t *testing.T) {
 		scorePublishOnce = sync.Once{}
 
 		out := captureStderr(t, func() {
-			handleScorePublishing(p, conf, result, complianceSummary{}, []byte(`{"plumberScore":{"score":"A"}}`))
+			handleScorePublishing(p, conf, result, []byte(`{"plumberScore":{"score":"A"}}`))
 		})
 
 		if !strings.Contains(out, "--score-push skipped") || !strings.Contains(out, "https://platform.example.com") {
@@ -622,7 +622,7 @@ func TestHandleScorePublishing_PlatformPreemptsScorePush(t *testing.T) {
 		scorePublishOnce = sync.Once{}
 
 		out := captureStderr(t, func() {
-			handleScorePublishing(p, conf, result, complianceSummary{}, []byte(`{"plumberScore":{"score":"A"}}`))
+			handleScorePublishing(p, conf, result, []byte(`{"plumberScore":{"score":"A"}}`))
 		})
 
 		if !strings.Contains(out, "--score-push skipped") {

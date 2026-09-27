@@ -8,7 +8,7 @@ import (
 	"github.com/google/uuid"
 )
 
-// CycloneDX spec version we're generating
+// CycloneDXSpecVersion is the CycloneDX specification version the PBOM is generated as.
 const CycloneDXSpecVersion = "1.5"
 
 // The CycloneDX export deliberately carries no per-job entry. PBOM.Jobs

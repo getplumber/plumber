@@ -112,7 +112,7 @@ func TestSecurityPolicyConfigContract(t *testing.T) {
 	// expectedProjectId set via the REAL projection: a mismatch fires, a match does not.
 	cfgExpect := buildEngineConfig(&configuration.ControlsConfig{
 		ProjectMustHaveSecurityPolicySource: &configuration.SecurityPolicyControlConfig{
-			Enabled: spBoolPtr(true), ExpectedProjectId: spIntPtr(9),
+			Enabled: spBoolPtr(true), ExpectedProjectID: spIntPtr(9),
 		},
 	})
 	if _, ok := cfgExpect["projectMustHaveSecurityPolicySource"]; !ok {

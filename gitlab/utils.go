@@ -9,7 +9,7 @@ import (
 
 var logger = logrus.WithField("context", "platform/gitlab")
 
-// Return if a template is up to date
+// IsUpToDate reports whether a template version is the latest one.
 func IsUpToDate(version, latestVersion string, latestRefs []string) bool {
 
 	// Initialize logger

@@ -334,11 +334,11 @@ var scorePublishOnce sync.Once
 // built once by the caller and shared with the platform push, so the badge
 // record and the file on disk never diverge. Never fails the run, and runs at
 // most once per process (scorePublishOnce).
-func handleScorePublishing(p providerPkg.Provider, conf *configuration.Configuration, result *control.AnalysisResult, summary complianceSummary, payload []byte) {
-	scorePublishOnce.Do(func() { handleScorePublishingOnce(p, conf, result, summary, payload) })
+func handleScorePublishing(p providerPkg.Provider, conf *configuration.Configuration, result *control.AnalysisResult, payload []byte) {
+	scorePublishOnce.Do(func() { handleScorePublishingOnce(p, conf, result, payload) })
 }
 
-func handleScorePublishingOnce(p providerPkg.Provider, conf *configuration.Configuration, result *control.AnalysisResult, summary complianceSummary, payload []byte) {
+func handleScorePublishingOnce(p providerPkg.Provider, conf *configuration.Configuration, result *control.AnalysisResult, payload []byte) {
 	if push, _ := effectiveScorePush(); !push {
 		// A push was explicitly requested (--score-push) but --platform preempted
 		// it: say so instead of falling through to the "you should turn on

@@ -34,12 +34,12 @@ type SecurityPolicyProjectLink struct {
 // answers null (no linkage), which is indistinguishable from an Ultimate project
 // that simply has not linked one — the caller surfaces a conditional tier caveat
 // rather than asserting the tier.
-func GetSecurityPolicyProject(fullPath, token, instanceUrl string, conf *configuration.Configuration) (*SecurityPolicyProjectLink, bool, error) {
+func GetSecurityPolicyProject(fullPath, token, instanceURL string, conf *configuration.Configuration) (*SecurityPolicyProjectLink, bool, error) {
 	l := logrus.WithFields(logrus.Fields{
 		"platform":        "gitlab",
 		"action":          "GetSecurityPolicyProject",
 		"projectFullPath": fullPath,
-		"instanceUrl":     instanceUrl,
+		"instanceURL":     instanceURL,
 	})
 
 	request := `
@@ -63,7 +63,7 @@ func GetSecurityPolicyProject(fullPath, token, instanceUrl string, conf *configu
 		} `json:"project"`
 	}
 
-	client := GetGraphQLClient(instanceUrl, conf)
+	client := GetGraphQLClient(instanceURL, conf)
 	req := graphql.NewRequest(request)
 	req.Var("fullPath", fullPath)
 	req.Header.Add("Authorization", "Bearer "+token)
@@ -137,7 +137,7 @@ type SecurityPolicyData struct {
 // whether it degrades the run (a network blip should not read as a clean pass)
 // while the returned data already carries Known=false so the control reports
 // not-evaluable either way.
-func CollectSecurityPolicy(fullPath, token, instanceUrl string, conf *configuration.Configuration) (*SecurityPolicyData, error) {
-	link, known, err := GetSecurityPolicyProject(fullPath, token, instanceUrl, conf)
+func CollectSecurityPolicy(fullPath, token, instanceURL string, conf *configuration.Configuration) (*SecurityPolicyData, error) {
+	link, known, err := GetSecurityPolicyProject(fullPath, token, instanceURL, conf)
 	return &SecurityPolicyData{Known: known, Project: link}, err
 }

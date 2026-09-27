@@ -312,7 +312,7 @@ func publishRun(p provider.Provider, conf *configuration.Configuration, result *
 	nothingEvaluated := summary.platformMode && runsProduceNoPolicyResult(runs)
 	if !nothingEvaluated {
 		jsonPayload := buildPublishPayload(p, conf, result, summary)
-		handleScorePublishing(p, conf, result, summary, jsonPayload)
+		handleScorePublishing(p, conf, result, jsonPayload)
 	}
 	verdict, platformErr := maybePushPlatform(p, conf, result, summary.score, runs)
 	reportPlatformOutcome(conf.PlatformRun)

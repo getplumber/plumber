@@ -180,11 +180,11 @@ func TestConfigForPolicyPreservesLargeIntegers(t *testing.T) {
 	})
 	cfg, _, _ := configForPlatformPolicy("gitlab", pol)
 	sp := cfg.ControlsFor("gitlab").ProjectMustHaveSecurityPolicySource
-	if sp == nil || sp.ExpectedProjectId == nil {
+	if sp == nil || sp.ExpectedProjectID == nil {
 		t.Fatal("the control must be configured with its expectedProjectId")
 	}
-	if *sp.ExpectedProjectId != 9007199254740993 {
-		t.Fatalf("large integer was rounded: got %d, want 9007199254740993", *sp.ExpectedProjectId)
+	if *sp.ExpectedProjectID != 9007199254740993 {
+		t.Fatalf("large integer was rounded: got %d, want 9007199254740993", *sp.ExpectedProjectID)
 	}
 }
 
