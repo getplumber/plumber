@@ -48,16 +48,16 @@ func TestEvaluateModules_IsolatesFailingModule(t *testing.T) {
 	}
 }
 
-// TestEvaluate_StrictStillFailsOnAnyModule keeps the existing contract of
-// Evaluate for its callers: any module failure is an error naming the module,
-// so a test suite asserting a clean evaluation keeps catching a broken policy.
-func TestEvaluate_StrictStillFailsOnAnyModule(t *testing.T) {
+// TestEvaluateStrict_FailsOnAnyModule pins the test suites' own contract:
+// any module failure is an error naming the module, so a suite asserting a
+// clean evaluation keeps catching a broken policy.
+func TestEvaluateStrict_FailsOnAnyModule(t *testing.T) {
 	engine := New()
 	engine.LoadModule("healthy", healthyModule)
 	engine.LoadModule("broken", conflictingModule)
 	pipeline := &ir.NormalizedPipeline{Jobs: []ir.Job{{Name: "build"}}}
 
-	if _, err := engine.Evaluate(context.Background(), pipeline, nil); err == nil || !strings.Contains(err.Error(), `module "broken"`) {
-		t.Fatalf("Evaluate must fail naming the broken module, got %v", err)
+	if _, err := evaluateStrict(engine, context.Background(), pipeline, nil); err == nil || !strings.Contains(err.Error(), `module "broken"`) {
+		t.Fatalf("evaluateStrict must fail naming the broken module, got %v", err)
 	}
 }

@@ -118,6 +118,13 @@ func applyGitHubDegraded(result *AnalysisResult, partialCount int, branchFetchFa
 // affected, through NotEvaluable.
 const degradedReasonPolicyPrefix = "policy could not be evaluated"
 
+// degradedReasonEnginePrefix is the shared prefix of a DegradedReasons entry
+// written when no policy could run at all (#489): the embedded policies did
+// not load, or the engine input could not be built. Unlike
+// degradedReasonPolicyPrefix it is NOT excluded from StatusFor's whole-run
+// classification, so every control reads not evaluated.
+const degradedReasonEnginePrefix = "policy engine could not run"
+
 // degradedReasonIsPolicyFailure classifies a DegradedReasons entry as a
 // failed policy module.
 func degradedReasonIsPolicyFailure(reason string) bool {
@@ -144,6 +151,15 @@ func applyPolicyFailures(result *AnalysisResult, failures []policyFailure) {
 		return
 	}
 	for _, f := range failures {
+		if len(f.Controls) == 0 {
+			// Nothing could run at all (the policies did not load, the engine
+			// input could not be built): no control was evaluated, so the
+			// reason deliberately does NOT carry the policy-failure prefix.
+			// StatusFor reads any other degraded reason as a whole-run
+			// failure and reports every control not evaluated.
+			markDegraded(result, fmt.Sprintf("%s: %s: %v", degradedReasonEnginePrefix, f.Module, f.Err))
+			continue
+		}
 		markDegraded(result, fmt.Sprintf("%s: %s: %v", degradedReasonPolicyPrefix, f.Module, f.Err))
 		for _, control := range f.Controls {
 			result.MarkNotEvaluable(control, ReasonPolicyEvaluationFailed)

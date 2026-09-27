@@ -161,6 +161,13 @@ var controlsRequiringIncludeAttribution = []string{
 // and why. The FIRST reason recorded for a control wins: the earliest lane
 // to come up empty is the most specific explanation, and a later, broader
 // failure should not overwrite it.
+//
+// The one exception is a policy-failure mark (ReasonPolicyEvaluationFailed,
+// #489), which is recorded before any data lane is examined and is the
+// weakest claim: it says one of the control's modules did not run, not
+// that the data was missing. A data-lane reason recorded later replaces
+// it, so DropNotEvaluableFindings drops the control's findings exactly as
+// it would have without the policy failure.
 func (r *AnalysisResult) MarkNotEvaluable(controlName, reason string) {
 	if r == nil || controlName == "" {
 		return
@@ -168,7 +175,7 @@ func (r *AnalysisResult) MarkNotEvaluable(controlName, reason string) {
 	if r.NotEvaluable == nil {
 		r.NotEvaluable = map[string]string{}
 	}
-	if _, exists := r.NotEvaluable[controlName]; exists {
+	if existing, exists := r.NotEvaluable[controlName]; exists && existing != ReasonPolicyEvaluationFailed {
 		return
 	}
 	r.NotEvaluable[controlName] = reason
@@ -531,7 +538,12 @@ func (r *AnalysisResult) DropNotEvaluableFindings() {
 	for _, f := range r.Findings {
 		info := LookupCode(ErrorCode(f.Code))
 		if info != nil {
-			if _, marked := r.NotEvaluable[info.ControlName]; marked {
+			// A control marked because one of its policy modules failed
+			// keeps the findings its OTHER modules produced: they were
+			// evaluated on complete data and are genuine, only the failed
+			// module's codes are missing (#489). Every other mark means the
+			// data itself was missing or wrong, and the findings go.
+			if reason, marked := r.NotEvaluable[info.ControlName]; marked && reason != ReasonPolicyEvaluationFailed {
 				continue
 			}
 		}

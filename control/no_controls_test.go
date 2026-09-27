@@ -12,7 +12,7 @@ import (
 // engine boundary: when the user asked for no controls, no policy is
 // evaluated at all. Filtering the findings afterwards would not be the same
 // thing, because a policy that crashes takes the whole run's findings with it
-// (Engine.Evaluate returns on the first module error), so a run that
+// (the engine used to return on the first module error (since #489 a failing module is isolated and degrades only its own controls)), so a run that
 // evaluates nothing is also a run nothing can break.
 func TestNoControls_SkipsPolicyEvaluation(t *testing.T) {
 	pc, _, _, err := configuration.LoadPlumberConfig("../.plumber.yaml")

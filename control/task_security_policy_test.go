@@ -97,7 +97,7 @@ func TestSecurityPolicyConfigContract(t *testing.T) {
 	}
 	fires := func(linkedID int, cfg map[string]any) bool {
 		p := &ir.NormalizedPipeline{Provider: ir.ProviderGitLab, SecurityPolicyProject: &ir.SecurityPolicyProjectState{Known: true, LinkedProjectID: linkedID}}
-		findings, err := engine.Evaluate(context.Background(), p, cfg)
+		findings, err := evaluateStrict(engine, context.Background(), p, cfg)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -139,7 +139,7 @@ func TestSecurityPolicyConfigContract(t *testing.T) {
 	// expectedProjectPath via the REAL projection: case-insensitive path match.
 	firesPath := func(linkedPath string, cfg map[string]any) bool {
 		p := &ir.NormalizedPipeline{Provider: ir.ProviderGitLab, SecurityPolicyProject: &ir.SecurityPolicyProjectState{Known: true, LinkedProjectID: 5, LinkedProjectPath: linkedPath}}
-		findings, err := engine.Evaluate(context.Background(), p, cfg)
+		findings, err := evaluateStrict(engine, context.Background(), p, cfg)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}

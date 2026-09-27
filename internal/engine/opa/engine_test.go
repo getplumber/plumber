@@ -12,7 +12,7 @@ func TestEvaluateNoModules(t *testing.T) {
 	engine := New()
 	pipeline := &ir.NormalizedPipeline{Provider: ir.ProviderGitLab}
 
-	findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -37,7 +37,7 @@ deny contains finding if {
 	engine.LoadModule("toy", module)
 
 	pipeline := &ir.NormalizedPipeline{Provider: ir.ProviderGitLab}
-	findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -55,7 +55,7 @@ deny contains finding if {
 
 func TestEvaluateNilPipeline(t *testing.T) {
 	engine := New()
-	if _, err := engine.Evaluate(context.Background(), nil, nil); err == nil {
+	if _, err := evaluateStrict(engine, context.Background(), nil, nil); err == nil {
 		t.Fatal("expected error for nil pipeline")
 	}
 }
@@ -78,7 +78,7 @@ deny contains finding if {
 	pipeline := &ir.NormalizedPipeline{Provider: ir.ProviderGitLab}
 	cfg := map[string]any{"threshold": 5}
 
-	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -109,7 +109,7 @@ deny contains finding if {
 	engine.LoadModule("alpha", alpha)
 
 	pipeline := &ir.NormalizedPipeline{Provider: ir.ProviderGitLab}
-	findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -139,7 +139,7 @@ deny contains finding if {
 	engine := New()
 	engine.LoadModule("tiebreak", mod)
 	pipeline := &ir.NormalizedPipeline{Provider: ir.ProviderGitLab}
-	findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

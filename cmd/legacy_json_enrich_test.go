@@ -194,7 +194,7 @@ func TestBuildForbiddenVersionsBlock_EnrichmentSurvivesRealFindings(t *testing.T
 			{Kind: "project", Source: "group/project@main", Ref: "main"},
 		},
 	}
-	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}

@@ -368,17 +368,26 @@ func evaluatePolicies(l *logrus.Entry, conf *configuration.Configuration, provid
 	defer cancel()
 	findings, failed, err := engine.EvaluateModules(ctx, pipeline, buildEngineConfig(controls))
 	if err != nil {
-		// Nothing could run at all (nil pipeline, unbuildable input): every
-		// control is left unevaluated and the run reads as incomplete, never
-		// as clean (#489).
+		// Nothing could run at all (nil pipeline, unbuildable input): the
+		// failure carries no controls, applyPolicyFailures records it as a
+		// whole-run reason, and every control reads not evaluated (#489).
 		l.WithError(err).Error("Rego/OPA engine evaluation failed")
 		return empty, []policyFailure{{Module: "engine", Err: err}}
 	}
 	var failures []policyFailure
 	for _, f := range failed {
-		l.WithError(f.Err).WithField("policy", f.Module).Error("Policy failed to evaluate; its controls are not evaluable this run")
 		source, _ := engine.ModuleSource(f.Module)
-		failures = append(failures, policyFailure{Module: f.Module, Err: f.Err, Controls: controlsDeclaredBy([]byte(source))})
+		affected := activeControls(controlsDeclaredBy([]byte(source)), provider, controls, conf.ControlsFilter, conf.SkipControlsFilter)
+		if len(affected) == 0 {
+			// The failure touches no control this run evaluates (disabled,
+			// filtered out, benched, or not this provider's): the same rule
+			// that drops such a control's findings drops its failure, so a
+			// policy the user opted out of cannot withhold the score.
+			l.WithError(f.Err).WithField("policy", f.Module).Debug("Policy failed to evaluate but none of its controls is active this run")
+			continue
+		}
+		l.WithError(f.Err).WithField("policy", f.Module).Error("Policy failed to evaluate; its controls are not evaluable this run")
+		failures = append(failures, policyFailure{Module: f.Module, Err: f.Err, Controls: affected})
 	}
 	findings = FilterFindingsByEnabledControls(findings, provider, controls, conf.ControlsFilter, conf.SkipControlsFilter)
 	if findings == nil {

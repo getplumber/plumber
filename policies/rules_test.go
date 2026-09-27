@@ -312,7 +312,7 @@ func TestIssue102_ImageMutableTag(t *testing.T) {
 				}
 				pipeline := suite.parse(t, data)
 
-				findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+				findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 				if err != nil {
 					t.Fatalf("evaluate: %v", err)
 				}
@@ -386,7 +386,7 @@ func TestIssue509_ExcessivePermissions(t *testing.T) {
 				t.Fatalf("scan: %v", err)
 			}
 
-			findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+			findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -509,7 +509,7 @@ func TestIssue414_DangerousTriggers(t *testing.T) {
 				t.Fatalf("scan: %v", err)
 			}
 
-			findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+			findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -629,7 +629,7 @@ func TestIssue206_TemplateInjection(t *testing.T) {
 				t.Fatalf("scan: %v", err)
 			}
 
-			findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+			findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -695,7 +695,7 @@ func TestIssue208_InsecureCommands(t *testing.T) {
 				t.Fatalf("scan: %v", err)
 			}
 
-			findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+			findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -782,7 +782,7 @@ func TestIssue307_Artipacked(t *testing.T) {
 				t.Fatalf("scan: %v", err)
 			}
 
-			findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+			findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -862,7 +862,7 @@ func TestIssue103_ImagePinnedByDigest(t *testing.T) {
 				}
 				pipeline := suite.parse(t, data)
 
-				findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+				findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 				if err != nil {
 					t.Fatalf("evaluate: %v", err)
 				}
@@ -936,7 +936,7 @@ func TestIssue413_DockerInDockerInsecure(t *testing.T) {
 			if err != nil {
 				t.Fatalf("read fixture: %v", err)
 			}
-			findings, err := engine.Evaluate(context.Background(), parseGitLabCI(t, data), nil)
+			findings, err := evaluateStrict(engine, context.Background(), parseGitLabCI(t, data), nil)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -1117,7 +1117,7 @@ func TestIssue403_IncludesOutdated(t *testing.T) {
 			{Kind: "local", Source: "ci/lint.yml"},
 		},
 	}
-	findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -1168,7 +1168,7 @@ func TestIssue403_IncludesOutdated_PartialSemver(t *testing.T) {
 					{Kind: "component", Source: "plumber/base", Ref: c.ref, Current: c.current},
 				},
 			}
-			findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+			findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -1208,7 +1208,7 @@ func TestIssue501_BranchUnprotected(t *testing.T) {
 			{Name: "main-protected", Protected: true}, // just noise
 		},
 	}
-	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -1267,7 +1267,7 @@ func TestIssue502_MRApprovalRulesMinApprovals(t *testing.T) {
 			{ID: "50", Name: "", ApprovalsRequired: 0, AppliesToAllProtectedBranches: true},
 		},
 	}
-	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -1310,7 +1310,7 @@ func TestIssue502_MRApprovalRulesMinApprovals(t *testing.T) {
 			{ID: "10", Name: "All", ApprovalsRequired: 2, AppliesToAllProtectedBranches: true},
 		},
 	}
-	if f, _ := engine.Evaluate(context.Background(), clean, cfg); countCode(f, "ISSUE-502") != 0 {
+	if f, _ := evaluateStrict(engine, context.Background(), clean, cfg); countCode(f, "ISSUE-502") != 0 {
 		t.Fatalf("expected 0 ISSUE-502 findings when every covering rule meets the minimum")
 	}
 
@@ -1323,7 +1323,7 @@ func TestIssue502_MRApprovalRulesMinApprovals(t *testing.T) {
 			{ID: "10", Name: "All", ApprovalsRequired: 0, AppliesToAllProtectedBranches: true},
 		},
 	}
-	if f, _ := engine.Evaluate(context.Background(), unknown, cfg); countCode(f, "ISSUE-502") != 0 {
+	if f, _ := evaluateStrict(engine, context.Background(), unknown, cfg); countCode(f, "ISSUE-502") != 0 {
 		t.Fatalf("expected 0 ISSUE-502 findings when the approvals listing is unreadable")
 	}
 }
@@ -1358,7 +1358,7 @@ func TestIssue503_MRApprovalSettingsCompliant(t *testing.T) {
 			BehaviorWhenCommitIsAdded: ir.MRApprovalBehaviorKeepApprovals,
 		},
 	}
-	findings, err := engine.Evaluate(context.Background(), weak, allExpectations)
+	findings, err := evaluateStrict(engine, context.Background(), weak, allExpectations)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -1409,7 +1409,7 @@ func TestIssue503_MRApprovalSettingsCompliant(t *testing.T) {
 			BehaviorWhenCommitIsAdded:       ir.MRApprovalBehaviorRemoveAllApprovals,
 		},
 	}
-	if f, _ := engine.Evaluate(context.Background(), strict, allExpectations); countCode(f, "ISSUE-503") != 0 {
+	if f, _ := evaluateStrict(engine, context.Background(), strict, allExpectations); countCode(f, "ISSUE-503") != 0 {
 		t.Fatal("expected 0 ISSUE-503 findings when every expectation is met")
 	}
 
@@ -1421,7 +1421,7 @@ func TestIssue503_MRApprovalSettingsCompliant(t *testing.T) {
 			"preventApprovalByAuthor": false,
 		},
 	}
-	if f, _ := engine.Evaluate(context.Background(), weak, noExpectations); countCode(f, "ISSUE-503") != 0 {
+	if f, _ := evaluateStrict(engine, context.Background(), weak, noExpectations); countCode(f, "ISSUE-503") != 0 {
 		t.Fatal("expected 0 ISSUE-503 findings with no (or explicit-false) expectations")
 	}
 
@@ -1432,7 +1432,7 @@ func TestIssue503_MRApprovalSettingsCompliant(t *testing.T) {
 			"behaviorWhenCommitIsAdded": ir.MRApprovalBehaviorRemoveAllApprovals,
 		},
 	}
-	f, err := engine.Evaluate(context.Background(), weak, behaviorOnly)
+	f, err := evaluateStrict(engine, context.Background(), weak, behaviorOnly)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -1451,7 +1451,7 @@ func TestIssue503_MRApprovalSettingsCompliant(t *testing.T) {
 	// Abstain: settings unreadable (nil projection, the 401/403 case) -> no
 	// findings even though every expectation is set: not-evaluable, not a pass.
 	unknown := &ir.NormalizedPipeline{Provider: ir.ProviderGitLab}
-	if f, _ := engine.Evaluate(context.Background(), unknown, allExpectations); countCode(f, "ISSUE-503") != 0 {
+	if f, _ := evaluateStrict(engine, context.Background(), unknown, allExpectations); countCode(f, "ISSUE-503") != 0 {
 		t.Fatal("expected 0 ISSUE-503 findings when the settings could not be read")
 	}
 }
@@ -1485,7 +1485,7 @@ func TestIssue506_MRSettingsCompliant(t *testing.T) {
 			RemoveSourceBranchAfterMerge: false,   // != true
 		},
 	}
-	findings, err := engine.Evaluate(context.Background(), deviating, cfg)
+	findings, err := evaluateStrict(engine, context.Background(), deviating, cfg)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -1533,7 +1533,7 @@ func TestIssue506_MRSettingsCompliant(t *testing.T) {
 		Provider:   ir.ProviderGitLab,
 		MRSettings: &ir.MRSettings{SquashOption: "never"},
 	}
-	squashFindings, err := engine.Evaluate(context.Background(), squashDeviating, squashCfg)
+	squashFindings, err := evaluateStrict(engine, context.Background(), squashDeviating, squashCfg)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -1581,7 +1581,7 @@ func TestIssue506_MRSettingsCompliant(t *testing.T) {
 			// and deviates rather than being dropped.
 		},
 	}
-	allFindings, err := engine.Evaluate(context.Background(), allDeviating, allCfg)
+	allFindings, err := evaluateStrict(engine, context.Background(), allDeviating, allCfg)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -1618,20 +1618,20 @@ func TestIssue506_MRSettingsCompliant(t *testing.T) {
 			RemoveSourceBranchAfterMerge: true,
 		},
 	}
-	if f, _ := engine.Evaluate(context.Background(), compliant, cfg); countCode(f, "ISSUE-506") != 0 {
+	if f, _ := evaluateStrict(engine, context.Background(), compliant, cfg); countCode(f, "ISSUE-506") != 0 {
 		t.Fatal("expected 0 ISSUE-506 findings when every configured expectation matches")
 	}
 
 	// Negative: no expectations configured -> nothing to check, no finding even
 	// though the project settings are all set.
 	noCfg := map[string]any{"mergeRequestSettingsMustBeCompliant": map[string]any{}}
-	if f, _ := engine.Evaluate(context.Background(), deviating, noCfg); countCode(f, "ISSUE-506") != 0 {
+	if f, _ := evaluateStrict(engine, context.Background(), deviating, noCfg); countCode(f, "ISSUE-506") != 0 {
 		t.Fatal("expected 0 ISSUE-506 findings when no expectation is configured")
 	}
 
 	// Abstain: settings unreadable (nil projection) -> no finding: not-evaluable.
 	unknown := &ir.NormalizedPipeline{Provider: ir.ProviderGitLab}
-	if f, _ := engine.Evaluate(context.Background(), unknown, cfg); countCode(f, "ISSUE-506") != 0 {
+	if f, _ := evaluateStrict(engine, context.Background(), unknown, cfg); countCode(f, "ISSUE-506") != 0 {
 		t.Fatal("expected 0 ISSUE-506 findings when the settings could not be read")
 	}
 }
@@ -1655,7 +1655,7 @@ func TestIssue504_MRApprovalRulesCoverAllBranches(t *testing.T) {
 			{ID: "20", Name: "Scoped-b", ApprovalsRequired: 2, ProtectedBranchCount: 3},
 		},
 	}
-	findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -1666,7 +1666,7 @@ func TestIssue504_MRApprovalRulesCoverAllBranches(t *testing.T) {
 	// Positive: zero rules is also a finding — no rule covers all protected
 	// branches, so the gate is absent.
 	empty := &ir.NormalizedPipeline{Provider: ir.ProviderGitLab, MRApprovalRulesKnown: true}
-	if f, _ := engine.Evaluate(context.Background(), empty, nil); countCode(f, "ISSUE-504") != 1 {
+	if f, _ := evaluateStrict(engine, context.Background(), empty, nil); countCode(f, "ISSUE-504") != 1 {
 		t.Fatalf("expected 1 ISSUE-504 finding when no approval rule is defined")
 	}
 
@@ -1679,7 +1679,7 @@ func TestIssue504_MRApprovalRulesCoverAllBranches(t *testing.T) {
 			{ID: "20", Name: "Scoped", ApprovalsRequired: 2, ProtectedBranchCount: 1},
 		},
 	}
-	if f, _ := engine.Evaluate(context.Background(), covered, nil); countCode(f, "ISSUE-504") != 0 {
+	if f, _ := evaluateStrict(engine, context.Background(), covered, nil); countCode(f, "ISSUE-504") != 0 {
 		t.Fatalf("expected 0 ISSUE-504 findings when a rule covers all protected branches")
 	}
 
@@ -1696,13 +1696,13 @@ func TestIssue504_MRApprovalRulesCoverAllBranches(t *testing.T) {
 			{ID: "30", Name: "All branches", ApprovalsRequired: 2, AppliesToAllProtectedBranches: false, ProtectedBranchCount: 0},
 		},
 	}
-	if f, _ := engine.Evaluate(context.Background(), allBranchesOnly, nil); countCode(f, "ISSUE-504") != 1 {
+	if f, _ := evaluateStrict(engine, context.Background(), allBranchesOnly, nil); countCode(f, "ISSUE-504") != 1 {
 		t.Fatalf("expected 1 ISSUE-504 finding: an \"All branches\" rule is not the explicit all-protected-branches flag (legacy-faithful)")
 	}
 
 	// Abstain: listing unreadable -> not-evaluable.
 	unknown := &ir.NormalizedPipeline{Provider: ir.ProviderGitLab, MRApprovalRulesKnown: false}
-	if f, _ := engine.Evaluate(context.Background(), unknown, nil); countCode(f, "ISSUE-504") != 0 {
+	if f, _ := evaluateStrict(engine, context.Background(), unknown, nil); countCode(f, "ISSUE-504") != 0 {
 		t.Fatalf("expected 0 ISSUE-504 findings when the approvals listing is unreadable")
 	}
 }
@@ -1728,7 +1728,7 @@ func TestIssue201_CicdVariableUnprotected(t *testing.T) {
 			{Name: "SAFE", Type: "env_var", Environment: "*", Protected: true, Masked: true},
 		},
 	}
-	findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -1746,7 +1746,7 @@ func TestIssue201_CicdVariableUnprotected(t *testing.T) {
 			{Name: "SAFE", Type: "env_var", Environment: "*", Protected: true, Masked: true},
 		},
 	}
-	if f, _ := engine.Evaluate(context.Background(), clean, nil); countCode(f, "ISSUE-201") != 0 {
+	if f, _ := evaluateStrict(engine, context.Background(), clean, nil); countCode(f, "ISSUE-201") != 0 {
 		t.Fatalf("expected 0 ISSUE-201 findings when all variables are protected")
 	}
 
@@ -1759,7 +1759,7 @@ func TestIssue201_CicdVariableUnprotected(t *testing.T) {
 			{Name: "AWS_KEY", Type: "env_var", Environment: "*", Protected: false},
 		},
 	}
-	if f, _ := engine.Evaluate(context.Background(), unknown, nil); countCode(f, "ISSUE-201") != 0 {
+	if f, _ := evaluateStrict(engine, context.Background(), unknown, nil); countCode(f, "ISSUE-201") != 0 {
 		t.Fatalf("expected 0 ISSUE-201 findings when the settings listing is unreadable")
 	}
 }
@@ -1782,7 +1782,7 @@ func TestIssue202_CicdVariableUnmasked(t *testing.T) {
 			{Name: "MASKED", Type: "env_var", Environment: "*", Protected: true, Masked: true},
 		},
 	}
-	findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -1799,7 +1799,7 @@ func TestIssue202_CicdVariableUnmasked(t *testing.T) {
 			{Name: "MASKED", Type: "env_var", Environment: "*", Protected: true, Masked: true},
 		},
 	}
-	if f, _ := engine.Evaluate(context.Background(), clean, nil); countCode(f, "ISSUE-202") != 0 {
+	if f, _ := evaluateStrict(engine, context.Background(), clean, nil); countCode(f, "ISSUE-202") != 0 {
 		t.Fatalf("expected 0 ISSUE-202 findings when all variables are masked")
 	}
 
@@ -1816,7 +1816,7 @@ func TestIssue202_CicdVariableUnmasked(t *testing.T) {
 			{Name: "PLAINTEXT_TOKEN", Type: "env_var", Environment: "*", Protected: true, Masked: false},
 		},
 	}
-	if f, _ := engine.Evaluate(context.Background(), fileVars, nil); countCode(f, "ISSUE-202") != 1 {
+	if f, _ := evaluateStrict(engine, context.Background(), fileVars, nil); countCode(f, "ISSUE-202") != 1 {
 		t.Fatalf("expected exactly 1 ISSUE-202 finding: file-type variables cannot be masked and must be skipped, only the env_var counts")
 	}
 
@@ -1828,7 +1828,7 @@ func TestIssue202_CicdVariableUnmasked(t *testing.T) {
 			{Name: "PLAINTEXT_TOKEN", Type: "env_var", Environment: "*", Masked: false},
 		},
 	}
-	if f, _ := engine.Evaluate(context.Background(), unknown, nil); countCode(f, "ISSUE-202") != 0 {
+	if f, _ := evaluateStrict(engine, context.Background(), unknown, nil); countCode(f, "ISSUE-202") != 0 {
 		t.Fatalf("expected 0 ISSUE-202 findings when the settings listing is unreadable")
 	}
 }
@@ -1860,7 +1860,7 @@ func TestIssue505_BranchNonCompliant(t *testing.T) {
 			{Name: "unprotected", Protected: false},
 		},
 	}
-	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -1938,7 +1938,7 @@ func TestIssue505_AccessLevelStrictestPolicy(t *testing.T) {
 			{Name: "main", Protected: true, MinPushAccessLevel: 40, MinMergeAccessLevel: 40, ProtectionDetailsKnown: true},
 		},
 	}
-	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -1983,7 +1983,7 @@ func TestIssue505_AccessLevelSkipsWhenIRZero(t *testing.T) {
 			{Name: "main", Protected: true, ProtectionDetailsKnown: true},
 		},
 	}
-	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -2051,7 +2051,7 @@ func TestIssue505_DetailUnknownAbstainsButIssue501StillFires(t *testing.T) {
 			{Name: "feature", Protected: false},
 		},
 	}
-	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -2099,7 +2099,7 @@ func TestIssue505_NotInPolicyScope(t *testing.T) {
 			{Name: "main", Protected: true, AllowForcePush: true, ProtectionDetailsKnown: true},
 		},
 	}
-	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -2133,7 +2133,7 @@ func TestIssue404_IncludesForbiddenVersion(t *testing.T) {
 			{Kind: "hardcoded", Source: "plumber/d", Ref: "main"}, // skipped
 		},
 	}
-	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -2184,7 +2184,7 @@ func TestIssue401_HardcodedJobs(t *testing.T) {
 			{Name: "deploy"}, // unknown origin — not flagged
 		},
 	}
-	findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -2302,7 +2302,7 @@ func TestNewV4SubjectValues(t *testing.T) {
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
-			findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+			findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -2488,7 +2488,7 @@ func TestIssue101_ImageAuthorizedSources(t *testing.T) {
 				Provider: ir.ProviderGitLab,
 				Jobs:     []ir.Job{{Name: "build", Image: &tc.image}},
 			}
-			findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+			findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -2545,7 +2545,7 @@ func TestImageRepoIdentityValue(t *testing.T) {
 				Provider: ir.ProviderGitLab,
 				Jobs:     []ir.Job{{Name: "build", Image: &tc.image}},
 			}
-			findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+			findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -2610,7 +2610,7 @@ func TestIssue410_MultipleWeakeningsOnOneJob(t *testing.T) {
 			},
 		},
 	}
-	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 	if err != nil {
 		t.Fatalf("evaluate: %v (was the function-conflict regression — pre-fix this errored with eval_conflict_error)", err)
 	}
@@ -2699,7 +2699,7 @@ func TestIssue410_GitHubContinueOnError(t *testing.T) {
 				t.Fatalf("scan: %v", err)
 			}
 
-			findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+			findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -2755,7 +2755,7 @@ func TestIssue205_RootVariablesOverride(t *testing.T) {
 			"protectedVariables": []string{"SAST_DISABLED"},
 		},
 	}
-	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -2801,7 +2801,7 @@ func TestIssue404_WildcardForbiddenVersion(t *testing.T) {
 			{Kind: "hardcoded", Source: "plumber/c", Ref: "v9.9.9"}, // skipped (kind)
 		},
 	}
-	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -2857,7 +2857,7 @@ func TestIssue404_DefaultBranchIsForbiddenWhenTheKeyIsUnset(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			findings, err := engine.Evaluate(context.Background(), pipeline, tc.cfg)
+			findings, err := evaluateStrict(engine, context.Background(), pipeline, tc.cfg)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -2904,7 +2904,7 @@ func TestIssue204_SourceAndDotSourcing(t *testing.T) {
 			{Name: "echo", Scripts: []string{`echo $CI_COMMIT_MESSAGE`}},      // safe
 		},
 	}
-	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -2943,7 +2943,7 @@ func TestIssue204_VariableWordBoundary(t *testing.T) {
 			{Name: "prefix-only", Scripts: []string{`eval "$CI_COMMIT_BRANCH_OTHER"`}},
 		},
 	}
-	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -2962,7 +2962,7 @@ func TestIssue204_VariableWordBoundary(t *testing.T) {
 // reported against v0.4.41: `_dangerous_variable_in_line` was a complete
 // function, so a script line naming TWO configured dangerous variables
 // made it yield two values and OPA aborted the module with
-// eval_conflict_error. Because Engine.Evaluate returns on the first
+// eval_conflict_error. Because the engine, before #489, returned on the first
 // module error, that one line discarded the findings of EVERY policy and
 // the run silently scored 100/100. The default config ships ten
 // dangerous variables, several of which routinely co-occur on one line
@@ -2994,7 +2994,7 @@ func TestIssue204_MultipleDangerousVariablesOnOneLine(t *testing.T) {
 			{Name: "deploy", Scripts: []string{`echo "$CI_COMMIT_MESSAGE" && source "./ci/$CI_COMMIT_REF_NAME.sh"`}},
 		},
 	}
-	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -3027,7 +3027,7 @@ func TestIssue204_NoConfigNoFindings(t *testing.T) {
 			{Name: "deploy", Scripts: []string{`eval "$CI_COMMIT_MESSAGE"`}},
 		},
 	}
-	findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -3056,7 +3056,7 @@ func TestIssue412_DindLatestAndRegistryPrefix(t *testing.T) {
 			{Name: "nginx-dind", Services: []ir.Image{{Name: "nginx", Tag: "dind"}}}, // wrong name → not dind
 		},
 	}
-	findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -3091,7 +3091,7 @@ func TestIssue412_OneFindingPerJob(t *testing.T) {
 			},
 		}},
 	}
-	findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -3132,7 +3132,7 @@ func TestIssue203_TruthyAndCaseInsensitive(t *testing.T) {
 			{Name: "off", Variables: map[string]string{"CI_DEBUG_TRACE": "false"}},
 		},
 	}
-	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -3150,7 +3150,7 @@ func TestIssue203_TruthyAndCaseInsensitive(t *testing.T) {
 
 	// No cfg → no findings (legacy parity: control is skipped when
 	// forbiddenVariables is empty / unset).
-	noCfg, err := engine.Evaluate(context.Background(), pipeline, nil)
+	noCfg, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 	if err != nil {
 		t.Fatalf("evaluate (no cfg): %v", err)
 	}
@@ -3181,7 +3181,7 @@ func TestIssue203_RootVariablesDebugTrace(t *testing.T) {
 			"forbiddenVariables": []string{"CI_DEBUG_TRACE"},
 		},
 	}
-	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -3233,7 +3233,7 @@ func TestIssue203_GitHubDebugVariables(t *testing.T) {
 			{Name: "build/no-vars"},
 		},
 	}
-	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -3258,7 +3258,7 @@ func TestIssue203_GitHubDebugVariables(t *testing.T) {
 	}
 
 	// Without cfg the GitHub side stays silent too (same skip as GitLab).
-	noCfg, err := engine.Evaluate(context.Background(), pipeline, nil)
+	noCfg, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 	if err != nil {
 		t.Fatalf("evaluate (no cfg): %v", err)
 	}
@@ -3311,7 +3311,7 @@ jobs:
 			"forbiddenVariables": []string{"ACTIONS_STEP_DEBUG", "ACTIONS_RUNNER_DEBUG"},
 		},
 	}
-	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -3357,7 +3357,7 @@ func TestIssue101_VarNotationAndUnknownRegistry(t *testing.T) {
 				Image: &ir.Image{Name: "$PROJECT/app", Tag: "1.0", Registry: "registry.company.com"},
 			}},
 		}
-		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -3381,7 +3381,7 @@ func TestIssue101_VarNotationAndUnknownRegistry(t *testing.T) {
 				Image: &ir.Image{Name: "local-image", Tag: "1.0", Registry: "unknown"},
 			}},
 		}
-		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -3415,7 +3415,7 @@ func runGitLabPolicyCases(t *testing.T, code string, cases []policyCase, cfg map
 				t.Fatalf("read fixture: %v", err)
 			}
 			pipeline := parseGitLabCI(t, data)
-			findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+			findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -3474,7 +3474,7 @@ func TestIssue408_ComponentMissing(t *testing.T) {
 				{Kind: "project", Source: "group/templates/ci.yml", Path: "group/templates/ci.yml"},
 			},
 		}
-		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -3494,7 +3494,7 @@ func TestIssue408_ComponentMissing(t *testing.T) {
 				{Kind: "component", Source: "gitlab.example.com/components/sast/sast@1.0.0", Path: "components/sast/sast"},
 			},
 		}
-		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -3514,7 +3514,7 @@ func TestIssue408_ComponentMissing(t *testing.T) {
 				{Kind: "component", Source: "gitlab.example.com/your-org/full-security/full-security@2.0.0", Path: "your-org/full-security/full-security"},
 			},
 		}
-		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -3564,7 +3564,7 @@ func TestIssue409_ComponentOverridden(t *testing.T) {
 			},
 		},
 	}
-	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -3600,7 +3600,7 @@ func TestIssue409_ComponentOverridden(t *testing.T) {
 				},
 			},
 		}
-		thinFindings, err := engine.Evaluate(context.Background(), thin, cfg)
+		thinFindings, err := evaluateStrict(engine, context.Background(), thin, cfg)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -3654,7 +3654,7 @@ func TestIssue405_TemplateMissing(t *testing.T) {
 				{Kind: "component", Source: "gitlab.example.com/components/trivy/trivy@1.0.0", Path: "components/trivy/trivy"},
 			},
 		}
-		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -3675,7 +3675,7 @@ func TestIssue405_TemplateMissing(t *testing.T) {
 				{Kind: "component", Source: "gitlab.example.com/components/trivy/trivy@1.0.0", Path: "components/trivy/trivy"},
 			},
 		}
-		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -3695,7 +3695,7 @@ func TestIssue405_TemplateMissing(t *testing.T) {
 				{Kind: "project", Source: "group/templates/full-security.yml", Path: "group/templates/full-security.yml", AltPath: "templates/full-security/full-security"},
 			},
 		}
-		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -3740,7 +3740,7 @@ func TestIssue405_TemplateMissing_MatchesByTemplateIdentity(t *testing.T) {
 			Provider: ir.ProviderGitLab,
 			Includes: []ir.Include{include},
 		}
-		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -3763,7 +3763,7 @@ func TestIssue405_TemplateMissing_MatchesByTemplateIdentity(t *testing.T) {
 			Provider: ir.ProviderGitLab,
 			Includes: []ir.Include{include},
 		}
-		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -3809,7 +3809,7 @@ func TestIssue406_TemplateOverridden(t *testing.T) {
 			},
 		},
 	}
-	findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -3844,7 +3844,7 @@ func TestIssue406_TemplateOverridden(t *testing.T) {
 				},
 			},
 		}
-		thinFindings, err := engine.Evaluate(context.Background(), thin, cfg)
+		thinFindings, err := evaluateStrict(engine, context.Background(), thin, cfg)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -3897,7 +3897,7 @@ func TestIssue406_TemplateOverridden(t *testing.T) {
 				},
 			},
 		}
-		idFindings, err := engine.Evaluate(context.Background(), idPipeline, idCfg)
+		idFindings, err := evaluateStrict(engine, context.Background(), idPipeline, idCfg)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -3972,7 +3972,7 @@ func TestIssue302_SecretsInherit(t *testing.T) {
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
-			findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+			findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -4031,7 +4031,7 @@ func TestIssue309_OverprovisionedSecrets(t *testing.T) {
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
-			findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+			findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -4119,7 +4119,7 @@ func TestIssue209_GitHubEnvInjection(t *testing.T) {
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
-			findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+			findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -4222,7 +4222,7 @@ func TestIssue105_ContainerHardcodedCredentials(t *testing.T) {
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
-			findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+			findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -4278,7 +4278,7 @@ func TestIssue104_ActionUnpinned(t *testing.T) {
 				t.Fatalf("read fixture: %v", err)
 			}
 			pipeline := parseGitHubActions(t, data)
-			findings, err := engine.Evaluate(context.Background(), pipeline, tc.cfg)
+			findings, err := evaluateStrict(engine, context.Background(), pipeline, tc.cfg)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -4331,7 +4331,7 @@ func TestIssue210_BotConditions(t *testing.T) {
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
-			findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+			findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -4388,7 +4388,7 @@ func TestIssue303_UnredactedSecrets(t *testing.T) {
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
-			findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+			findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -4469,7 +4469,7 @@ func TestIssue705_CachePoisoning(t *testing.T) {
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
-			findings, err := engine.Evaluate(context.Background(), pipeline, issue705DefaultConfig())
+			findings, err := evaluateStrict(engine, context.Background(), pipeline, issue705DefaultConfig())
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -4566,7 +4566,7 @@ func TestIssue705_CachePoisoning_ExcludeVeto(t *testing.T) {
 	}
 	count := func(t *testing.T, cfg map[string]any) int {
 		t.Helper()
-		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -4632,7 +4632,7 @@ func TestIssue705_CachePoisoning_Configurable(t *testing.T) {
 	}
 	countHits := func(t *testing.T, cfg map[string]any) int {
 		t.Helper()
-		findings, err := engine.Evaluate(context.Background(), scan(t), cfg)
+		findings, err := evaluateStrict(engine, context.Background(), scan(t), cfg)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -4689,7 +4689,7 @@ func TestIssue601_SecurityPolicyProject(t *testing.T) {
 	}
 	only601 := func(p *ir.NormalizedPipeline, cfg map[string]any) []opaengine.Finding {
 		t.Helper()
-		findings, err := engine.Evaluate(context.Background(), p, cfg)
+		findings, err := evaluateStrict(engine, context.Background(), p, cfg)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -4807,7 +4807,7 @@ func TestIssue422_AnonymousDefinition(t *testing.T) {
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
-			findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+			findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -4859,7 +4859,7 @@ func TestIssue422_MissingConcurrency(t *testing.T) {
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
-			findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+			findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -4947,7 +4947,7 @@ func runGitHubFixtureCasesWithConfig(t *testing.T, code string, cases []struct {
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
-			findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+			findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -5047,7 +5047,7 @@ func TestIssue606_DependabotInsecureExec(t *testing.T) {
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
-			findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+			findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -5130,7 +5130,7 @@ func TestIssue607_DependabotMissingCooldown(t *testing.T) {
 			if err != nil {
 				t.Fatalf("scan: %v", err)
 			}
-			findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+			findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -5256,7 +5256,7 @@ func TestIssue402_RefConfusion(t *testing.T) {
 				Provider: ir.ProviderGitHub,
 				Jobs:     []ir.Job{{Name: "build", Uses: []ir.Action{tc.action}}},
 			}
-			findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+			findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -5346,7 +5346,7 @@ func TestIssue707_ImpostorCommit(t *testing.T) {
 				Provider: ir.ProviderGitHub,
 				Jobs:     []ir.Job{{Name: "build", Uses: []ir.Action{tc.action}}},
 			}
-			findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+			findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -5443,7 +5443,7 @@ func TestIssue709_StaleActionRef(t *testing.T) {
 				Provider: ir.ProviderGitHub,
 				Jobs:     []ir.Job{{Name: "build", Uses: []ir.Action{tc.action}}},
 			}
-			findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+			findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -5545,7 +5545,7 @@ func TestIssue708_RefVersionMismatch(t *testing.T) {
 				Provider: ir.ProviderGitHub,
 				Jobs:     []ir.Job{{Name: "build", Uses: []ir.Action{tc.action}}},
 			}
-			findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+			findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -5601,7 +5601,7 @@ func TestIssue402_GitLabRefConfusion(t *testing.T) {
 				Provider: ir.ProviderGitLab,
 				Includes: []ir.Include{tc.include},
 			}
-			findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+			findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -5640,7 +5640,7 @@ func TestIssue114_KnownVulnerableAction(t *testing.T) {
 				},
 			}},
 		}
-		findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -5673,7 +5673,7 @@ func TestIssue114_KnownVulnerableAction(t *testing.T) {
 				},
 			}},
 		}
-		findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -5707,7 +5707,7 @@ func TestIssue114_KnownVulnerableAction(t *testing.T) {
 				},
 			}},
 		}
-		findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -5731,7 +5731,7 @@ func TestIssue714_MutableRemoteExec(t *testing.T) {
 	}
 
 	codeHits := func(pipeline *ir.NormalizedPipeline, code string) (int, string) {
-		findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -5833,7 +5833,7 @@ func TestIssue108_ActionArchivedRepo(t *testing.T) {
 				},
 			}},
 		}
-		findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -5865,7 +5865,7 @@ func TestIssue108_ActionArchivedRepo(t *testing.T) {
 				},
 			}},
 		}
-		findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -5886,7 +5886,7 @@ func TestIssue108_ActionArchivedRepo(t *testing.T) {
 				},
 			}},
 		}
-		findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -5915,7 +5915,7 @@ func TestIssue713_ActionAuthorizedSources(t *testing.T) {
 		t.Helper()
 		job := ir.Job{Name: "build", Uses: actions, ReusableWorkflowUses: reusable}
 		pipeline := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{job}}
-		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -6049,7 +6049,7 @@ func TestIssue713_ActionAuthorizedSources(t *testing.T) {
 			ProjectPath: projectPath,
 			Jobs:        []ir.Job{{Name: "build", Uses: actions}},
 		}
-		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -6180,7 +6180,7 @@ func TestProviderGuards_SuppressGitHubOnlyRulesOnGitLab(t *testing.T) {
 	countCode := func(t *testing.T, provider ir.Provider, job ir.Job, code string) int {
 		t.Helper()
 		pipeline := &ir.NormalizedPipeline{Provider: provider, Jobs: []ir.Job{job}}
-		findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -6252,7 +6252,7 @@ func TestIssue609_SASTWorkflowMissing(t *testing.T) {
 				Uses:       []ir.Action{{Uses: "actions/checkout@v4"}},
 			}},
 		}
-		findings, _ := engine.Evaluate(context.Background(), pipeline, nil)
+		findings, _ := evaluateStrict(engine, context.Background(), pipeline, nil)
 		hits := 0
 		for _, f := range findings {
 			if f.Code == "ISSUE-904" {
@@ -6272,7 +6272,7 @@ func TestIssue609_SASTWorkflowMissing(t *testing.T) {
 				Uses:       []ir.Action{{Uses: "github/codeql-action/analyze@v3"}},
 			}},
 		}
-		findings, _ := engine.Evaluate(context.Background(), pipeline, nil)
+		findings, _ := evaluateStrict(engine, context.Background(), pipeline, nil)
 		for _, f := range findings {
 			if f.Code == "ISSUE-904" {
 				t.Fatalf("unexpected ISSUE-904 on SAST-equipped repo: %+v", f)
@@ -6291,7 +6291,7 @@ func TestIssue608_DependencyUpdateToolMissing(t *testing.T) {
 	baseJobs := []ir.Job{{Name: "build", OriginFile: "/tmp/.github/workflows/build.yml"}}
 	t.Run("no-tool", func(t *testing.T) {
 		pipeline := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: baseJobs}
-		findings, _ := engine.Evaluate(context.Background(), pipeline, nil)
+		findings, _ := evaluateStrict(engine, context.Background(), pipeline, nil)
 		hits := 0
 		for _, f := range findings {
 			if f.Code == "ISSUE-903" {
@@ -6308,7 +6308,7 @@ func TestIssue608_DependencyUpdateToolMissing(t *testing.T) {
 			Jobs:       baseJobs,
 			Dependabot: &ir.DependabotConfig{Path: "/tmp/.github/dependabot.yml"},
 		}
-		findings, _ := engine.Evaluate(context.Background(), pipeline, nil)
+		findings, _ := evaluateStrict(engine, context.Background(), pipeline, nil)
 		for _, f := range findings {
 			if f.Code == "ISSUE-903" {
 				t.Fatalf("unexpected ISSUE-903 on dependabot-equipped repo: %+v", f)
@@ -6321,7 +6321,7 @@ func TestIssue608_DependencyUpdateToolMissing(t *testing.T) {
 			Jobs:               baseJobs,
 			RenovateConfigPath: "/tmp/renovate.json",
 		}
-		findings, _ := engine.Evaluate(context.Background(), pipeline, nil)
+		findings, _ := evaluateStrict(engine, context.Background(), pipeline, nil)
 		for _, f := range findings {
 			if f.Code == "ISSUE-903" {
 				t.Fatalf("unexpected ISSUE-903 on renovate-equipped repo: %+v", f)
@@ -6340,7 +6340,7 @@ func TestIssue610_SecurityPolicyMissing(t *testing.T) {
 	baseJobs := []ir.Job{{Name: "build", OriginFile: "/tmp/.github/workflows/build.yml"}}
 	t.Run("missing", func(t *testing.T) {
 		pipeline := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: baseJobs}
-		findings, _ := engine.Evaluate(context.Background(), pipeline, nil)
+		findings, _ := evaluateStrict(engine, context.Background(), pipeline, nil)
 		hits := 0
 		for _, f := range findings {
 			if f.Code == "ISSUE-905" {
@@ -6357,7 +6357,7 @@ func TestIssue610_SecurityPolicyMissing(t *testing.T) {
 			Jobs:               baseJobs,
 			SecurityPolicyPath: "/tmp/SECURITY.md",
 		}
-		findings, _ := engine.Evaluate(context.Background(), pipeline, nil)
+		findings, _ := evaluateStrict(engine, context.Background(), pipeline, nil)
 		for _, f := range findings {
 			if f.Code == "ISSUE-905" {
 				t.Fatalf("unexpected ISSUE-905: %+v", f)
@@ -6387,7 +6387,7 @@ func TestIssue107_DockerfileUnpinnedBase(t *testing.T) {
 			},
 		},
 	}
-	findings, _ := engine.Evaluate(context.Background(), pipeline, nil)
+	findings, _ := evaluateStrict(engine, context.Background(), pipeline, nil)
 	hits := 0
 	for _, f := range findings {
 		if f.Code == "ISSUE-706" {
@@ -6435,7 +6435,7 @@ func TestIssue416_RequiredActionMissing(t *testing.T) {
 				},
 			},
 		}
-		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -6457,7 +6457,7 @@ func TestIssue416_RequiredActionMissing(t *testing.T) {
 				},
 			},
 		}
-		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -6486,7 +6486,7 @@ func TestIssue416_RequiredActionMissing(t *testing.T) {
 				},
 			},
 		}
-		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -6513,7 +6513,7 @@ func TestIssue416_RequiredActionMissing(t *testing.T) {
 				},
 			},
 		}
-		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -6536,7 +6536,7 @@ func TestIssue416_RequiredActionMissing(t *testing.T) {
 				},
 			},
 		}
-		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -6562,7 +6562,7 @@ func TestIssue416_RequiredActionMissing(t *testing.T) {
 				},
 			},
 		}
-		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -6580,7 +6580,7 @@ func TestIssue416_RequiredActionMissing(t *testing.T) {
 				{Name: "ci/lint", Uses: []ir.Action{{Uses: "actions/checkout@v4"}}},
 			},
 		}
-		findings, err := engine.Evaluate(context.Background(), pipeline, map[string]any{})
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, map[string]any{})
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -6741,7 +6741,7 @@ func TestIssue323_FindingsCarryStructuredEvidence(t *testing.T) {
 
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			findings, err := engine.Evaluate(context.Background(), tc.pipeline, tc.cfg)
+			findings, err := evaluateStrict(engine, context.Background(), tc.pipeline, tc.cfg)
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
@@ -6779,7 +6779,7 @@ func TestIssue403_OutdatedIncludeIdentifiesOnTheIncludePath(t *testing.T) {
 			{Kind: "component", Source: "gitlab.example.com/components/sast/sast", Ref: "1.0.0", Current: "1.1.0"},
 		},
 	}
-	findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -6801,7 +6801,7 @@ func TestIssue402_AmbiguousIncludeIdentifiesOnTheIncludePath(t *testing.T) {
 			{Kind: "component", Source: "gitlab.example.com/components/sast/sast", Ref: "v1", RefIsAmbiguous: true},
 		},
 	}
-	findings, err := engine.Evaluate(context.Background(), pipeline, nil)
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
@@ -6841,7 +6841,7 @@ func TestUnresolvedImageGuardAbstains(t *testing.T) {
 		}
 	}
 
-	unresolvedFindings, err := engine.Evaluate(context.Background(), job(true), cfg)
+	unresolvedFindings, err := evaluateStrict(engine, context.Background(), job(true), cfg)
 	if err != nil {
 		t.Fatalf("evaluate unresolved: %v", err)
 	}
@@ -6851,7 +6851,7 @@ func TestUnresolvedImageGuardAbstains(t *testing.T) {
 		}
 	}
 
-	resolvedFindings, err := engine.Evaluate(context.Background(), job(false), cfg)
+	resolvedFindings, err := evaluateStrict(engine, context.Background(), job(false), cfg)
 	if err != nil {
 		t.Fatalf("evaluate resolved: %v", err)
 	}

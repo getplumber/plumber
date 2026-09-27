@@ -321,10 +321,11 @@ type ModuleError struct {
 // EvaluateModules runs every loaded policy against pipeline and returns the
 // aggregated findings of the modules that evaluated, plus one ModuleError
 // per module that did not. A failing module never takes the others' findings
-// with it (#489): the caller decides what a failure means for the run. The
-// error return is reserved for the cases where nothing could run at all (a
-// nil pipeline, an input that could not be built). Policies see a two-field
-// input:
+// with it (#489): the caller decides what a failure means for the run (the
+// analysis degrades the failed policy's controls; the test suites fail on
+// any failure through their evaluateStrict helpers). The error return is
+// reserved for the cases where nothing could run at all (a nil pipeline, an
+// input that could not be built). Policies see a two-field input:
 //
 //	input.pipeline  - the NormalizedPipeline
 //	input.config    - an arbitrary map forwarded from .plumber.yaml
@@ -361,22 +362,6 @@ func (e *Engine) EvaluateModules(ctx context.Context, pipeline *ir.NormalizedPip
 	sortFindingsInPlace(findings)
 	notifyFindingsObserver(findings)
 	return findings, failed, nil
-}
-
-// Evaluate is the strict form of EvaluateModules: any module failure is an
-// error naming the first failing module and no findings are returned. It is
-// what a test suite wants, where a broken policy must fail the run loudly;
-// the analysis itself calls EvaluateModules so one broken policy degrades
-// its own controls instead of blanking the report.
-func (e *Engine) Evaluate(ctx context.Context, pipeline *ir.NormalizedPipeline, config map[string]any) ([]Finding, error) {
-	findings, failed, err := e.EvaluateModules(ctx, pipeline, config)
-	if err != nil {
-		return nil, err
-	}
-	if len(failed) > 0 {
-		return nil, fmt.Errorf("evaluate module %q: %w", failed[0].Module, failed[0].Err)
-	}
-	return findings, nil
 }
 
 // ModuleSource returns the source of a loaded module by name, so a caller

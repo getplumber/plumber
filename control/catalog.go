@@ -503,3 +503,19 @@ func GitHubControlCompliance(_ string, _ *GitHubAnalysisStats, findings int) flo
 	}
 	return 100
 }
+
+// activeControls keeps the names a run actually evaluates: applicable to the
+// provider, not benched, enabled in c, and passing the include/skip filters.
+// It is FilterFindingsByEnabledControls's rule applied to control names, so
+// a failed policy (#489) counts only where its findings would have counted.
+func activeControls(names []string, provider string, c *configuration.ControlsConfig, includeOnly, skip []string) []string {
+	disabled := DisabledControlNames(c)
+	var out []string
+	for _, name := range names {
+		if !configuration.IsControlApplicableTo(name, provider) || configuration.IsBenched(provider, name) || disabled[name] || !ControlPassesFilter(name, includeOnly, skip) {
+			continue
+		}
+		out = append(out, name)
+	}
+	return out
+}

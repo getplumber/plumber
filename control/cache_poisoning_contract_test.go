@@ -34,7 +34,7 @@ func TestCachePoisoningConfigContract(t *testing.T) {
 	}
 	countISSUE705 := func(t *testing.T, p *ir.NormalizedPipeline) int {
 		t.Helper()
-		findings, err := engine.Evaluate(context.Background(), p, engineCfg)
+		findings, err := evaluateStrict(engine, context.Background(), p, engineCfg)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}

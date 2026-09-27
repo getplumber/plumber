@@ -16,7 +16,7 @@ import (
 // The pipeline below trips two independent controls: a dind service
 // (ISSUE-412) and a script line naming two of the ten dangerous variables
 // the shipped default ships (ISSUE-204). Before the fix the second one
-// aborted its module with eval_conflict_error, and because Engine.Evaluate
+// aborted its module with eval_conflict_error, and because the engine, before #489,
 // returns on the first module error, evaluatePolicies swallowed it and
 // returned ZERO findings: the dind service disappeared too and the run
 // scored a clean 100/100.

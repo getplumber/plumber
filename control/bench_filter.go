@@ -54,15 +54,22 @@ func IsRegoFileBenchedForProvider(content []byte, provider string) bool {
 	return true
 }
 
+// emittedCodeRegex matches the codes a policy EMITS, the `"code": "ISSUE-N"`
+// literal of a finding map, and nothing else. issueCodeRegex is deliberately
+// looser (any ISSUE-N in the file, comments included), which is safe when the
+// only consequence is loading a file, and wrong here: a policy's header
+// comment routinely cites other controls' codes to explain its threat model,
+// and a failure must not mark those controls not evaluable.
+var emittedCodeRegex = regexp.MustCompile(`"code"\s*:\s*"(ISSUE-\d+)"`)
+
 // controlsDeclaredBy returns the distinct control names behind the ISSUE-XXX
-// codes a policy source references, in first-seen order. It is the same
-// code-to-control link IsRegoFileBenchedForProvider uses; a failed policy's
+// codes a policy source emits, in first-seen order. A failed policy's
 // controls are marked not evaluable through it (#489).
 func controlsDeclaredBy(content []byte) []string {
 	var out []string
 	seen := map[string]bool{}
-	for _, m := range issueCodeRegex.FindAll(content, -1) {
-		info := LookupCode(ErrorCode(m))
+	for _, m := range emittedCodeRegex.FindAllSubmatch(content, -1) {
+		info := LookupCode(ErrorCode(m[1]))
 		if info == nil || info.ControlName == "" || seen[info.ControlName] {
 			continue
 		}

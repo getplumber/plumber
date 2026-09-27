@@ -94,7 +94,7 @@ func TestAliasNormalization_E2E(t *testing.T) {
 
 	eval := func(img ir.Image) bool {
 		pipeline := &ir.NormalizedPipeline{Provider: ir.ProviderGitLab, Jobs: []ir.Job{{Name: "build", Image: &img}}}
-		findings, err := engine.Evaluate(context.Background(), pipeline, cfg)
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -150,7 +150,7 @@ jobs:
 		t.Fatalf("GitHub: collector extracted {name:%q tag:%q}, want {name:%q tag:%q} after alias fold",
 			ghImage.Name, ghImage.Tag, "docker.io/library/node", "alpine")
 	}
-	ghFindings, err := engine.Evaluate(context.Background(), ghPipeline, cfg)
+	ghFindings, err := evaluateStrict(engine, context.Background(), ghPipeline, cfg)
 	if err != nil {
 		t.Fatalf("evaluate github pipeline: %v", err)
 	}
@@ -184,7 +184,7 @@ jobs:
 	if err != nil {
 		t.Fatalf("scan github workflows (untrusted): %v", err)
 	}
-	badFindings, err := engine.Evaluate(context.Background(), badPipeline, cfg)
+	badFindings, err := evaluateStrict(engine, context.Background(), badPipeline, cfg)
 	if err != nil {
 		t.Fatalf("evaluate github pipeline (untrusted): %v", err)
 	}

@@ -34,7 +34,7 @@ func TestMRApprovalMinApprovalsConfigContract(t *testing.T) {
 		},
 	}
 	count502 := func(engineCfg map[string]any) int {
-		findings, err := engine.Evaluate(context.Background(), pipeline, engineCfg)
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, engineCfg)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -99,7 +99,7 @@ func TestMRApprovalSettingsConfigContract(t *testing.T) {
 		},
 	}
 	deviations503 := func(engineCfg map[string]any) []any {
-		findings, err := engine.Evaluate(context.Background(), pipeline, engineCfg)
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, engineCfg)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
@@ -175,7 +175,7 @@ func TestMRSettingsConfigContract(t *testing.T) {
 		},
 	}
 	deviations506 := func(engineCfg map[string]any) []any {
-		findings, err := engine.Evaluate(context.Background(), pipeline, engineCfg)
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, engineCfg)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
 		}
