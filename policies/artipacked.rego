@@ -33,7 +33,7 @@ deny contains finding if {
 	action := job.uses[j]
 	startswith(action.uses, "actions/checkout@")
 	not _credentials_disabled(action)
-	upload := _git_packing_upload(job, object.get(action, "line", 0))
+	some upload in _git_packing_uploads(job, object.get(action, "line", 0))
 	finding := {
 		"code":     "ISSUE-310",
 		"severity": "high",
@@ -56,7 +56,7 @@ deny contains finding if {
 	action := job.uses[j]
 	startswith(action.uses, "actions/checkout@")
 	not _credentials_disabled(action)
-	not _git_packing_upload(job, object.get(action, "line", 0))
+	count(_git_packing_uploads(job, object.get(action, "line", 0))) == 0
 	finding := {
 		"code":     "ISSUE-307",
 		"severity": "low",
@@ -77,10 +77,14 @@ _credentials_disabled(action) if {
 	action.with["persist-credentials"] == "false"
 }
 
-# _git_packing_upload returns an upload-artifact action from the same
-# job that (a) runs after the checkout at checkoutLine and (b) uploads
-# a path that would include the `.git` directory.
-_git_packing_upload(job, checkoutLine) := upload if {
+# _git_packing_uploads is the set of upload-artifact actions from the same
+# job that (a) run after the checkout at checkoutLine and (b) upload a
+# path that would include the `.git` directory. Built as a comprehension
+# so the function has exactly one output (the set) for a given input: a
+# job may have several such uploads (a report directory plus files inside
+# it), and a function returning one upload at a time failed the whole
+# evaluation with eval_conflict_error (#489).
+_git_packing_uploads(job, checkoutLine) := {upload |
 	some k
 	upload := job.uses[k]
 	startswith(upload.uses, "actions/upload-artifact@")
