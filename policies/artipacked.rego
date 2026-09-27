@@ -111,11 +111,13 @@ _path_includes_git(path) if {
 }
 
 # A path that packs the whole workspace (and therefore `.git`), or that
-# names `.git` directly.
+# names `.git` directly. A path UNDER the workspace (`${{ github.workspace
+# }}/dist`) packs only that directory and never `.git`, so it is not risky;
+# the expression must stand alone, optionally followed by `/`, `/.` or `/./`.
 _risky_path(p) if p == "."
 
 _risky_path(p) if p == "./"
 
-_risky_path(p) if contains(p, "github.workspace")
+_risky_path(p) if regex.match(`^\$\{\{\s*github\.workspace\s*\}\}(/\.?/?)?$`, p)
 
 _risky_path(p) if contains(p, ".git")
