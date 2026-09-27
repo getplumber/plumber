@@ -19,3 +19,4 @@ jobs:
           path: |
             dist/
             .git
+          include-hidden-files: true

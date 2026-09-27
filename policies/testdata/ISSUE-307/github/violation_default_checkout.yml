@@ -19,3 +19,4 @@ jobs:
         with:
           name: workspace
           path: .
+          include-hidden-files: true
