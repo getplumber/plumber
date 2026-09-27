@@ -105,7 +105,7 @@ func TestNoGitHubOnlyControlLeaksOnGitLabRun(t *testing.T) {
 	pipeline := &ir.NormalizedPipeline{Provider: ir.Provider("gitlab"), ProjectPath: "woob/woob", DefaultBranch: "master", Jobs: jobs}
 	conf := &configuration.Configuration{ProjectPath: "woob/woob", PlumberConfig: pc}
 
-	findings := evaluatePolicies(logrus.NewEntry(logrus.New()), conf, "gitlab", pipeline)
+	findings, _ := evaluatePolicies(logrus.NewEntry(logrus.New()), conf, "gitlab", pipeline)
 
 	// Every surviving finding must belong to a control applicable to gitlab.
 	for _, f := range findings {

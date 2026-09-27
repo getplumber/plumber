@@ -46,7 +46,7 @@ func TestIssue204_DoesNotVoidTheRestOfTheRun(t *testing.T) {
 	}
 	conf := &configuration.Configuration{ProjectPath: "group/project", PlumberConfig: pc}
 
-	findings := evaluatePolicies(logrus.NewEntry(logrus.New()), conf, "gitlab", pipeline)
+	findings, _ := evaluatePolicies(logrus.NewEntry(logrus.New()), conf, "gitlab", pipeline)
 
 	seen := map[string]int{}
 	for _, f := range findings {

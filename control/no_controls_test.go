@@ -31,12 +31,12 @@ func TestNoControls_SkipsPolicyEvaluation(t *testing.T) {
 	}
 
 	conf := &configuration.Configuration{ProjectPath: "group/project", PlumberConfig: pc}
-	if got := evaluatePolicies(logrus.NewEntry(logrus.New()), conf, "gitlab", pipeline); len(got) == 0 {
+	if got, _ := evaluatePolicies(logrus.NewEntry(logrus.New()), conf, "gitlab", pipeline); len(got) == 0 {
 		t.Fatal("fixture must produce findings without --no-controls, otherwise this test proves nothing")
 	}
 
 	conf.NoControls = true
-	got := evaluatePolicies(logrus.NewEntry(logrus.New()), conf, "gitlab", pipeline)
+	got, _ := evaluatePolicies(logrus.NewEntry(logrus.New()), conf, "gitlab", pipeline)
 	if len(got) != 0 {
 		t.Fatalf("--no-controls must evaluate nothing, got %d findings", len(got))
 	}

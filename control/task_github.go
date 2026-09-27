@@ -267,6 +267,7 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 	if defaultBranch == "" {
 		defaultBranch = conf.Branch
 	}
+	findings, policyFailures := evaluatePolicies(l, conf, "github", pipeline)
 	result := &AnalysisResult{
 		ProjectPath:      conf.ProjectPath,
 		DefaultBranch:    defaultBranch,
@@ -274,12 +275,13 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 		CIConfigSource:   "local",
 		CiValid:          len(pipeline.Jobs) > 0,
 		CiMissing:        len(pipeline.Jobs) == 0,
-		Findings:         evaluatePolicies(l, conf, "github", pipeline),
+		Findings:         findings,
 		GitHubStats:      AggregateGitHubStats(pipeline, conf.PlumberConfig),
 		GitHubPipeline:   pipeline,
 		AnalyzedCIConfig: githubAnalyzedCIConfig(pipeline),
 		Warnings:         pipeline.AdvisoryWarnings,
 	}
+	applyPolicyFailures(result, policyFailures)
 	markGitHubLanes(result, conf, conf.ProjectPath, scanMutableExec, branchScope)
 	// Local scans read workflow files from disk, so a skipped file is a
 	// parse/read problem (user-fixable), not a degraded collection — only
@@ -391,6 +393,7 @@ func RunGitHubAnalysisRemote(conf *configuration.Configuration, owner, repo, ref
 	if defaultBranch == "" {
 		defaultBranch = ref
 	}
+	findings, policyFailures := evaluatePolicies(l, conf, "github", pipeline)
 	result := &AnalysisResult{
 		ProjectPath:      owner + "/" + repo,
 		DefaultBranch:    defaultBranch,
@@ -398,12 +401,13 @@ func RunGitHubAnalysisRemote(conf *configuration.Configuration, owner, repo, ref
 		CIConfigSource:   "remote",
 		CiValid:          len(pipeline.Jobs) > 0,
 		CiMissing:        len(pipeline.Jobs) == 0,
-		Findings:         evaluatePolicies(l, conf, "github", pipeline),
+		Findings:         findings,
 		GitHubStats:      AggregateGitHubStats(pipeline, conf.PlumberConfig),
 		GitHubPipeline:   pipeline,
 		AnalyzedCIConfig: githubAnalyzedCIConfig(pipeline),
 		Warnings:         pipeline.AdvisoryWarnings,
 	}
+	applyPolicyFailures(result, policyFailures)
 	markGitHubLanes(result, conf, owner+"/"+repo, scanMutableExec, branchScope)
 	applyGitHubDegraded(result, len(partial), branchFetchFailed)
 	// An enabled control asserting nothing until its substantive fields are set is not a clean

@@ -189,7 +189,7 @@ func StatusFor(e ControlEntry, result *AnalysisResult, findingCount int) string 
 		return StatusError
 	}
 	for _, r := range result.DegradedReasons {
-		if !degradedReasonIsBranchProtection(r) && !degradedReasonIsVariables(r) && !degradedReasonIsSecurityPolicy(r) {
+		if !degradedReasonIsBranchProtection(r) && !degradedReasonIsVariables(r) && !degradedReasonIsSecurityPolicy(r) && !degradedReasonIsPolicyFailure(r) {
 			return StatusError
 		}
 	}

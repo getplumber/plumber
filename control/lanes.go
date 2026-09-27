@@ -116,6 +116,12 @@ const (
 	// nothing was evaluated. The alternative is the vacuous pass this whole
 	// file exists to prevent: zero findings over data nobody fetched.
 	ReasonLaneNotCollected = "lane_not_collected"
+
+	// ReasonPolicyEvaluationFailed marks a control whose Rego policy failed
+	// to evaluate (an engine error such as eval_conflict_error, #489). The
+	// run is degraded with a reason naming the policy; every other control
+	// keeps its own status and findings.
+	ReasonPolicyEvaluationFailed = "policy_evaluation_failed"
 )
 
 // controlsRequiringIncludeAttribution lists the GitLab controls whose
@@ -781,7 +787,7 @@ func ReEvaluateForConfig(
 	scopedConf := *conf
 	scopedConf.PlumberConfig = pc
 
-	found := evaluatePolicies(l.WithField("scope", "per-policy"), &scopedConf, provider, pipeline)
+	found, failures := evaluatePolicies(l.WithField("scope", "per-policy"), &scopedConf, provider, pipeline)
 
 	// The same honesty rules the run applied must apply here, or a policy's
 	// verdict would include findings the run itself withheld as unevaluable.
@@ -791,6 +797,11 @@ func ReEvaluateForConfig(
 	for k, v := range result.NotEvaluable {
 		scopedResult.MarkNotEvaluable(k, v)
 	}
+	// A policy module that failed under this configuration degrades this
+	// policy's verdict the same way it degrades the run's (#489); the
+	// scoped copy keeps its own reasons and marks, the run's are untouched.
+	scopedResult.DegradedReasons = append([]string(nil), result.DegradedReasons...)
+	applyPolicyFailures(&scopedResult, failures)
 	// Tier caveats are a statement about a CONTROL, so they belong to the
 	// policy that enables it, not to the run. Inherited from the run they
 	// were computed against the local configuration: a policy enabling an

@@ -53,3 +53,21 @@ func IsRegoFileBenchedForProvider(content []byte, provider string) bool {
 	}
 	return true
 }
+
+// controlsDeclaredBy returns the distinct control names behind the ISSUE-XXX
+// codes a policy source references, in first-seen order. It is the same
+// code-to-control link IsRegoFileBenchedForProvider uses; a failed policy's
+// controls are marked not evaluable through it (#489).
+func controlsDeclaredBy(content []byte) []string {
+	var out []string
+	seen := map[string]bool{}
+	for _, m := range issueCodeRegex.FindAll(content, -1) {
+		info := LookupCode(ErrorCode(m))
+		if info == nil || info.ControlName == "" || seen[info.ControlName] {
+			continue
+		}
+		seen[info.ControlName] = true
+		out = append(out, info.ControlName)
+	}
+	return out
+}

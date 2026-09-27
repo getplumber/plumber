@@ -311,21 +311,33 @@ func notifyFindingsObserver(fs []Finding) {
 	}
 }
 
-// Evaluate runs every loaded policy against pipeline and returns the
-// aggregated findings. Policies see a two-field input:
+// ModuleError is one policy module that failed to evaluate: the module name
+// (the .rego file name without its extension) and the engine's own error.
+type ModuleError struct {
+	Module string
+	Err    error
+}
+
+// EvaluateModules runs every loaded policy against pipeline and returns the
+// aggregated findings of the modules that evaluated, plus one ModuleError
+// per module that did not. A failing module never takes the others' findings
+// with it (#489): the caller decides what a failure means for the run. The
+// error return is reserved for the cases where nothing could run at all (a
+// nil pipeline, an input that could not be built). Policies see a two-field
+// input:
 //
-//	input.pipeline  — the NormalizedPipeline
-//	input.config    — an arbitrary map forwarded from .plumber.yaml
+//	input.pipeline  - the NormalizedPipeline
+//	input.config    - an arbitrary map forwarded from .plumber.yaml
 //
 // config may be nil. Pipeline must not be nil.
-func (e *Engine) Evaluate(ctx context.Context, pipeline *ir.NormalizedPipeline, config map[string]any) ([]Finding, error) {
+func (e *Engine) EvaluateModules(ctx context.Context, pipeline *ir.NormalizedPipeline, config map[string]any) ([]Finding, []ModuleError, error) {
 	if pipeline == nil {
-		return nil, fmt.Errorf("evaluate: nil pipeline")
+		return nil, nil, fmt.Errorf("evaluate: nil pipeline")
 	}
 
 	input, err := buildInput(pipeline, config)
 	if err != nil {
-		return nil, fmt.Errorf("evaluate: build input: %w", err)
+		return nil, nil, fmt.Errorf("evaluate: build input: %w", err)
 	}
 
 	names := make([]string, 0, len(e.modules))
@@ -335,18 +347,43 @@ func (e *Engine) Evaluate(ctx context.Context, pipeline *ir.NormalizedPipeline, 
 	sort.Strings(names)
 
 	var findings []Finding
+	var failed []ModuleError
 	for _, name := range names {
 		source := e.modules[name]
 		moduleFindings, err := evalModule(ctx, name, source, input)
 		if err != nil {
-			return nil, fmt.Errorf("evaluate module %q: %w", name, err)
+			failed = append(failed, ModuleError{Module: name, Err: err})
+			continue
 		}
 		findings = append(findings, moduleFindings...)
 	}
 	enrichFindingsWithJobLocation(findings, pipeline)
 	sortFindingsInPlace(findings)
 	notifyFindingsObserver(findings)
+	return findings, failed, nil
+}
+
+// Evaluate is the strict form of EvaluateModules: any module failure is an
+// error naming the first failing module and no findings are returned. It is
+// what a test suite wants, where a broken policy must fail the run loudly;
+// the analysis itself calls EvaluateModules so one broken policy degrades
+// its own controls instead of blanking the report.
+func (e *Engine) Evaluate(ctx context.Context, pipeline *ir.NormalizedPipeline, config map[string]any) ([]Finding, error) {
+	findings, failed, err := e.EvaluateModules(ctx, pipeline, config)
+	if err != nil {
+		return nil, err
+	}
+	if len(failed) > 0 {
+		return nil, fmt.Errorf("evaluate module %q: %w", failed[0].Module, failed[0].Err)
+	}
 	return findings, nil
+}
+
+// ModuleSource returns the source of a loaded module by name, so a caller
+// can read which issue codes a failed module declares.
+func (e *Engine) ModuleSource(name string) (string, bool) {
+	source, ok := e.modules[name]
+	return source, ok
 }
 
 // sortFindingsInPlace orders findings deterministically for stable JSON and CLI output.

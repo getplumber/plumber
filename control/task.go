@@ -3,6 +3,7 @@ package control
 import (
 	"context"
 	"fmt"
+	"io/fs"
 	"os"
 	"time"
 
@@ -320,7 +321,9 @@ func runRegoEngine(
 	if result != nil {
 		result.Pipeline = pipeline
 	}
-	return evaluatePolicies(l, conf, "gitlab", pipeline)
+	findings, failures := evaluatePolicies(l, conf, "gitlab", pipeline)
+	applyPolicyFailures(result, failures)
+	return findings
 }
 
 // evaluatePolicies loads the embedded Rego policies and evaluates them
@@ -330,43 +333,59 @@ func runRegoEngine(
 // allowlist). conf.ControlsFilter / conf.SkipControlsFilter further
 // restrict which controls' findings reach the caller. Callers pass
 // "gitlab" or "github". Anything else returns no findings.
-func evaluatePolicies(l *logrus.Entry, conf *configuration.Configuration, provider string, pipeline *ir.NormalizedPipeline) []opaengine.Finding {
+//
+// A policy module that fails to evaluate is returned as a policyFailure with
+// the controls it declares, while the other modules' findings come back as
+// usual (#489); the caller hands the failures to applyPolicyFailures so the
+// run is degraded instead of reading as clean.
+// policyFS is the filesystem the embedded policies are loaded from; a test
+// seam so a deliberately broken module can be added next to the real ones.
+var policyFS fs.FS = policies.FS
+
+func evaluatePolicies(l *logrus.Entry, conf *configuration.Configuration, provider string, pipeline *ir.NormalizedPipeline) ([]opaengine.Finding, []policyFailure) {
 	// Empty (non-nil) so the eventual JSON output marshals an empty
 	// findings array as `[]`, not `null` — `null` makes downstream
 	// jq pipelines like `.findings[]` blow up on a clean run.
 	empty := []opaengine.Finding{}
 	// --no-controls: the user asked for no controls, so nothing is loaded
-	// and nothing is evaluated. Filtering the findings afterwards would not
-	// be equivalent: Engine.Evaluate returns on the first module error, so a
-	// single crashing policy takes every finding with it. A run that
-	// evaluates nothing is a run no policy can break.
+	// and nothing is evaluated. A run that evaluates nothing is a run no
+	// policy can break.
 	if conf.NoControls {
 		l.WithField("provider", provider).Info("Control evaluation disabled (--no-controls)")
-		return empty
+		return empty, nil
 	}
 	l.WithField("provider", provider).Info("Running Rego/OPA rule engine")
 	engine := opaengine.New()
 	skip := func(filename string, content []byte) bool {
 		return IsRegoFileBenchedForProvider(content, provider)
 	}
-	if err := engine.LoadFromFSFiltered(policies.FS, skip); err != nil {
+	if err := engine.LoadFromFSFiltered(policyFS, skip); err != nil {
 		l.WithError(err).Warn("Failed to load embedded Rego policies")
-		return empty
+		return empty, []policyFailure{{Module: "policies", Err: err}}
 	}
 	controls := conf.PlumberConfig.ControlsFor(provider)
 	ctx, cancel := context.WithTimeout(context.Background(), opaEvaluateTimeout)
 	defer cancel()
-	findings, err := engine.Evaluate(ctx, pipeline, buildEngineConfig(controls))
+	findings, failed, err := engine.EvaluateModules(ctx, pipeline, buildEngineConfig(controls))
 	if err != nil {
-		l.WithError(err).Warn("Rego/OPA engine evaluation failed")
-		return empty
+		// Nothing could run at all (nil pipeline, unbuildable input): every
+		// control is left unevaluated and the run reads as incomplete, never
+		// as clean (#489).
+		l.WithError(err).Error("Rego/OPA engine evaluation failed")
+		return empty, []policyFailure{{Module: "engine", Err: err}}
+	}
+	var failures []policyFailure
+	for _, f := range failed {
+		l.WithError(f.Err).WithField("policy", f.Module).Error("Policy failed to evaluate; its controls are not evaluable this run")
+		source, _ := engine.ModuleSource(f.Module)
+		failures = append(failures, policyFailure{Module: f.Module, Err: f.Err, Controls: controlsDeclaredBy([]byte(source))})
 	}
 	findings = FilterFindingsByEnabledControls(findings, provider, controls, conf.ControlsFilter, conf.SkipControlsFilter)
 	if findings == nil {
 		findings = empty
 	}
 	l.WithField("findingCount", len(findings)).Info("Rego/OPA engine evaluation completed")
-	return findings
+	return findings, failures
 }
 
 // buildEngineConfig projects the relevant bits of the user's .plumber.yaml

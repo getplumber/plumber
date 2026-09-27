@@ -110,3 +110,43 @@ func applyGitHubDegraded(result *AnalysisResult, partialCount int, branchFetchFa
 	result.DataCollectionDegraded = true
 	result.DegradedReasons = append(result.DegradedReasons, reasons...)
 }
+
+// degradedReasonPolicyPrefix is the shared prefix of every DegradedReasons
+// entry a failed policy module writes (#489). The StatusFor classifier
+// (degradedReasonIsPolicyFailure) keeps such a reason from reading as a
+// whole-run failure: only the controls the failed policy declares are
+// affected, through NotEvaluable.
+const degradedReasonPolicyPrefix = "policy could not be evaluated"
+
+// degradedReasonIsPolicyFailure classifies a DegradedReasons entry as a
+// failed policy module.
+func degradedReasonIsPolicyFailure(reason string) bool {
+	return strings.HasPrefix(reason, degradedReasonPolicyPrefix)
+}
+
+// policyFailure is one Rego module that failed to evaluate, with the
+// controls it declares (read off the issue codes in its source), which are
+// the controls its failure leaves not evaluable.
+type policyFailure struct {
+	Module   string
+	Err      error
+	Controls []string
+}
+
+// applyPolicyFailures records what a failed policy module means for the run
+// (#489): the run is degraded, so the score is withheld and the exit code
+// says incomplete, with one reason per module naming it and the engine's
+// error; and every control the module declares is marked not evaluable, so
+// it reads "not evaluated" while the other controls keep their real findings
+// and statuses.
+func applyPolicyFailures(result *AnalysisResult, failures []policyFailure) {
+	if result == nil {
+		return
+	}
+	for _, f := range failures {
+		markDegraded(result, fmt.Sprintf("%s: %s: %v", degradedReasonPolicyPrefix, f.Module, f.Err))
+		for _, control := range f.Controls {
+			result.MarkNotEvaluable(control, ReasonPolicyEvaluationFailed)
+		}
+	}
+}
