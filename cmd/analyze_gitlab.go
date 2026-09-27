@@ -18,6 +18,7 @@ import (
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
 	defaultconfig "github.com/getplumber/plumber/defaultConfig"
+	"github.com/getplumber/plumber/gitlab"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	plumberprovider "github.com/getplumber/plumber/provider"
 	"github.com/getplumber/plumber/utils"
@@ -441,7 +442,7 @@ func parseControlsFilters() (includeOnly, skip []string, err error) {
 
 // dispatchGitHub runs the GitHub analysis path and returns its result.
 // It is called after provider resolution confirms provider == "github".
-func dispatchGitHub(cmd *cobra.Command, flags analyzeFlags, remoteInfo *utils.GitRemoteInfo, controlsFilterList, skipControlsList []string) error {
+func dispatchGitHub(flags analyzeFlags, remoteInfo *utils.GitRemoteInfo, controlsFilterList, skipControlsList []string) error {
 	if flags.projectFromFlag {
 		ref := ""
 		if flags.branchFromFlag {
@@ -784,7 +785,7 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	}
 
 	if providerName == "github" {
-		return dispatchGitHub(cmd, flags, remoteInfo, controlsFilterList, skipControlsList)
+		return dispatchGitHub(flags, remoteInfo, controlsFilterList, skipControlsList)
 	}
 
 	remote, err := resolveGitLabTarget(flags, remoteInfo)
@@ -1116,31 +1117,11 @@ func parsePolicyObject(rawCfg string) map[string]any {
 	if err := yaml.Unmarshal([]byte(rawCfg), &parsed); err != nil {
 		return map[string]any{}
 	}
-	obj, ok := normalizeYAMLValue(parsed).(map[string]any)
+	obj, ok := gitlab.NormalizeYAMLValue(parsed).(map[string]any)
 	if !ok {
 		return map[string]any{}
 	}
 	return obj
-}
-
-// normalizeYAMLValue rewrites yaml.v2's map[any]any into JSON-encodable
-// map[string]any, recursively, leaving scalars and slices intact.
-func normalizeYAMLValue(v any) any {
-	switch t := v.(type) {
-	case map[any]any:
-		m := make(map[string]any, len(t))
-		for k, val := range t {
-			m[fmt.Sprint(k)] = normalizeYAMLValue(val)
-		}
-		return m
-	case []any:
-		for i := range t {
-			t[i] = normalizeYAMLValue(t[i])
-		}
-		return t
-	default:
-		return v
-	}
 }
 
 // platformPolicyReportEntries renders the report's `policies` array: one entry
@@ -2010,6 +1991,22 @@ func printNoControlsSummary() {
 	fmt.Println()
 }
 
+// printScoreWithheld prints the "Plumber Score" section when no grade can
+// be shown: a rule, the muted section title, the headline in the fail
+// style and a muted hint on what to do next, framed by blank lines.
+func printScoreWithheld(headline, hint string) {
+	sep := styleRule.Render(strings.Repeat("─", hrWidth))
+	fmt.Println()
+	fmt.Println(" " + sep)
+	fmt.Println(" " + styleMuted.Render("Plumber Score"))
+	fmt.Println()
+	fmt.Printf(" %s\n", styleFail.Render(headline))
+	fmt.Printf(" %s\n", styleMuted.Render(hint))
+	fmt.Println()
+	fmt.Println(" " + sep)
+	fmt.Println()
+}
+
 func printSummaryScoreBanner(score *control.PlumberScoreResult, scoreMode, degraded bool) {
 	if !scoreMode {
 		return
@@ -2026,16 +2023,10 @@ func printSummaryScoreBanner(score *control.PlumberScoreResult, scoreMode, degra
 	// failed"), not the generic "nothing was checked" (review finding
 	// 6c38fbc735473281, platform decision row 45).
 	if degraded {
-		sep := styleRule.Render(strings.Repeat("─", hrWidth))
-		fmt.Println()
-		fmt.Println(" " + sep)
-		fmt.Println(" " + styleMuted.Render("Plumber Score"))
-		fmt.Println()
-		fmt.Printf(" %s\n", styleFail.Render("Score withheld — analysis ran on incomplete data"))
-		fmt.Printf(" %s\n", styleMuted.Render("Resolve the data-collection warnings above, then re-run for a grade."))
-		fmt.Println()
-		fmt.Println(" " + sep)
-		fmt.Println()
+		printScoreWithheld(
+			"Score withheld — analysis ran on incomplete data",
+			"Resolve the data-collection warnings above, then re-run for a grade.",
+		)
 		return
 	}
 
@@ -2048,16 +2039,10 @@ func printSummaryScoreBanner(score *control.PlumberScoreResult, scoreMode, degra
 	// than as nothing having been checked. Say so in the same withheld
 	// wording family as the degraded case above (platform decision row 45).
 	if score == nil {
-		sep := styleRule.Render(strings.Repeat("─", hrWidth))
-		fmt.Println()
-		fmt.Println(" " + sep)
-		fmt.Println(" " + styleMuted.Render("Plumber Score"))
-		fmt.Println()
-		fmt.Printf(" %s\n", styleFail.Render("Score withheld: no control was evaluated"))
-		fmt.Printf(" %s\n", styleMuted.Render("Nothing was checked, so this run makes no claim about the pipeline."))
-		fmt.Println()
-		fmt.Println(" " + sep)
-		fmt.Println()
+		printScoreWithheld(
+			"Score withheld: no control was evaluated",
+			"Nothing was checked, so this run makes no claim about the pipeline.",
+		)
 		return
 	}
 
@@ -2065,7 +2050,7 @@ func printSummaryScoreBanner(score *control.PlumberScoreResult, scoreMode, degra
 
 	// Block-letter ASCII badge — six lines tall, matches the project
 	// banner lettering style.
-	badge := scoreLetterAsciiArt(score.Score)
+	badge := scoreLetterASCIIArt(score.Score)
 
 	letterStyle := lipgloss.NewStyle().Foreground(letterColor).Bold(true)
 	pointsLine := letterStyle.Render(fmt.Sprintf("%.0f / 100 pts", score.FinalPoints))

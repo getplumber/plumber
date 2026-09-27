@@ -7,6 +7,7 @@ import (
 	"path"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -279,20 +280,11 @@ func entrypointPaths(actionYML string) []string {
 		paths = append(paths, sm[1])
 	}
 	for _, c := range entrypointCandidates {
-		if !contains(paths, c) {
+		if !slices.Contains(paths, c) {
 			paths = append(paths, c)
 		}
 	}
 	return paths
-}
-
-func contains(s []string, v string) bool {
-	for _, e := range s {
-		if e == v {
-			return true
-		}
-	}
-	return false
 }
 
 // scanActionDefinition scans an action given its action.yml text and a

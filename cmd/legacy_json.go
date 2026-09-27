@@ -239,9 +239,17 @@ func buildLegacyResult(e control.ControlEntry, result *control.AnalysisResult, p
 	case "includesMustNotUseForbiddenVersions":
 		return "forbiddenVersionsIncludesResult", buildForbiddenVersionsBlock(common, result, findings)
 	case "pipelineMustIncludeComponent":
-		return "requiredComponentsResult", buildRequirementGroupsBlock(common, pc.ControlsFor("gitlab").PipelineMustIncludeComponent, result, findings)
+		var groups [][]string
+		if cfg := pc.ControlsFor("gitlab").PipelineMustIncludeComponent; cfg != nil {
+			groups = cfg.RequiredGroups
+		}
+		return "requiredComponentsResult", buildRequirementGroupsBlock(common, groups, result, findings)
 	case "pipelineMustIncludeTemplate":
-		return "requiredTemplatesResult", buildRequirementGroupsTemplateBlock(common, pc.ControlsFor("gitlab").PipelineMustIncludeTemplate, result, findings)
+		var groups [][]string
+		if cfg := pc.ControlsFor("gitlab").PipelineMustIncludeTemplate; cfg != nil {
+			groups = cfg.RequiredGroups
+		}
+		return "requiredTemplatesResult", buildRequirementGroupsBlock(common, groups, result, findings)
 	case "pipelineMustNotEnableDebugTrace":
 		return "debugTraceResult", buildDebugTraceBlock(common, result, findings)
 	case "pipelineMustNotUseUnsafeVariableExpansion":
@@ -1037,34 +1045,13 @@ func buildForbiddenVersionsBlock(c legacyCommon, result *control.AnalysisResult,
 	}
 }
 
-func buildRequirementGroupsBlock(c legacyCommon, cfg *configuration.RequiredComponentsControlConfig, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
-	var groups [][]string
-	if cfg != nil && !c.Skipped {
-		groups = cfg.RequiredGroups
-	}
-	requirementGroups, satisfied := _resolveRequirementGroups(groups, result)
-	return map[string]any{
-		"requirementGroups": requirementGroups,
-		"issues":            projectFindings(findings, ""),
-		"overriddenIssues":  []any{},
-		"metrics": map[string]any{
-			"totalGroups":       len(requirementGroups),
-			"satisfiedGroups":   satisfied,
-			"anySatisfiedGroup": len(requirementGroups) > 0 && satisfied > 0,
-			"ciInvalid":         0,
-			"ciMissing":         0,
-		},
-		"version":   "0.2.0",
-		"ciValid":   c.CiValid,
-		"ciMissing": c.CiMissing,
-		"skipped":   c.Skipped,
-	}
-}
-
-func buildRequirementGroupsTemplateBlock(c legacyCommon, cfg *configuration.RequiredTemplatesControlConfig, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
-	var groups [][]string
-	if cfg != nil && !c.Skipped {
-		groups = cfg.RequiredGroups
+// buildRequirementGroupsBlock renders the legacy requirement-groups shape
+// shared by the required-components and required-templates results. groups
+// are the configured AND-groups (nil when the control has no config); a
+// skipped control resolves no groups at all.
+func buildRequirementGroupsBlock(c legacyCommon, groups [][]string, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	if c.Skipped {
+		groups = nil
 	}
 	requirementGroups, satisfied := _resolveRequirementGroups(groups, result)
 	return map[string]any{

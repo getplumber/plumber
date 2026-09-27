@@ -155,7 +155,7 @@ func TestPlatformIncludesOnlyServeTheirOwnConfig(t *testing.T) {
 // includes list is used, not treated as missing attribution: it returns a
 // non-nil, zero-length slice, and the origin loop that ranges over it then
 // correctly attributes every job in the merged config to the project
-// (dataCollectionGitlabPipelineOrigin.go), which is the right answer when
+// (collect_pipeline_origin.go), which is the right answer when
 // there are genuinely zero includes.
 func TestPlatformIncludesServedEmptyIsNonNilAndUsed(t *testing.T) {
 	conf := platformConf(platform.SourceResolved, "stages: [build]")

@@ -77,6 +77,28 @@ func isAlphaNumericUnderscore(c byte) bool {
 	return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'
 }
 
+// extractSingleVariableTag handles the ":$TAG" suffix shared by the multi
+// variable cases: when the text after the last colon is exactly one variable
+// and carries no slash, it becomes the tag, the rest the name, and the
+// registry is unknown. It reports whether that split was applied.
+func (i *GitlabPipelineImageInfo) extractSingleVariableTag() bool {
+	if !strings.Contains(i.Link, ":") {
+		return false
+	}
+	lastColon := strings.LastIndex(i.Link, ":")
+	if lastColon > 0 && !strings.Contains(i.Link[lastColon+1:], "/") {
+		afterColon := i.Link[lastColon+1:]
+		// Check if the part after colon is a single variable
+		if strings.HasPrefix(afterColon, "$") && strings.Count(afterColon, "$") == 1 {
+			i.Registry = unknownRegistry
+			i.Name = i.Link[:lastColon]
+			i.Tag = afterColon
+			return true
+		}
+	}
+	return false
+}
+
 func (i *GitlabPipelineImageInfo) handlePresenceOfVariables() {
 
 	// Check if it contains any unresolved variables
@@ -447,18 +469,8 @@ func (i *GitlabPipelineImageInfo) handlePresenceOfVariables() {
 		}
 
 		// Extract tag if pattern ends with :$TAG
-		if strings.Contains(i.Link, ":") {
-			lastColon := strings.LastIndex(i.Link, ":")
-			if lastColon > 0 && !strings.Contains(i.Link[lastColon+1:], "/") {
-				afterColon := i.Link[lastColon+1:]
-				// Check if the part after colon is a single variable
-				if strings.HasPrefix(afterColon, "$") && strings.Count(afterColon, "$") == 1 {
-					i.Registry = unknownRegistry
-					i.Name = i.Link[:lastColon]
-					i.Tag = afterColon
-					return
-				}
-			}
+		if i.extractSingleVariableTag() {
+			return
 		}
 
 		// Extract tag if pattern ends with @$DIGEST
@@ -537,18 +549,8 @@ func (i *GitlabPipelineImageInfo) handlePresenceOfVariables() {
 		}
 
 		// Extract tag if pattern ends with :$TAG
-		if strings.Contains(i.Link, ":") {
-			lastColon := strings.LastIndex(i.Link, ":")
-			if lastColon > 0 && !strings.Contains(i.Link[lastColon+1:], "/") {
-				afterColon := i.Link[lastColon+1:]
-				// Check if the part after colon is a single variable
-				if strings.HasPrefix(afterColon, "$") && strings.Count(afterColon, "$") == 1 {
-					i.Registry = unknownRegistry
-					i.Name = i.Link[:lastColon]
-					i.Tag = afterColon
-					return
-				}
-			}
+		if i.extractSingleVariableTag() {
+			return
 		}
 
 		// Default: preserve full structure

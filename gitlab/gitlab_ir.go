@@ -800,38 +800,38 @@ func extractGitLabRules(v any) []map[string]any {
 	}
 	out := make([]map[string]any, 0, len(list))
 	for _, entry := range list {
-		if m, ok := normalizeYAMLValue(entry).(map[string]any); ok && len(m) > 0 {
+		if m, ok := NormalizeYAMLValue(entry).(map[string]any); ok && len(m) > 0 {
 			out = append(out, m)
 		}
 	}
 	return out
 }
 
-// normalizeYAMLValue recursively walks a value coming out of yaml.v2
-// and rewrites every map[interface{}]interface{} as map[string]any
-// so the result is JSON-marshallable.
-func normalizeYAMLValue(v any) any {
+// NormalizeYAMLValue recursively rewrites a value decoded by yaml.v2 into a
+// JSON-encodable one: every map[interface{}]interface{} becomes a
+// map[string]any (a non-string key is rendered with fmt.Sprint, so a bare
+// `on:` or `1:` key survives as "true" or "1" rather than being dropped),
+// nested maps and slices are walked, scalars pass through. It is the one
+// shared implementation for every place that hands yaml.v2 output to a JSON
+// encoder or to the Rego engine.
+func NormalizeYAMLValue(v any) any {
 	switch x := v.(type) {
 	case map[interface{}]interface{}:
 		out := make(map[string]any, len(x))
 		for k, val := range x {
-			ks, ok := k.(string)
-			if !ok {
-				continue
-			}
-			out[ks] = normalizeYAMLValue(val)
+			out[fmt.Sprint(k)] = NormalizeYAMLValue(val)
 		}
 		return out
 	case map[string]interface{}:
 		out := make(map[string]any, len(x))
 		for k, val := range x {
-			out[k] = normalizeYAMLValue(val)
+			out[k] = NormalizeYAMLValue(val)
 		}
 		return out
 	case []interface{}:
 		out := make([]any, len(x))
 		for i, item := range x {
-			out[i] = normalizeYAMLValue(item)
+			out[i] = NormalizeYAMLValue(item)
 		}
 		return out
 	}

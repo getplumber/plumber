@@ -1,6 +1,7 @@
 package github
 
 import (
+	"slices"
 	"strings"
 	"testing"
 )
@@ -286,7 +287,7 @@ func TestEntrypointPaths(t *testing.T) {
 		t.Fatalf("expected declared entrypoint first, got %v", got)
 	}
 	// the usual candidates are appended without duplicating the declared one
-	if !contains(got, "action.js") || !contains(got, "dist/index.js") {
+	if !slices.Contains(got, "action.js") || !slices.Contains(got, "dist/index.js") {
 		t.Fatalf("expected candidate paths appended, got %v", got)
 	}
 }

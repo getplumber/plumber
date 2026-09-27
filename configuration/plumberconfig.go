@@ -485,21 +485,21 @@ type EnabledOnlyControlConfig struct {
 
 // SecurityPolicyControlConfig configures the GitLab security-policy-project
 // linkage check (ISSUE-601). GitLab-only, requires Ultimate. When
-// ExpectedProjectId is set, the linked policy project must be exactly that
+// ExpectedProjectID is set, the linked policy project must be exactly that
 // project. When it is unset, any linked policy project passes and the control
 // fails only when none is linked.
 type SecurityPolicyControlConfig struct {
 	// Enabled controls whether this check runs.
 	Enabled *bool `yaml:"enabled,omitempty"`
 
-	// ExpectedProjectId is the numeric GitLab project ID the security policy
+	// ExpectedProjectID is the numeric GitLab project ID the security policy
 	// project must match. Unset => require only that some policy project is
 	// linked.
-	ExpectedProjectId *int `yaml:"expectedProjectId,omitempty"`
+	ExpectedProjectID *int `yaml:"expectedProjectId,omitempty"`
 
 	// ExpectedProjectPath is the full path (namespace/project) the linked
 	// security policy project must match — a human-friendly alternative to the
-	// numeric ID, compared case-insensitively. Ignored when ExpectedProjectId is
+	// numeric ID, compared case-insensitively. Ignored when ExpectedProjectID is
 	// also set (the ID is authoritative). Unset (and no ID) => require only that
 	// some policy project is linked.
 	ExpectedProjectPath *string `yaml:"expectedProjectPath,omitempty"`
@@ -710,7 +710,6 @@ type ImageAuthorizedSourcesControlConfig struct {
 	IncludePlumberDefaults *bool `yaml:"includePlumberDefaults,omitempty"`
 }
 
-// BranchProtectionControlConfig configuration for the branch protection control
 // MRApprovalRulesMinApprovalsControlConfig configures the GitLab
 // merge-request approval-rules minimum-approvals check (ISSUE-502).
 // GitLab-only.
@@ -957,6 +956,27 @@ type RequiredComponentsControlConfig struct {
 	RequiredGroups [][]string `yaml:"requiredGroups,omitempty"`
 }
 
+// resolveRequiredGroups is the one resolution shared by every control that
+// accepts a requirement either as a boolean expression (`required`) or as
+// DNF groups written out (`requiredGroups`): the two are mutually exclusive,
+// an expression is parsed with ParseRequiredExpression, and errors are
+// prefixed with the control name.
+func resolveRequiredGroups(control, required string, groups [][]string) ([][]string, error) {
+	hasExpression := required != ""
+	hasGroups := len(groups) > 0
+	if hasExpression && hasGroups {
+		return nil, fmt.Errorf("%s: cannot use both 'required' and 'requiredGroups'; use only one", control)
+	}
+	if hasExpression {
+		parsed, err := ParseRequiredExpression(required)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", control, err)
+		}
+		return parsed, nil
+	}
+	return groups, nil
+}
+
 // GetResolvedRequiredGroups returns the effective required groups by resolving
 // either the 'required' expression or the 'requiredGroups' field.
 // Returns an error if both are set or if the expression is invalid.
@@ -964,20 +984,7 @@ func (c *RequiredComponentsControlConfig) GetResolvedRequiredGroups() ([][]strin
 	if c == nil {
 		return nil, nil
 	}
-	hasExpression := c.Required != ""
-	hasGroups := len(c.RequiredGroups) > 0
-
-	if hasExpression && hasGroups {
-		return nil, fmt.Errorf("pipelineMustIncludeComponent: cannot use both 'required' and 'requiredGroups' — use only one")
-	}
-	if hasExpression {
-		groups, err := ParseRequiredExpression(c.Required)
-		if err != nil {
-			return nil, fmt.Errorf("pipelineMustIncludeComponent: %w", err)
-		}
-		return groups, nil
-	}
-	return c.RequiredGroups, nil
+	return resolveRequiredGroups("pipelineMustIncludeComponent", c.Required, c.RequiredGroups)
 }
 
 // RequiredActionsControlConfig configures the GitHub
@@ -1006,19 +1013,7 @@ func (c *RequiredActionsControlConfig) GetResolvedRequiredGroups() ([][]string, 
 	if c == nil {
 		return nil, nil
 	}
-	hasExpression := c.Required != ""
-	hasGroups := len(c.RequiredGroups) > 0
-	if hasExpression && hasGroups {
-		return nil, fmt.Errorf("workflowMustIncludeRequiredActions: cannot use both 'required' and 'requiredGroups'; use only one")
-	}
-	if hasExpression {
-		groups, err := ParseRequiredExpression(c.Required)
-		if err != nil {
-			return nil, fmt.Errorf("workflowMustIncludeRequiredActions: %w", err)
-		}
-		return groups, nil
-	}
-	return c.RequiredGroups, nil
+	return resolveRequiredGroups("workflowMustIncludeRequiredActions", c.Required, c.RequiredGroups)
 }
 
 // IsEnabled returns whether the control is enabled. Returns false
@@ -1148,20 +1143,7 @@ func (c *RequiredTemplatesControlConfig) GetResolvedRequiredGroups() ([][]string
 	if c == nil {
 		return nil, nil
 	}
-	hasExpression := c.Required != ""
-	hasGroups := len(c.RequiredGroups) > 0
-
-	if hasExpression && hasGroups {
-		return nil, fmt.Errorf("pipelineMustIncludeTemplate: cannot use both 'required' and 'requiredGroups' — use only one")
-	}
-	if hasExpression {
-		groups, err := ParseRequiredExpression(c.Required)
-		if err != nil {
-			return nil, fmt.Errorf("pipelineMustIncludeTemplate: %w", err)
-		}
-		return groups, nil
-	}
-	return c.RequiredGroups, nil
+	return resolveRequiredGroups("pipelineMustIncludeTemplate", c.Required, c.RequiredGroups)
 }
 
 // LoadPlumberConfig loads configuration from a file path.
@@ -1789,16 +1771,6 @@ func FindClosestMatch(unknownKey string, validKeys []string) string {
 	return ""
 }
 
-// contains checks if a string is in a slice
-func contains(slice []string, item string) bool {
-	for _, s := range slice {
-		if s == item {
-			return true
-		}
-	}
-	return false
-}
-
 // rawHasTopLevelKey reports whether the raw YAML data has the named
 // key at top level. Used to detect deprecated keys (e.g. "engine") that
 // no longer have a Go-side struct field, so they would otherwise be
@@ -1912,7 +1884,7 @@ func validateControlsBlock(controlsRaw interface{}, pathPrefix string) []string 
 			continue
 		}
 
-		if !contains(knownNames, controlName) {
+		if !slices.Contains(knownNames, controlName) {
 			suggestion := FindClosestMatch(controlName, knownNames)
 			if suggestion != "" {
 				warnings = append(warnings,
@@ -1935,7 +1907,7 @@ func validateControlsBlock(controlsRaw interface{}, pathPrefix string) []string 
 			if !ok {
 				continue
 			}
-			if !contains(validSubKeys, subKey) {
+			if !slices.Contains(validSubKeys, subKey) {
 				suggestion := FindClosestMatch(subKey, validSubKeys)
 				if suggestion != "" {
 					warnings = append(warnings,

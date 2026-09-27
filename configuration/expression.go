@@ -153,12 +153,10 @@ func (p *parser) current() token {
 	return p.tokens[p.pos]
 }
 
-func (p *parser) advance() token {
-	t := p.current()
+func (p *parser) advance() {
 	if p.pos < len(p.tokens) {
 		p.pos++
 	}
-	return t
 }
 
 // parseExpression is the entry point: parses a full or_expr.
@@ -172,48 +170,35 @@ func (p *parser) parseExpression() (exprNode, error) {
 
 // parseOr: and_expr (OR and_expr)*
 func (p *parser) parseOr() (exprNode, error) {
-	left, err := p.parseAnd()
-	if err != nil {
-		return nil, err
-	}
-
-	children := []exprNode{left}
-	for p.current().typ == tokenOr {
-		p.advance() // consume OR
-		right, err := p.parseAnd()
-		if err != nil {
-			return nil, err
-		}
-		children = append(children, right)
-	}
-
-	if len(children) == 1 {
-		return children[0], nil
-	}
-	return &orNode{children: children}, nil
+	return p.parseChain(tokenOr, p.parseAnd, func(children []exprNode) exprNode { return &orNode{children: children} })
 }
 
 // parseAnd: atom (AND atom)*
 func (p *parser) parseAnd() (exprNode, error) {
-	left, err := p.parseAtom()
+	return p.parseChain(tokenAnd, p.parseAtom, func(children []exprNode) exprNode { return &andNode{children: children} })
+}
+
+// parseChain parses `operand (sep operand)*`: one operand is returned as is,
+// two or more are wrapped by join. parseOr and parseAnd differ only in the
+// separator, the operand parser and the node they build.
+func (p *parser) parseChain(sep tokenType, operand func() (exprNode, error), join func([]exprNode) exprNode) (exprNode, error) {
+	left, err := operand()
 	if err != nil {
 		return nil, err
 	}
-
 	children := []exprNode{left}
-	for p.current().typ == tokenAnd {
-		p.advance() // consume AND
-		right, err := p.parseAtom()
+	for p.current().typ == sep {
+		p.advance() // consume the separator
+		right, err := operand()
 		if err != nil {
 			return nil, err
 		}
 		children = append(children, right)
 	}
-
 	if len(children) == 1 {
 		return children[0], nil
 	}
-	return &andNode{children: children}, nil
+	return join(children), nil
 }
 
 // parseAtom: IDENT | LPAREN or_expr RPAREN

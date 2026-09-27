@@ -86,49 +86,39 @@ func ParseDefaultImage(conf *GitlabCIConf) (string, error) {
 	return defaultImage, nil
 }
 
-// ParseGlobalVariables parses global variables of a GitLab CI conf
-func ParseGlobalVariables(conf *GitlabCIConf) (map[string]string, error) {
+// parseVariableMap resolves every raw variable value into its string form.
+// On the first unparsable value it logs under the given action, names the
+// variable kind in the message ("global" or "job"), and returns the map
+// filled so far together with the error.
+func parseVariableMap(raw map[string]interface{}, action, what string) (map[string]string, error) {
 	l := logger.WithFields(logrus.Fields{
-		"action": "ParseGlobalVariables",
-	})
-
-	globalCiConfVariables := map[string]string{}
-	for key, value := range conf.GlobalVariables {
-		value, err := GetVariableValue(value)
-		if err != nil {
-			l.WithError(err).WithFields(logrus.Fields{
-				"variableKey":   key,
-				"variableValue": value,
-			}).Error("Unable to parse a global variable")
-			return globalCiConfVariables, err
-		}
-		globalCiConfVariables[key] = value
-	}
-
-	return globalCiConfVariables, nil
-}
-
-// ParseJobVariables parses job variables from a GitLab CI conf
-func ParseJobVariables(job *GitlabJob) (map[string]string, error) {
-	l := logger.WithFields(logrus.Fields{
-		"action": "ParseJobVariables",
+		"action": action,
 	})
 
 	variables := map[string]string{}
-
-	for key, value := range job.Variables {
+	for key, value := range raw {
 		value, err := GetVariableValue(value)
 		if err != nil {
 			l.WithError(err).WithFields(logrus.Fields{
 				"variableKey":   key,
 				"variableValue": value,
-			}).Error("Unable to parse a job variable")
+			}).Error("Unable to parse a " + what + " variable")
 			return variables, err
 		}
 		variables[key] = value
 	}
 
 	return variables, nil
+}
+
+// ParseGlobalVariables parses global variables of a GitLab CI conf
+func ParseGlobalVariables(conf *GitlabCIConf) (map[string]string, error) {
+	return parseVariableMap(conf.GlobalVariables, "ParseGlobalVariables", "global")
+}
+
+// ParseJobVariables parses job variables from a GitLab CI conf
+func ParseJobVariables(job *GitlabJob) (map[string]string, error) {
+	return parseVariableMap(job.Variables, "ParseJobVariables", "job")
 }
 
 // ProjectInfo contains basic project information for CI analysis

@@ -727,6 +727,24 @@ func runInitWizard(skipAnalyzePrompt bool) (*initWizardState, error) {
 func boolPtrInit(b bool) *bool { return &b }
 func intPtrInit(i int) *int    { return &i }
 
+// securityJobsConfigInit builds one provider's security-jobs control config
+// from the wizard's multiline pattern text (falling back to defaults when it
+// is empty) and the three sub-toggle answers. Every call allocates fresh
+// toggle structs, so the GitLab and GitHub sections never share a pointer.
+func securityJobsConfigInit(patternsText string, defaults func() []string, allowFailure, rules, whenNotManual bool) *configuration.SecurityJobsWeakenedControlConfig {
+	p := parseLinesInit(patternsText)
+	if len(p) == 0 {
+		p = defaults()
+	}
+	return &configuration.SecurityJobsWeakenedControlConfig{
+		Enabled:                 boolPtrInit(true),
+		SecurityJobPatterns:     p,
+		AllowFailureMustBeFalse: &configuration.SecurityJobsSubControlToggle{Enabled: boolPtrInit(allowFailure)},
+		RulesMustNotBeRedefined: &configuration.SecurityJobsSubControlToggle{Enabled: boolPtrInit(rules)},
+		WhenMustNotBeManual:     &configuration.SecurityJobsSubControlToggle{Enabled: boolPtrInit(whenNotManual)},
+	}
+}
+
 // hasProvider reports whether the wizard state currently targets the
 // given canonical provider name ("gitlab" or "github"). Returns false
 // for an empty Providers slice — callers should always set at least
@@ -1363,30 +1381,16 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 		// so the two providers never alias the same pointer.
 		if compSelected(st, compSecurity) {
 			if gl != nil {
-				p := parseLinesInit(st.SecurityJobPatternsMultiline)
-				if len(p) == 0 {
-					p = defaultSecurityJobPatterns()
-				}
-				gl.Controls.SecurityJobsMustNotBeWeakened = &configuration.SecurityJobsWeakenedControlConfig{
-					Enabled:                 boolPtrInit(true),
-					SecurityJobPatterns:     p,
-					AllowFailureMustBeFalse: &configuration.SecurityJobsSubControlToggle{Enabled: boolPtrInit(st.SecuritySubAllowFailure)},
-					RulesMustNotBeRedefined: &configuration.SecurityJobsSubControlToggle{Enabled: boolPtrInit(st.SecuritySubRules)},
-					WhenMustNotBeManual:     &configuration.SecurityJobsSubControlToggle{Enabled: boolPtrInit(st.SecuritySubWhenNotManual)},
-				}
+				gl.Controls.SecurityJobsMustNotBeWeakened = securityJobsConfigInit(
+					st.SecurityJobPatternsMultiline, defaultSecurityJobPatterns,
+					st.SecuritySubAllowFailure, st.SecuritySubRules, st.SecuritySubWhenNotManual,
+				)
 			}
 			if gh != nil {
-				p := parseLinesInit(st.SecurityJobPatternsGitHubMultiline)
-				if len(p) == 0 {
-					p = defaultGitHubSecurityJobPatterns()
-				}
-				gh.Controls.SecurityJobsMustNotBeWeakened = &configuration.SecurityJobsWeakenedControlConfig{
-					Enabled:                 boolPtrInit(true),
-					SecurityJobPatterns:     p,
-					AllowFailureMustBeFalse: &configuration.SecurityJobsSubControlToggle{Enabled: boolPtrInit(st.SecuritySubAllowFailureGitHub)},
-					RulesMustNotBeRedefined: &configuration.SecurityJobsSubControlToggle{Enabled: boolPtrInit(st.SecuritySubRulesGitHub)},
-					WhenMustNotBeManual:     &configuration.SecurityJobsSubControlToggle{Enabled: boolPtrInit(st.SecuritySubWhenNotManualGitHub)},
-				}
+				gh.Controls.SecurityJobsMustNotBeWeakened = securityJobsConfigInit(
+					st.SecurityJobPatternsGitHubMultiline, defaultGitHubSecurityJobPatterns,
+					st.SecuritySubAllowFailureGitHub, st.SecuritySubRulesGitHub, st.SecuritySubWhenNotManualGitHub,
+				)
 			}
 		}
 

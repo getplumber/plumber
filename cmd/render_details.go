@@ -981,11 +981,7 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 				resolved = g
 			}
 		}
-		satisfied := countSatisfiedGroups(resolved, result, "component")
-		return []statLine{
-			{Label: statRequirementGroups, Value: fmt.Sprintf("%d", len(resolved))},
-			{Label: statSatisfiedGroups, Value: fmt.Sprintf("%d", satisfied)},
-		}
+		return requirementGroupStats(resolved, result, "component")
 	case "pipelineMustIncludeTemplate":
 		var resolved [][]string
 		if pc != nil && pc.ControlsFor("gitlab").PipelineMustIncludeTemplate != nil {
@@ -993,11 +989,7 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 				resolved = g
 			}
 		}
-		satisfied := countSatisfiedGroups(resolved, result, "template")
-		return []statLine{
-			{Label: statRequirementGroups, Value: fmt.Sprintf("%d", len(resolved))},
-			{Label: statSatisfiedGroups, Value: fmt.Sprintf("%d", satisfied)},
-		}
+		return requirementGroupStats(resolved, result, "template")
 	case "pipelineMustNotUseDockerInDocker":
 		return []statLine{
 			{Label: statJobsChecked, Value: fmt.Sprintf("%d", jobTotal)},
@@ -1418,6 +1410,18 @@ func _serviceLooksLikeDind(item interface{}) bool {
 		}
 	}
 	return false
+}
+
+// requirementGroupStats renders the two stat lines shared by the
+// required-components and required-templates controls: how many AND-groups
+// were configured and how many of them the pipeline satisfies for the given
+// origin kind ("component" or "template").
+func requirementGroupStats(resolved [][]string, result *control.AnalysisResult, kind string) []statLine {
+	satisfied := countSatisfiedGroups(resolved, result, kind)
+	return []statLine{
+		{Label: statRequirementGroups, Value: fmt.Sprintf("%d", len(resolved))},
+		{Label: statSatisfiedGroups, Value: fmt.Sprintf("%d", satisfied)},
+	}
 }
 
 // countSatisfiedGroups returns how many DNF requirement groups have
