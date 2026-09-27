@@ -3,6 +3,8 @@ package control
 import (
 	"github.com/getplumber/plumber/configuration"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
+	"reflect"
+	"strings"
 )
 
 // ControlEntry is the canonical per-control view consumed by the
@@ -330,137 +332,60 @@ func isSecurityJobsWeakenedSkipped(cfg *configuration.SecurityJobsWeakenedContro
 // ControlsConfig (use pc.ControlsFor("gitlab") or
 // pc.ControlsFor("github")).
 // DisabledControlNames returns the set of control names that are disabled
-// (nil or enabled:false) in the given ControlsConfig.
+// (nil or enabled:false) in the given ControlsConfig, keyed by the yaml name
+// of each ControlsConfig field.
 //
-// WARNING: this is a HAND-WRITTEN if-chain, not a derivation. It does NOT
-// stay in sync with GitLabControls/GitHubControls automatically, and no
-// test compares them, so adding a control to either catalog without adding
-// a branch here silently breaks its disable path: the control renders as
-// "skipped" in the terminal table and the legacy JSON, while its findings
-// still survive FilterFindingsByEnabledControls into SARIF, GLSAST, PBOM
-// and the score. For a Critical code that means a 30-point malus and an E
-// on a control the user believes is off. Keep the branch count equal to
-// the union of the two catalogs.
+// DERIVED, not hand-written: every field of ControlsConfig is walked and asked
+// IsEnabled, so a control added to the struct is covered the moment it exists.
+// The previous if-chain had to be extended by hand for every new control and
+// never was for actionRefsMustExistUpstream, so a config that disabled it still
+// let its findings through FilterFindingsByEnabledControls into SARIF, GLSAST,
+// PBOM and the score. TestDisabledControlNames_MatchesCatalogSkipFlags pins this
+// map against the catalog's own Skipped flags so the two cannot drift again.
+//
+// One control keeps a rule of its own: securityJobsMustNotBeWeakened is also
+// disabled when its parent is on but every sub-check is off (see
+// isSecurityJobsWeakenedSkipped).
 func DisabledControlNames(c *configuration.ControlsConfig) map[string]bool {
 	out := map[string]bool{}
 	if c == nil {
 		return out
 	}
-	if cfg := c.ContainerImageMustNotUseForbiddenTags; cfg == nil || !cfg.IsEnabled() {
-		out["containerImageMustNotUseForbiddenTags"] = true
-	}
-	if cfg := c.ContainerImageMustComeFromAuthorizedSources; cfg == nil || !cfg.IsEnabled() {
-		out["containerImageMustComeFromAuthorizedSources"] = true
-	}
-	if cfg := c.BranchMustBeProtected; cfg == nil || !cfg.IsEnabled() {
-		out["branchMustBeProtected"] = true
-	}
-	if cfg := c.MergeRequestApprovalRulesMustRequireMinimumApprovals; cfg == nil || !cfg.IsEnabled() {
-		out["mergeRequestApprovalRulesMustRequireMinimumApprovals"] = true
-	}
-	if cfg := c.MergeRequestApprovalRulesMustCoverAllProtectedBranches; cfg == nil || !cfg.IsEnabled() {
-		out["mergeRequestApprovalRulesMustCoverAllProtectedBranches"] = true
-	}
-	if cfg := c.MergeRequestApprovalSettingsMustBeCompliant; cfg == nil || !cfg.IsEnabled() {
-		out["mergeRequestApprovalSettingsMustBeCompliant"] = true
-	}
-	if cfg := c.MergeRequestSettingsMustBeCompliant; cfg == nil || !cfg.IsEnabled() {
-		out["mergeRequestSettingsMustBeCompliant"] = true
-	}
-	if cfg := c.CicdVariablesMustBeProtected; cfg == nil || !cfg.IsEnabled() {
-		out["cicdVariablesMustBeProtected"] = true
-	}
-	if cfg := c.CicdVariablesMustBeMasked; cfg == nil || !cfg.IsEnabled() {
-		out["cicdVariablesMustBeMasked"] = true
-	}
-	if cfg := c.ProjectMustHaveSecurityPolicySource; cfg == nil || !cfg.IsEnabled() {
-		out["projectMustHaveSecurityPolicySource"] = true
-	}
-	if cfg := c.PipelineMustNotIncludeHardcodedJobs; cfg == nil || !cfg.IsEnabled() {
-		out["pipelineMustNotIncludeHardcodedJobs"] = true
-	}
-	if cfg := c.ExternalRefsMustNotCollide; cfg == nil || !cfg.IsEnabled() {
-		out["externalRefsMustNotCollide"] = true
-	}
-	if cfg := c.IncludesMustBeUpToDate; cfg == nil || !cfg.IsEnabled() {
-		out["includesMustBeUpToDate"] = true
-	}
-	if cfg := c.IncludesMustNotUseForbiddenVersions; cfg == nil || !cfg.IsEnabled() {
-		out["includesMustNotUseForbiddenVersions"] = true
-	}
-	if cfg := c.PipelineMustIncludeComponent; cfg == nil || !cfg.IsEnabled() {
-		out["pipelineMustIncludeComponent"] = true
-	}
-	if cfg := c.PipelineMustIncludeTemplate; cfg == nil || !cfg.IsEnabled() {
-		out["pipelineMustIncludeTemplate"] = true
-	}
-	if cfg := c.PipelineMustNotEnableDebugTrace; cfg == nil || !cfg.IsEnabled() {
-		out["pipelineMustNotEnableDebugTrace"] = true
-	}
-	if cfg := c.PipelineMustNotUseUnsafeVariableExpansion; cfg == nil || !cfg.IsEnabled() {
-		out["pipelineMustNotUseUnsafeVariableExpansion"] = true
-	}
-	if isSecurityJobsWeakenedSkipped(c.SecurityJobsMustNotBeWeakened) {
-		out["securityJobsMustNotBeWeakened"] = true
-	}
-	if cfg := c.PipelineMustNotExecuteUnverifiedScripts; cfg == nil || !cfg.IsEnabled() {
-		out["pipelineMustNotExecuteUnverifiedScripts"] = true
-	}
-	if cfg := c.PipelineMustNotOverrideJobVariables; cfg == nil || !cfg.IsEnabled() {
-		out["pipelineMustNotOverrideJobVariables"] = true
-	}
-	if cfg := c.PipelineMustNotUseDockerInDocker; cfg == nil || !cfg.IsEnabled() {
-		out["pipelineMustNotUseDockerInDocker"] = true
-	}
-	if cfg := c.ActionsMustBePinnedByCommitSha; cfg == nil || !cfg.IsEnabled() {
-		out["actionsMustBePinnedByCommitSha"] = true
-	}
-	if cfg := c.GithubActionMustComeFromAuthorizedSources; cfg == nil || !cfg.IsEnabled() {
-		out["githubActionMustComeFromAuthorizedSources"] = true
-	}
-	if cfg := c.WorkflowMustNotInjectUserInputInScripts; cfg == nil || !cfg.IsEnabled() {
-		out["workflowMustNotInjectUserInputInScripts"] = true
-	}
-	if cfg := c.WorkflowMustNotWriteUntrustedContentToGitHubEnv; cfg == nil || !cfg.IsEnabled() {
-		out["workflowMustNotWriteUntrustedContentToGitHubEnv"] = true
-	}
-	if cfg := c.WorkflowMustNotExportEntireSecretsContext; cfg == nil || !cfg.IsEnabled() {
-		out["workflowMustNotExportEntireSecretsContext"] = true
-	}
-	if cfg := c.WorkflowMustNotUseDangerousTriggers; cfg == nil || !cfg.IsEnabled() {
-		out["workflowMustNotUseDangerousTriggers"] = true
-	}
-	if cfg := c.PullRequestTargetMustNotCheckoutHead; cfg == nil || !cfg.IsEnabled() {
-		out["pullRequestTargetMustNotCheckoutHead"] = true
-	}
-	if cfg := c.CheckoutMustNotPersistCredentials; cfg == nil || !cfg.IsEnabled() {
-		out["checkoutMustNotPersistCredentials"] = true
-	}
-	if cfg := c.WorkflowsMustDeclarePermissions; cfg == nil || !cfg.IsEnabled() {
-		out["workflowsMustDeclarePermissions"] = true
-	}
-	if cfg := c.ReusableWorkflowsMustNotInheritSecrets; cfg == nil || !cfg.IsEnabled() {
-		out["reusableWorkflowsMustNotInheritSecrets"] = true
-	}
-	if cfg := c.WorkflowMustIncludeRequiredActions; cfg == nil || !cfg.IsEnabled() {
-		out["workflowMustIncludeRequiredActions"] = true
-	}
-	if cfg := c.WorkflowMustNotGrantPermissionsWriteAll; cfg == nil || !cfg.IsEnabled() {
-		out["workflowMustNotGrantPermissionsWriteAll"] = true
-	}
-	if cfg := c.ActionsMustNotBeArchived; cfg == nil || !cfg.IsEnabled() {
-		out["actionsMustNotBeArchived"] = true
-	}
-	if cfg := c.ActionsMustNotCarryKnownCVEs; cfg == nil || !cfg.IsEnabled() {
-		out["actionsMustNotCarryKnownCVEs"] = true
-	}
-	if cfg := c.ActionsMustNotExecuteMutableRemoteCode; cfg == nil || !cfg.IsEnabled() {
-		out["actionsMustNotExecuteMutableRemoteCode"] = true
-	}
-	if cfg := c.ReleaseWorkflowsMustNotRestoreUntrustedCache; cfg == nil || !cfg.IsEnabled() {
-		out["releaseWorkflowsMustNotRestoreUntrustedCache"] = true
+	v := reflect.ValueOf(c).Elem()
+	t := v.Type()
+	for i := 0; i < t.NumField(); i++ {
+		name := yamlFieldName(t.Field(i))
+		if name == "" {
+			continue
+		}
+		if name == "securityJobsMustNotBeWeakened" {
+			if isSecurityJobsWeakenedSkipped(c.SecurityJobsMustNotBeWeakened) {
+				out[name] = true
+			}
+			continue
+		}
+		field := v.Field(i)
+		if field.Kind() == reflect.Ptr && field.IsNil() {
+			out[name] = true
+			continue
+		}
+		e, ok := field.Interface().(interface{ IsEnabled() bool })
+		if !ok || !e.IsEnabled() {
+			out[name] = true
+		}
 	}
 	return out
+}
+
+// yamlFieldName is the key a ControlsConfig field carries in .plumber.yaml:
+// the first element of its yaml tag, or "" when the field is untagged or
+// skipped ("-").
+func yamlFieldName(f reflect.StructField) string {
+	name := strings.Split(f.Tag.Get("yaml"), ",")[0]
+	if name == "-" {
+		return ""
+	}
+	return name
 }
 
 // FilterFindingsByEnabledControls drops findings whose ControlName
