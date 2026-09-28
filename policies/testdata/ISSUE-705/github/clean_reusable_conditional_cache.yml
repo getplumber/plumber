@@ -1,0 +1,22 @@
+# PR #500 review: inside a reusable workflow the issue #497 remediation
+# still resolves, because the enable expression and the publish if test
+# the SAME caller event: whatever the caller's trigger is, the cache is
+# empty exactly on the runs that publish. Expected: 0.
+name: release-reusable
+on:
+  workflow_call:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: temurin
+          cache: ${{ github.event_name != 'workflow_dispatch' && 'maven' || '' }}
+      - run: mvn -B package
+      - name: Publish
+        if: github.event_name == 'workflow_dispatch'
+        run: npm publish

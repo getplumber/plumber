@@ -4444,6 +4444,63 @@ func TestIssue705_CachePoisoning(t *testing.T) {
 		{"violation_buildpush_head_ref_scope.yml", []string{"violation_buildpush_head_ref_scope/publish"}},
 		{"clean_buildpush_scoped_gha_cache.yml", nil},
 		{"clean_buildpush_registry_cache.yml", nil},
+		// Issue #497: the conditional enable expression disables the cache on
+		// the publish trigger, so restore and publish never share a run.
+		{"clean_conditional_cache_expression.yml", nil},
+		{"clean_conditional_cache_eq_inverse.yml", nil},
+		// Issue #497: caching split across two steps with step-level if conditions.
+		{"clean_split_cache_steps.yml", nil},
+		// Issue #497: a cache step whose if excludes the release trigger is off the release path.
+		{"clean_release_trigger_cache_step_excluded.yml", nil},
+		// Issue #497 guard: a resolvable expression that still caches on the publish trigger keeps the High.
+		{"violation_conditional_cache_overlap.yml", []string{"violation_conditional_cache_overlap/build-and-publish"}},
+		// Issue #497: an unresolvable enable expression is never a High; it
+		// downgrades to ISSUE-717 (severity asserted in its own test below).
+		{"violation_unresolved_cache_expression.yml", []string{"violation_unresolved_cache_expression/publish (ISSUE-717)"}},
+		// PR #500 review: a default-mode conditional disable resolves per
+		// trigger too (both disableValue directions), an overlap keeps the
+		// High, and an unresolvable disable expression downgrades like the
+		// opt-in arm does.
+		{"clean_setup_go_conditional_disable.yml", nil},
+		{"clean_gradle_conditional_disable.yml", nil},
+		{"violation_gradle_conditional_disable_overlap.yml", []string{"violation_gradle_conditional_disable_overlap/publish"}},
+		{"violation_setup_go_conditional_disable_overlap.yml", []string{"violation_setup_go_conditional_disable_overlap/publish"}},
+		{"violation_unresolved_disable_expression.yml", []string{"violation_unresolved_disable_expression/publish (ISSUE-717)"}},
+		// PR #500 review: the ISSUE-717 arm stays silent when the
+		// unresolvable step's own if is off every publish event.
+		{"clean_unresolved_off_release_path.yml", nil},
+		// PR #500 review: a publish action's step if narrows the publish
+		// events like a publish script's does.
+		{"clean_conditional_publish_action.yml", nil},
+		// PR #500 review: a reusable workflow runs under the caller's event
+		// (github.event_name is never "workflow_call"), so an event-gated
+		// publish stays reachable and the unscoped cache keeps the High...
+		{"violation_reusable_event_gated_publish.yml", []string{"violation_reusable_event_gated_publish/publish"}},
+		// ...while the #497 remediation still resolves inside one: enable
+		// expression and publish if test the same caller event.
+		{"clean_reusable_conditional_cache.yml", nil},
+		// PR #500 review: the JOB-level if gates every step, so a job that
+		// never runs on the release event is off the release path...
+		{"clean_job_if_excludes_release.yml", nil},
+		// ...and one that still admits it keeps the High.
+		{"violation_job_if_overlaps_release.yml", []string{"violation_job_if_overlaps_release/publish"}},
+		// PR #500 review: the reusable event universe is fed by action ifs,
+		// with-input comparisons, and the job if; dropping any of them
+		// resolves an == gate to the empty set and loses these Highs.
+		{"violation_reusable_action_if_gated_cache.yml", []string{"violation_reusable_action_if_gated_cache/publish"}},
+		{"violation_reusable_conditional_disable_gap.yml", []string{"violation_reusable_conditional_disable_gap/publish"}},
+		{"violation_reusable_conditional_enable_gap.yml", []string{"violation_reusable_conditional_enable_gap/publish"}},
+		// PR #500 review: the conditional enable form combined with
+		// enableContains (build-push-action): the manager the expression
+		// yields is matched against type=gha, in both directions, and a
+		// non-gha manager is still vetoed.
+		{"violation_buildpush_conditional_gha_overlap.yml", []string{"violation_buildpush_conditional_gha_overlap/publish"}},
+		{"clean_buildpush_conditional_gha_pr_only.yml", nil},
+		{"clean_buildpush_conditional_registry.yml", nil},
+		{"violation_reusable_job_if_gated.yml", []string{"violation_reusable_job_if_gated/publish"}},
+		// PR #500 review: a conditional disable inside a reusable workflow
+		// still resolves against the caller event the publish requires.
+		{"clean_reusable_conditional_disable.yml", nil},
 	}
 
 	engine := opaengine.New()
@@ -4473,12 +4530,18 @@ func TestIssue705_CachePoisoning(t *testing.T) {
 			if err != nil {
 				t.Fatalf("evaluate: %v", err)
 			}
+			// Both cache-poisoning codes count as hits (ISSUE-717 marked
+			// explicitly), so a clean fixture asserts full silence: a
+			// spurious medium downgrade on a safe workflow fails here
+			// just as a spurious High does (PR #500 review).
 			hits := make([]string, 0)
 			for _, f := range findings {
-				if f.Code != "ISSUE-705" {
-					continue
+				switch f.Code {
+				case "ISSUE-705":
+					hits = append(hits, f.Job)
+				case "ISSUE-717":
+					hits = append(hits, f.Job+" (ISSUE-717)")
 				}
-				hits = append(hits, f.Job)
 			}
 			sort.Strings(hits)
 			expected := append([]string(nil), tc.expectedHits...)
@@ -4487,6 +4550,59 @@ func TestIssue705_CachePoisoning(t *testing.T) {
 				t.Fatalf("%s: expected %v, got %v", tc.fixture, expected, hits)
 			}
 		})
+	}
+}
+
+// TestIssue705_UnresolvedEnableExpressionDowngrades pins issue #497's
+// unresolvable arm: when an opt-in enable input is a whole-value
+// expression plumber cannot resolve per trigger, asserting a High
+// restore would be a guess, so the rule emits exactly one medium
+// ISSUE-717 verify-manually finding on the job and no ISSUE-705. The
+// severity is asserted against the rego output so it stays aligned
+// with the codes.go canonical severity for the code.
+func TestIssue705_UnresolvedEnableExpressionDowngrades(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	tmp := t.TempDir()
+	wfDir := filepath.Join(tmp, ".github", "workflows")
+	if err := os.MkdirAll(wfDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	fixture := "violation_unresolved_cache_expression.yml"
+	data, err := os.ReadFile(filepath.Join("testdata", "ISSUE-705", "github", fixture))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(wfDir, fixture), data, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pipeline, _, err := githubpkg.ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
+	if err != nil {
+		t.Fatalf("scan: %v", err)
+	}
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, issue705DefaultConfig())
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	var downgraded []opaengine.Finding
+	for _, f := range findings {
+		if f.Code == "ISSUE-705" {
+			t.Errorf("unresolvable enable expression must not assert the High restore, got ISSUE-705 on job %q", f.Job)
+		}
+		if f.Code == "ISSUE-717" {
+			downgraded = append(downgraded, f)
+		}
+	}
+	if len(downgraded) != 1 {
+		t.Fatalf("expected exactly 1 ISSUE-717, got %d", len(downgraded))
+	}
+	if got := downgraded[0].Job; got != "violation_unresolved_cache_expression/publish" {
+		t.Errorf("ISSUE-717 job = %q, want violation_unresolved_cache_expression/publish", got)
+	}
+	if got := downgraded[0].Severity; got != "medium" {
+		t.Errorf("ISSUE-717 severity = %q, want medium (codes.go canonical)", got)
 	}
 }
 

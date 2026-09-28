@@ -1,0 +1,17 @@
+# PR #500 review: the conditional enable form combined with
+# enableContains, resolving clean. type=gha is the cache-from only on
+# pull_request, never on the release event that publishes. Expected: 0.
+name: Release
+on:
+  release:
+    types: [published]
+  pull_request:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/build-push-action@v6
+        with:
+          cache-from: ${{ github.event_name == 'pull_request' && 'type=gha' || '' }}
+          push: true

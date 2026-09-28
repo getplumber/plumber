@@ -1,0 +1,20 @@
+# PR #500 review, the disableValue: true overlap direction: the
+# expression disables gradle's cache on pull_request only, so the
+# release event still restores it on the publish path and the High
+# stays. Pins _disable_complement(true, ...) the way the setup-go
+# overlap fixture pins the false direction. Expected: 1.
+name: release
+on:
+  release:
+    types: [published]
+  pull_request:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-disabled: ${{ github.event_name == 'pull_request' }}
+      - run: ./gradlew build

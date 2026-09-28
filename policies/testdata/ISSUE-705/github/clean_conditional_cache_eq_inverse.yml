@@ -1,0 +1,23 @@
+# Issue #497, the == inverse of the conditional-enable shape: the cache
+# is a manager only on pull_request and empty on every other event,
+# while the publish step runs only on workflow_dispatch. Disjoint, so
+# silent. Expected: 0.
+name: plugin
+on:
+  workflow_dispatch:
+  pull_request:
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: temurin
+          cache: ${{ github.event_name == 'pull_request' && 'maven' || '' }}
+      - run: mvn -B package
+      - name: Publish
+        if: github.event_name == 'workflow_dispatch'
+        run: npm publish

@@ -1,0 +1,26 @@
+# Issue #497 reproduction: the setup action's cache input is the
+# canonical conditional-enable expression, empty on workflow_dispatch
+# (the only trigger that publishes) and a manager everywhere else. The
+# restore and the publish never share a run, so the rule must stay
+# silent. Expected: 0.
+name: plugin
+on:
+  workflow_dispatch:
+  pull_request:
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: temurin
+          cache: ${{ github.event_name != 'workflow_dispatch' && 'maven' || '' }}
+      - run: mvn -B package
+      - name: Publish
+        if: github.event_name == 'workflow_dispatch'
+        run: npm publish

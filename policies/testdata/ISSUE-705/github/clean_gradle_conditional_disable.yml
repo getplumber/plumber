@@ -1,0 +1,18 @@
+# PR #500 review, the disableValue: true direction: setup-gradle turns
+# caching OFF where cache-disabled is true, here exactly on the release
+# event, so the publish path restores nothing. Expected: 0.
+name: release
+on:
+  release:
+    types: [published]
+  pull_request:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-disabled: ${{ github.event_name == 'release' }}
+      - run: ./gradlew build

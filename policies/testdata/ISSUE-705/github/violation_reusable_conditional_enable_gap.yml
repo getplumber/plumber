@@ -1,0 +1,21 @@
+# PR #500 review: makes the enable-expression clause of the mentioned-
+# events collection load-bearing. release appears ONLY in the opt-in
+# enable expression: the cache is a manager exactly on the release
+# caller event, and the unconditional publish script covers it. If the
+# enable form stopped feeding the universe, the enabled set would
+# resolve empty and this High would be lost. Expected: 1.
+name: release-reusable
+on:
+  workflow_call:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: temurin
+          cache: ${{ github.event_name == 'release' && 'maven' || '' }}
+      - run: npm publish

@@ -1,0 +1,25 @@
+# PR #500 review: an unresolvable enable expression on a step whose if
+# excludes every publish event raises nothing: the restore cannot share
+# a run with the publish, so neither the High nor the medium ISSUE-717
+# fires. Expected: 0.
+name: plugin
+on:
+  workflow_dispatch:
+  pull_request:
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK
+        if: github.event_name == 'pull_request'
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: temurin
+          cache: ${{ vars.CACHE_MANAGER }}
+      - run: mvn -B package
+      - name: Publish
+        if: github.event_name == 'workflow_dispatch'
+        run: npm publish

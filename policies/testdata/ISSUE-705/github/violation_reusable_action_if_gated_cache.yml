@@ -1,0 +1,20 @@
+# PR #500 review: pins from_action_ifs in the reusable event universe.
+# The cache step's if names release, so release is a possible caller
+# event; the unconditional publish action covers it and the unscoped
+# key restores on it. Dropping action ifs from the universe would
+# resolve the == to the empty set and lose this High. Expected: 1.
+name: release-reusable
+on:
+  workflow_call:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        if: github.event_name == 'release'
+        with:
+          path: ~/.m2/repository
+          key: deps-cache
+      - uses: pypa/gh-action-pypi-publish@v1

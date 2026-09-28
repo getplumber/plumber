@@ -220,6 +220,11 @@ var declarations = map[string][]string{
 	"ISSUE-715": {"file", "job", "uses", "step"},
 	// Action source could not be verified: keyed on the action ref (uses); step separates a reused action.
 	"ISSUE-716": {"file", "job", "uses", "step"},
+	// Conditional cache enablement unresolved on a release path: same key
+	// as ISSUE-705, the proven variant it downgrades from. A resolved and
+	// an unresolved finding on the same step are different codes, so they
+	// never collide.
+	"ISSUE-717": {"file", "job", "uses", "step"},
 	// Workflow has no `permissions:` block: one per job, keyed on the job.
 	"ISSUE-801": {"file", "job"},
 	// Dangerous workflow trigger: one per job, keyed on the job.

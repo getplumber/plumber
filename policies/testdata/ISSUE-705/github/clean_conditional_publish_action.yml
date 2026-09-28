@@ -1,0 +1,24 @@
+# PR #500 review: a publish ACTION's own step if narrows the publish
+# events exactly like a publish script's does. The cache restores only
+# on pull_request and the publish action runs only on workflow_dispatch,
+# so they never share a run. Expected: 0.
+name: plugin
+on:
+  workflow_dispatch:
+  pull_request:
+
+jobs:
+  build-and-publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Cache dependencies
+        if: github.event_name != 'workflow_dispatch'
+        uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-deps
+      - run: npm run build
+      - name: Publish to PyPI
+        if: github.event_name == 'workflow_dispatch'
+        uses: pypa/gh-action-pypi-publish@v1

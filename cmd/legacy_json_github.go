@@ -386,15 +386,27 @@ func buildOverprovisionedSecretsBlock(c legacyCommon, result *control.AnalysisRe
 	}
 }
 
-// buildCachePoisoningBlock — ISSUE-705. One finding per release/publish
-// job that restores a build cache with a key not scoped to the release ref.
+// buildCachePoisoningBlock — ISSUE-705 / ISSUE-717. One control, two codes
+// graded by certainty: a proven unscoped restore on a release path (high)
+// versus a conditional enablement the analyzer could not resolve per trigger
+// (medium, verify manually). Counted separately so a consumer triaging this
+// knows which of the two it has.
 func buildCachePoisoningBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
 	s := statsOf(result)
+	unscoped, unresolved := 0, 0
+	for _, f := range findings {
+		if f.Code == string(control.CodeCachePoisoningUnresolved) {
+			unresolved++
+		} else {
+			unscoped++
+		}
+	}
 	return map[string]any{
 		"issues": projectFindings(findings, "job"),
 		"metrics": map[string]any{
-			"workflowsScanned":          s.WorkflowsTotal,
-			"unscopedCacheRestoreFound": len(findings),
+			"workflowsScanned":                s.WorkflowsTotal,
+			"unscopedCacheRestoreFound":       unscoped,
+			"unresolvedConditionalCacheFound": unresolved,
 		},
 		"version":   "0.1.0",
 		"ciValid":   c.CiValid,

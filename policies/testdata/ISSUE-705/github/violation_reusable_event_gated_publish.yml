@@ -1,0 +1,22 @@
+# PR #500 review: a reusable workflow runs under the CALLER's event, so
+# github.event_name is never the literal "workflow_call" and an
+# event-gated publish step is reachable (a release caller satisfies
+# it). The unscoped maven cache restores on that same run, the exact
+# vector the control exists to catch. Expected: 1.
+name: release-reusable
+on:
+  workflow_call:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: temurin
+          cache: maven
+      - name: Publish
+        if: github.event_name == 'release'
+        run: mvn -B deploy

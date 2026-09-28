@@ -1,0 +1,19 @@
+# PR #500 review: makes the with-input arm of the mentioned-events
+# collection load-bearing. release appears ONLY in the disable input:
+# the cache is enabled exactly on the release caller event, and the
+# unconditional publish script covers it. If the disable input stopped
+# feeding the universe, the enabled set would resolve empty and this
+# High would be lost. Expected: 1.
+name: release-reusable
+on:
+  workflow_call:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-disabled: ${{ github.event_name != 'release' }}
+      - run: ./gradlew publish

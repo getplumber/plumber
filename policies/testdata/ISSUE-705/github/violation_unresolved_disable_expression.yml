@@ -1,0 +1,22 @@
+# PR #500 review, symmetry with the opt-in arm: a default-mode disable
+# input holding a whole-value expression outside the resolvable shape
+# cannot be resolved per trigger, so the rule reports the medium
+# ISSUE-717 verify-manually finding instead of asserting the High.
+# Expected: 0 x ISSUE-705, 1 x ISSUE-717.
+name: release
+on:
+  release:
+    types: [published]
+  pull_request:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: ${{ vars.ENABLE_CACHE }}
+      - run: make release

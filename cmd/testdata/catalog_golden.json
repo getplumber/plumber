@@ -1455,7 +1455,8 @@
         ]
       },
       "issueCodes": [
-        "ISSUE-705"
+        "ISSUE-705",
+        "ISSUE-717"
       ]
     },
     {
@@ -2610,6 +2611,15 @@
       "remediation": "Re-run where the action source is reachable (authenticated token, network access) to get a definitive result, or vendor the action so its source is local and auditable. This finding is informational: it flags an unchecked dependency, not a confirmed problem.",
       "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-716",
       "controlName": "actionsMustNotExecuteMutableRemoteCode"
+    },
+    {
+      "code": "ISSUE-717",
+      "severity": "medium",
+      "title": "Conditional cache on a release path could not be resolved",
+      "description": "A release or publish job enables a build cache through a GitHub expression the analyzer cannot resolve per trigger. If the expression yields a cache manager on the trigger that publishes, the job restores a cache that runs on other branches can poison; if it yields an empty value there, the job is safe. Reported at medium severity because the restore is conditional, not proven (the proven case is ISSUE-705).",
+      "remediation": "Make the condition statically checkable: use the `${{ github.event_name != '\u003cpublish trigger\u003e' \u0026\u0026 '\u003cmanager\u003e' || '' }}` form (or its == inverse) so the cache is provably off on the publish trigger, split caching into a step whose `if:` excludes the publish trigger, or scope the cache key (and any restore-keys) to the release ref.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-717",
+      "controlName": "releaseWorkflowsMustNotRestoreUntrustedCache"
     },
     {
       "code": "ISSUE-801",

@@ -1,0 +1,23 @@
+# Issue #497 unresolvable arm: the enable input is an expression the
+# analyzer cannot resolve per trigger, on a job that publishes on every
+# event. Asserting a High restore would be a guess, so this reports the
+# medium ISSUE-717 verify-manually finding instead of ISSUE-705.
+# Expected: 0 x ISSUE-705, 1 x ISSUE-717 (asserted in its own test).
+name: plugin
+on:
+  workflow_dispatch:
+  pull_request:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up JDK
+        uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: temurin
+          cache: ${{ vars.CACHE_MANAGER }}
+      - run: mvn -B package
+      - run: npm publish

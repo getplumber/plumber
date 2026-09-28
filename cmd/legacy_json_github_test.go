@@ -281,3 +281,57 @@ func TestMutableRemoteExecJSONBlock(t *testing.T) {
 		t.Errorf("clean actionsWithMutableRemoteExec = %v, want 0", cmm["actionsWithMutableRemoteExec"])
 	}
 }
+
+// TestCachePoisoningJSONBlock pins the ISSUE-705/717 split introduced with
+// the issue #497 fix: the cachePoisoningResult metrics count the proven
+// unscoped restores and the unresolved conditional enablements separately,
+// so a consumer triaging on the counts knows which of the two it has. An
+// inverted classification (or swapped keys) on a mixed result set fails
+// here.
+func TestCachePoisoningJSONBlock(t *testing.T) {
+	entry := control.ControlEntry{
+		DisplayName: "Release workflows must not restore an untrusted cache",
+		ControlName: "releaseWorkflowsMustNotRestoreUntrustedCache",
+	}
+	findings := []opaengine.Finding{
+		{Code: string(control.CodeCachePoisoning), Job: "release/publish"},
+		{Code: string(control.CodeCachePoisoning), Job: "release/build"},
+		{Code: string(control.CodeCachePoisoningUnresolved), Job: "plugin/publish"},
+	}
+	result := &control.AnalysisResult{
+		CiValid:     true,
+		GitHubStats: &control.GitHubAnalysisStats{WorkflowsTotal: 4},
+	}
+
+	name, block := buildLegacyResultGitHub(entry, result, nil, findings)
+	if name != "cachePoisoningResult" {
+		t.Fatalf("block name = %q, want cachePoisoningResult", name)
+	}
+	m, ok := block.(map[string]any)
+	if !ok {
+		t.Fatalf("block is %T, want map[string]any", block)
+	}
+	if issues, _ := m["issues"].([]map[string]any); len(issues) != 3 {
+		t.Fatalf("issues = %v, want all 3 findings surfaced", m["issues"])
+	}
+	metrics := m["metrics"].(map[string]any)
+	if metrics["unscopedCacheRestoreFound"] != 2 {
+		t.Errorf("unscopedCacheRestoreFound = %v, want 2 (the ISSUE-705 count)", metrics["unscopedCacheRestoreFound"])
+	}
+	if metrics["unresolvedConditionalCacheFound"] != 1 {
+		t.Errorf("unresolvedConditionalCacheFound = %v, want 1 (the ISSUE-717 count)", metrics["unresolvedConditionalCacheFound"])
+	}
+	if metrics["workflowsScanned"] != 4 {
+		t.Errorf("workflowsScanned = %v, want the GitHubStats total", metrics["workflowsScanned"])
+	}
+
+	// Clean run: no findings, both counters zero.
+	cleanName, cleanBlock := buildLegacyResultGitHub(entry, result, nil, nil)
+	if cleanName != "cachePoisoningResult" {
+		t.Fatalf("clean block name = %q", cleanName)
+	}
+	cmm := cleanBlock.(map[string]any)["metrics"].(map[string]any)
+	if cmm["unscopedCacheRestoreFound"] != 0 || cmm["unresolvedConditionalCacheFound"] != 0 {
+		t.Errorf("clean metrics = %v, want both counters 0", cmm)
+	}
+}

@@ -1,0 +1,18 @@
+# PR #500 review: a conditional disable inside a reusable workflow
+# still resolves: gradle's cache is off exactly on the caller event the
+# publish step requires, so no publish run restores it. Expected: 0.
+name: release-reusable
+on:
+  workflow_call:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-disabled: ${{ github.event_name == 'workflow_dispatch' }}
+      - name: Publish
+        if: github.event_name == 'workflow_dispatch'
+        run: ./gradlew publish

@@ -1,0 +1,22 @@
+# PR #500 review: the JOB-level if gates every step. This test job
+# never runs on the release event, so its unconditional maven cache is
+# never restored on a publish run, whatever the workflow's other jobs
+# do. Expected: 0.
+name: ci
+on:
+  pull_request:
+  release:
+    types: [published]
+
+jobs:
+  test:
+    if: github.event_name != 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          java-version: '17'
+          distribution: temurin
+          cache: maven
+      - run: mvn -B verify

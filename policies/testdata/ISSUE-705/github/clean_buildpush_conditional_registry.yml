@@ -1,0 +1,18 @@
+# PR #500 review: enableContains still vetoes a conditional manager. The
+# expression yields a registry cache on the release event, not the
+# poisonable GHA one, so there is nothing to flag whatever the trigger.
+# Expected: 0.
+name: Release
+on:
+  release:
+    types: [published]
+  pull_request:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/build-push-action@v6
+        with:
+          cache-from: ${{ github.event_name != 'pull_request' && 'type=registry,ref=ghcr.io/acme/app:cache' || '' }}
+          push: true

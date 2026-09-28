@@ -1,0 +1,20 @@
+# PR #500 review guard: a job-level if that still admits the release
+# event keeps the High: the job runs on release, restores the unscoped
+# cache, and the release trigger publishes. Expected: 1.
+name: ci
+on:
+  pull_request:
+  release:
+    types: [published]
+
+jobs:
+  publish:
+    if: github.event_name != 'pull_request'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: maven-deps
+      - run: mvn -B package

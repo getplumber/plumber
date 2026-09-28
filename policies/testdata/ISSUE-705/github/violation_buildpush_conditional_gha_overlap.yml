@@ -1,0 +1,18 @@
+# PR #500 review: the conditional enable form combined with
+# enableContains. The expression yields type=gha on every event but
+# pull_request, so the release event restores the unscoped GHA cache
+# and publishes. Expected: 1.
+name: Release
+on:
+  release:
+    types: [published]
+  pull_request:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: docker/build-push-action@v6
+        with:
+          cache-from: ${{ github.event_name != 'pull_request' && 'type=gha' || '' }}
+          push: true

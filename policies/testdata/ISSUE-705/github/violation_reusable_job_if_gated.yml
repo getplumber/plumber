@@ -1,0 +1,20 @@
+# PR #500 review: pins the job-level if feeding the reusable event
+# universe. The job runs only when the caller event is release, where
+# the unscoped cache restores and the script publishes. If the job if
+# stopped feeding the universe, narrowing by it would resolve to the
+# empty set and this High would be lost. Expected: 1.
+name: release-reusable
+on:
+  workflow_call:
+
+jobs:
+  publish:
+    if: github.event_name == 'release'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/cache@v4
+        with:
+          path: ~/.m2/repository
+          key: deps-cache
+      - run: mvn -B deploy

@@ -1,0 +1,20 @@
+# PR #500 review guard: a resolvable conditional disable that still
+# caches on the publish event keeps the High. The expression disables
+# the cache on pull_request only, so the release event both restores
+# and publishes. Expected: 1.
+name: release
+on:
+  release:
+    types: [published]
+  pull_request:
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.25'
+          cache: ${{ github.event_name != 'pull_request' }}
+      - run: make release

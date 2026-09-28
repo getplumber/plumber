@@ -38,6 +38,11 @@ const (
 	CodeContainerHardcodedCredentials ErrorCode = "ISSUE-704"
 	// ISSUE-705: Release/publish workflow primes a build cache from attacker-controlled artifacts
 	CodeCachePoisoning ErrorCode = "ISSUE-705"
+	// ISSUE-717: Cache enablement on a release/publish path hinges on an
+	// expression the analyzer cannot resolve per trigger. The unproven
+	// variant of ISSUE-705 (one control, two codes graded by certainty,
+	// the ISSUE-307/310 pattern).
+	CodeCachePoisoningUnresolved ErrorCode = "ISSUE-717"
 	// ISSUE-702: Action is hosted in an archived GitHub repository
 	CodeActionArchivedRepo ErrorCode = "ISSUE-702"
 	// ISSUE-707: Pinned commit SHA does not exist in the action's upstream repository
@@ -309,6 +314,15 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Description: "A release, tag or publish workflow uses `actions/cache@*` (or an equivalent cache action) without scoping the cache key to the ref being released. Caches on GitHub Actions are shared across branches according to the fallback rules: a malicious PR run on a feature branch can populate the same cache key that the release job later restores, silently injecting compiled artefacts, dependencies, or build scripts into the published output. Past supply-chain incidents have abused exactly this fallback to publish compromised packages to PyPI and npm.",
 		Remediation: "Either disable the cache entirely on release/publish jobs, or scope the `key:` to the ref being released (e.g. `key: release-${{ github.ref_name }}-${{ hashFiles('**/go.sum') }}`) without a `restore-keys:` fallback that reaches into PR-populated entries. Verify artefacts against a checksum after restoring.",
 		DocURL:      docsBaseURL + string(CodeCachePoisoning),
+		ControlName: "releaseWorkflowsMustNotRestoreUntrustedCache",
+	},
+	CodeCachePoisoningUnresolved: {
+		Code:        CodeCachePoisoningUnresolved,
+		Severity:    SeverityMedium,
+		Title:       "Conditional cache on a release path could not be resolved",
+		Description: "A release or publish job enables a build cache through a GitHub expression the analyzer cannot resolve per trigger. If the expression yields a cache manager on the trigger that publishes, the job restores a cache that runs on other branches can poison; if it yields an empty value there, the job is safe. Reported at medium severity because the restore is conditional, not proven (the proven case is ISSUE-705).",
+		Remediation: "Make the condition statically checkable: use the `${{ github.event_name != '<publish trigger>' && '<manager>' || '' }}` form (or its == inverse) so the cache is provably off on the publish trigger, split caching into a step whose `if:` excludes the publish trigger, or scope the cache key (and any restore-keys) to the release ref.",
+		DocURL:      docsBaseURL + string(CodeCachePoisoningUnresolved),
 		ControlName: "releaseWorkflowsMustNotRestoreUntrustedCache",
 	},
 	CodeActionArchivedRepo: {
