@@ -215,7 +215,15 @@ type Job struct {
 	// lives so legacy consumers (the Rego-port issue payload) can
 	// echo the v0.2.x scriptBlock attribute. Empty when the collector
 	// did not track origins (older fixtures).
-	ScriptBlocks []string          `json:"scriptBlocks,omitempty"`
+	ScriptBlocks []string `json:"scriptBlocks,omitempty"`
+	// ScriptIfs carries each Scripts entry's step-level `if:` expression
+	// (GitHub Actions), in the same order as Scripts, "" for a step that
+	// declared none. Set only when at least one run step in the job is
+	// conditional, so the field stays absent in the common unconditional
+	// case. Read by the cache-poisoning release-path resolution
+	// (ISSUE-705/717) to keep a publish script that cannot run on a
+	// given trigger off that trigger's release path.
+	ScriptIfs    []string          `json:"scriptIfs,omitempty"`
 	AllowFailure bool              `json:"allowFailure,omitempty"`
 	When         string            `json:"when,omitempty"`
 	Variables    map[string]string `json:"variables,omitempty"`
@@ -287,6 +295,13 @@ type Job struct {
 	// Only meaningful when ReusableWorkflowUses is set.
 	SecretsInherit bool `json:"secretsInherit,omitempty"`
 
+	// If is the JOB-level `if:` expression (GitHub Actions), verbatim,
+	// "" when the job is unconditional. Distinct from Conditions, which
+	// flattens the job's and its steps' conditions together for
+	// pattern-matching policies; per-trigger resolution (ISSUE-705/717)
+	// needs the job gate alone, because it excludes every step from the
+	// events it rules out.
+	If string `json:"if,omitempty"`
 	// Conditions collects every `if:` expression attached to the job
 	// (job-level + each step's). Kept as raw YAML strings so Rego
 	// policies can match them with regular expressions — no attempt
@@ -344,7 +359,13 @@ type Action struct {
 	// source workflow file. Populated by the provider collector so
 	// action-level findings can point the reviewer at the exact step
 	// instead of the surrounding job header. Zero when unknown.
-	Line     int             `json:"line,omitempty"`
+	Line int `json:"line,omitempty"`
+	// If is the step-level `if:` expression guarding this action step
+	// (GitHub Actions), verbatim from the workflow YAML, "" when the
+	// step is unconditional. Policies that reason per trigger
+	// (ISSUE-705/717) use it to exclude the step from events its
+	// condition rules out.
+	If       string          `json:"if,omitempty"`
 	Metadata *ActionMetadata `json:"metadata,omitempty"`
 	Comment  string          `json:"comment,omitempty"`
 }

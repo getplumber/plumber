@@ -516,8 +516,14 @@ func buildJob(jobName string, section map[string]any, wfCtx workflowContext, nam
 	} else if wfCtx.perms != nil {
 		job.Permissions = normalizeGitHubPermissions(wfCtx.perms)
 	}
-	if scripts := extractGitHubRunScripts(section["steps"]); len(scripts) > 0 {
+	if scripts, scriptIfs := extractGitHubRunScripts(section["steps"]); len(scripts) > 0 {
 		job.Scripts = scripts
+		for _, cond := range scriptIfs {
+			if cond != "" {
+				job.ScriptIfs = scriptIfs
+				break
+			}
+		}
 	}
 	if env := mergedEnv(wfCtx.env, section); env != nil {
 		job.Variables = env
@@ -534,6 +540,9 @@ func buildJob(jobName string, section map[string]any, wfCtx workflowContext, nam
 	}
 	if conds := collectGitHubJobConditions(section); len(conds) > 0 {
 		job.Conditions = conds
+	}
+	if cond, ok := section["if"].(string); ok {
+		job.If = cond
 	}
 	if env := extractGitHubJobEnvironment(section["environment"]); env != "" {
 		job.Environment = env
@@ -757,6 +766,9 @@ func extractGitHubUses(v any) []ir.Action {
 		if name, ok := stepMap["name"].(string); ok {
 			action.Name = name
 		}
+		if cond, ok := stepMap["if"].(string); ok {
+			action.If = cond
+		}
 		if withMap, ok := ghCastStringMap(stepMap["with"]); ok {
 			action.With = withMap
 		}
@@ -816,13 +828,16 @@ func normalizeGitHubEnv(v any) map[string]string {
 // extractGitHubRunScripts walks `jobs.<name>.steps[]` and collects every
 // inline shell script declared via `run:`. Steps using `uses:` (actions)
 // are ignored — their behavior lives in the referenced action, not in
-// the workflow file. Empty `run:` blocks are dropped.
-func extractGitHubRunScripts(v any) []string {
+// the workflow file. Empty `run:` blocks are dropped. The second slice
+// carries each collected script's step-level `if:` expression ("" when
+// the step is unconditional), aligned index for index with the first.
+func extractGitHubRunScripts(v any) ([]string, []string) {
 	stepsList, ok := v.([]any)
 	if !ok {
-		return nil
+		return nil, nil
 	}
 	scripts := make([]string, 0, len(stepsList))
+	ifs := make([]string, 0, len(stepsList))
 	for _, s := range stepsList {
 		stepMap, ok := ghCastStringMap(s)
 		if !ok {
@@ -830,9 +845,11 @@ func extractGitHubRunScripts(v any) []string {
 		}
 		if run, ok := stepMap["run"].(string); ok && run != "" {
 			scripts = append(scripts, run)
+			cond, _ := stepMap["if"].(string)
+			ifs = append(ifs, cond)
 		}
 	}
-	return scripts
+	return scripts, ifs
 }
 
 // extractGitHubTriggers returns the sorted list of event names declared
