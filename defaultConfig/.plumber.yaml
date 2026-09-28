@@ -100,9 +100,12 @@ gitlab:
         - registry.gitlab.com/security-products/*
         - registry.gitlab.com/gitlab-org/*
         - registry.gitlab.com/pipeline-components/*
-        # Do NOT use host-wide patterns such as ghcr.io/*, gcr.io/*, quay.io/*, mcr.microsoft.com/*,
-        # nvcr.io/* — anyone can publish images on those registries; wildcards would trust all of them.
-        # Prefer org-scoped patterns instead, e.g. ghcr.io/my-org/*, quay.io/prometheus/*
+        # Do NOT use host-wide patterns on multi-tenant registries such as
+        # ghcr.io/*, gcr.io/*, quay.io/*, nvcr.io/* — anyone can publish images
+        # on those; a wildcard would trust all of them. Prefer org-scoped
+        # patterns instead, e.g. ghcr.io/my-org/*, quay.io/prometheus/*.
+        # (mcr.microsoft.com is the exception: single-publisher, trusted
+        # host-wide above.)
 
         # Docker Hub — language / runtime official images
         - docker.io/node:*
@@ -168,11 +171,9 @@ gitlab:
         - docker.io/bats/* # Bats-core (Bash testing) project
         - docker.io/davidanson/* # markdownlint-cli2 upstream (David Anson)
         - docker.io/jdkato/* # Vale (prose linter) upstream (Joseph Kato)
-        # Microsoft Container Registry — official Microsoft products
-        - mcr.microsoft.com/dotnet/* # .NET official images (Microsoft)
-        - mcr.microsoft.com/playwright/* # Playwright (Microsoft) browser images
-        - mcr.microsoft.com/playwright:* # Playwright (Microsoft) repo:tag form
-        - mcr.microsoft.com/powershell:* # PowerShell official images (Microsoft)
+        # Microsoft Artifact Registry — single-publisher: only Microsoft can
+        # push to mcr.microsoft.com, so the whole registry is trustable
+        - mcr.microsoft.com/*
         # Quay.io — well-known projects with their own organisation
         - quay.io/buildah/* # Containers project (Buildah)
         - quay.io/podman/* # Containers project (Podman)
