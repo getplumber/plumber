@@ -192,14 +192,15 @@ func sarifSecuritySeverity(sev string) string {
 // codes registry); results carry a file/line location when the finding
 // has one.
 //
-// GitHub Code Scanning rejects any result without at least one location
-// ("expected at least one location") and the location's URI must resolve to
-// a committed file. Repository-level findings (branch protection and other
-// settings controls) have no source file, so they are anchored to
-// fallbackURI — the effective .plumber.yaml, the file where those controls
-// are enabled and which is always committed for a run to happen. When
-// fallbackURI is itself empty the result is emitted location-less (still
-// valid SARIF; only Code Scanning is that strict).
+// GitHub Code Scanning rejects the WHOLE upload when any result lacks a
+// location ("expected at least one location"). Repository-level findings
+// (branch protection and other settings controls) have no source file, so
+// they are anchored to fallbackURI, the effective .plumber.yaml when the run
+// read one from disk, and otherwise to the repository root ".", which Code
+// Scanning accepts as a location (verified by upload, 2026-09-28) and which
+// is the honest anchor for a finding about the repository itself. A
+// location-less result is valid SARIF but costs every other alert of the
+// run, which is what the boutique-api upload failure showed.
 
 // sarifRuleFor builds the rules[] entry for an issue code from the codes
 // registry (nil info falls back to the bare code). Shared by the finding
@@ -334,7 +335,14 @@ func sarifCodeSpanJob(f opaengine.Finding) string {
 	return strings.ReplaceAll(msg, `'`+f.Job+`'`, span)
 }
 
+// repoRootURI anchors a repository-level finding when no config file is on
+// disk: the repository root, the one path every commit has.
+const repoRootURI = "."
+
 func buildSARIF(findings []opaengine.Finding, fallbackURI, provider string) sarifLog {
+	if fallbackURI == "" {
+		fallbackURI = repoRootURI
+	}
 	rulesByID := map[string]sarifRule{}
 	results := make([]sarifResult, 0, len(findings))
 
@@ -400,9 +408,10 @@ func buildSARIF(findings []opaengine.Finding, fallbackURI, provider string) sari
 				phys.Region = &sarifRegion{StartLine: f.Line}
 			}
 			res.Locations = []sarifLocation{{PhysicalLocation: phys}}
-		} else if fallbackURI != "" {
+		} else {
 			// Repo-level finding with no source file: anchor it to the config
-			// file (no region) so Code Scanning accepts the result.
+			// file, or to the repository root, with no region, so Code
+			// Scanning accepts the result and with it the whole upload.
 			res.Locations = []sarifLocation{{PhysicalLocation: sarifPhysical{
 				ArtifactLocation: sarifArtifact{URI: fallbackURI},
 			}}}
@@ -461,9 +470,9 @@ func writeSARIFToFile(result *control.AnalysisResult, filePath, provider string)
 	// .plumber.yaml). Only anchor to it when it actually exists on disk: a
 	// zero-config run loads the embedded default and never writes a
 	// .plumber.yaml, so anchoring to that phantom path would emit a URI that
-	// maps to no committed file — Code Scanning silently drops or mis-maps it.
-	// When there is no real config file we drop the fallback location instead;
-	// a locationless result is valid SARIF, a phantom-path one is not.
+	// maps to no committed file. With no real config file the empty fallback
+	// makes buildSARIF anchor to the repository root instead: a location-less
+	// result is valid SARIF but makes Code Scanning reject the whole upload.
 	// provider routes per-provider Title/Description overrides from the codes
 	// registry into the rendered SARIF document.
 	fallbackURI := ""

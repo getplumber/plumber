@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -173,12 +174,14 @@ func TestBuildSARIF_OnlyFindingResultsAllKindFail(t *testing.T) {
 	}
 }
 
-// #352 review: writeSARIFToFile must not anchor a repo-level (file-less)
-// finding to a config path that does not exist on disk. A zero-config run
-// loads the embedded default and writes no .plumber.yaml, so anchoring to
-// that phantom path would emit a Code Scanning URI mapping to no committed
-// file. With no real config present the finding gets no physical location;
-// with one present it anchors to it (unchanged behaviour).
+// #352 review, amended after the boutique-api upload failure (2026-09-28):
+// writeSARIFToFile must not anchor a repo-level (file-less) finding to a
+// config path that does not exist on disk, but it must not leave it
+// location-less either: Code Scanning rejects the WHOLE upload when any
+// result has no location ("expected at least one location"). With no real
+// config present the finding anchors to the repository root, ".", which
+// Code Scanning accepts (verified by upload); with one present it anchors
+// to the config file (unchanged behaviour).
 func TestWriteSARIFToFile_FilelessAnchorGuardedOnConfigExistence(t *testing.T) {
 	result := &control.AnalysisResult{Findings: []opaengine.Finding{
 		{Code: "ISSUE-501", Severity: "critical", Message: "branch not protected"}, // no File
@@ -186,15 +189,19 @@ func TestWriteSARIFToFile_FilelessAnchorGuardedOnConfigExistence(t *testing.T) {
 	orig := configFile
 	defer func() { configFile = orig }()
 
-	t.Run("absent config -> no phantom location", func(t *testing.T) {
+	t.Run("absent config -> anchored to the repository root", func(t *testing.T) {
 		dir := t.TempDir()
 		configFile = filepath.Join(dir, ".plumber.yaml") // does not exist
 		out := filepath.Join(dir, "out.sarif")
 		if err := writeSARIFToFile(result, out, "github"); err != nil {
 			t.Fatalf("writeSARIFToFile: %v", err)
 		}
-		if sb := mustRead(t, out); strings.Contains(sb, "artifactLocation") {
+		sb := mustRead(t, out)
+		if strings.Contains(sb, ".plumber.yaml") {
 			t.Errorf("file-less finding must not anchor to a non-existent config:\n%s", sb)
+		}
+		if !regexp.MustCompile(`"uri":\s*"\."`).MatchString(sb) {
+			t.Errorf("file-less finding must anchor to the repository root so Code Scanning accepts the upload:\n%s", sb)
 		}
 	})
 
@@ -209,8 +216,12 @@ func TestWriteSARIFToFile_FilelessAnchorGuardedOnConfigExistence(t *testing.T) {
 		if err := writeSARIFToFile(result, out, "github"); err != nil {
 			t.Fatalf("writeSARIFToFile: %v", err)
 		}
-		if sb := mustRead(t, out); !strings.Contains(sb, "artifactLocation") {
-			t.Errorf("file-less finding should anchor to the existing config:\n%s", sb)
+		sb := mustRead(t, out)
+		if !regexp.MustCompile(`"uri":\s*"[^"]*\.plumber\.yaml"`).MatchString(sb) {
+			t.Errorf("file-less finding should anchor to the existing config file:\n%s", sb)
+		}
+		if regexp.MustCompile(`"uri":\s*"\."`).MatchString(sb) {
+			t.Errorf("with a config file present the root anchor must not be used:\n%s", sb)
 		}
 	})
 }
@@ -485,5 +496,34 @@ func TestBuildSARIF_UnregisteredCodeStillLinksToDocs(t *testing.T) {
 	// help block, so the message link is the reader's only path to the docs.
 	if rule := doc.Runs[0].Tool.Driver.Rules[0]; rule.Help != nil || rule.HelpURI != "" {
 		t.Errorf("rule for an unregistered code should carry no help block, got help=%+v helpUri=%q", rule.Help, rule.HelpURI)
+	}
+}
+
+// TestBuildSARIF_EveryResultHasALocation is the Code Scanning contract:
+// a result without a location makes GitHub reject the whole file, so even
+// with no fallback file at all a repository-level finding is anchored to
+// the repository root, without a region, and a file-bound finding keeps its
+// own file and line.
+func TestBuildSARIF_EveryResultHasALocation(t *testing.T) {
+	findings := []opaengine.Finding{
+		{Code: "ISSUE-501", Severity: "critical", Message: "branch not protected"},
+		{Code: "ISSUE-801", Severity: "medium", Message: "no permissions", File: ".github/workflows/ci.yml", Line: 9},
+	}
+	doc := buildSARIF(findings, "", "github")
+	if len(doc.Runs) != 1 || len(doc.Runs[0].Results) != 2 {
+		t.Fatalf("want two results, got %+v", doc)
+	}
+	for _, r := range doc.Runs[0].Results {
+		if len(r.Locations) == 0 {
+			t.Fatalf("result %s has no location; Code Scanning rejects the whole upload", r.RuleID)
+		}
+	}
+	root := doc.Runs[0].Results[0].Locations[0].PhysicalLocation
+	if root.ArtifactLocation.URI != "." || root.Region != nil {
+		t.Fatalf("a file-less finding anchors to the repository root without a region, got %+v", root)
+	}
+	file := doc.Runs[0].Results[1].Locations[0].PhysicalLocation
+	if file.ArtifactLocation.URI != ".github/workflows/ci.yml" || file.Region == nil || file.Region.StartLine != 9 {
+		t.Fatalf("a file-bound finding keeps its file and line, got %+v", file)
 	}
 }
