@@ -53,13 +53,13 @@ Run your first scan before reading the full docs.
 
 ```bash
 brew tap getplumber/plumber
+brew trust --formula getplumber/plumber/plumber
 brew install plumber
 
-plumber config generate # generate the default configuration file
 plumber analyze
 ```
 
-See the generated default config in this repo: [`defaultConfig/.plumber.yaml`](./defaultConfig/.plumber.yaml).
+No configuration file is needed: `plumber analyze` runs with the built-in default configuration, [`defaultConfig/.plumber.yaml`](./defaultConfig/.plumber.yaml) in this repo.
 
 Plumber auto-detects the provider from your git remote. Use explicit flags when scanning a repo that is not the current checkout.
 
@@ -79,6 +79,7 @@ Plumber auto-detects the provider from your git remote. Use explicit flags when 
 
 ```bash
 brew tap getplumber/plumber
+brew trust --formula getplumber/plumber/plumber
 brew install plumber
 ```
 
