@@ -392,23 +392,37 @@ func VariablesFromSnapshot(run *platform.RunContext) (*GitlabVariablesAnalysisDa
 // the pipeline would see. See DeclaredVariableNames for why each exclusion
 // is there.
 func expandableFromJobEnvironment(item snapshotVariableMeta) bool {
-	if strings.EqualFold(item.Type, snapshotVariableTypeFile) {
+	return variableExpandable(item.Type, item.Masked, item.Hidden, item.Protected, item.Environment, ciRefIsProtected())
+}
+
+// variableExpandable is the visibility rule both variable sources share: the
+// platform snapshot's metadata (names, values from the job environment) and
+// the API listing standalone mode reads. A variable's value is a sound
+// substitute for a placeholder in an image reference only when the analysed
+// job would hold exactly that value; the four exclusions are the cases where
+// it would not (see DeclaredVariableNames for the reasoning behind each).
+// refProtected says whether the ref being analysed is a protected branch or
+// tag: read from Plumber's own job environment when it runs inside the
+// pipeline, from the project's protection settings when it analyses a
+// branch over the API.
+func variableExpandable(varType string, masked, hidden, protected bool, environment string, refProtected bool) bool {
+	if strings.EqualFold(varType, snapshotVariableTypeFile) {
 		return false
 	}
-	if item.Masked || item.Hidden {
+	if masked || hidden {
 		return false
 	}
 	// GitLab withholds a protected variable unless the ref is protected, so
-	// on an unprotected ref this job never received it. A value present
-	// under that name came from somewhere else - an ENV line in Plumber's
-	// own container image is the likely source, where names like VERSION or
-	// LANG are ordinary - and using it would judge a job against a value it
-	// is specifically not entitled to see.
-	if item.Protected && !ciRefIsProtected() {
+	// on an unprotected ref the analysed job never receives it. Inside the
+	// pipeline, a value present under that name came from somewhere else -
+	// an ENV line in Plumber's own container image is the likely source,
+	// where names like VERSION or LANG are ordinary - and using it would
+	// judge a job against a value it is specifically not entitled to see.
+	if protected && !refProtected {
 		return false
 	}
 	// An absent scope is the default, which is every environment.
-	if scope := strings.TrimSpace(item.Environment); scope != "" && scope != snapshotEnvironmentScopeAll {
+	if scope := strings.TrimSpace(environment); scope != "" && scope != snapshotEnvironmentScopeAll {
 		return false
 	}
 	return true

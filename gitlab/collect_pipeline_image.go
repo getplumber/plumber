@@ -733,6 +733,17 @@ func (dc *GitlabPipelineImageDataCollection) Run(project *ProjectInfo, token str
 		data.ProjectVars = JobEnvironmentVariables(DeclaredVariableNames(conf.PlatformRun))
 		l.WithField("envVarKeys", GetMapKeys(data.ProjectVars)).Debug("Image-ref variables resolved from the job environment")
 	} else {
+		// Whether the analysed ref is protected decides whether a protected
+		// variable's value is one a job on that ref would hold. On this path
+		// the ref under analysis is the requested branch (else the default
+		// branch), which need not be the ref Plumber's own job runs on, so
+		// GitLab is asked about that branch rather than about this job's
+		// CI_COMMIT_REF_PROTECTED. When the branch cannot be read it counts
+		// as unprotected, so protected variables keep their placeholder and
+		// the image rules abstain rather than judging a reference built from
+		// a value the job may not receive.
+		refProtected := analysedBranchIsProtected(project, token, conf)
+
 		// Get instance variables only if it's an instance wide organization (not a group)
 		if !project.IsGroup {
 			instanceVarsResult, err := GetGitlabInstanceVariables(token, conf.GitlabURL, conf)
@@ -740,7 +751,7 @@ func (dc *GitlabPipelineImageDataCollection) Run(project *ProjectInfo, token str
 				l.WithError(err).Error("Unable to retrieve instance variables")
 				return data, metrics, err
 			}
-			data.InstanceVars = ConvertCICDVariableToMap(instanceVarsResult)
+			data.InstanceVars = ConvertCICDVariableToMap(instanceVarsResult, refProtected)
 			l.WithField("instanceVarKeys", GetMapKeys(data.InstanceVars)).Debug("Instance vars found")
 		}
 
@@ -750,7 +761,7 @@ func (dc *GitlabPipelineImageDataCollection) Run(project *ProjectInfo, token str
 			l.WithError(err).Error("Unable to retrieve project inherited variables")
 			return data, metrics, err
 		}
-		data.GroupVars = ConvertCICDVariableToMap(groupVarsResult)
+		data.GroupVars = ConvertCICDVariableToMap(groupVarsResult, refProtected)
 		l.WithField("groupVarKeys", GetMapKeys(data.GroupVars)).Debug("Group vars found")
 
 		// Get project variables
@@ -768,7 +779,7 @@ func (dc *GitlabPipelineImageDataCollection) Run(project *ProjectInfo, token str
 				return data, metrics, err
 			}
 		}
-		data.ProjectVars = ConvertCICDVariableToMap(projectVarsResult)
+		data.ProjectVars = ConvertCICDVariableToMap(projectVarsResult, refProtected)
 		l.WithField("projectVarKeys", GetMapKeys(data.ProjectVars)).Debug("Project vars found")
 	}
 

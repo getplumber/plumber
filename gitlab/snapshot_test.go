@@ -491,17 +491,18 @@ func TestJobEnvironmentVariablesReadsOnlyWhatItMay(t *testing.T) {
 
 	got := JobEnvironmentVariables([]string{"REGISTRY", "EMPTY_ONE"})
 
-	// Declared by the platform, or under a GitLab-reserved prefix.
-	for _, name := range []string{"CI_REGISTRY_IMAGE", "GITLAB_USER_LOGIN", "REGISTRY"} {
+	// Declared by the platform, or a pipeline-wide predefined image source.
+	for _, name := range []string{"CI_REGISTRY_IMAGE", "REGISTRY"} {
 		if got[name] == "" {
 			t.Errorf("%q should be available for expansion", name)
 		}
 	}
-	// Process environment that is not a CI/CD variable. GitLab would not
-	// substitute these into an image reference, so neither may we.
-	for _, name := range []string{"HOME", "PATH"} {
+	// Process environment that is not a CI/CD variable, or a predefined
+	// name that is not a component of an image reference. GitLab would not
+	// build an image reference out of these, so neither may we.
+	for _, name := range []string{"HOME", "PATH", "GITLAB_USER_LOGIN"} {
 		if _, present := got[name]; present {
-			t.Errorf("%q is not a CI/CD variable and must not be substituted", name)
+			t.Errorf("%q is not an image reference component and must not be substituted", name)
 		}
 	}
 	// A defined-but-empty variable is skipped: substituting "" turns

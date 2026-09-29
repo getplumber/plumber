@@ -23,37 +23,44 @@ import (
 // to: it serves the NAMES, and the job supplies the values for them. The
 // two halves are individually harmless and together sufficient.
 
-// gitLabReservedPrefixes are the variable-name prefixes GitLab reserves for
-// its own predefined variables. A name under one of them is a CI variable by
-// definition, so it can be read from the environment without an allowlist.
-var gitLabReservedPrefixes = []string{"CI_", "GITLAB_"}
-
-// jobScopedPredefined are predefined variables whose value describes the JOB
-// reading them rather than the pipeline.
+// pipelineWidePredefined are the predefined variables an image reference is
+// built from: registry hosts and image prefixes, the server host, the
+// project coordinates, and the commit and pipeline coordinates image tags
+// are routinely built from (`$CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG`). Their
+// value is the same for every job of the pipeline, so the value this job
+// reads is the value any job would use.
 //
-// The reserved prefixes above are a sound allowlist for pipeline-wide facts
-// - `$CI_REGISTRY_IMAGE` is the same for every job. These are not. Plumber
-// reads them from its OWN job and would substitute its own job name, id,
-// stage or image into another job's reference, producing a resolved-looking
-// value that is confidently wrong. Left out, they stay placeholders and the
-// image rules abstain on that job, which is the honest answer.
-var jobScopedPredefined = map[string]bool{
-	"CI_JOB_ID":             true,
-	"CI_JOB_NAME":           true,
-	"CI_JOB_NAME_SLUG":      true,
-	"CI_JOB_STAGE":          true,
-	"CI_JOB_IMAGE":          true,
-	"CI_JOB_URL":            true,
-	"CI_JOB_TOKEN":          true,
-	"CI_JOB_STARTED_AT":     true,
-	"CI_JOB_MANUAL":         true,
-	"CI_ENVIRONMENT_NAME":   true,
-	"CI_ENVIRONMENT_SLUG":   true,
-	"CI_ENVIRONMENT_URL":    true,
-	"CI_ENVIRONMENT_ACTION": true,
-	"CI_ENVIRONMENT_TIER":   true,
-	"CI_NODE_INDEX":         true,
-	"CI_NODE_TOTAL":         true,
+// The list is explicit rather than a prefix rule. A prefix admitted every
+// predefined name GitLab exports, and most of them are not pipeline facts at
+// all: `CI_JOB_*` and `CI_ENVIRONMENT_*` describe the job reading them, so
+// substituting them into another job's reference produced a resolved-looking
+// value that was confidently wrong, and names such as `CI_REPOSITORY_URL` or
+// the `*_PASSWORD` ones are never a component of an image reference to begin
+// with. A name absent from this list stays a placeholder, the reference is
+// marked unresolved, and the image rules abstain on that job, which is the
+// honest answer.
+var pipelineWidePredefined = map[string]bool{
+	"CI_REGISTRY":                                   true,
+	"CI_REGISTRY_IMAGE":                             true,
+	"CI_DEPENDENCY_PROXY_GROUP_IMAGE_PREFIX":        true,
+	"CI_DEPENDENCY_PROXY_DIRECT_GROUP_IMAGE_PREFIX": true,
+	"CI_TEMPLATE_REGISTRY_HOST":                     true,
+	"CI_SERVER_HOST":                                true,
+	"CI_SERVER_FQDN":                                true,
+	"CI_SERVER_URL":                                 true,
+	"CI_PROJECT_PATH":                               true,
+	"CI_PROJECT_NAME":                               true,
+	"CI_PROJECT_NAMESPACE":                          true,
+	"CI_PROJECT_ROOT_NAMESPACE":                     true,
+	"CI_DEFAULT_BRANCH":                             true,
+	"CI_COMMIT_SHA":                                 true,
+	"CI_COMMIT_SHORT_SHA":                           true,
+	"CI_COMMIT_REF_NAME":                            true,
+	"CI_COMMIT_REF_SLUG":                            true,
+	"CI_COMMIT_BRANCH":                              true,
+	"CI_COMMIT_TAG":                                 true,
+	"CI_PIPELINE_ID":                                true,
+	"CI_PIPELINE_IID":                               true,
 }
 
 // ciRefIsProtected reports whether the ref this job is running on is a
@@ -75,10 +82,11 @@ func ciRefIsProtected() bool {
 //
 // Two sources, and the split is deliberate:
 //
-//   - Every variable under a GitLab-reserved prefix. These are predefined
-//     and their names are not user-chosen, so reading them needs no
-//     permission from anyone. `$CI_REGISTRY_IMAGE` is by far the most common
-//     placeholder in a real image reference.
+//   - The pipeline-wide predefined variables (pipelineWidePredefined). These
+//     are the predefined names an image reference is built from, and their
+//     names are not user-chosen, so reading them needs no permission from
+//     anyone. `$CI_REGISTRY_IMAGE` is by far the most common placeholder in
+//     a real image reference.
 //   - Every name in declared, which is the variable metadata the platform
 //     serves. Restricting the user-defined half to names the platform
 //     vouched for is what keeps this from being "read the process
@@ -105,21 +113,9 @@ func JobEnvironmentVariables(declared []string) map[string]string {
 		if !ok || value == "" {
 			continue
 		}
-		if allowed[name] || hasReservedPrefix(name) {
+		if allowed[name] || pipelineWidePredefined[name] {
 			out[name] = value
 		}
 	}
 	return out
-}
-
-func hasReservedPrefix(name string) bool {
-	if jobScopedPredefined[name] {
-		return false
-	}
-	for _, prefix := range gitLabReservedPrefixes {
-		if strings.HasPrefix(name, prefix) {
-			return true
-		}
-	}
-	return false
 }

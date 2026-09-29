@@ -505,7 +505,10 @@ func TestGitLabCallInventory(t *testing.T) {
 		"1x GET /api/v4/projects/:id/approvals",
 		"1x GET /api/v4/projects/:id/protected_branches",
 		"1x GET /api/v4/projects/:id/repository/branches",
-		"1x GET /api/v4/projects/:id/repository/branches/:ref",
+		// Two single-branch reads: the head sha of the analysed ref, and the
+		// image collection asking whether that ref is protected, which
+		// decides if a protected variable's value may expand a placeholder.
+		"2x GET /api/v4/projects/:id/repository/branches/:ref",
 		"1x GET /api/v4/projects/:id/repository/commits",
 		"1x GET /api/v4/projects/:id/repository/files/:file/raw",
 		"1x GET /api/v4/projects/:id/repository/tags/:ref",
@@ -579,7 +582,7 @@ func TestPlatformModeRemovesMostGitLabRequests(t *testing.T) {
 	standalone := totalRequests(runInventory(t, false))
 	platformRun := totalRequests(runInventory(t, true))
 
-	const wantStandaloneTotal = 17
+	const wantStandaloneTotal = 18
 	const wantPlatformTotal = 3
 
 	if standalone != wantStandaloneTotal || platformRun != wantPlatformTotal {
@@ -1327,7 +1330,9 @@ func TestSuppliedObservationsRemoveTheUpstreamProbes(t *testing.T) {
 	// removes one of these and adds an unrelated request cannot pass.
 	for _, gone := range []string{
 		"1x GET /api/v4/projects/:id/repository/tags/:ref",
-		"1x GET /api/v4/projects/:id/repository/branches/:ref",
+		// The upstream probe and the analysed ref's protection verdict:
+		// the host supplies the first, the job environment answers the second.
+		"2x GET /api/v4/projects/:id/repository/branches/:ref",
 		"1x POST /api/graphql getCIComponentResource",
 		"1x POST /api/graphql getCiConfig (per-include merge)",
 	} {
