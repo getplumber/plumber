@@ -897,12 +897,22 @@ Releases are automated by semantic-release. A handful of version / image-digest 
 
 ### Bumped automatically — do not hand-edit
 
-semantic-release runs two scripts in this repo:
+semantic-release runs these scripts in this repo:
 
-- `scripts/release-bump-version.sh` (in the tagged commit) — `action.yml`: the `version` input default and its "(e.g. vX)" hint.
-- `scripts/release-pin-refs.sh` (post-build, committed with `[skip ci]`) — the `templates/plumber.yml` component **image digest** line (`getplumber/plumber@sha256:… #vX`).
+- `scripts/release-plan.sh` (verify step, in both runs): exposes the next version to the workflow during the dry run, and refuses a real run that would cut another version than the one the image was built for.
+- `scripts/release-bump-version.sh` (in the tagged commit): in `action.yml`, the `version` input default and its "(e.g. vX)" hint; in `templates/plumber.yml`, the component **image digest** line (`getplumber/plumber@sha256:… #vX`).
 
-  > The same script also contains a `README.md` rewrite for the GitHub Action `uses: getplumber/plumber@<sha> # vX` pin. **It is currently dead.** Its sed requires a 40-hex SHA followed by a `# vX.Y.Z` comment, and the README now reads `uses: getplumber/plumber@<version>`, which can never match. The script still exits 0 and `pin-refs` still `git add README.md`, so the breakage is silent. Either restore a real SHA-pinned example in the README or drop the sed; do not assume the README pin is being maintained.
+The image is built and pushed by digest **before** the release commit (`release.yml`: `plan`, `docker`, `release`, `docker-tags`), so the commit a release tag points at pins the image of that same version. Up to v0.5.15 the digest was written after the tag, in a separate commit, and every tag of this repository pinned the previous version's image. The GitLab component tags were not affected: the component is published after the pin.
+
+What this order means when you operate a release:
+
+- The tag, the GitHub Release, the binaries and the Homebrew formula appear once the image is built, about ten minutes after the push.
+- To recover from a failed job, use **Re-run failed jobs**. "Re-run all jobs" plans no release once the tag exists, and skips every job after the plan.
+- If a commit lands on `main` between the plan and the release, the release job refuses (version mismatch, or branch behind). The next push to `main` releases both.
+- The version tags and `latest` are put on the image after the release. If `docker-tags` fails, the pinned digest still pulls; re-run the job.
+- `gh workflow run release.yml` never releases: it plans, builds and pushes an untagged image, then stops.
+
+The README carries no pinned version (`uses: getplumber/plumber@<version>`), so no script rewrites it.
 
 Also automated: the Homebrew formula (the `release.yml` Homebrew job) and `CHANGELOG.md` (semantic-release).
 
