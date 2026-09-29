@@ -134,6 +134,22 @@ type NormalizedPipeline struct {
 	// repository's SECURITY.md file (a GitHub-oriented, unrelated control).
 	SecurityPolicyProject *SecurityPolicyProjectState `json:"securityPolicyProject,omitempty"`
 
+	// ProjectMembers are the project's member counts per role, projected from
+	// the members collection (GitLab: GET /projects/:id/members/all, everyone
+	// with effective access, access-token bots excluded). Provider-neutral on
+	// purpose: a GitHub collaborators lane can fill the same counts later. nil
+	// when the counts were not collected. Read by the
+	// numberOfProjectMembersMustRespectQuota control (ISSUE-507).
+	ProjectMembers *MemberCounts `json:"projectMembers,omitempty"`
+
+	// ProjectMembersKnown is true when the member listing was read
+	// authoritatively (a zero count then means "nobody holds that role", a
+	// real state the rule reasons about). False when the listing could not be
+	// read (a 403/404, a page cap exceeded, a degraded snapshot lane), so the
+	// control reports not-evaluable rather than a false verdict. Mirrors
+	// MRApprovalRulesKnown.
+	ProjectMembersKnown bool `json:"projectMembersKnown,omitempty"`
+
 	// Dockerfiles lists every Dockerfile the collector scanned at the
 	// repo root and under common build directories, with each FROM
 	// base-image extracted so policies can check pinning state.
@@ -656,6 +672,16 @@ type MRSettings struct {
 	// RemoveSourceBranchAfterMerge is true when the source branch is deleted by
 	// default after merge (GitLab: remove_source_branch_after_merge).
 	RemoveSourceBranchAfterMerge bool `json:"removeSourceBranchAfterMerge"`
+}
+
+// MemberCounts are a project's member counts per role. Total counts every
+// member at any level (Guests and Reporters included), the three named roles
+// count exactly that role; a user appears once, at their highest level.
+type MemberCounts struct {
+	Owners      int `json:"owners"`
+	Maintainers int `json:"maintainers"`
+	Developers  int `json:"developers"`
+	Total       int `json:"total"`
 }
 
 // AnalyzedWorkflow is one GitHub workflow file a scan read, retained for the

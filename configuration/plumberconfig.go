@@ -55,6 +55,10 @@ var validControlSchema = map[string][]string{
 		"resolveOutdatedDiffDiscussions", "printingMergeRequestLinkEnabled",
 		"removeSourceBranchAfterMerge",
 	},
+	"numberOfProjectMembersMustRespectQuota": {
+		"enabled", "ownerMin", "ownerMax", "maintainerMin", "maintainerMax",
+		"developerMin", "developerMax", "totalMin", "totalMax",
+	},
 	"cicdVariablesMustBeProtected": {
 		"enabled",
 	},
@@ -323,6 +327,12 @@ type ControlsConfig struct {
 	// merge trains, source-branch removal, etc.) against per-setting optional
 	// expectations for exact equality (ISSUE-506).
 	MergeRequestSettingsMustBeCompliant *MRSettingsControlConfig `yaml:"mergeRequestSettingsMustBeCompliant,omitempty"`
+
+	// NumberOfProjectMembersMustRespectQuota control configuration (GitLab
+	// only). Flags a role whose member count falls outside its configured
+	// bounds (ISSUE-507). Every bound is optional; an unset bound asserts
+	// nothing.
+	NumberOfProjectMembersMustRespectQuota *ProjectMemberQuotaControlConfig `yaml:"numberOfProjectMembersMustRespectQuota,omitempty"`
 
 	// ProjectMustHaveSecurityPolicySource control configuration (GitLab only).
 	// Requires the project to link the expected GitLab security policy project
@@ -740,6 +750,70 @@ func (c *MRApprovalRulesMinApprovalsControlConfig) IsEnabled() bool {
 		return false
 	}
 	return *c.Enabled
+}
+
+// ProjectMemberQuotaControlConfig configures the GitLab project member quota
+// check (ISSUE-507). GitLab-only.
+//
+// Counts come from GET /projects/:id/members/all: everyone with effective
+// access, each user once at their highest level, access-token bots excluded.
+// Owner is level 50, Maintainer 40, Developer 30; Total is every non-bot
+// member at any level. Bounds are inclusive and every bound is optional: a
+// nil bound asserts nothing, so `totalMax: 20` alone is a complete
+// configuration. The keys are the v1 platform's, unchanged, so a v1 policy
+// maps onto this block 1:1.
+type ProjectMemberQuotaControlConfig struct {
+	// Enabled controls whether this check runs.
+	Enabled *bool `yaml:"enabled,omitempty"`
+
+	OwnerMin      *int `yaml:"ownerMin,omitempty"`
+	OwnerMax      *int `yaml:"ownerMax,omitempty"`
+	MaintainerMin *int `yaml:"maintainerMin,omitempty"`
+	MaintainerMax *int `yaml:"maintainerMax,omitempty"`
+	DeveloperMin  *int `yaml:"developerMin,omitempty"`
+	DeveloperMax  *int `yaml:"developerMax,omitempty"`
+	TotalMin      *int `yaml:"totalMin,omitempty"`
+	TotalMax      *int `yaml:"totalMax,omitempty"`
+}
+
+// IsEnabled reports whether the control is enabled. Returns false when the
+// wrapper or the field is nil, the same convention as every other IsEnabled().
+func (c *ProjectMemberQuotaControlConfig) IsEnabled() bool {
+	if c == nil || c.Enabled == nil {
+		return false
+	}
+	return *c.Enabled
+}
+
+// validateBounds rejects a negative bound and a min above its max AT CONFIG
+// LOAD. A negative maximum would flag every project and an inverted pair
+// would flag every count, both deterministic but never what the operator
+// meant; refusing the file is the honest answer (spec 4.2).
+func (c *ProjectMemberQuotaControlConfig) validateBounds() error {
+	if c == nil {
+		return nil
+	}
+	type pair struct {
+		minName, maxName string
+		min, max         *int
+	}
+	pairs := []pair{
+		{"ownerMin", "ownerMax", c.OwnerMin, c.OwnerMax},
+		{"maintainerMin", "maintainerMax", c.MaintainerMin, c.MaintainerMax},
+		{"developerMin", "developerMax", c.DeveloperMin, c.DeveloperMax},
+		{"totalMin", "totalMax", c.TotalMin, c.TotalMax},
+	}
+	for _, p := range pairs {
+		for name, v := range map[string]*int{p.minName: p.min, p.maxName: p.max} {
+			if v != nil && *v < 0 {
+				return fmt.Errorf("numberOfProjectMembersMustRespectQuota.%s: must be at least 0 (got %d)", name, *v)
+			}
+		}
+		if p.min != nil && p.max != nil && *p.min > *p.max {
+			return fmt.Errorf("numberOfProjectMembersMustRespectQuota: %s (%d) exceeds %s (%d)", p.minName, *p.min, p.maxName, *p.max)
+		}
+	}
+	return nil
 }
 
 // MRApprovalSettingsControlConfig configures the GitLab merge-request
@@ -1348,6 +1422,9 @@ func validateControlsConfig(c *ControlsConfig) error {
 	if err := c.MergeRequestSettingsMustBeCompliant.validateEnums(); err != nil {
 		return err
 	}
+	if err := c.NumberOfProjectMembersMustRespectQuota.validateBounds(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -1415,6 +1492,15 @@ func (c *PlumberConfig) GetMergeRequestApprovalRulesMustRequireMinimumApprovalsC
 		return nil
 	}
 	return c.ControlsFor("gitlab").MergeRequestApprovalRulesMustRequireMinimumApprovals
+}
+
+// GetNumberOfProjectMembersMustRespectQuotaConfig returns the control
+// configuration. Returns nil if not configured.
+func (c *PlumberConfig) GetNumberOfProjectMembersMustRespectQuotaConfig() *ProjectMemberQuotaControlConfig {
+	if c == nil {
+		return nil
+	}
+	return c.ControlsFor("gitlab").NumberOfProjectMembersMustRespectQuota
 }
 
 func (c *PlumberConfig) GetMergeRequestApprovalRulesMustCoverAllProtectedBranchesConfig() *EnabledOnlyControlConfig {

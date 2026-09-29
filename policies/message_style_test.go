@@ -111,6 +111,9 @@ var gitLabMessageStyleKeys = map[string][]string{
 	"ISSUE-504": {},
 	"ISSUE-505": {"branchName"},
 	"ISSUE-506": {},
+	// Project member quota: the sentence names the count and the bound in
+	// prose, no technical token to quote.
+	"ISSUE-507": {},
 	"ISSUE-601": {},
 }
 
@@ -247,6 +250,8 @@ var messageBranches = []messageBranch{
 	{"ISSUE-506", "subject resolveOutdatedDiffDiscussions", "Resolving outdated diff discussions is", ""},
 	{"ISSUE-506", "subject printingMergeRequestLinkEnabled", "Printing the merge request link on push is", ""},
 	{"ISSUE-506", "subject removeSourceBranchAfterMerge", "Removing the source branch after merge is", ""},
+	{"ISSUE-507", "above maximum", "above the quota maximum of", ""},
+	{"ISSUE-507", "below minimum", "below the quota minimum of", ""},
 	{"ISSUE-601", "nothing linked, no expectation", "is linked to this project", ""},
 	{"ISSUE-601", "nothing linked, expectation set", "is linked (expected", ""},
 	{"ISSUE-601", "wrong project, id only", ") is not the expected one (expected id", ""},

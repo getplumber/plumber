@@ -929,6 +929,89 @@
       ]
     },
     {
+      "id": "CTRL-507",
+      "name": "numberOfProjectMembersMustRespectQuota",
+      "displayName": "Number of project members must respect a quota",
+      "category": "Access and Authorization",
+      "providers": [
+        "gitlab"
+      ],
+      "description": "Verifies that the number of project members with the Owner, Maintainer and Developer roles, and the total number of members, stay within the configured bounds.",
+      "requiresConfig": true,
+      "configSchema": {
+        "control": "numberOfProjectMembersMustRespectQuota",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "nullable": true,
+            "toggle": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          },
+          {
+            "name": "ownerMin",
+            "type": "integer",
+            "optional": true,
+            "nullable": true,
+            "description": "Fewest members with the Owner role the project must have. Unset asserts nothing."
+          },
+          {
+            "name": "ownerMax",
+            "type": "integer",
+            "optional": true,
+            "nullable": true,
+            "description": "Most members with the Owner role the project may have. Unset asserts nothing."
+          },
+          {
+            "name": "maintainerMin",
+            "type": "integer",
+            "optional": true,
+            "nullable": true,
+            "description": "Fewest members with the Maintainer role the project must have. Unset asserts nothing."
+          },
+          {
+            "name": "maintainerMax",
+            "type": "integer",
+            "optional": true,
+            "nullable": true,
+            "description": "Most members with the Maintainer role the project may have. Unset asserts nothing."
+          },
+          {
+            "name": "developerMin",
+            "type": "integer",
+            "optional": true,
+            "nullable": true,
+            "description": "Fewest members with the Developer role the project must have. Unset asserts nothing."
+          },
+          {
+            "name": "developerMax",
+            "type": "integer",
+            "optional": true,
+            "nullable": true,
+            "description": "Most members with the Developer role the project may have. Unset asserts nothing."
+          },
+          {
+            "name": "totalMin",
+            "type": "integer",
+            "optional": true,
+            "nullable": true,
+            "description": "Fewest members at any role the project must have, access-token bots excluded. Unset asserts nothing."
+          },
+          {
+            "name": "totalMax",
+            "type": "integer",
+            "optional": true,
+            "nullable": true,
+            "description": "Most members at any role the project may have, access-token bots excluded. Unset asserts nothing."
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-507"
+      ]
+    },
+    {
       "id": "CTRL-408",
       "name": "pipelineMustIncludeComponent",
       "displayName": "Pipeline must include required components",
@@ -2467,6 +2550,15 @@
       "remediation": "Align the project's merge-request settings in Settings \u003e Merge requests with your policy: set the required merge method and squash option, and toggle the merge-train, skipped-pipeline, discussion-resolution, and source-branch-removal options to the expected values.",
       "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-506",
       "controlName": "mergeRequestSettingsMustBeCompliant"
+    },
+    {
+      "code": "ISSUE-507",
+      "severity": "medium",
+      "title": "Project member count is outside its role quota",
+      "description": "The number of members holding a role in the project (Owner, Maintainer, Developer, or the total) is above the configured maximum or below the configured minimum, so access to the project is wider or thinner than the policy allows.",
+      "remediation": "Review the project's members in Settings \u003e Members: remove or downgrade members of a role that is over its quota, or add members of a role that is under it, so each role count falls within the configured bounds.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-507",
+      "controlName": "numberOfProjectMembersMustRespectQuota"
     },
     {
       "code": "ISSUE-601",
