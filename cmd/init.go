@@ -60,7 +60,7 @@ const (
 	compKnownCVEs          = "Flag third-party actions with known CVEs (GitHub Advisory DB)"
 	compImpostorCommit     = "Flag third-party actions pinned to a commit SHA absent upstream (impostor commit)"
 	compMutableRemoteExec  = "Flag actions that fetch+execute mutable remote code (SHA pin bypassed)"
-	compCachePoisoning     = "Flag release/publish jobs restoring an unscoped build cache"
+	compCachePoisoning     = "Flag release/publish jobs restoring an unscoped build cache (or an unresolvable conditional cache)"
 	compDebugTraceGitHub   = "Flag Actions debug logging (ACTIONS_STEP_DEBUG / ACTIONS_RUNNER_DEBUG)"
 )
 

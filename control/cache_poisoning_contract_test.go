@@ -40,7 +40,12 @@ func TestCachePoisoningConfigContract(t *testing.T) {
 		}
 		n := 0
 		for _, f := range findings {
-			if f.Code == "ISSUE-705" {
+			switch f.Code {
+			case "ISSUE-705":
+				n++
+			case "ISSUE-717":
+				// The unresolved-expression downgrade must never fire on
+				// a literal input: counting it here keeps a clean case clean.
 				n++
 			}
 		}

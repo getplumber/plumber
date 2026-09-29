@@ -416,7 +416,7 @@ var controlsMeta = map[string]ControlMeta{
 		DisplayName:    "Release workflows must not restore an untrusted cache",
 		Category:       CategoryThirdPartyActions,
 		ID:             "CTRL-705",
-		Description:    "Flags release and publish jobs that restore a build cache whose key is not scoped to the release ref, closing the cross-branch cache poisoning vector.",
+		Description:    "Flags release and publish jobs that restore a build cache whose key is not scoped to the release ref, closing the cross-branch cache poisoning vector. Conditions are resolved per trigger; a cache condition it cannot resolve is reported as a medium verify-manually finding.",
 		RequiresConfig: true,
 	},
 	"releaseWorkflowsMustSignArtefacts": {

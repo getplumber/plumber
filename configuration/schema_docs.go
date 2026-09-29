@@ -321,13 +321,13 @@ var controlFieldDocs = map[string]FieldDoc{
 		Enum:        []string{"always", "default", "opt-in"},
 	},
 	"releaseWorkflowsMustNotRestoreUntrustedCache.cacheActions[].disableInput": {
-		Description: "For mode default, the action's with: input whose value turns caching off.",
+		Description: "For mode default, the action's with: input whose value turns caching off; a ${{ github.event_name ==/!= '<event>' }} value is resolved per trigger.",
 	},
 	"releaseWorkflowsMustNotRestoreUntrustedCache.cacheActions[].disableValue": {
 		Description: "For mode default, the value of disableInput that turns caching off.",
 	},
 	"releaseWorkflowsMustNotRestoreUntrustedCache.cacheActions[].enableInput": {
-		Description: "For mode opt-in, the with: input that turns caching on when set to a package manager.",
+		Description: "For mode opt-in, the with: input that turns caching on when set to a package manager, literally or through the ${{ github.event_name ==/!= '<event>' && '<manager>' || '' }} form resolved per trigger.",
 	},
 	"releaseWorkflowsMustNotRestoreUntrustedCache.cacheActions[].enableContains": {
 		Description: "Additionally requires enableInput's value to contain this substring, case-insensitive, for the cache to count as active.",

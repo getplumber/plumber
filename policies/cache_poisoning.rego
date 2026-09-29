@@ -37,6 +37,8 @@
 #   default  restores unless disableInput holds disableValue.
 #   opt-in   restores only when enableInput names a manager (a non-empty,
 #            non-"false" string).
+# Expression values in either input follow the per-trigger resolution
+# described above and in the helpers below.
 #
 # The only thing kept in code is the github.ref* scope-token regex — what
 # counts as "weaving the release ref" is fixed GitHub expression syntax.
@@ -82,11 +84,12 @@ deny contains finding if {
 	}
 }
 
-# The unresolvable arm (issue #497): an opt-in enable input that is a
-# whole-value expression outside the canonical shape cannot be resolved
-# per trigger. Asserting the High restore would be a guess, so the rule
-# reports the medium verify-manually code instead, and only when the
-# step itself can share an event with a publish.
+# The unresolvable arm (issue #497): an opt-in enable input or a
+# default-mode disable input that is a whole-value expression outside
+# the resolvable shapes cannot be resolved per trigger. Asserting the
+# High restore would be a guess, so the rule reports the medium
+# verify-manually code instead, and only when the step itself can share
+# an event with a publish.
 deny contains finding if {
 	some i, j
 	job := input.pipeline.jobs[i]
@@ -101,7 +104,7 @@ deny contains finding if {
 	finding := {
 		"code":     "ISSUE-717",
 		"severity": "medium",
-		"message":  sprintf("job %q enables the cache of %q through an expression that cannot be resolved per trigger on a release path, verify the cache is disabled on publish runs or scope the key (and any restore-keys) to the release ref", [job.name, action.uses]),
+		"message":  sprintf("job %q gates the cache of %q with an expression that cannot be resolved per trigger on a release path, verify the cache is disabled on publish runs or scope the key (and any restore-keys) to the release ref", [job.name, action.uses]),
 		"job":      job.name,
 		"uses":     action.uses,
 		"line":     object.get(action, "line", 0),

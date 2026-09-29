@@ -1345,7 +1345,7 @@
       "providers": [
         "github"
       ],
-      "description": "Flags release and publish jobs that restore a build cache whose key is not scoped to the release ref, closing the cross-branch cache poisoning vector.",
+      "description": "Flags release and publish jobs that restore a build cache whose key is not scoped to the release ref, closing the cross-branch cache poisoning vector. Conditions are resolved per trigger; a cache condition it cannot resolve is reported as a medium verify-manually finding.",
       "requiresConfig": true,
       "configSchema": {
         "control": "releaseWorkflowsMustNotRestoreUntrustedCache",
@@ -1398,7 +1398,7 @@
                   "name": "disableInput",
                   "type": "string",
                   "optional": true,
-                  "description": "For mode default, the action's with: input whose value turns caching off."
+                  "description": "For mode default, the action's with: input whose value turns caching off; a ${{ github.event_name ==/!= '\u003cevent\u003e' }} value is resolved per trigger."
                 },
                 {
                   "name": "disableValue",
@@ -1411,7 +1411,7 @@
                   "name": "enableInput",
                   "type": "string",
                   "optional": true,
-                  "description": "For mode opt-in, the with: input that turns caching on when set to a package manager."
+                  "description": "For mode opt-in, the with: input that turns caching on when set to a package manager, literally or through the ${{ github.event_name ==/!= '\u003cevent\u003e' \u0026\u0026 '\u003cmanager\u003e' || '' }} form resolved per trigger."
                 },
                 {
                   "name": "enableContains",
@@ -2616,7 +2616,7 @@
       "code": "ISSUE-717",
       "severity": "medium",
       "title": "Conditional cache on a release path could not be resolved",
-      "description": "A release or publish job enables a build cache through a GitHub expression the analyzer cannot resolve per trigger. If the expression yields a cache manager on the trigger that publishes, the job restores a cache that runs on other branches can poison; if it yields an empty value there, the job is safe. Reported at medium severity because the restore is conditional, not proven (the proven case is ISSUE-705).",
+      "description": "A release or publish job enables or disables a build cache through a GitHub expression the analyzer cannot resolve per trigger (an opt-in enable input or a default-mode disable input outside the github.event_name ==/!= '\u003cevent\u003e' shapes). If the cache is on for the trigger that publishes, the job restores a cache that runs on other branches can poison; if it is off there, the job is safe. Reported at medium severity because the restore is conditional, not proven (the proven case is ISSUE-705).",
       "remediation": "Make the condition statically checkable: use the `${{ github.event_name != '\u003cpublish trigger\u003e' \u0026\u0026 '\u003cmanager\u003e' || '' }}` form (or its == inverse) so the cache is provably off on the publish trigger, split caching into a step whose `if:` excludes the publish trigger, or scope the cache key (and any restore-keys) to the release ref.",
       "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-717",
       "controlName": "releaseWorkflowsMustNotRestoreUntrustedCache"

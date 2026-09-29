@@ -17,6 +17,7 @@ reading the upstream docs.
 | [ISSUE-713](#issue-713--action-authorized-sources) | `action-authorized-sources` | high |
 | [ISSUE-704](#issue-704--container-hardcoded-credentials) | `container-hardcoded-credentials` | **critical** |
 | [ISSUE-705](#issue-705--cache-poisoning) | `cache-poisoning` | high |
+| [ISSUE-717](#issue-717---cache-poisoning-unresolved) | `cache-poisoning-unresolved` | medium |
 | [ISSUE-706](#issue-706--dockerfile-unpinned-base) | `dockerfile-unpinned-base` | medium |
 | [ISSUE-702](#issue-702--action-archived-repo) | `action-archived-repo` | high _(API)_ |
 | [ISSUE-707](#issue-707--impostor-commit) | `impostor-commit` | **critical** _(API)_ |
@@ -284,12 +285,76 @@ releaseWorkflowsMustNotRestoreUntrustedCache:
 
 - **Release context** = a `release` trigger, a `publishActions` action, or a
   `publishScriptPatterns` match in a `run:` script.
+- **Per-trigger resolution.** The rule reasons about the events on which each
+  step actually runs: the job-level and step-level `if:` conditions and the
+  cache inputs are resolved when they are `github.event_name ==/!= '<event>'`
+  comparisons, and the finding fires only when a restore and a publish can
+  share an event. So `cache: ${{ github.event_name != 'workflow_dispatch' && 'maven' || '' }}`
+  on a job that publishes only on `workflow_dispatch`, a caching step whose
+  `if:` excludes the publish trigger, or a job whose `if:` excludes the release
+  event are all silent. In a reusable workflow (`workflow_call`)
+  `github.event_name` is the caller's event and the comparisons are resolved
+  against it. Any other whole-value expression is unresolvable and reports
+  [ISSUE-717](#issue-717---cache-poisoning-unresolved) instead of this High.
 - **`cacheActions` `mode`:** `always` (restores whenever present), `default`
-  (restores unless `disableInput` holds `disableValue`), or `opt-in` (restores
-  only when `enableInput` names a package manager). Add your org's own cache
-  actions with the matching mode.
+  (restores unless `disableInput` holds `disableValue`, literally or through a
+  `${{ github.event_name ==/!= '<event>' }}` comparison), or `opt-in` (restores
+  only when `enableInput` names a package manager, literally or through the
+  conditional form above). Add your org's own cache actions with the matching
+  mode.
 - **`allowedJobs`** is the escape hatch: a glob whitelist for release jobs you
   have reviewed and accept (e.g. a lint job that caches but ships nothing).
+
+---
+
+## ISSUE-717 - `cache-poisoning-unresolved`
+
+**Severity:** `medium` • **Control:** `releaseWorkflowsMustNotRestoreUntrustedCache`
+
+A release or publish job enables or disables a build cache through a GitHub
+expression the analyzer cannot resolve per trigger: an opt-in `enableInput`
+or a default-mode `disableInput` holding a whole-value `${{ }}` expression
+outside the `github.event_name ==/!= '<event>'` shapes (a `vars.*`, an
+`inputs.*`, a compound condition). The cache may be off exactly on the runs
+that publish, or on for them; the expression does not say which statically,
+so asserting the ISSUE-705 High would be a guess. The finding fires only when
+the step itself can still share an event with a publish.
+
+```yaml
+# ❌ cache enablement Plumber cannot resolve
+on:
+  workflow_dispatch:
+  pull_request:
+jobs:
+  publish:
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          cache: ${{ vars.CACHE_MANAGER }}   # on? off? depends on a repo variable
+      - run: npm publish
+```
+
+```yaml
+# ✅ provably off on the publish trigger, resolved per trigger
+on:
+  workflow_dispatch:
+  pull_request:
+jobs:
+  publish:
+    steps:
+      - uses: actions/setup-java@v4
+        with:
+          cache: ${{ github.event_name != 'workflow_dispatch' && 'maven' || '' }}
+      - name: Publish
+        if: github.event_name == 'workflow_dispatch'
+        run: npm publish
+```
+
+Make the condition statically checkable (the `github.event_name != '<publish
+trigger>' && '<manager>' || ''` form or its `==` inverse, or a step whose `if:`
+excludes the publish trigger), or scope the cache key and every `restore-keys`
+entry to the release ref. Same control, same `.plumber.yaml` block and
+`allowedJobs` escape hatch as ISSUE-705.
 
 ---
 
@@ -2024,6 +2089,7 @@ and in `.plumber.yaml`) is declared in
 | ISSUE-102 / 103 | `containerImageMustNotUseForbiddenTags` |
 | ISSUE-701 | `actionsMustBePinnedByCommitSha` |
 | ISSUE-713 | `githubActionMustComeFromAuthorizedSources` _(`minimumStars` requires the GitHub API)_ |
+| ISSUE-705 / 717 | `releaseWorkflowsMustNotRestoreUntrustedCache` |
 | ISSUE-706 | `dockerfilesMustPinBaseImageByDigest` |
 | ISSUE-712 | `releaseWorkflowsMustSignArtefacts` |
 | ISSUE-402 | `externalRefsMustNotCollide` |

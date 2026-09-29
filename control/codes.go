@@ -320,7 +320,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Code:        CodeCachePoisoningUnresolved,
 		Severity:    SeverityMedium,
 		Title:       "Conditional cache on a release path could not be resolved",
-		Description: "A release or publish job enables a build cache through a GitHub expression the analyzer cannot resolve per trigger. If the expression yields a cache manager on the trigger that publishes, the job restores a cache that runs on other branches can poison; if it yields an empty value there, the job is safe. Reported at medium severity because the restore is conditional, not proven (the proven case is ISSUE-705).",
+		Description: "A release or publish job enables or disables a build cache through a GitHub expression the analyzer cannot resolve per trigger (an opt-in enable input or a default-mode disable input outside the github.event_name ==/!= '<event>' shapes). If the cache is on for the trigger that publishes, the job restores a cache that runs on other branches can poison; if it is off there, the job is safe. Reported at medium severity because the restore is conditional, not proven (the proven case is ISSUE-705).",
 		Remediation: "Make the condition statically checkable: use the `${{ github.event_name != '<publish trigger>' && '<manager>' || '' }}` form (or its == inverse) so the cache is provably off on the publish trigger, split caching into a step whose `if:` excludes the publish trigger, or scope the cache key (and any restore-keys) to the release ref.",
 		DocURL:      docsBaseURL + string(CodeCachePoisoningUnresolved),
 		ControlName: "releaseWorkflowsMustNotRestoreUntrustedCache",

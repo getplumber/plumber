@@ -1242,6 +1242,12 @@ github:
       #   default — restores unless disableInput holds disableValue
       #   opt-in  — restores only when enableInput names a package manager
       #             (enableContains further requires that substring in the value)
+      # Conditions are resolved per trigger: job and step if: conditions and
+      # inputs of the form ${{ github.event_name ==/!= '<event>' }} (or the
+      # enable form ... && '<manager>' || '') restrict a step to the events they
+      # admit, and ISSUE-705 fires only when a restore and a publish can share
+      # one. Any other whole-value expression reports ISSUE-717 (medium, verify
+      # manually) instead.
       cacheActions:
         - {action: actions/cache, mode: always}
         - {action: actions/cache/restore, mode: always}

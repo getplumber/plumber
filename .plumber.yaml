@@ -1144,6 +1144,12 @@ github:
       #             (enableContains further requires that substring in the
       #             value, e.g. build-push-action only caches via GHA when
       #             cache-from mentions type=gha)
+      # Conditions are resolved per trigger: job and step if: conditions and
+      # inputs of the form ${{ github.event_name ==/!= '<event>' }} (or the
+      # enable form ... && '<manager>' || '') restrict a step to the events
+      # they admit, and ISSUE-705 fires only when a restore and a publish can
+      # share one. Any other whole-value expression reports ISSUE-717
+      # (medium, verify manually) instead.
       # Add your org's own cache actions with the matching mode.
       cacheActions:
         - {action: actions/cache, mode: always}

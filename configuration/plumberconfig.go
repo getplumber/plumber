@@ -548,7 +548,8 @@ func (c *ActionsPinnedByShaControlConfig) IsEnabled() bool {
 }
 
 // CachePoisoningControlConfig configures the release cache-poisoning
-// check (ISSUE-705). The action and script INVENTORIES are configurable
+// check (ISSUE-705, and ISSUE-717 for a cache condition it cannot resolve
+// per trigger). The action and script INVENTORIES are configurable
 // so an org can add its own publish actions, cache actions, or publish
 // commands without a plumber release. The built-in cache SEMANTICS
 // (which setup-* actions cache by default vs on opt-in, and the
@@ -586,7 +587,10 @@ type CachePoisoningControlConfig struct {
 // CacheActionSpec describes one cache-restoring action and when it
 // actually restores a cache. Mode is "always" (restores whenever
 // present), "default" (restores unless DisableInput holds DisableValue),
-// or "opt-in" (restores only when EnableInput names a manager).
+// or "opt-in" (restores only when EnableInput names a manager). A
+// `${{ github.event_name ==/!= '<event>' }}` value in either input is
+// resolved per trigger by the rego; any other whole-value expression is
+// reported as ISSUE-717 instead of asserting a restore.
 type CacheActionSpec struct {
 	// Action is the `uses:` owner/repo prefix (e.g. "actions/setup-go").
 	Action string `yaml:"action"`
