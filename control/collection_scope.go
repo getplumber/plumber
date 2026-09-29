@@ -56,6 +56,7 @@ const (
 	laneGitLabProtection     = "gitlab_protection"
 	laneGitLabVariables      = "gitlab_variables"
 	laneGitLabSecurityPolicy = "gitlab_security_policy"
+	laneGitLabMembers        = "gitlab_members"
 	laneGitHubBranches       = "github_branches"
 	laneGitHubActionSource   = "github_action_source"
 )
@@ -194,6 +195,7 @@ var controlsByGatedLane = map[string]map[string][]string{
 			controlCicdVariablesMustBeMasked,
 		},
 		laneGitLabSecurityPolicy: {controlSecurityPolicy},
+		laneGitLabMembers:        {controlProjectMemberQuota},
 	},
 	configuration.ProviderGitHub: {
 		laneGitHubBranches:     {controlBranchMustBeProtected},

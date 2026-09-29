@@ -657,7 +657,8 @@ func configEnablingOnly(t *testing.T, provider, name string) *configuration.Conf
 // for the one coupling row 62 introduced: controlsByGatedLane restates, as a
 // hand-written literal, a fact that already lives in the collection gates
 // (protectionDataNeeded, cicdVariableControlEnabled,
-// securityPolicyControlEnabled, branchLaneCollected, shouldScanMutableExec).
+// securityPolicyControlEnabled, projectMemberQuotaControlEnabled,
+// branchLaneCollected, shouldScanMutableExec).
 // Nothing else pins that the two keep agreeing, and they must: a control
 // listed under a lane whose gate does not consider it is marked
 // not_evaluable on every per-policy push even though its data WAS collected,
@@ -679,6 +680,7 @@ func TestControlsByGatedLane_Row62_MirrorsTheGatesItStandsFor(t *testing.T) {
 			laneGitLabProtection:     protectionDataNeeded,
 			laneGitLabVariables:      cicdVariableControlEnabled,
 			laneGitLabSecurityPolicy: securityPolicyControlEnabled,
+			laneGitLabMembers:        projectMemberQuotaControlEnabled,
 		},
 		configuration.ProviderGitHub: {
 			// The one lane whose gate needs the collector's own inputs: the

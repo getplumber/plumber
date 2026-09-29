@@ -578,6 +578,8 @@ var controlsIndependentOfMergedConfig = map[string]bool{
 	"mergeRequestSettingsMustBeCompliant": true,
 	// Reads the project's linked security policy project over GraphQL.
 	"projectMustHaveSecurityPolicySource": true,
+	// Reads the project's member listing, never the pipeline.
+	"numberOfProjectMembersMustRespectQuota": true,
 }
 
 // snapshotLaneControls maps each platform snapshot lane identifier to the
@@ -601,6 +603,7 @@ var snapshotLaneControls = map[string][]string{
 	},
 	platform.DegradedFieldProjectDetails:        {"mergeRequestSettingsMustBeCompliant"},
 	platform.DegradedFieldSecurityPolicyProject: {"projectMustHaveSecurityPolicySource"},
+	platform.DegradedFieldMembers:               {"numberOfProjectMembersMustRespectQuota"},
 }
 
 // lanesWhoseAbsenceIsAFailure names the snapshot lanes the platform writes
@@ -627,7 +630,9 @@ var lanesWhoseAbsenceIsAFailure = map[string]bool{
 // snapshot does not carry them at all - not that the collection failed, and
 // not that the project has nothing to report.
 //
-// The two entries are the lanes the platform started serving on 2026-08-27.
+// project_details and security_policy_project are the lanes the platform
+// started serving on 2026-08-27; members arrived 2026-09 with the project
+// member quota control.
 // A snapshot collected by an older platform (an on-prem or air-gapped
 // deployment that has not refreshed since) simply has no such key, and the
 // difference from lanesWhoseAbsenceIsAFailure is what the operator is told:
@@ -644,6 +649,7 @@ var lanesWhoseAbsenceIsAFailure = map[string]bool{
 var lanesWhoseAbsenceIsNotServed = map[string]bool{
 	platform.DegradedFieldProjectDetails:        true,
 	platform.DegradedFieldSecurityPolicyProject: true,
+	platform.DegradedFieldMembers:               true,
 }
 
 // laneUnusableReason names why a snapshot lane cannot feed its controls this

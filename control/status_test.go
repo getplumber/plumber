@@ -168,3 +168,28 @@ func TestCodesForControl(t *testing.T) {
 		t.Errorf("unknown control should return no codes")
 	}
 }
+
+func TestStatusForProjectMemberQuota(t *testing.T) {
+	e := ControlEntry{ControlName: "numberOfProjectMembersMustRespectQuota"}
+
+	if got := StatusFor(e, &AnalysisResult{CiValid: true}, 0); got != StatusError {
+		t.Errorf("no members collection: status = %q, want %q", got, StatusError)
+	}
+	notKnown := &AnalysisResult{CiValid: true, MembersData: &gitlab.GitlabMembersAnalysisData{Known: false}}
+	if got := StatusFor(e, notKnown, 0); got != StatusError {
+		t.Errorf("unknown counts: status = %q, want %q", got, StatusError)
+	}
+	known := &AnalysisResult{CiValid: true, MembersData: &gitlab.GitlabMembersAnalysisData{Known: true}}
+	if got := StatusFor(e, known, 0); got != StatusPassed {
+		t.Errorf("known counts, no finding: status = %q, want %q", got, StatusPassed)
+	}
+	if got := StatusFor(e, known, 1); got != StatusFailed {
+		t.Errorf("known counts, one finding: status = %q, want %q", got, StatusFailed)
+	}
+	// The CI file is irrelevant to a settings control: missing CI must not
+	// turn a known collection into an error.
+	noCI := &AnalysisResult{CiMissing: true, MembersData: &gitlab.GitlabMembersAnalysisData{Known: true}}
+	if got := StatusFor(e, noCI, 0); got != StatusPassed {
+		t.Errorf("missing CI file must not affect a settings control: %q", got)
+	}
+}
