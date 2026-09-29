@@ -9,12 +9,20 @@ on:
       - .github/scripts/**
       - .github/workflows/scripts-test.yml
       - scripts/**
+      # The release scripts rewrite these two files; their tests run against
+      # them, so a change of shape fails here and not at the next release.
+      - action.yml
+      - templates/plumber.yml
   push:
     branches: [main]
     paths:
       - .github/scripts/**
       - .github/workflows/scripts-test.yml
       - scripts/**
+      # The release scripts rewrite these two files; their tests run against
+      # them, so a change of shape fails here and not at the next release.
+      - action.yml
+      - templates/plumber.yml
 
 permissions: {}
 
@@ -36,3 +44,5 @@ jobs:
         run: |
           bash scripts/release-propagate-pins.test.sh
           bash scripts/release-template-digest.test.sh
+          bash scripts/release-bump-version.test.sh
+          bash scripts/release-plan.test.sh
