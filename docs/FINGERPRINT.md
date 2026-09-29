@@ -399,6 +399,11 @@ an edited file as new findings.
   deviating-settings list is data, not identity, so a project drifting from
   three deviations to one keeps the same finding rather than spawning a new
   one per combination.
+- ISSUE-507 (a project role outside its member quota) keys on the **role name**
+  (`role`: owner, maintainer, developer or total), never on the count or the
+  bounds: a quota edit or a membership change moves the data, not the
+  identity, so the platform issue survives both. This matches the v1
+  platform's `{role}` identity for the same control.
 - **A declared field holding a non-string is skipped, not coerced**, and
   renders as an empty pair, the same as an absent key. A JSON round trip turns
   a numeric `tag: 7` into a float64, so this is reachable from real payload.

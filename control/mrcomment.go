@@ -373,6 +373,7 @@ var mrCommentControlOrder = []struct {
 	{"mergeRequestApprovalRulesMustCoverAllProtectedBranches", "MR approval rules must cover all protected branches"},
 	{"mergeRequestApprovalSettingsMustBeCompliant", "MR approval settings must be compliant"},
 	{"mergeRequestSettingsMustBeCompliant", "MR settings must be compliant"},
+	{"numberOfProjectMembersMustRespectQuota", "Number of project members must respect a quota"},
 	{"cicdVariablesMustBeProtected", "CI/CD variables must be protected"},
 	{"cicdVariablesMustBeMasked", "CI/CD variables must be masked"},
 	{"pipelineMustNotIncludeHardcodedJobs", "Pipeline must not include hardcoded jobs"},

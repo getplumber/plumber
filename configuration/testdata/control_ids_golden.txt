@@ -41,6 +41,7 @@ CTRL-502 mergeRequestApprovalRulesMustRequireMinimumApprovals
 CTRL-503 mergeRequestApprovalSettingsMustBeCompliant
 CTRL-504 mergeRequestApprovalRulesMustCoverAllProtectedBranches
 CTRL-506 mergeRequestSettingsMustBeCompliant
+CTRL-507 numberOfProjectMembersMustRespectQuota
 CTRL-601 projectMustHaveSecurityPolicySource
 CTRL-701 actionsMustBePinnedByCommitSha
 CTRL-702 actionsMustNotBeArchived

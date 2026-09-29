@@ -208,6 +208,8 @@ const (
 	CodeBranchNonCompliant ErrorCode = "ISSUE-505"
 	// ISSUE-506: The project's merge-request/merge settings do not meet the configured expectations
 	CodeMRSettingsNonCompliant ErrorCode = "ISSUE-506"
+	// ISSUE-507: The project's member count for a role is outside the configured quota
+	CodeProjectMemberQuota ErrorCode = "ISSUE-507"
 	// ISSUE-803: Job runs with overly broad permissions (write-all)
 	CodeExcessivePermissions ErrorCode = "ISSUE-803"
 )
@@ -727,6 +729,15 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		ControlName: "mergeRequestSettingsMustBeCompliant",
 		// Role: hygiene, not gate: merge method and squash settings shape history, they remove no review protection.
 		Role: RoleHygiene,
+	},
+	CodeProjectMemberQuota: {
+		Code:        CodeProjectMemberQuota,
+		Severity:    SeverityMedium,
+		Title:       "Project member count is outside its role quota",
+		Description: "The number of members holding a role in the project (Owner, Maintainer, Developer, or the total) is above the configured maximum or below the configured minimum, so access to the project is wider or thinner than the policy allows.",
+		Remediation: "Review the project's members in Settings > Members: remove or downgrade members of a role that is over its quota, or add members of a role that is under it, so each role count falls within the configured bounds.",
+		DocURL:      docsBaseURL + string(CodeProjectMemberQuota),
+		ControlName: "numberOfProjectMembersMustRespectQuota",
 	},
 	CodeSecurityPolicyProjectNotSet: {
 		Code:        CodeSecurityPolicyProjectNotSet,
