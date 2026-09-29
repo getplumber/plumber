@@ -298,6 +298,8 @@ func (r *RunContext) LaneMissing(field string) bool {
 		return snap.Data.ProjectDetails == nil
 	case DegradedFieldSecurityPolicyProject:
 		return snap.Data.SecurityPolicyProject == nil
+	case DegradedFieldMembers:
+		return snap.Data.Members == nil
 	}
 	return false
 }
