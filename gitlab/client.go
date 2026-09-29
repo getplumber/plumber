@@ -80,14 +80,32 @@ func GetGraphQLClient(url string, conf *configuration.Configuration) *graphql.Cl
 	// Initialize the GraphQL client
 	client := graphql.NewClient(url, graphql.WithHTTPClient(guardGraphQLStatus(httpClient)))
 
-	// Optionally add logging for debugging GraphQL queries
-	// Mask sensitive data like Authorization headers
+	// Debug logging of the GraphQL exchange: the request side only, with
+	// the Authorization header masked. See graphqlDebugLine.
 	client.Log = func(s string) {
-		masked := maskSensitiveData(s)
-		logrus.WithField("context", "GraphQL").Debug(masked)
+		if line, keep := graphqlDebugLine(s); keep {
+			logrus.WithField("context", "GraphQL").Debug(line)
+		}
 	}
 
 	return client
+}
+
+// graphqlResponsePrefix is how the GraphQL client marks the lines it logs
+// for a response body (requests are logged with ">>").
+const graphqlResponsePrefix = "<<"
+
+// graphqlDebugLine decides what the GraphQL client's log hook forwards. The
+// request side (query, variables, headers) is kept, masked, because it says
+// which call ran. The response body is dropped: the caller unmarshals it and
+// whatever matters from it is already in the report, so echoing it only
+// duplicated the report into the log at full size, once per page of every
+// query.
+func graphqlDebugLine(s string) (string, bool) {
+	if strings.HasPrefix(strings.TrimSpace(s), graphqlResponsePrefix) {
+		return "", false
+	}
+	return maskSensitiveData(s), true
 }
 
 // maskSensitiveData masks sensitive information in log strings
