@@ -910,7 +910,7 @@ What this order means when you operate a release:
 - To recover from a failed job, use **Re-run failed jobs**. "Re-run all jobs" plans no release once the tag exists, and skips every job after the plan.
 - If a commit lands on `main` between the plan and the release, the release job refuses (version mismatch, or branch behind). The next push to `main` releases both.
 - The version tags and `latest` are put on the image after the release. If `docker-tags` fails, the pinned digest still pulls; re-run the job.
-- `gh workflow run release.yml` never releases: it plans, builds and pushes an untagged image, then stops.
+- `gh workflow run release.yml` never releases. On `main` it plans, builds and pushes an untagged image, then stops. On any other branch nothing runs: the workflow holds the release credentials and only ever executes reviewed code.
 
 The README carries no pinned version (`uses: getplumber/plumber@<version>`), so no script rewrites it.
 

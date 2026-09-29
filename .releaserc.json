@@ -47,6 +47,7 @@
     [
       "@semantic-release/exec",
       {
+        "verifyReleaseCmd": "bash scripts/release-plan.sh ${nextRelease.version}",
         "prepareCmd": "bash scripts/release-bump-version.sh ${nextRelease.version}",
         "successCmd": "bash scripts/release-set-outputs.sh ${nextRelease.version}"
       }
@@ -54,7 +55,7 @@
     [
       "@semantic-release/git",
       {
-        "assets": ["CHANGELOG.md", "action.yml", "README.md"],
+        "assets": ["CHANGELOG.md", "action.yml", "README.md", "templates/plumber.yml"],
         "message": "chore(release): ${nextRelease.version} [skip ci]\n\n${nextRelease.notes}"
       }
     ]

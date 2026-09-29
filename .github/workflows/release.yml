@@ -1,18 +1,185 @@
 name: Release & Publish
 
+# Order of a release, and why:
+#
+#   plan         what would be released? (semantic-release --dry-run, no write)
+#   docker       build the image for that version, push it BY DIGEST, no tag
+#   release      the real semantic-release: the release commit pins that
+#                digest in templates/plumber.yml, then the tag is created
+#   docker-tags  put X.Y.Z, X.Y, X and latest on that same digest
+#   binaries, upload-release, homebrew, propagate: unchanged, after the tag
+#
+# The image is built BEFORE the tag so that the commit a release tag points
+# at carries, in templates/plumber.yml, the digest of the image of that same
+# version. Built after the tag (the order until v0.5.15), the digest could
+# only land in a later commit, and every tag pinned the previous version's
+# image. Nothing public moves before the release exists: an image pushed by
+# digest has no tag, and the version tags and `latest` are added last.
+#
+# Recovery: use "Re-run failed jobs", never "Re-run all jobs". Once the tag
+# exists a full re-run plans no release and skips every job after the plan.
+
 on:
   push:
     branches:
       - main
+  # A manual run never releases. On main it plans, builds the image and
+  # pushes it by digest, then stops: a way to exercise the build half of the
+  # pipeline. On any other branch nothing runs at all (see the plan job).
+  workflow_dispatch:
 
 permissions: {}
 
 jobs:
+  plan:
+    name: Plan Release
+    runs-on: ubuntu-24.04
+    # main only, whatever the trigger. This job mints the release app token
+    # and runs semantic-release, which executes commands taken from the
+    # checked-out .releaserc.json: on any other ref that would be unreviewed
+    # code running with a token that can push to main. Every other job
+    # depends on this one, so none of them runs off main either.
+    if: github.ref == 'refs/heads/main'
+    permissions:
+      contents: read
+    outputs:
+      release_planned: ${{ steps.plan.outputs.planned_release }}
+      version: ${{ steps.plan.outputs.planned_version }}
+    steps:
+      - name: Generate GitHub App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+          token: ${{ steps.app-token.outputs.token }}
+
+      - name: Setup Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: '20.20.2'
+
+      # Pinned versions and the reasons for them live in the script, shared
+      # by the two semantic-release jobs (plan, release).
+      - name: Install semantic-release
+        run: bash scripts/release-install-semantic-release.sh
+
+      # A dry run stops before prepare, so it commits, tags and publishes
+      # nothing. semantic-release still checks that it could push, which is
+      # why this job carries the release app token. The outputs are written
+      # by the verifyReleaseCmd of .releaserc.json (scripts/release-plan.sh),
+      # which only runs when a release is due.
+      - name: Plan (semantic-release dry run)
+        id: plan
+        env:
+          GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: semantic-release --dry-run
+
+  docker:
+    name: Build & Push Docker Image
+    runs-on: ubuntu-24.04
+    outputs:
+      digest: ${{ steps.push.outputs.digest }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    needs: plan
+    if: github.ref == 'refs/heads/main' && (needs.plan.outputs.release_planned == 'true' || github.event_name == 'workflow_dispatch')
+    env:
+      # A manual run on main with no release due still builds, under a
+      # version that can never be released.
+      VERSION: ${{ needs.plan.outputs.version || '0.0.0-dryrun' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
+        with:
+          # The action defaults to the mutable :latest tag for this
+          # privileged image; pin it by digest.
+          image: docker.io/tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        with:
+          # The docker-container driver otherwise boots the mutable
+          # moby/buildkit:buildx-stable-1 tag; pin it by digest.
+          driver-opts: image=docker.io/moby/buildkit:v0.30.0@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # No tag is pushed by this job: the metadata step only supplies the
+      # image labels, from the same tag rules the docker-tags job applies.
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: getplumber/plumber
+          tags: |
+            type=semver,pattern={{version}},value=${{ env.VERSION }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.VERSION }}
+            type=semver,pattern={{major}},value=${{ env.VERSION }}
+            type=raw,value=latest
+
+      # Same timestamp format as the release binaries' BUILD_DATE (job binaries).
+      - name: Compute build date
+        id: build_date
+        run: echo "date=$(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push
+        id: push
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
+        with:
+          context: .
+          platforms: linux/amd64,linux/arm64
+          # Pushed by digest only: the image exists in the registry, pullable
+          # as getplumber/plumber@sha256:..., with no tag pointing at it. The
+          # release commit pins that digest; docker-tags names it afterwards.
+          tags: getplumber/plumber
+          outputs: type=image,push-by-digest=true,name-canonical=true,push=true
+          labels: ${{ steps.meta.outputs.labels }}
+          # Stamp version metadata into the binary (Dockerfile ARGs feeding
+          # -X ldflags on cmd/version.go); without these the image reports
+          # "plumber version dev" (getplumber/plumber#425).
+          build-args: |
+            VERSION=${{ env.VERSION }}
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ steps.build_date.outputs.date }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          # Always rebuild the `runtime` stage so `apk upgrade` re-runs and pulls
+          # current OS security fixes; the cached `builder` stage keeps Go builds
+          # fast. Without this the runtime layer is restored from gha cache release
+          # after release and ships stale openssl/curl/git.
+          no-cache-filters: runtime
+
+      - name: Attest Docker image
+        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
+        with:
+          subject-name: docker.io/getplumber/plumber
+          subject-digest: ${{ steps.push.outputs.digest }}
+
   release:
     name: Semantic Release
     runs-on: ubuntu-24.04
     permissions:
       contents: read
+    needs: [plan, docker]
+    if: github.event_name == 'push' && needs.plan.outputs.release_planned == 'true'
     outputs:
       new_release_published: ${{ steps.semantic.outputs.new_release_published }}
       new_release_version: ${{ steps.semantic.outputs.new_release_version }}
@@ -37,38 +204,26 @@ jobs:
         with:
           node-version: '20.20.2'
 
-      # Run semantic-release directly instead of the third-party
-      # cycjimmy/semantic-release-action wrapper. Top-level packages are
-      # pinned to exact, immutable npm versions (npm versions are
-      # immutable once published and npm verifies each tarball's registry
-      # integrity hash on install). A hardcoded checksum is not practical
-      # here: semantic-release pulls a large transitive dependency tree
-      # and this Go repo carries no package-lock.json to anchor it.
-      #
-      # Every plugin referenced by .releaserc.json is installed explicitly,
-      # including the commit-analyzer / release-notes-generator that ship
-      # as semantic-release dependencies — so plugin resolution never
-      # depends on transitive hoisting. Versions match semantic-release
-      # 23.1.1's declared ranges (commit-analyzer ^12, notes-generator ^13).
+      # Pinned versions and the reasons for them live in the script, shared
+      # by the two semantic-release jobs (plan, release).
       - name: Install semantic-release
-        run: |
-          npm install -g \
-            semantic-release@23.1.1 \
-            @semantic-release/commit-analyzer@12.0.0 \
-            @semantic-release/release-notes-generator@13.0.0 \
-            @semantic-release/changelog@6.0.3 \
-            @semantic-release/exec@6.0.3 \
-            @semantic-release/git@10.0.1 \
-            conventional-changelog-conventionalcommits@7.0.2
+        run: bash scripts/release-install-semantic-release.sh
 
       # The release-detection outputs (new_release_published,
       # new_release_version) are written by the @semantic-release/exec
-      # successCmd in .releaserc.json — it runs only on a published
-      # release — replacing the outputs the wrapper action used to set.
+      # successCmd in .releaserc.json, which runs only on a published release.
+      #
+      # RELEASE_IMAGE_DIGEST is read by the prepareCmd
+      # (scripts/release-bump-version.sh), which pins it in
+      # templates/plumber.yml inside the release commit. PLANNED_VERSION is
+      # read by the verifyReleaseCmd (scripts/release-plan.sh), which refuses
+      # to cut a version other than the one the image was built for.
       - name: Semantic Release
         id: semantic
         env:
           GITHUB_TOKEN: ${{ steps.app-token.outputs.token }}
+          PLANNED_VERSION: ${{ needs.plan.outputs.version }}
+          RELEASE_IMAGE_DIGEST: ${{ needs.docker.outputs.digest }}
         run: semantic-release
 
       # Release notes are extracted from the top section of CHANGELOG.md
@@ -84,6 +239,62 @@ jobs:
             awk '/^## \[/{n++} n==1' CHANGELOG.md
             echo "__PLUMBER_NOTES_EOF__"
           } >> "$GITHUB_OUTPUT"
+
+  docker-tags:
+    name: Tag Docker Image
+    runs-on: ubuntu-24.04
+    permissions: {}
+    needs: [release, docker]
+    if: needs.release.outputs.new_release_published == 'true'
+    steps:
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
+        with:
+          # The docker-container driver otherwise boots the mutable
+          # moby/buildkit:buildx-stable-1 tag; pin it by digest.
+          driver-opts: image=docker.io/moby/buildkit:v0.30.0@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Extract metadata
+        id: meta
+        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
+        with:
+          images: getplumber/plumber
+          tags: |
+            type=semver,pattern={{version}},value=${{ needs.release.outputs.new_release_version }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ needs.release.outputs.new_release_version }}
+            type=semver,pattern={{major}},value=${{ needs.release.outputs.new_release_version }}
+            type=raw,value=latest
+
+      # The release exists: name the digest it pins. imagetools copies the
+      # image index as it is, so every tag resolves to the digest that was
+      # attested and pinned. The check below fails the job if one does not.
+      - name: Tag the released digest
+        env:
+          DIGEST: ${{ needs.docker.outputs.digest }}
+          VERSION: ${{ needs.release.outputs.new_release_version }}
+        run: |
+          set -euo pipefail
+          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]] || { echo "::error::bad digest from the docker job: '${DIGEST}'"; exit 1; }
+          args=()
+          while IFS= read -r tag; do
+            if [ -n "$tag" ]; then args+=(-t "$tag"); fi
+          done < <(jq -r '.tags[]' <<< "$DOCKER_METADATA_OUTPUT_JSON")
+          [ "${#args[@]}" -gt 0 ] || { echo "::error::no tag to apply"; exit 1; }
+          docker buildx imagetools create "${args[@]}" "getplumber/plumber@${DIGEST}"
+          for tag in "$VERSION" latest; do
+            got="$(docker buildx imagetools inspect "getplumber/plumber:${tag}" --format '{{json .Manifest}}' | jq -r .digest)"
+            if [ "$got" != "$DIGEST" ]; then
+              echo "::error::getplumber/plumber:${tag} resolves to ${got}, expected ${DIGEST}"
+              exit 1
+            fi
+          done
+          echo "getplumber/plumber:${VERSION} and :latest -> ${DIGEST}"
 
   binaries:
     name: Build Binaries
@@ -192,89 +403,6 @@ jobs:
             --title "v${VERSION}" \
             --notes-file release-notes.md \
             dist/plumber-* dist/checksums.txt dist/provenance.intoto.jsonl
-
-  docker:
-    name: Build & Push Docker Image
-    runs-on: ubuntu-24.04
-    outputs:
-      digest: ${{ steps.push.outputs.digest }}
-    permissions:
-      contents: read
-      id-token: write
-      attestations: write
-    needs: release
-    if: needs.release.outputs.new_release_published == 'true'
-    steps:
-      - name: Checkout
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          persist-credentials: false
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4.2.0
-        with:
-          # The action defaults to the mutable :latest tag for this
-          # privileged image; pin it by digest.
-          image: docker.io/tonistiigi/binfmt:qemu-v10.2.3@sha256:400a4873b838d1b89194d982c45e5fb3cda4593fbfd7e08a02e76b03b21166f0
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@bb05f3f5519dd87d3ba754cc423b652a5edd6d2c # v4.2.0
-        with:
-          # The docker-container driver otherwise boots the mutable
-          # moby/buildkit:buildx-stable-1 tag; pin it by digest.
-          driver-opts: image=docker.io/moby/buildkit:v0.30.0@sha256:0168606be2315b7c807a03b3d8aa79beefdb31c98740cebdffdfeebf31190c9f
-
-      - name: Login to Docker Hub
-        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4.6.0
-        with:
-          username: ${{ secrets.DOCKERHUB_USERNAME }}
-          password: ${{ secrets.DOCKERHUB_TOKEN }}
-
-      - name: Extract metadata
-        id: meta
-        uses: docker/metadata-action@dc802804100637a589fabce1cb79ff13a1411302 # v6.2.0
-        with:
-          images: getplumber/plumber
-          tags: |
-            type=semver,pattern={{version}},value=${{ needs.release.outputs.new_release_version }}
-            type=semver,pattern={{major}}.{{minor}},value=${{ needs.release.outputs.new_release_version }}
-            type=semver,pattern={{major}},value=${{ needs.release.outputs.new_release_version }}
-            type=raw,value=latest
-
-      # Same timestamp format as the release binaries' BUILD_DATE above.
-      - name: Compute build date
-        id: build_date
-        run: echo "date=$(date -u +"%Y-%m-%dT%H:%M:%SZ")" >> "$GITHUB_OUTPUT"
-
-      - name: Build and push
-        id: push
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7.3.0
-        with:
-          context: .
-          platforms: linux/amd64,linux/arm64
-          push: true
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
-          # Stamp version metadata into the binary (Dockerfile ARGs feeding
-          # -X ldflags on cmd/version.go); without these the image reports
-          # "plumber version dev" (getplumber/plumber#425).
-          build-args: |
-            VERSION=${{ needs.release.outputs.new_release_version }}
-            COMMIT=${{ github.sha }}
-            BUILD_DATE=${{ steps.build_date.outputs.date }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
-          # Always rebuild the `runtime` stage so `apk upgrade` re-runs and pulls
-          # current OS security fixes; the cached `builder` stage keeps Go builds
-          # fast. Without this the runtime layer is restored from gha cache release
-          # after release and ships stale openssl/curl/git.
-          no-cache-filters: runtime
-
-      - name: Attest Docker image
-        uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
-        with:
-          subject-name: docker.io/getplumber/plumber
-          subject-digest: ${{ steps.push.outputs.digest }}
 
   homebrew:
     name: Update Homebrew Tap
@@ -461,58 +589,9 @@ jobs:
           git commit -m "Update to v${VERSION}"
           git push
 
-  pin-refs:
-    name: Pin release refs (SHA + image digest)
-    runs-on: ubuntu-24.04
-    permissions:
-      contents: read
-    needs: [release, docker]
-    if: needs.release.outputs.new_release_published == 'true'
-    steps:
-      - name: Generate GitHub App token
-        id: app-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
-        with:
-          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
-          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
-
-      - name: Checkout main
-        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          ref: main
-          fetch-depth: 0
-          fetch-tags: true
-          persist-credentials: false
-
-      # The app token is supplied at push time through a credential helper
-      # that reads it from the step env (same pattern as the homebrew job):
-      # .git/config only ever stores the literal helper script, never the
-      # token, so no credential outlives this step.
-      - name: Pin README SHA and template image digest
-        env:
-          VERSION: ${{ needs.release.outputs.new_release_version }}
-          DIGEST: ${{ needs.docker.outputs.digest }}
-          RELEASE_APP_TOKEN: ${{ steps.app-token.outputs.token }}
-        run: |
-          set -euo pipefail
-          # The release tag points at the chore(release) commit; pin to it so
-          # uses:@<sha> matches uses:@v${VERSION}.
-          SHA="$(git rev-parse "v${VERSION}^{commit}")"
-          bash scripts/release-pin-refs.sh "$VERSION" "$SHA" "$DIGEST"
-          if git diff --quiet; then
-            echo "No ref changes to commit."
-            exit 0
-          fi
-          git config user.name "plumber-release-bot[bot]"
-          git config user.email "plumber-release-bot[bot]@users.noreply.github.com"
-          git config credential.helper '!f() { echo "username=x-access-token"; echo "password=${RELEASE_APP_TOKEN}"; }; f'
-          git add README.md templates/plumber.yml
-          git commit -m "ci(release): pin v${VERSION} refs [skip ci]"
-          git push origin HEAD:main
-
   propagate:
     name: Propagate Release
-    needs: [release, docker, upload-release, pin-refs]
+    needs: [release, docker, docker-tags, upload-release]
     if: needs.release.outputs.new_release_published == 'true'
     permissions:
       contents: read

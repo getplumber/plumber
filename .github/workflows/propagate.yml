@@ -17,10 +17,10 @@ name: Propagate Release
 #    (distinctively named so a stale-PR sweep only ever touches branches
 #    this workflow itself created), and open a PR for manual review. Runs
 #    after propagate-component (needs it for that SHA), not in parallel.
-# Called from release.yml after pin-refs, or run via workflow_dispatch to
-# re-propagate the latest release. Dispatching an older version fails the
-# template pin check on purpose: templates/plumber.yml on main only ever
-# carries the latest release's digest.
+# Called from release.yml once the release is published and its image
+# tagged, or run via workflow_dispatch to re-propagate the latest release.
+# Dispatching an older version fails the template pin check on purpose:
+# templates/plumber.yml on main only ever carries the latest release's digest.
 
 on:
   workflow_call:
@@ -110,9 +110,7 @@ jobs:
       # already contains this release's actual template and release notes
       # (the only thing the second commit adds is the self-pin fix, which
       # has zero effect on how the component behaves), so pinning to it
-      # gives identical behavior to pinning the tag itself. This mirrors
-      # how pin-refs already handles the CLI's own README, just with the
-      # tag moved to the second commit instead of the first.
+      # gives identical behavior to pinning the tag itself.
       - name: Sync component repo and tag
         id: sync
         env:
