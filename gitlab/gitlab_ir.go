@@ -36,6 +36,7 @@ func ToNormalizedPipeline(
 	protection *GitlabProtectionAnalysisData,
 	variables *GitlabVariablesAnalysisData,
 	securityPolicy *SecurityPolicyData,
+	members *GitlabMembersAnalysisData,
 ) *ir.NormalizedPipeline {
 	pipeline := &ir.NormalizedPipeline{
 		Provider:      ir.ProviderGitLab,
@@ -55,6 +56,7 @@ func ToNormalizedPipeline(
 	pipeline.MRApprovalSettings = buildApprovalSettings(protection)
 	pipeline.MRSettings = buildMRSettings(protection)
 	pipeline.SecurityPolicyProject = buildSecurityPolicyProject(securityPolicy)
+	pipeline.ProjectMembers, pipeline.ProjectMembersKnown = buildMemberCounts(members)
 	if origin != nil && origin.MergedConf != nil {
 		if globals := extractGitLabVariables(origin.MergedConf.GlobalVariables); len(globals) > 0 {
 			pipeline.GlobalVariables = globals
@@ -198,6 +200,22 @@ func buildSecurityPolicyProject(data *SecurityPolicyData) *ir.SecurityPolicyProj
 		state.LinkedProjectPath = data.Project.FullPath
 	}
 	return state
+}
+
+// buildMemberCounts projects the members collection onto the IR. The second
+// return is ProjectMembersKnown: false when the collection did not run or
+// the listing was not read authoritatively, in which case no counts are
+// projected at all, so the quota rule abstains rather than judging zeros.
+func buildMemberCounts(members *GitlabMembersAnalysisData) (*ir.MemberCounts, bool) {
+	if members == nil || !members.Known {
+		return nil, false
+	}
+	return &ir.MemberCounts{
+		Owners:      members.Counts.Owners,
+		Maintainers: members.Counts.Maintainers,
+		Developers:  members.Counts.Developers,
+		Total:       members.Counts.Total,
+	}, true
 }
 
 // buildBranches flattens the GitLab protection API response into

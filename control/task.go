@@ -314,6 +314,7 @@ func runRegoEngine(
 		protectionData,
 		variablesData,
 		securityPolicyData,
+		nil,
 	)
 	// Retained so a later per-policy evaluation can re-run the rules over the
 	// SAME collected data under a different policy's parameters, without
