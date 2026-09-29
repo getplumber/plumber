@@ -1715,7 +1715,7 @@ func printBanner() {
 	fmt.Println()
 	fmt.Println(asciiArt)
 	fmt.Printf("  %s  %s\n",
-		styleTitle.Render("CI/CD Compliance Scanner for GitLab & GitHub Actions"),
+		styleTitle.Render("CI/CD Security Scanner for GitHub & GitLab"),
 		styleMuted.Render("v"+Version),
 	)
 	fmt.Printf("  %s %s\n\n",
