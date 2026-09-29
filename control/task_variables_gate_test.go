@@ -102,3 +102,28 @@ func TestDegradedReasonIsVariables(t *testing.T) {
 		t.Fatal("classifier must not match the branch-protection reason")
 	}
 }
+
+// TestStatusFor_MembersDegradedCarveOut: a members network failure degrades
+// the run, but only ISSUE-507 reports it (through MembersData.Known); every
+// unrelated CI-file control with zero findings stays passed.
+func TestStatusFor_MembersDegradedCarveOut(t *testing.T) {
+	result := &AnalysisResult{
+		CiValid:         true,
+		DegradedReasons: []string{degradedReasonMembersPrefix + " (network or timeout)"},
+		MembersData:     &gitlab.GitlabMembersAnalysisData{Known: false},
+	}
+	unrelated := ControlEntry{ControlName: "pipelineMustNotUseDockerInDocker"}
+	if got := StatusFor(unrelated, result, 0); got != StatusPassed {
+		t.Fatalf("a members degrade must leave an unrelated CI-file control passed, got %q", got)
+	}
+	members := ControlEntry{ControlName: controlProjectMemberQuota}
+	if got := StatusFor(members, result, 0); got == StatusPassed {
+		t.Fatalf("the member quota control with Known=false must not read as passed")
+	}
+	if !degradedReasonIsMembers(degradedReasonMembersPrefix + " (network or timeout)") {
+		t.Fatal("classifier must match the members degraded-reason prefix")
+	}
+	if degradedReasonIsMembers(degradedReasonVariablesPrefix + " (network or timeout)") {
+		t.Fatal("classifier must not match the variables reason")
+	}
+}

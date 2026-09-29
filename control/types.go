@@ -88,6 +88,11 @@ type AnalysisResult struct {
 	// the POLICY's configuration, and the two booleans below cannot answer
 	// "is a policy project linked" on their own (row 62).
 	SecurityPolicyData *gitlab.SecurityPolicyData `json:"-"`
+	// MembersData is the project members collection for the
+	// numberOfProjectMembersMustRespectQuota control. nil (never ran) or
+	// Known=false (403/404, page cap, degraded lane) makes the control
+	// report not-evaluable rather than a false pass (see StatusFor).
+	MembersData *gitlab.GitlabMembersAnalysisData `json:"-"`
 
 	// SecurityPolicyEvaluable is true when the security policy project linkage
 	// was read authoritatively (a successful GraphQL read). False when it could

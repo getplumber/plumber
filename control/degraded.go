@@ -78,6 +78,10 @@ const degradedReasonVariablesPrefix = "CI/CD variables could not be fetched"
 // keeps every unrelated control from flipping to error over it.
 const degradedReasonSecurityPolicyPrefix = "security policy project could not be fetched"
 
+// degradedReasonMembersPrefix is the shared prefix of the degraded reason the
+// members collection records on a network failure (ISSUE-507).
+const degradedReasonMembersPrefix = "project members could not be fetched"
+
 // degradedReasonsFromGitHubCollection builds the human-readable list of
 // collection failures behind a degraded GitHub run (#220). partialCount
 // is the number of workflow files that could not be fetched/parsed and

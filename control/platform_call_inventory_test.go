@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"maps"
+	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -48,6 +49,14 @@ type gitlabRecorder struct {
 	// than answer, which is what a token that can read this project but not
 	// the include's SOURCE project produces.
 	failRefProbes bool
+	// membersFailure makes the members/all listing fail (or abstain):
+	// "unauthorized" answers 401 (an API answer, not retried), "forbidden"
+	// answers 403 (a permission fact, folded into Known=false with no
+	// error), "reset" drops the TCP connection with a reset (a network
+	// failure), "pagecap" serves one page past gitlab.maxMemberPages (20,
+	// unexported) so the client's own cap stops it without ever reading
+	// page 21.
+	membersFailure string
 }
 
 // A ledger has to name ENDPOINTS, not URLs, or the same run against a
@@ -161,11 +170,58 @@ func (g *gitlabRecorder) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case strings.HasSuffix(path, "/approvals"):
 		_, _ = w.Write([]byte(`{}`))
 	case strings.HasSuffix(path, "/members/all"):
+		switch g.membersFailure {
+		case "unauthorized":
+			w.WriteHeader(http.StatusUnauthorized)
+			_, _ = w.Write([]byte(`{"message":"401 Unauthorized"}`))
+			return
+		case "forbidden":
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(`{"message":"403 Forbidden"}`))
+			return
+		case "reset":
+			resetConnection(w)
+			return
+		case "pagecap":
+			// gitlab.maxMemberPages is 20 and unexported; serve 21 full
+			// pages of developers with X-Next-Page always set, so the
+			// client's own cap stops it after reading page 20, without
+			// ever asking for page 21.
+			page, _ := strconv.Atoi(r.URL.Query().Get("page"))
+			if page == 0 {
+				page = 1
+			}
+			w.Header().Set("X-Next-Page", strconv.Itoa(page+1))
+			members := make([]string, 0, 100)
+			for i := 0; i < 100; i++ {
+				members = append(members, fmt.Sprintf(`{"id":%d,"username":"u%d_%d","name":"n","state":"active","access_level":30}`, page*1000+i, page, i))
+			}
+			_, _ = fmt.Fprintf(w, "[%s]", strings.Join(members, ","))
+			return
+		}
 		_, _ = w.Write([]byte(`[]`))
 	default:
 		// GET /projects/:id — the project payload.
 		_, _ = fmt.Fprintf(w, `{"id":42,"name":"project","path_with_namespace":%q,"default_branch":"main","archived":false,"namespace":{"id":9,"kind":"group"}}`, testProjectPath)
 	}
+}
+
+// resetConnection closes the request's TCP connection with SO_LINGER 0, so
+// the client reads "connection reset by peer": a network failure, not an
+// API answer.
+func resetConnection(w http.ResponseWriter) {
+	hj, ok := w.(http.Hijacker)
+	if !ok {
+		return
+	}
+	conn, _, err := hj.Hijack()
+	if err != nil {
+		return
+	}
+	if tcp, ok := conn.(*net.TCPConn); ok {
+		_ = tcp.SetLinger(0)
+	}
+	_ = conn.Close()
 }
 
 func (g *gitlabRecorder) graphql(w http.ResponseWriter, op string, _ map[string]any) {
@@ -255,6 +311,9 @@ gitlab:
     mergeRequestSettingsMustBeCompliant:
       enabled: true
       mergeMethod: ff
+    numberOfProjectMembersMustRespectQuota:
+      enabled: true
+      ownerMin: 1
     cicdVariablesMustBeProtected:
       enabled: true
     cicdVariablesMustBeMasked:
@@ -322,6 +381,10 @@ func platformSnapshot(t *testing.T, sha string) *platform.RunContext {
 					// real verdict rather than a silence.
 					ProjectDetails:        snapshotProjectDetails(),
 					SecurityPolicyProject: &platform.SecurityPolicyProject{Known: true},
+					// Zero members, the same answer the fake GitLab's empty
+					// members/all listing gives standalone, so ownerMin: 1
+					// fires ISSUE-507 in both modes.
+					Members: &platform.MemberCounts{},
 					ResolutionAnchor: &platform.ResolutionAnchor{
 						Ref: "main", Sha: sha,
 						ConfigDigest: "abc", DigestVersion: platform.LocalDigestVersion,
@@ -503,6 +566,7 @@ func TestGitLabCallInventory(t *testing.T) {
 	wantStandalone := []string{
 		"1x GET /api/v4/projects/:id/approval_rules",
 		"1x GET /api/v4/projects/:id/approvals",
+		"1x GET /api/v4/projects/:id/members/all",
 		"1x GET /api/v4/projects/:id/protected_branches",
 		"1x GET /api/v4/projects/:id/repository/branches",
 		// Two single-branch reads: the head sha of the analysed ref, and the
@@ -588,7 +652,8 @@ func TestPlatformModeRemovesMostGitLabRequests(t *testing.T) {
 	if standalone != wantStandaloneTotal || platformRun != wantPlatformTotal {
 		t.Errorf("GitLab request totals changed: standalone %d (want %d), platform %d (want %d).\n"+
 			"A LOWER platform number is progress on #368 step 3 and this constant should be updated; "+
-			"a higher one means a collection came back.",
+			"a higher one means a collection came back; a higher standalone number is a new collection "+
+			"and must be reflected in wantStandalone.",
 			standalone, wantStandaloneTotal, platformRun, wantPlatformTotal)
 	}
 }
@@ -603,6 +668,21 @@ func totalRequests(ledger []string) int {
 		}
 	}
 	return total
+}
+
+// membersAllRequestCount reads the members/all line back out of the ledger,
+// so a page-cap test can assert the client stopped asking rather than
+// reading every page the server has.
+func membersAllRequestCount(rec *gitlabRecorder) int {
+	for _, line := range rec.ledger() {
+		if strings.Contains(line, "/members/all") {
+			var n int
+			if _, err := fmt.Sscanf(line, "%dx ", &n); err == nil {
+				return n
+			}
+		}
+	}
+	return 0
 }
 
 // ledgerDiff renders the two ledgers as +/- lines. A plain reflect.DeepEqual
@@ -689,6 +769,9 @@ func TestSwitchedLanesReportTheSameVerdicts(t *testing.T) {
 	if platformRun["ISSUE-501"] != standalone["ISSUE-501"] {
 		t.Errorf("branchMustBeProtected changed verdict across the lane switch: standalone %d, platform %d",
 			standalone["ISSUE-501"], platformRun["ISSUE-501"])
+	}
+	if standalone["ISSUE-507"] != 1 || platformRun["ISSUE-507"] != 1 {
+		t.Errorf("the members lane must yield the same quota verdict in both modes: standalone %d, platform %d", standalone["ISSUE-507"], platformRun["ISSUE-507"])
 	}
 
 	for code, n := range platformRun {
@@ -947,6 +1030,7 @@ func TestDegradedNewLanesAbstainEndToEnd(t *testing.T) {
 	run.Context.Snapshot.Data.DegradedFields = []string{
 		platform.DegradedFieldProjectDetails,
 		platform.DegradedFieldSecurityPolicyProject,
+		platform.DegradedFieldMembers,
 	}
 	conf.PlatformRun = run
 
@@ -955,14 +1039,14 @@ func TestDegradedNewLanesAbstainEndToEnd(t *testing.T) {
 		t.Fatalf("analysis failed: %v", err)
 	}
 
-	for _, control := range []string{"mergeRequestSettingsMustBeCompliant", "projectMustHaveSecurityPolicySource"} {
+	for _, control := range []string{"mergeRequestSettingsMustBeCompliant", "projectMustHaveSecurityPolicySource", "numberOfProjectMembersMustRespectQuota"} {
 		if result.NotEvaluable[control] != ReasonSnapshotLaneDegraded {
 			t.Errorf("%s must report %q on a failed collection, got %v",
 				control, ReasonSnapshotLaneDegraded, result.NotEvaluable[control])
 		}
 	}
 	for _, f := range result.Findings {
-		if f.Code == "ISSUE-506" || f.Code == "ISSUE-601" {
+		if f.Code == "ISSUE-506" || f.Code == "ISSUE-601" || f.Code == "ISSUE-507" {
 			t.Errorf("a finding computed over a lane that failed collection must be dropped: %+v", f)
 		}
 	}
@@ -1487,5 +1571,151 @@ func TestStandaloneRunMarksItsOwnFailedProbes(t *testing.T) {
 	}
 	if reason != ReasonUpstreamProbeFailed {
 		t.Errorf("reason = %q, want %q", reason, ReasonUpstreamProbeFailed)
+	}
+}
+
+// TestPlatformRunWithoutMembersLaneAbstains is today's platform: a snapshot
+// that predates the members lane. The run must not fall back to asking
+// GitLab (members/all refuses a job token), and ISSUE-507 abstains with
+// lane_not_served rather than reading as a pass or a finding.
+func TestPlatformRunWithoutMembersLaneAbstains(t *testing.T) {
+	rec := &gitlabRecorder{sha: "0123456789abcdef0123456789abcdef01234567"}
+	srv := httptest.NewServer(rec)
+	defer srv.Close()
+
+	conf := inventoryConf(t, srv.URL)
+	run := platformSnapshot(t, rec.sha)
+	run.Context.Snapshot.Data.Members = nil
+	conf.PlatformRun = run
+
+	result, err := RunAnalysis(conf)
+	if err != nil {
+		t.Fatalf("analysis failed: %v", err)
+	}
+	ledger := rec.ledger()
+	for _, line := range ledger {
+		if strings.Contains(line, "/members/all") {
+			t.Errorf("a platform run must never ask GitLab for the members: %s", line)
+		}
+	}
+	if got := totalRequests(ledger); got != 3 {
+		t.Errorf("platform request total = %d, want 3:\n  %s", got, strings.Join(ledger, "\n  "))
+	}
+	if got := result.NotEvaluable[controlProjectMemberQuota]; got != ReasonLaneNotServed {
+		t.Errorf("NotEvaluable[%s] = %q, want %q", controlProjectMemberQuota, got, ReasonLaneNotServed)
+	}
+	for _, f := range result.Findings {
+		if f.Code == "ISSUE-507" {
+			t.Errorf("no ISSUE-507 without the members lane: %+v", f)
+		}
+	}
+}
+
+// TestStandaloneMembersFailureIsNotEvaluable drives the members fetch into a
+// non-permission API error (401; a 403/404 is a permission fact handled
+// separately). The control must say why it abstains, and an API answer must
+// not degrade the run.
+func TestStandaloneMembersFailureIsNotEvaluable(t *testing.T) {
+	rec := &gitlabRecorder{sha: "0123456789abcdef0123456789abcdef01234567", membersFailure: "unauthorized"}
+	srv := httptest.NewServer(rec)
+	defer srv.Close()
+
+	result, err := RunAnalysis(inventoryConf(t, srv.URL))
+	if err != nil {
+		t.Fatalf("analysis failed: %v", err)
+	}
+	if got := result.NotEvaluable[controlProjectMemberQuota]; got != ReasonCollectionFailed {
+		t.Errorf("NotEvaluable[%s] = %q, want %q", controlProjectMemberQuota, got, ReasonCollectionFailed)
+	}
+	for _, f := range result.Findings {
+		if f.Code == "ISSUE-507" {
+			t.Errorf("no ISSUE-507 over counts nobody read: %+v", f)
+		}
+	}
+	for _, r := range result.DegradedReasons {
+		if degradedReasonIsMembers(r) {
+			t.Errorf("a 401 is an API answer and must not degrade the run: %q", r)
+		}
+	}
+}
+
+// TestStandaloneMembersNetworkFailureDegrades is the same run with the
+// members connection reset: the run degrades with the members reason, the
+// control abstains, and the carve-out keeps unrelated controls from error.
+func TestStandaloneMembersNetworkFailureDegrades(t *testing.T) {
+	rec := &gitlabRecorder{sha: "0123456789abcdef0123456789abcdef01234567", membersFailure: "reset"}
+	srv := httptest.NewServer(rec)
+	defer srv.Close()
+
+	result, err := RunAnalysis(inventoryConf(t, srv.URL))
+	if err != nil {
+		t.Fatalf("analysis failed: %v", err)
+	}
+	if !result.DataCollectionDegraded {
+		t.Fatalf("a members network failure must degrade the run, reasons=%v", result.DegradedReasons)
+	}
+	if !slices.ContainsFunc(result.DegradedReasons, degradedReasonIsMembers) {
+		t.Errorf("DegradedReasons must carry the members reason, got %v", result.DegradedReasons)
+	}
+	if got := result.NotEvaluable[controlProjectMemberQuota]; got != ReasonCollectionFailed {
+		t.Errorf("NotEvaluable[%s] = %q, want %q", controlProjectMemberQuota, got, ReasonCollectionFailed)
+	}
+}
+
+// TestStandaloneMembersForbiddenIsNotEvaluable drives the members fetch into
+// a 403: CollectProjectMembers folds this into Known=false with no error, so
+// it takes a separate path through RunAnalysis than the 401 case above. The
+// control must still say why it abstains, and a permission fact must not
+// degrade the run.
+func TestStandaloneMembersForbiddenIsNotEvaluable(t *testing.T) {
+	rec := &gitlabRecorder{sha: "0123456789abcdef0123456789abcdef01234567", membersFailure: "forbidden"}
+	srv := httptest.NewServer(rec)
+	defer srv.Close()
+
+	result, err := RunAnalysis(inventoryConf(t, srv.URL))
+	if err != nil {
+		t.Fatalf("analysis failed: %v", err)
+	}
+	if got := result.NotEvaluable[controlProjectMemberQuota]; got != ReasonCollectionFailed {
+		t.Errorf("NotEvaluable[%s] = %q, want %q", controlProjectMemberQuota, got, ReasonCollectionFailed)
+	}
+	for _, f := range result.Findings {
+		if f.Code == "ISSUE-507" {
+			t.Errorf("no ISSUE-507 over counts nobody read: %+v", f)
+		}
+	}
+	if result.DataCollectionDegraded {
+		t.Errorf("a 403 is a permission fact and must not degrade the run, reasons=%v", result.DegradedReasons)
+	}
+}
+
+// TestStandaloneMembersPageCapIsNotEvaluable drives the members fetch past
+// gitlab.maxMemberPages: FetchProjectMemberCounts abandons the listing as
+// unknown rather than truncating it, with no error, the same "no error but
+// unreadable" shape as the 403 above. The control must still say why it
+// abstains, the cap must not degrade the run, and the client must stop
+// asking once it hits the cap rather than reading every page the server has.
+func TestStandaloneMembersPageCapIsNotEvaluable(t *testing.T) {
+	rec := &gitlabRecorder{sha: "0123456789abcdef0123456789abcdef01234567", membersFailure: "pagecap"}
+	srv := httptest.NewServer(rec)
+	defer srv.Close()
+
+	result, err := RunAnalysis(inventoryConf(t, srv.URL))
+	if err != nil {
+		t.Fatalf("analysis failed: %v", err)
+	}
+	if got := result.NotEvaluable[controlProjectMemberQuota]; got != ReasonCollectionFailed {
+		t.Errorf("NotEvaluable[%s] = %q, want %q", controlProjectMemberQuota, got, ReasonCollectionFailed)
+	}
+	for _, f := range result.Findings {
+		if f.Code == "ISSUE-507" {
+			t.Errorf("no ISSUE-507 over counts nobody read: %+v", f)
+		}
+	}
+	if result.DataCollectionDegraded {
+		t.Errorf("the page cap is an honest abstention, not a failure, and must not degrade the run, reasons=%v", result.DegradedReasons)
+	}
+	if n := membersAllRequestCount(rec); n > 20 {
+		t.Errorf("members/all requests = %d, want at most 20 (the page cap)", n)
 	}
 }
