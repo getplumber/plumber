@@ -1,0 +1,10 @@
+{
+  "//": "Hand edits for the README adopter block (rendered by scripts/readme-adopters.sh). `exclude` lists GitHub owner logins to never show. `owners` overrides per owner login (lowercase): `name` for the label, `logo` for an image path when the GitHub avatar is a personal photo rather than a project logo.",
+  "exclude": [],
+  "owners": {
+    "0xjacky": {
+      "name": "nginx-ui",
+      "logo": "assets/adopters/nginx-ui.png"
+    }
+  }
+}

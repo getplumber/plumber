@@ -31,6 +31,21 @@
   <a href="https://github.com/getplumber/plumber/issues">Issues</a>
 </p>
 
+<p align="center"><sub>Running in the CI of open source projects like</sub></p>
+
+<!-- adopters:start -->
+<table align="center">
+  <tr>
+    <td align="center"><a href="https://github.com/lightpanda-io/browser"><img src="https://avatars.githubusercontent.com/u/145980012?s=96" width="48" height="48" alt="Lightpanda"><br><sub><b>Lightpanda</b><br>&#9733; 35.6k</sub></a></td>
+    <td align="center"><a href="https://github.com/go-delve/delve"><img src="https://avatars.githubusercontent.com/u/19232073?s=96" width="48" height="48" alt="Delve"><br><sub><b>Delve</b><br>&#9733; 24.9k</sub></a></td>
+    <td align="center"><a href="https://github.com/go-resty/resty"><img src="https://avatars.githubusercontent.com/u/14019737?s=96" width="48" height="48" alt="Resty"><br><sub><b>Resty</b><br>&#9733; 11.8k</sub></a></td>
+    <td align="center"><a href="https://github.com/0xJacky/nginx-ui"><img src="assets/adopters/nginx-ui.png" width="48" height="48" alt="nginx-ui"><br><sub><b>nginx-ui</b><br>&#9733; 11.5k</sub></a></td>
+    <td align="center"><a href="https://github.com/bunkerity/bunkerweb"><img src="https://avatars.githubusercontent.com/u/86405535?s=96" width="48" height="48" alt="Bunkerity"><br><sub><b>Bunkerity</b><br>&#9733; 11k</sub></a></td>
+    <td align="center"><a href="https://github.com/intuitem/ciso-assistant-community"><img src="https://avatars.githubusercontent.com/u/71849524?s=96" width="48" height="48" alt="intuitem"><br><sub><b>intuitem</b><br>&#9733; 4.4k</sub></a></td>
+  </tr>
+</table>
+<!-- adopters:end -->
+
 ---
 
 ## What Is Plumber?

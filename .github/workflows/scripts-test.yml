@@ -36,3 +36,4 @@ jobs:
         run: |
           bash scripts/release-propagate-pins.test.sh
           bash scripts/release-template-digest.test.sh
+          bash scripts/readme-adopters.test.sh
