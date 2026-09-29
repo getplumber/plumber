@@ -327,6 +327,7 @@ func runRegoEngine(
 		protectionData,
 		variablesData,
 		securityPolicyData,
+		nil,
 	)
 	applyGitLabVisibility(pipeline, project)
 	// Retained so a later per-policy evaluation can re-run the rules over the
