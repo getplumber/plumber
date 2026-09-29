@@ -231,6 +231,24 @@ type SecurityPolicyProject struct {
 	FullPath *string `json:"full_path,omitempty"`
 }
 
+// MemberCounts is the members lane (spec 2026-09-29, project member quota):
+// the project's member counts per role as the platform tallied them from
+// GET /projects/:id/members/all with the org token, everyone with effective
+// access once at their highest level, access-token bots excluded. Counts
+// only, never names: the quota control needs four integers and the snapshot
+// must not become a member directory.
+//
+// Present whenever the platform's collection succeeded, zeros included (a
+// project with no Owner is a real state). Absent on a snapshot from a
+// platform that predates the lane (lane_not_served) and absent-plus-listed
+// in DegradedFields when the collection failed (snapshot_lane_degraded).
+type MemberCounts struct {
+	Owners      int `json:"owners"`
+	Maintainers int `json:"maintainers"`
+	Developers  int `json:"developers"`
+	Total       int `json:"total"`
+}
+
 // SnapshotData is the collected project settings the platform serves from
 // its own cache. Every field is optional: a collection that degraded stays
 // honestly absent rather than being fabricated as a zero value.
@@ -297,6 +315,9 @@ type SnapshotData struct {
 	// platform, or the field simply was not served).
 	SecurityPolicyProject *SecurityPolicyProject `json:"security_policy_project,omitempty"`
 
+	// Members is the per-role member count lane. See MemberCounts.
+	Members *MemberCounts `json:"members,omitempty"`
+
 	// RawConfig is the RAW, un-merged root CI config file exactly as
 	// fetched, at CiConfigPath on the default branch. Present whenever the
 	// file fetch itself succeeded, including when the merge step failed or
@@ -357,6 +378,10 @@ const (
 	// attribution could not be established, or the derive call was capped
 	// or failed.
 	DegradedFieldIncludesJobs = "includes_jobs"
+	// DegradedFieldMembers means the members listing could not be tallied
+	// (a permission failure, a listing past the platform's page cap, or a
+	// transport failure). The quota control reports not_evaluable.
+	DegradedFieldMembers = "members"
 )
 
 // SnapshotSchemaV2 is the first schema version whose DegradedFields absence

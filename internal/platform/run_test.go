@@ -417,6 +417,7 @@ func TestLaneMissingCoversEveryServedLane(t *testing.T) {
 		Variables:             json.RawMessage(`{"items":[]}`),
 		ProjectDetails:        &ProjectDetails{DefaultBranch: "main"},
 		SecurityPolicyProject: &SecurityPolicyProject{Known: true, ID: &id},
+		Members:               &MemberCounts{Owners: 1, Maintainers: 1, Developers: 1, Total: 3},
 	}
 
 	for _, tc := range []struct {
@@ -429,6 +430,7 @@ func TestLaneMissingCoversEveryServedLane(t *testing.T) {
 		{DegradedFieldVariables, func(d *SnapshotData) { d.Variables = nil }},
 		{DegradedFieldProjectDetails, func(d *SnapshotData) { d.ProjectDetails = nil }},
 		{DegradedFieldSecurityPolicyProject, func(d *SnapshotData) { d.SecurityPolicyProject = nil }},
+		{DegradedFieldMembers, func(d *SnapshotData) { d.Members = nil }},
 	} {
 		t.Run(tc.lane, func(t *testing.T) {
 			served := *full
