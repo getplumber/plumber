@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"fmt"
 	"testing"
 
 	"github.com/getplumber/plumber/control"
+	"github.com/getplumber/plumber/gitlab"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 )
 
@@ -290,5 +292,82 @@ func TestMRSettingsJSONBlock(t *testing.T) {
 	cleanName, cleanBlock := buildLegacyResult(entry, result, nil, nil)
 	if cleanName != "mrSettingsResult" || cleanBlock == nil {
 		t.Fatalf("clean run: name=%q block=%v, want mrSettingsResult with a non-nil block", cleanName, cleanBlock)
+	}
+}
+
+// TestProjectMemberQuotaJSONBlock is the ISSUE-507 twin of
+// TestMRSettingsJSONBlock: it pins the dispatch route, the legacy block name
+// external consumers parse, and the metrics/issues shape for the member
+// quota control.
+func TestProjectMemberQuotaJSONBlock(t *testing.T) {
+	result := &control.AnalysisResult{
+		MembersData: &gitlab.GitlabMembersAnalysisData{
+			Known:  true,
+			Counts: gitlab.MemberCounts{Owners: 4, Maintainers: 1, Developers: 2, Total: 9},
+		},
+	}
+	entry := control.ControlEntry{
+		DisplayName: "Number of project members must respect a quota",
+		ControlName: "numberOfProjectMembersMustRespectQuota",
+	}
+	findings := []opaengine.Finding{{
+		Code:    "ISSUE-507",
+		Message: "The project has 4 owners, above the quota maximum of 3.",
+		Data: map[string]any{
+			"role":          "owner",
+			"currentCount":  4,
+			"authorizedMax": 3,
+		},
+	}}
+
+	name, block := buildLegacyResult(entry, result, nil, findings)
+	if name != "projectMemberQuotaResult" {
+		t.Fatalf("507 block name = %q, want projectMemberQuotaResult (dispatch dropped the block)", name)
+	}
+	m, ok := block.(map[string]any)
+	if !ok {
+		t.Fatalf("507 block is %T, want map[string]any", block)
+	}
+	issues, ok := m["issues"].([]map[string]any)
+	if !ok || len(issues) != 1 {
+		t.Fatalf("507 issues = %v, want exactly 1 entry", m["issues"])
+	}
+	if issues[0]["code"] != "ISSUE-507" {
+		t.Errorf("507 issue code = %v, want ISSUE-507", issues[0]["code"])
+	}
+	if issues[0]["role"] != "owner" {
+		t.Errorf("507 issue role = %v, want owner", issues[0]["role"])
+	}
+	if fmt.Sprint(issues[0]["currentCount"]) != "4" {
+		t.Errorf("507 issue currentCount = %v, want 4", issues[0]["currentCount"])
+	}
+	if fmt.Sprint(issues[0]["authorizedMax"]) != "3" {
+		t.Errorf("507 issue authorizedMax = %v, want 3", issues[0]["authorizedMax"])
+	}
+	if _, present := issues[0]["authorizedMin"]; present {
+		t.Errorf("507 issue authorizedMin must be absent, got %v", issues[0]["authorizedMin"])
+	}
+	metrics, ok := m["metrics"].(map[string]any)
+	if !ok {
+		t.Fatalf("507 metrics is %T, want map[string]any", m["metrics"])
+	}
+	if metrics["rolesOutOfQuota"] != 1 || metrics["owners"] != 4 || metrics["total"] != 9 {
+		t.Fatalf("507 metrics = %v", metrics)
+	}
+
+	// The listing was not read (nil MembersData): the count metrics must be
+	// absent, not zeroed, so a consumer cannot mistake "not evaluated" for a
+	// clean project.
+	unreadableName, unreadableBlock := buildLegacyResult(entry, &control.AnalysisResult{}, nil, nil)
+	if unreadableName != "projectMemberQuotaResult" {
+		t.Fatalf("507 unreadable: name=%q, want projectMemberQuotaResult", unreadableName)
+	}
+	um, ok := unreadableBlock.(map[string]any)
+	if !ok {
+		t.Fatalf("507 unreadable block is %T, want map[string]any", unreadableBlock)
+	}
+	umetrics := um["metrics"].(map[string]any)
+	if _, present := umetrics["owners"]; present {
+		t.Errorf("507 unreadable metrics must omit counts, got %v", umetrics)
 	}
 }

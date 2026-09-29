@@ -6,6 +6,7 @@ import (
 
 	"github.com/getplumber/plumber/control"
 	"github.com/getplumber/plumber/gitlab"
+	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	glab "gitlab.com/gitlab-org/api/client-go"
 )
 
@@ -68,6 +69,27 @@ func TestSettingsCaveatsAgreeWithStatusFor(t *testing.T) {
 			controlName: "mergeRequestSettingsMustBeCompliant",
 			caveat:      mrSettingsUnreadableCaveat,
 		},
+		{
+			name:        "members: collection never ran",
+			result:      &control.AnalysisResult{CiValid: true},
+			wantCaveat:  true,
+			controlName: "numberOfProjectMembersMustRespectQuota",
+			caveat:      membersUnreadableCaveat,
+		},
+		{
+			name:        "members: listing unreadable (Known false)",
+			result:      &control.AnalysisResult{CiValid: true, MembersData: &gitlab.GitlabMembersAnalysisData{}},
+			wantCaveat:  true,
+			controlName: "numberOfProjectMembersMustRespectQuota",
+			caveat:      membersUnreadableCaveat,
+		},
+		{
+			name:        "members: read authoritatively",
+			result:      &control.AnalysisResult{CiValid: true, MembersData: &gitlab.GitlabMembersAnalysisData{Known: true}},
+			wantCaveat:  false,
+			controlName: "numberOfProjectMembersMustRespectQuota",
+			caveat:      membersUnreadableCaveat,
+		},
 	}
 
 	for _, tc := range cases {
@@ -93,5 +115,43 @@ func TestSettingsCaveatsAgreeWithStatusFor(t *testing.T) {
 					gotCaveat, status, wantStatus)
 			}
 		})
+	}
+}
+
+// The member quota block: an unread listing prints the single caveat line
+// (and nothing that looks like a count); a read listing prints the four
+// counts and the number of roles out of quota, which is the findings count.
+func TestMemberQuotaStatLines(t *testing.T) {
+	const name = "numberOfProjectMembersMustRespectQuota"
+	for _, result := range []*control.AnalysisResult{
+		{CiValid: true},
+		{CiValid: true, MembersData: &gitlab.GitlabMembersAnalysisData{Counts: gitlab.MemberCounts{Owners: 9}}},
+	} {
+		lines := buildGitLabControlStats(name, result, nil, nil)
+		if len(lines) != 1 || !strings.HasPrefix(lines[0].Label, statCaveatPrefix) {
+			t.Fatalf("an unread listing must print only the caveat line, got %+v", lines)
+		}
+	}
+
+	result := &control.AnalysisResult{CiValid: true, MembersData: &gitlab.GitlabMembersAnalysisData{
+		Known:  true,
+		Counts: gitlab.MemberCounts{Owners: 3, Maintainers: 1, Developers: 5, Total: 12},
+	}}
+	findings := []opaengine.Finding{{Code: "ISSUE-507"}, {Code: "ISSUE-507"}}
+	got := buildGitLabControlStats(name, result, nil, findings)
+	want := []statLine{
+		{Label: "Owners", Value: "3"},
+		{Label: "Maintainers", Value: "1"},
+		{Label: "Developers", Value: "5"},
+		{Label: "Total Members", Value: "12"},
+		{Label: "Roles Out Of Quota", Value: "2"},
+	}
+	if len(got) != len(want) {
+		t.Fatalf("got %d stat lines, want %d: %+v", len(got), len(want), got)
+	}
+	for i := range want {
+		if got[i].Label != want[i].Label || got[i].Value != want[i].Value {
+			t.Errorf("line %d = %+v, want %+v", i, got[i], want[i])
+		}
 	}
 }

@@ -369,6 +369,33 @@ gitlab:
       # printingMergeRequestLinkEnabled: true
       # removeSourceBranchAfterMerge: true   # clean up the branch after merge
     # ===========================================
+    # Number of project members must respect a quota
+    # ===========================================
+    # Flags a role whose member count is outside the bounds below. Counts
+    # everyone with effective access (direct, inherited from groups, invited
+    # groups), each person once at their highest level; access-token bots are
+    # excluded. Owner, Maintainer and Developer are counted by role; total is
+    # every member at any level. Every bound is optional and inclusive: leave
+    # one out to assert nothing about it. Reading members needs a token with
+    # read_api on the project (a CI job token cannot); without one, or when a
+    # project has more than 2000 members, the control reports not-evaluable.
+    # Ships disabled: enable it and set the bounds your policy expects.
+    numberOfProjectMembersMustRespectQuota:
+      # Set to true to enable this control
+      enabled: false
+      # The expectations ship COMMENTED OUT: an inheriting config can override
+      # a value but cannot remove a key, so uncommenting is the only way to
+      # opt in to each one. All eight bounds are optional; set only the ones
+      # your policy expects. Examples:
+      # ownerMin: 1
+      # ownerMax: 3
+      # maintainerMin: 1
+      # maintainerMax: 5
+      # developerMin: 1
+      # developerMax: 20
+      # totalMin: 2
+      # totalMax: 30
+    # ===========================================
     # Project must have a security policy source
     # ===========================================
     # Requires the project to link a GitLab security policy project (Settings >
