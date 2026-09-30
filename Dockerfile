@@ -3,7 +3,12 @@
 # advisories GO-2026-5026, GO-2026-5972, GO-2026-6089, GO-2026-6090, all High).
 # Bump this digest when go.mod's `toolchain` is raised so the bundled compiler
 # carries stdlib security fixes.
-FROM golang:1.26-alpine@sha256:70b46548e42db77e0966aaf3619fd068734dc6c77584d526b91126504fd95816 AS builder
+#
+# --platform=$BUILDPLATFORM: the compiler runs on the machine doing the
+# build and cross-compiles for the target (TARGETOS/TARGETARCH below), instead
+# of running under QEMU emulation for every non-native platform of a
+# multi-arch build.
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine@sha256:70b46548e42db77e0966aaf3619fd068734dc6c77584d526b91126504fd95816 AS builder
 
 # Set working directory
 WORKDIR /app
@@ -33,8 +38,12 @@ ARG VERSION=dev
 ARG COMMIT=none
 ARG BUILD_DATE=unknown
 
-# Build static binary
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build -ldflags="-s -w -X github.com/getplumber/plumber/cmd.Version=${VERSION} -X github.com/getplumber/plumber/cmd.Commit=${COMMIT} -X github.com/getplumber/plumber/cmd.BuildDate=${BUILD_DATE}" -o plumber .
+# Build a static binary for the TARGET platform. TARGETOS and TARGETARCH are
+# set by BuildKit for each platform of the build (linux/amd64 and linux/arm64
+# in release.yml). A hard-coded GOARCH=amd64 here put an x86-64 binary into
+# the arm64 image of every multi-arch release up to v0.5.15.
+ARG TARGETOS TARGETARCH
+RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build -ldflags="-s -w -X github.com/getplumber/plumber/cmd.Version=${VERSION} -X github.com/getplumber/plumber/cmd.Commit=${COMMIT} -X github.com/getplumber/plumber/cmd.BuildDate=${BUILD_DATE}" -o plumber .
 
 # Final stage - Alpine (small, has shell for CI compatibility)
 # Named `runtime` so CI can target it with build-push-action's `no-cache-filter:
