@@ -93,25 +93,40 @@ const (
 )
 
 var analyzeCmd = &cobra.Command{
-	Use:          "analyze",
-	Short:        "Analyze CI/CD configuration (GitLab via API, or local GitHub Actions when origin is GitHub)",
+	Use:          "analyze [TARGET]",
+	Short:        "Analyze the CI/CD configuration of a GitHub or GitLab repository",
 	SilenceUsage: true, // Don't print usage on errors (e.g., threshold failures)
+	// One optional positional: the repository to scan. Before it existed, extra
+	// arguments were silently dropped and `plumber analyze <url>` scanned the
+	// current directory's remote instead.
+	Args: cobra.MaximumNArgs(1),
 	Long: `Analyze CI/CD configuration for security issues.
 
-GitLab path (when the git remote is GitLab, or when you pass --gitlab-url and --project):
+Without TARGET, the repository is the git remote of the current directory.
+With TARGET, it is that repository, fetched through the provider API:
+  github.com/owner/repo, https://github.com/owner/repo, owner/repo (github.com),
+  gitlab.com/group/project, https://gitlab.example.com/group/sub/project,
+  git@host:path.git. A /tree/<branch> suffix selects the branch; the other page
+  suffixes a browser URL carries (/blob, /pull, /-/merge_requests) are ignored.
+  Any host other than github.com and gitlab.com is GitLab unless --provider github.
+
+GitHub (github.com remote, or a GitHub TARGET / --project):
+  Inside a clone, scans the local .github/workflows and the repository settings.
+  With a TARGET or --project, fetches the workflows through the GitHub API.
+  Token: GH_TOKEN (GH_ENTERPRISE_TOKEN for a GitHub Enterprise Server host).
+
+GitLab (gitlab.com or self-hosted remote, or a GitLab TARGET / --gitlab-url):
   Connects to GitLab, retrieves CI/CD configuration and project settings, and runs
   checks including pipeline origins, images, tags, and branch protection.
-  Required environment variable: GITLAB_TOKEN, unless --platform is set: platform
-  mode reads the configuration and project settings from the platform, so a CI job
-  can run with no GitLab token at all.
+  Token: GITLAB_TOKEN, unless --platform is set: platform mode reads the
+  configuration and project settings from the platform, so a CI job can run with
+  no GitLab token at all.
 
-GitHub path (when origin is GitHub and --gitlab-url / --project are not set):
-  Scans local .github/workflows only (Rego). No GitLab token. Some flags apply only
-  to the GitLab API path (see README).
-
-Flags (auto-detected from git remote if not specified):
+Flags (auto-detected from git remote if not specified; TARGET sets them for you):
   --gitlab-url    GitLab instance URL (auto-detected from git remote)
+  --github-url    GitHub Enterprise Server API host (empty = api.github.com)
   --project       Full path of the project (auto-detected from git remote)
+  --provider      Force github or gitlab when the host does not tell
 
 Optional flags:
   --config           Path to .plumber.yaml config file (default: .plumber.yaml)
@@ -149,17 +164,23 @@ Examples:
   # Set token via environment variable
   export GITLAB_TOKEN=glpat-xxxx
 
-  # Analyze current repo (auto-detects GitLab URL and project from git remote)
+  # Analyze the current repo (provider, host and project from the git remote)
   plumber analyze
 
-  # Analyze a specific project
+  # Analyze another repository, on GitHub or GitLab
+  plumber analyze github.com/owner/repo
+  plumber analyze https://gitlab.com/mygroup/myproject
+  plumber analyze https://gitlab.example.com/mygroup/myproject/-/tree/release
+
+  # The same with explicit flags
+  plumber analyze --provider github --project owner/repo
   plumber analyze --gitlab-url https://gitlab.com --project mygroup/myproject
 
   # Analyze with custom config and a relaxed score gate
-  plumber analyze --gitlab-url https://gitlab.com --project mygroup/myproject --config custom.yaml --min-points 80
+  plumber analyze gitlab.com/mygroup/myproject --config custom.yaml --min-points 80
 
   # Analyze and save JSON to file (no stdout)
-  plumber analyze --gitlab-url https://gitlab.com --project mygroup/myproject --print=false --output results.json
+  plumber analyze gitlab.com/mygroup/myproject --print=false --output results.json
 
   # Analyze a project that uses a custom CI configuration file path
   plumber analyze --ci-config-path my-custom-ci.yml
@@ -760,6 +781,19 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	// envStringFallback marks --config as changed when PLUMBER_ANALYZE_CONFIG
 	// is set, so this one check covers both an explicit flag and the env var.
 	configExplicitlySet = cmd.Flags().Changed("config")
+
+	// The positional target is applied after the env fallbacks so that a
+	// coordinate given both ways is checked for agreement, and before the
+	// flags are read so that everything downstream sees it as flags.
+	if len(args) == 1 {
+		target, err := parseAnalyzeTarget(args[0], providerFlag)
+		if err != nil {
+			return err
+		}
+		if err := applyAnalyzeTarget(cmd.Flags(), target); err != nil {
+			return err
+		}
+	}
 
 	flags := readAnalyzeFlags(cmd)
 
