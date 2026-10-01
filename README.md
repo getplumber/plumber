@@ -92,13 +92,13 @@ export GITLAB_TOKEN=glpat_xxxx
 plumber analyze
 
 # a GitHub repo without a local clone
-plumber analyze --provider github --github-url github.com --project owner/repo
+plumber analyze github.com/owner/repo
 
-# a GitLab project without a local clone
-plumber analyze --provider gitlab --gitlab-url https://gitlab.com --project group/project
+# a GitLab project without a local clone (self-hosted instances work too)
+plumber analyze gitlab.com/group/project
 ```
 
-Run `plumber analyze --help` for the full flag list.
+The target can also be a full URL pasted from the browser (`https://github.com/owner/repo/tree/main` selects the branch). Run `plumber analyze --help` for the full flag list.
 
 ## GitHub Action
 

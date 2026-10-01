@@ -157,8 +157,8 @@ export GITLAB_TOKEN=glpat-xxxx
 # Auto-detect from git remote
 ./plumber analyze
 
-# Specify project explicitly
-./plumber analyze --gitlab-url https://gitlab.com --project mygroup/myproject
+# Specify the project (a URL pasted from the browser works too)
+./plumber analyze gitlab.com/mygroup/myproject
 
 # With debug output
 ./plumber analyze --verbose
@@ -180,7 +180,7 @@ gh auth login          # preferred; or export GH_TOKEN=ghp_xxxx
 ./plumber analyze
 
 # A repo you have not cloned (remote mode; a token is mandatory here)
-./plumber analyze --provider github --project owner/repo
+./plumber analyze github.com/owner/repo
 ```
 
 Remote mode does not read on-disk repo artefacts, so absence-based controls
