@@ -786,6 +786,12 @@ func enrichFromMergedConf(job *ir.Job, name string, conf *GitlabCIConf) {
 	if rules := extractGitLabRules(parsed.Rules); len(rules) > 0 {
 		job.Rules = rules
 	}
+	job.Needs = gitlabNeeds(parsed.Needs)
+	job.Caches = gitlabCaches(parsed.Cache)
+	job.Artifacts = gitlabArtifacts(name, parsed.Artifacts, parsed.Needs, parsed.Dependencies)
+	if job.Environment == "" {
+		job.Environment = gitlabEnvironmentName(parsed.Environment)
+	}
 }
 
 // extractGitLabRules normalises the polymorphic `rules:` block into a
@@ -940,4 +946,179 @@ func splitServiceRef(ref string) ir.Image {
 		return ir.Image{Name: ref[:idx], Tag: ref[idx+1:]}
 	}
 	return ir.Image{Name: ref}
+}
+
+// yamlMap converts a map decoded by yaml.v2 (map[any]any) or already in
+// map[string]any form into map[string]any, recursing into nested maps and
+// slices. It is a tiny wrapper over NormalizeYAMLValue, the one shared
+// implementation for every place that hands yaml.v2 output to a JSON
+// encoder or to the Rego engine; non-map input (including nil) yields a
+// nil map.
+func yamlMap(v any) map[string]any {
+	m, _ := NormalizeYAMLValue(v).(map[string]any)
+	return m
+}
+
+// gitlabNeeds reads needs: in both forms GitLab accepts, a list of job names
+// or a list of {job: name, ...} maps. An entry carrying a project: or
+// pipeline: key is a cross-project or parent-pipeline need, not a local job,
+// and is skipped.
+func gitlabNeeds(v any) []string {
+	items, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, item := range items {
+		switch x := item.(type) {
+		case string:
+			out = append(out, x)
+		default:
+			if m := yamlMap(item); m != nil {
+				if _, ok := m["project"]; ok {
+					continue
+				}
+				if _, ok := m["pipeline"]; ok {
+					continue
+				}
+				if job, ok := m["job"].(string); ok {
+					out = append(out, job)
+				}
+			}
+		}
+	}
+	return out
+}
+
+// gitlabCaches reads cache: as one map or a list of maps. policy pull is a
+// restore, push a save, pull-push (the default) both.
+func gitlabCaches(v any) []ir.CacheRef {
+	var entries []map[string]any
+	switch x := v.(type) {
+	case map[string]any:
+		entries = append(entries, x)
+	case map[any]any:
+		entries = append(entries, yamlMap(x))
+	case []any:
+		for _, item := range x {
+			if m := yamlMap(item); m != nil {
+				entries = append(entries, m)
+			}
+		}
+	}
+	var out []ir.CacheRef
+	for _, m := range entries {
+		ref := ir.CacheRef{Paths: anyStrings(m["paths"]), Mode: "both"}
+		if keyVal := yamlMap(m["key"]); keyVal != nil {
+			ref.Key = "files:" + strings.Join(anyStrings(keyVal["files"]), ",")
+		} else if keyStr, ok := m["key"].(string); ok {
+			ref.Key = keyStr
+		}
+		switch m["policy"] {
+		case "pull":
+			ref.Mode = "restore"
+		case "push":
+			ref.Mode = "save"
+		}
+		out = append(out, ref)
+	}
+	return out
+}
+
+// gitlabArtifacts: the job's own artifacts: block is a produce entry named
+// after the producing job (GitLab consumers refer to the job that produced
+// an artifact, never to artifacts:name, which is only the archive's display
+// name and is not kept here), and is always recorded first, regardless of
+// what follows.
+//
+// Consume entries come from exactly one source. When dependencies: is
+// present at all, GitLab restricts artifact downloads to exactly the jobs
+// it lists, and needs: contributes nothing: the needs loop below is skipped
+// entirely, even when needs: also names jobs or sets artifacts: true.
+// "Present" means the raw value decodes to a non-nil []any, including the
+// empty list ([]): dependencies: [] is GitLab's documented way to download
+// no artifacts at all. An absent key is indistinguishable from nil via
+// anyStrings, so the raw value is checked directly. When dependencies: is
+// present, its string items become consume entries, deduplicated with seen.
+//
+// Only when dependencies: is absent does the needs: default apply: GitLab
+// downloads the artifacts of every job a job needs, so a bare-string
+// needs: entry (build) and a map entry ({job: build}) without an
+// artifacts key are consume entries; artifacts: true is explicit opt-in
+// (already the default) and artifacts: false opts out. A needs: entry
+// carrying a project: or pipeline: key is a cross-project or
+// parent-pipeline need, not a local job, and is skipped.
+func gitlabArtifacts(jobName string, artifacts, needs, dependencies any) []ir.ArtifactRef {
+	var out []ir.ArtifactRef
+	if m := yamlMap(artifacts); m != nil {
+		out = append(out, ir.ArtifactRef{Name: jobName, Paths: anyStrings(m["paths"]), Mode: "produce"})
+	}
+	if items, ok := dependencies.([]any); ok {
+		seen := map[string]bool{}
+		for _, dep := range anyStrings(items) {
+			if !seen[dep] {
+				seen[dep] = true
+				out = append(out, ir.ArtifactRef{Name: dep, Mode: "consume"})
+			}
+		}
+		return out
+	}
+	seen := map[string]bool{}
+	if items, ok := needs.([]any); ok {
+		for _, item := range items {
+			var job string
+			consume := true
+			switch x := item.(type) {
+			case string:
+				job = x
+			default:
+				itemMap := yamlMap(item)
+				if itemMap == nil {
+					continue
+				}
+				if _, ok := itemMap["project"]; ok {
+					continue
+				}
+				if _, ok := itemMap["pipeline"]; ok {
+					continue
+				}
+				job, _ = itemMap["job"].(string)
+				if withArtifacts, declared := itemMap["artifacts"].(bool); declared {
+					consume = withArtifacts
+				}
+			}
+			if job != "" && consume && !seen[job] {
+				seen[job] = true
+				out = append(out, ir.ArtifactRef{Name: job, Mode: "consume"})
+			}
+		}
+	}
+	return out
+}
+
+// gitlabEnvironmentName accepts environment: as a string or a map with name.
+func gitlabEnvironmentName(v any) string {
+	if s, ok := v.(string); ok {
+		return s
+	}
+	if m := yamlMap(v); m != nil {
+		if name, ok := m["name"].(string); ok {
+			return name
+		}
+	}
+	return ""
+}
+
+func anyStrings(v any) []string {
+	items, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	var out []string
+	for _, item := range items {
+		if s, ok := item.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
