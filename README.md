@@ -19,7 +19,7 @@
   <tr>
     <td align="center"><a href="https://github.com/lightpanda-io/browser"><img src="https://avatars.githubusercontent.com/u/145980012?s=96" width="48" height="48" alt="Lightpanda"></a><br><sub><b>Lightpanda</b><br>&#9733; 35.6k</sub></td>
     <td align="center"><a href="https://github.com/go-delve/delve"><img src="https://avatars.githubusercontent.com/u/19232073?s=96" width="48" height="48" alt="Delve"></a><br><sub><b>Delve</b><br>&#9733; 24.9k</sub></td>
-    <td align="center"><a href="https://github.com/go-resty/resty"><img src="https://avatars.githubusercontent.com/u/14019737?s=96" width="48" height="48" alt="Resty"></a><br><sub><b>Resty</b><br>&#9733; 11.8k</sub></td>
+    <td align="center"><a href="https://github.com/go-resty/resty"><img src="assets/adopters/resty.png" width="48" height="48" alt="Resty"></a><br><sub><b>Resty</b><br>&#9733; 11.8k</sub></td>
     <td align="center"><a href="https://github.com/0xJacky/nginx-ui"><img src="assets/adopters/nginx-ui.png" width="48" height="48" alt="nginx-ui"></a><br><sub><b>nginx-ui</b><br>&#9733; 11.5k</sub></td>
     <td align="center"><a href="https://github.com/bunkerity/bunkerweb"><img src="https://avatars.githubusercontent.com/u/86405535?s=96" width="48" height="48" alt="Bunkerity"></a><br><sub><b>Bunkerity</b><br>&#9733; 11k</sub></td>
     <td align="center"><a href="https://github.com/intuitem/ciso-assistant-community"><img src="https://avatars.githubusercontent.com/u/71849524?s=96" width="48" height="48" alt="intuitem"></a><br><sub><b>intuitem</b><br>&#9733; 4.4k</sub></td>
