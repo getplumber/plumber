@@ -238,6 +238,11 @@ type ErrorCodeInfo struct {
 	DocURL string `json:"docUrl"`
 	// ControlName is the .plumber.yaml control key this code belongs to.
 	ControlName string `json:"controlName"`
+	// Role decides how a finding of this code enters the score (spec: contextual
+	// score). EntryKind is set for RoleEntry only and names the situation fact
+	// the finding anchors to.
+	Role      CodeRole  `json:"role"`
+	EntryKind EntryKind `json:"entryKind,omitempty"`
 
 	// TitleByProvider lets cross-provider controls render different titles
 	// in SARIF / JSON / GLSAST depending on which provider produced the
@@ -279,6 +284,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Use images from an authorized registry configured in .plumber.yaml under containerImageMustComeFromAuthorizedSources.trustedUrls, or add the registry to the authorized list.",
 		DocURL:      docsBaseURL + string(CodeImageUnauthorizedSource),
 		ControlName: "containerImageMustComeFromAuthorizedSources",
+		Role:        RoleEntry,
+		EntryKind:   EntryMutableDependency,
 	},
 	CodeImageForbiddenTag: {
 		Code:        CodeImageForbiddenTag,
@@ -288,6 +295,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Pin the image to a specific immutable version tag (e.g., 'python:3.12.1' instead of 'python:latest'). Configure forbidden tags in .plumber.yaml under containerImageMustNotUseForbiddenTags.tags.",
 		DocURL:      docsBaseURL + string(CodeImageForbiddenTag),
 		ControlName: "containerImageMustNotUseForbiddenTags",
+		Role:        RoleEntry,
+		EntryKind:   EntryMutableDependency,
 	},
 	CodeImageNotPinnedByDigest: {
 		Code:        CodeImageNotPinnedByDigest,
@@ -297,6 +306,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Pin the image using its digest: 'image: registry.example.com/myimage@sha256:abc123...'. You can find the digest with 'docker inspect --format={{.RepoDigests}} <image>'.",
 		DocURL:      docsBaseURL + string(CodeImageNotPinnedByDigest),
 		ControlName: "containerImageMustNotUseForbiddenTags",
+		Role:        RoleEntry,
+		EntryKind:   EntryMutableDependency,
 	},
 	CodeActionUnpinned: {
 		Code:        CodeActionUnpinned,
@@ -306,6 +317,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Replace `uses: owner/action@v4` with `uses: owner/action@<40-char-sha>` and add a `# vX.Y.Z` comment to document the version. Tools like Dependabot's `version-update-strategy: sha-and-version` can automate the update flow. Official GitHub-owned actions (actions/*, github/*) can be excluded if they are in the workflow's trusted boundary.",
 		DocURL:      docsBaseURL + string(CodeActionUnpinned),
 		ControlName: "actionsMustBePinnedByCommitSha",
+		Role:        RoleEntry,
+		EntryKind:   EntryMutableDependency,
 	},
 	CodeCachePoisoning: {
 		Code:        CodeCachePoisoning,
@@ -315,6 +328,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Either disable the cache entirely on release/publish jobs, or scope the `key:` to the ref being released (e.g. `key: release-${{ github.ref_name }}-${{ hashFiles('**/go.sum') }}`) without a `restore-keys:` fallback that reaches into PR-populated entries. Verify artefacts against a checksum after restoring.",
 		DocURL:      docsBaseURL + string(CodeCachePoisoning),
 		ControlName: "releaseWorkflowsMustNotRestoreUntrustedCache",
+		// Role: gate: restoring an untrusted cache removes the cache isolation scoped to the released ref.
+		Role: RoleGate,
 	},
 	CodeCachePoisoningUnresolved: {
 		Code:        CodeCachePoisoningUnresolved,
@@ -324,6 +339,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Make the condition statically checkable: use the `${{ github.event_name != '<publish trigger>' && '<manager>' || '' }}` form (or its == inverse) so the cache is provably off on the publish trigger, split caching into a step whose `if:` excludes the publish trigger, or scope the cache key (and any restore-keys) to the release ref.",
 		DocURL:      docsBaseURL + string(CodeCachePoisoningUnresolved),
 		ControlName: "releaseWorkflowsMustNotRestoreUntrustedCache",
+		// Role: gate, as ISSUE-705: a possible untrusted cache restore removes the cache isolation scoped to the released ref.
+		Role: RoleGate,
 	},
 	CodeActionArchivedRepo: {
 		Code:        CodeActionArchivedRepo,
@@ -333,6 +350,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Replace the action with a maintained fork (audit the fork's owner first) or with an equivalent step implemented inline. If the behaviour is trivial, inlining the shell logic avoids the supply-chain dependency entirely.",
 		DocURL:      docsBaseURL + string(CodeActionArchivedRepo),
 		ControlName: "actionsMustNotBeArchived",
+		// Role: hygiene, not entry: an archived repository is frozen, not mutable; hygiene is the smaller loss.
+		Role: RoleHygiene,
 	},
 	CodeActionUnauthorizedSource: {
 		Code:        CodeActionUnauthorizedSource,
@@ -342,6 +361,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Use an action from an authorized source. Configure the allowlist in .plumber.yaml under githubActionMustComeFromAuthorizedSources: keep trustGithubOfficialActions on for actions/* and github/*, add trusted owners or actions to trustedGithubActions (exact `owner/repo` or `owner/*`), and optionally set minimumStars to require a popularity threshold. Vendoring the action into a local `./.github/actions/…` directory removes the external dependency entirely.",
 		DocURL:      docsBaseURL + string(CodeActionUnauthorizedSource),
 		ControlName: "githubActionMustComeFromAuthorizedSources",
+		Role:        RoleEntry,
+		EntryKind:   EntryMutableDependency,
 	},
 	CodeActionMutableRemoteExec: {
 		Code:        CodeActionMutableRemoteExec,
@@ -351,6 +372,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Prefer an action that pins its downloads to an immutable ref AND verifies a checksum. Otherwise install the tool yourself from a pinned release, verify it against a checksum committed to your repo, and run it directly; or vendor the action and pin its internal fetch. A fetch that already verifies a pinned checksum is content-pinned and is not flagged here.",
 		DocURL:      docsBaseURL + string(CodeActionMutableRemoteExec),
 		ControlName: "actionsMustNotExecuteMutableRemoteCode",
+		Role:        RoleEntry,
+		EntryKind:   EntryMutableDependency,
 	},
 	CodeActionObfuscatedRemoteExec: {
 		Code:        CodeActionObfuscatedRemoteExec,
@@ -360,6 +383,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Remove the obfuscation. If the action is a dependency, drop or vendor it and replace the hidden fetch with an explicit, pinned, checksum-verified install. An action that must decode data at runtime should not feed that decoded value into a shell or eval.",
 		DocURL:      docsBaseURL + string(CodeActionObfuscatedRemoteExec),
 		ControlName: "actionsMustNotExecuteMutableRemoteCode",
+		Role:        RoleEntry,
+		EntryKind:   EntryMutableDependency,
 	},
 	CodeActionRemoteExecUnverified: {
 		Code:        CodeActionRemoteExecUnverified,
@@ -369,6 +394,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Re-run where the action source is reachable (authenticated token, network access) to get a definitive result, or vendor the action so its source is local and auditable. This finding is informational: it flags an unchecked dependency, not a confirmed problem.",
 		DocURL:      docsBaseURL + string(CodeActionRemoteExecUnverified),
 		ControlName: "actionsMustNotExecuteMutableRemoteCode",
+		Role:        RoleEntry,
+		EntryKind:   EntryMutableDependency,
 	},
 	CodeImpostorCommit: {
 		Code:        CodeImpostorCommit,
@@ -378,6 +405,9 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Replace the reference with a SHA that actually belongs to the action's repository. Use `gh api repos/<owner>/<repo>/commits/<sha>` to verify before committing the change. That endpoint only accepts commit SHAs, so a pin naming an annotated tag object answers 422 there; check it with `gh api repos/<owner>/<repo>/git/tags/<sha>` instead, which also reports the tag name and the commit it points at.",
 		DocURL:      docsBaseURL + string(CodeImpostorCommit),
 		ControlName: "actionRefsMustExistUpstream",
+		// Role: entry, not hygiene: the pinned SHA does not resolve in the action's upstream repository, so the pin vets no upstream code.
+		Role:      RoleEntry,
+		EntryKind: EntryMutableDependency,
 	},
 	CodeRefVersionMismatch: {
 		Code:        CodeRefVersionMismatch,
@@ -387,6 +417,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Either update the SHA to the one the tag points at, or update the comment to the tag that actually corresponds to the SHA. `gh api repos/<owner>/<repo>/git/ref/tags/<tag>` returns the SHA the tag resolves to.",
 		DocURL:      docsBaseURL + string(CodeRefVersionMismatch),
 		ControlName: "actionPinCommentsMustMatchSha",
+		// Role: hygiene, not entry: the SHA is immutable, the mismatch misleads review, and no situation fact anchors it.
+		Role: RoleHygiene,
 	},
 	CodeStaleActionRef: {
 		Code:        CodeStaleActionRef,
@@ -396,6 +428,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Update the pin to the SHA of the latest release, and refresh the trailing `# vX.Y.Z` comment. Enable Dependabot with `package-ecosystem: github-actions` and `version-update-strategy: sha-and-version` to keep the pins fresh automatically.",
 		DocURL:      docsBaseURL + string(CodeStaleActionRef),
 		ControlName: "actionPinsMustNotBeStale",
+		Role:        RoleHygiene,
 	},
 	CodeKnownVulnerableAction: {
 		Code:        CodeKnownVulnerableAction,
@@ -405,6 +438,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Upgrade the action to a version outside the advisory's affected range (the advisory page lists a fixed-in version). Pin by SHA once upgraded so future retags cannot silently revert the fix. Configure Dependabot with `package-ecosystem: github-actions` to receive PR alerts when new advisories land.",
 		DocURL:      docsBaseURL + string(CodeKnownVulnerableAction),
 		ControlName: "actionsMustNotCarryKnownCVEs",
+		Role:        RoleEntry,
+		EntryKind:   EntryMutableDependency,
 	},
 	CodeDockerfileUnpinnedBase: {
 		Code:        CodeDockerfileUnpinnedBase,
@@ -414,6 +449,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Replace `FROM image:tag` with `FROM image:tag@sha256:…`. `docker inspect --format='{{index .RepoDigests 0}}' image:tag` prints the digest for the tag you just pulled. Automate refresh with Dependabot or Renovate (`package-ecosystem: docker`, `version-update-strategy: sha-and-version`) so the pin stays current.",
 		DocURL:      docsBaseURL + string(CodeDockerfileUnpinnedBase),
 		ControlName: "dockerfilesMustPinBaseImageByDigest",
+		// Role: hygiene, not entry: the base image feeds the built artefact, not a pipeline job; hygiene is the smaller loss.
+		Role: RoleHygiene,
 	},
 	CodeReleaseWorkflowUnsigned: {
 		Code:        CodeReleaseWorkflowUnsigned,
@@ -423,6 +460,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Add a signing step to the release job: `sigstore/cosign-installer` followed by `cosign sign <artefact>` for container images, `sigstore/gh-action-sigstore-python` for Python wheels, `crazy-max/ghaction-import-gpg` + `gpg --detach-sign` for tarballs, or `--snapshot-github-actions` on goreleaser with the signing pipeline configured. Publish the `.sig` / `.asc` alongside the artefact in the release assets.",
 		DocURL:      docsBaseURL + string(CodeReleaseWorkflowUnsigned),
 		ControlName: "releaseWorkflowsMustSignArtefacts",
+		Role:        RoleHygiene,
 	},
 	CodeSuperfluousAction: {
 		Code:        CodeSuperfluousAction,
@@ -432,6 +470,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Replace the action with the equivalent inline shell step using the runner's built-in tooling (`gh pr create`, `gh release`, simple `bash` retry loops). Keeps the workflow readable AND removes a supply-chain link. When the capability is non-trivial (artifact caching, matrix fan-out), prefer the official `actions/*` action over a third-party duplicate.",
 		DocURL:      docsBaseURL + string(CodeSuperfluousAction),
 		ControlName: "actionsMustNotDuplicateRunnerBuiltins",
+		Role:        RoleHygiene,
 	},
 	CodeContainerHardcodedCredentials: {
 		Code:        CodeContainerHardcodedCredentials,
@@ -441,6 +480,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Store the password in a repository, environment, or organization secret and reference it via `${{ secrets.<NAME> }}`. If the password is already exposed in git history, rotate it immediately and purge the literal with `git filter-repo` or a BFG run before re-publishing.",
 		DocURL:      docsBaseURL + string(CodeContainerHardcodedCredentials),
 		ControlName: "containerCredentialsMustComeFromSecrets",
+		Role:        RolePrivilege,
 	},
 
 	// CI/CD variable controls (2xx)
@@ -452,6 +492,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Mark the variable protected in Settings > CI/CD > Variables so it is only exposed to pipelines on protected branches and tags.",
 		DocURL:      docsBaseURL + string(CodeCicdVariableUnprotected),
 		ControlName: "cicdVariablesMustBeProtected",
+		Role:        RolePrivilege,
 	},
 	CodeCicdVariableUnmasked: {
 		Code:        CodeCicdVariableUnmasked,
@@ -461,6 +502,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Enable masking in Settings > CI/CD > Variables. GitLab requires a value of at least 8 characters; restructure the secret if it cannot be masked by length.",
 		DocURL:      docsBaseURL + string(CodeCicdVariableUnmasked),
 		ControlName: "cicdVariablesMustBeMasked",
+		Role:        RolePrivilege,
 	},
 	CodeDebugTraceEnabled: {
 		Code:        CodeDebugTraceEnabled,
@@ -470,6 +512,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Remove or set CI_DEBUG_TRACE and CI_DEBUG_SERVICES to 'false' in your .gitlab-ci.yml variables section. These should only be used temporarily for debugging and never committed.",
 		DocURL:      docsBaseURL + string(CodeDebugTraceEnabled),
 		ControlName: "pipelineMustNotEnableDebugTrace",
+		Role:        RolePrivilege,
 	},
 	CodeUnsafeVariableExpansion: {
 		Code:        CodeUnsafeVariableExpansion,
@@ -479,6 +522,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Avoid passing variables to commands that re-interpret input as shell code. Use the variable in a safe context (e.g. echo, env) or sanitize/allowlist values. Configure dangerousVariables and allowedPatterns in .plumber.yaml under pipelineMustNotUseUnsafeVariableExpansion.",
 		DocURL:      docsBaseURL + string(CodeUnsafeVariableExpansion),
 		ControlName: "pipelineMustNotUseUnsafeVariableExpansion",
+		Role:        RoleEntry,
+		EntryKind:   EntryUntrustedExpression,
 	},
 	CodeJobVariableOverridden: {
 		Code:        CodeJobVariableOverridden,
@@ -488,6 +533,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Remove the variable from .gitlab-ci.yml and set it in GitLab CI/CD Settings > Variables instead. Configure the list of controlled variables in .plumber.yaml under pipelineMustNotOverrideJobVariables.variables.",
 		DocURL:      docsBaseURL + string(CodeJobVariableOverridden),
 		ControlName: "pipelineMustNotOverrideJobVariables",
+		Role:        RoleGate,
 	},
 
 	// Pipeline composition controls (4xx)
@@ -499,6 +545,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Replace the hardcoded job with a CI/CD component or an include from an approved catalog. Use 'include:' or 'component:' directives in your .gitlab-ci.yml.",
 		DocURL:      docsBaseURL + string(CodeJobHardcoded),
 		ControlName: "pipelineMustNotIncludeHardcodedJobs",
+		Role:        RoleHygiene,
 	},
 	CodeRefConfusion: {
 		Code:        CodeRefConfusion,
@@ -508,6 +555,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Pin the reference to a 40-character commit SHA (preferred), which is unambiguous. Alternatively, ask the upstream maintainer to remove one of the two colliding refs; keeping both is a supply-chain landmine for every caller.",
 		DocURL:      docsBaseURL + string(CodeRefConfusion),
 		ControlName: "externalRefsMustNotCollide",
+		Role:        RoleEntry,
+		EntryKind:   EntryMutableDependency,
 	},
 	CodeIncludeOutdated: {
 		Code:        CodeIncludeOutdated,
@@ -517,6 +566,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Update the include to use the latest version. Check the component/template repository for the latest release and update the version reference in your .gitlab-ci.yml.",
 		DocURL:      docsBaseURL + string(CodeIncludeOutdated),
 		ControlName: "includesMustBeUpToDate",
+		Role:        RoleHygiene,
 	},
 	CodeIncludeForbiddenVersion: {
 		Code:        CodeIncludeForbiddenVersion,
@@ -526,6 +576,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Replace the forbidden version with an authorized version format. Use semantic version tags (e.g., '1.2.3' or '~latest') instead of branch names or mutable references as configured in .plumber.yaml.",
 		DocURL:      docsBaseURL + string(CodeIncludeForbiddenVersion),
 		ControlName: "includesMustNotUseForbiddenVersions",
+		Role:        RoleEntry,
+		EntryKind:   EntryMutableDependency,
 	},
 	CodeTemplateMissing: {
 		Code:        CodeTemplateMissing,
@@ -535,6 +587,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Add the required template to your .gitlab-ci.yml using 'include:' with the template path specified in your .plumber.yaml under pipelineMustIncludeTemplate.",
 		DocURL:      docsBaseURL + string(CodeTemplateMissing),
 		ControlName: "pipelineMustIncludeTemplate",
+		Role:        RoleGate,
 	},
 	CodeTemplateOverridden: {
 		Code:        CodeTemplateOverridden,
@@ -544,6 +597,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Remove the local overrides on the template's jobs. If customization is needed, check if the template provides variables for configuration instead of overriding job keys directly.",
 		DocURL:      docsBaseURL + string(CodeTemplateOverridden),
 		ControlName: "pipelineMustIncludeTemplate",
+		// Role: hygiene, not gate: an override may alter a required template without removing it; hygiene is the smaller loss.
+		Role: RoleHygiene,
 	},
 	CodeComponentMissing: {
 		Code:        CodeComponentMissing,
@@ -553,6 +608,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Add the required component to your .gitlab-ci.yml using 'include:' with the component path specified in your .plumber.yaml under pipelineMustIncludeComponent.",
 		DocURL:      docsBaseURL + string(CodeComponentMissing),
 		ControlName: "pipelineMustIncludeComponent",
+		Role:        RoleGate,
 	},
 	CodeComponentOverridden: {
 		Code:        CodeComponentOverridden,
@@ -562,6 +618,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Remove the local overrides on the component's jobs. If customization is needed, check if the component provides input variables for configuration instead of overriding job keys directly.",
 		DocURL:      docsBaseURL + string(CodeComponentOverridden),
 		ControlName: "pipelineMustIncludeComponent",
+		// Role: hygiene, not gate: an override may alter a required component without removing it; hygiene is the smaller loss.
+		Role: RoleHygiene,
 	},
 	CodeSecurityJobWeakened: {
 		Code:        CodeSecurityJobWeakened,
@@ -571,6 +629,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Ensure security jobs run automatically and block the pipeline on failure. Remove allow_failure: true, do not override rules with when: never or when: manual, and do not set when: manual on security jobs.",
 		DocURL:      docsBaseURL + string(CodeSecurityJobWeakened),
 		ControlName: "securityJobsMustNotBeWeakened",
+		Role:        RoleGate,
 	},
 	CodeUnverifiedScriptExecution: {
 		Code:        CodeUnverifiedScriptExecution,
@@ -580,6 +639,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Download scripts to a file, verify checksum or signature on the same line, then execute. Avoid piping remote or encoded content directly into a shell. Vendor scripts in-repo or use trusted package managers.",
 		DocURL:      docsBaseURL + string(CodeUnverifiedScriptExecution),
 		ControlName: "pipelineMustNotExecuteUnverifiedScripts",
+		Role:        RoleEntry,
+		EntryKind:   EntryMutableDependency,
 	},
 
 	CodeDockerInDockerUsage: {
@@ -590,6 +651,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Replace Docker-in-Docker with a safer alternative such as Kaniko or Buildah for building container images. These tools do not require privileged mode and avoid the security risks of running a Docker daemon inside a CI container.",
 		DocURL:      docsBaseURL + string(CodeDockerInDockerUsage),
 		ControlName: "pipelineMustNotUseDockerInDocker",
+		// Role: privilege, not gate: a privileged dind service widens what a reached job can touch; it removes no review protection.
+		Role: RolePrivilege,
 	},
 	CodeDockerInDockerInsecure: {
 		Code:        CodeDockerInDockerInsecure,
@@ -599,6 +662,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "If Docker-in-Docker is required, ensure TLS is enabled: do not set DOCKER_TLS_CERTDIR to an empty string, and use tcp://docker:2376 (TLS) instead of tcp://docker:2375 (plaintext). Prefer Kaniko or Buildah to avoid this pattern entirely.",
 		DocURL:      docsBaseURL + string(CodeDockerInDockerInsecure),
 		ControlName: "pipelineMustNotUseDockerInDocker",
+		// Role: privilege, as ISSUE-412: an insecure dind daemon widens what a reached job exposes; it protects no entry.
+		Role: RolePrivilege,
 	},
 
 	// Access and authorization controls (5xx)
@@ -610,6 +675,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Enable branch protection in GitLab: Settings > Repository > Protected Branches. Add the branch with appropriate access levels for push and merge.",
 		DocURL:      docsBaseURL + string(CodeBranchUnprotected),
 		ControlName: "branchMustBeProtected",
+		Role:        RoleGate,
 	},
 	CodeMRApprovalRulesBelowMinimum: {
 		Code:        CodeMRApprovalRulesBelowMinimum,
@@ -619,6 +685,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Raise the rule's required approvals in Settings > Merge requests > Approval rules to at least your configured minimum, or narrow the rule's scope if it is not meant to cover all protected branches.",
 		DocURL:      docsBaseURL + string(CodeMRApprovalRulesBelowMinimum),
 		ControlName: "mergeRequestApprovalRulesMustRequireMinimumApprovals",
+		Role:        RoleGate,
 	},
 	CodeMRApprovalSettingsNonCompliant: {
 		Code:        CodeMRApprovalSettingsNonCompliant,
@@ -628,6 +695,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Tighten the project's approval settings in Settings > Merge requests: prevent approval by the author and by committers, prevent editing approval rules in merge requests, require re-authentication to approve, and remove approvals when new commits are added, as your policy requires.",
 		DocURL:      docsBaseURL + string(CodeMRApprovalSettingsNonCompliant),
 		ControlName: "mergeRequestApprovalSettingsMustBeCompliant",
+		Role:        RoleGate,
 	},
 	CodeMRApprovalRulesAllBranchesMissing: {
 		Code:        CodeMRApprovalRulesAllBranchesMissing,
@@ -637,6 +705,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Add a merge request approval rule that applies to all protected branches in Settings > Merge requests > Approval rules.",
 		DocURL:      docsBaseURL + string(CodeMRApprovalRulesAllBranchesMissing),
 		ControlName: "mergeRequestApprovalRulesMustCoverAllProtectedBranches",
+		Role:        RoleGate,
 	},
 	CodeBranchNonCompliant: {
 		Code:        CodeBranchNonCompliant,
@@ -646,6 +715,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Update branch protection settings in GitLab: Settings > Repository > Protected Branches. Ensure force push is disabled, access levels meet the minimum, and code owner approval is required per your .plumber.yaml configuration.",
 		DocURL:      docsBaseURL + string(CodeBranchNonCompliant),
 		ControlName: "branchMustBeProtected",
+		Role:        RoleGate,
 	},
 	CodeMRSettingsNonCompliant: {
 		Code:        CodeMRSettingsNonCompliant,
@@ -655,6 +725,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Align the project's merge-request settings in Settings > Merge requests with your policy: set the required merge method and squash option, and toggle the merge-train, skipped-pipeline, discussion-resolution, and source-branch-removal options to the expected values.",
 		DocURL:      docsBaseURL + string(CodeMRSettingsNonCompliant),
 		ControlName: "mergeRequestSettingsMustBeCompliant",
+		// Role: hygiene, not gate: merge method and squash settings shape history, they remove no review protection.
+		Role: RoleHygiene,
 	},
 	CodeSecurityPolicyProjectNotSet: {
 		Code:        CodeSecurityPolicyProjectNotSet,
@@ -664,6 +736,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Link the expected security policy project in Settings > Security & Compliance > Policies (or set it via the API). If your policies are enforced at a parent group and inherited, this project-scoped check will not see them, so link at the project level too or disable this control. Security policies require GitLab Ultimate.",
 		DocURL:      docsBaseURL + string(CodeSecurityPolicyProjectNotSet),
 		ControlName: "projectMustHaveSecurityPolicySource",
+		Role:        RoleGate,
 	},
 	CodeTemplateInjection: {
 		Code:        CodeTemplateInjection,
@@ -673,6 +746,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Move the template expression into an `env:` binding first, then reference the environment variable from the shell (`\"$TITLE\"`). Shell expansion of a bound variable quotes the value and neutralises injection payloads.",
 		DocURL:      docsBaseURL + string(CodeTemplateInjection),
 		ControlName: "workflowMustNotInjectUserInputInScripts",
+		Role:        RoleEntry,
+		EntryKind:   EntryUntrustedExpression,
 	},
 	CodeInsecureCommands: {
 		Code:        CodeInsecureCommands,
@@ -682,6 +757,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Remove the `ACTIONS_ALLOW_UNSECURE_COMMANDS` environment variable. Use the `$GITHUB_ENV` and `$GITHUB_PATH` files explicitly when you need to propagate values, and validate any untrusted content before writing to them.",
 		DocURL:      docsBaseURL + string(CodeInsecureCommands),
 		ControlName: "workflowMustNotReEnableInsecureCommands",
+		// Role: gate, not entry: it re-opens a path for untrusted log output but proves no untrusted value reaches it; gate is the smaller loss.
+		Role: RoleGate,
 	},
 	CodeBotConditions: {
 		Code:        CodeBotConditions,
@@ -691,6 +768,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Never grant elevated behaviour based on `github.actor` / `github.triggering_actor` alone. For Dependabot-specific flows use the `pull_request` event with a separate privileged workflow triggered by `pull_request_target` only after a manual review, or rely on branch protections. For bots, verify the commit signature/author via git rather than the GitHub actor string.",
 		DocURL:      docsBaseURL + string(CodeBotConditions),
 		ControlName: "workflowMustNotTrustSpoofableActorChecks",
+		Role:        RoleGate,
 	},
 	CodeUnsoundCondition: {
 		Code:        CodeUnsoundCondition,
@@ -700,6 +778,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Review the condition: remove dead branches (`always()` short-circuits OR), wrap every template expression in `${{ … }}`, and prefer simple comparisons over nested constructs. For debugging, `if: ${{ github.event_name == 'push' }}` is safer than `if: github.event_name == 'push'` which often parses as the literal string.",
 		DocURL:      docsBaseURL + string(CodeUnsoundCondition),
 		ControlName: "workflowConditionsMustBeSound",
+		// Role: hygiene, not gate: a broken if: may or may not guard anything; hygiene is the smaller loss.
+		Role: RoleHygiene,
 	},
 	CodeUnsoundContains: {
 		Code:        CodeUnsoundContains,
@@ -709,6 +789,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Use `contains(github.ref, 'refs/heads/main')`: the ref is the haystack, the branch name is the needle. For filter lists, convert to a set: `contains(fromJSON('[\"main\", \"release\"]'), github.ref_name)` makes the intent explicit.",
 		DocURL:      docsBaseURL + string(CodeUnsoundContains),
 		ControlName: "workflowContainsCallsMustBeSound",
+		// Role: hygiene, not gate: a misused contains() may or may not guard anything; hygiene is the smaller loss.
+		Role: RoleHygiene,
 	},
 	CodeUnsafeGithubContextDump: {
 		Code:        CodeUnsafeGithubContextDump,
@@ -718,6 +800,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Never pass the `github` context whole. Extract the exact fields you need into named `env:` bindings first (`env: { PR_TITLE: ${{ github.event.pull_request.title }} }`), then reference the environment variable from the shell: expansion quotes the value automatically. If the downstream tool genuinely requires JSON, build it explicitly from the named fields with `jq -n --arg title \"$PR_TITLE\" '{title: $title}'`.",
 		DocURL:      docsBaseURL + string(CodeUnsafeGithubContextDump),
 		ControlName: "workflowMustNotExportEntireGitHubContext",
+		Role:        RoleEntry,
+		EntryKind:   EntryUntrustedExpression,
 	},
 	CodeUnpinnedPackageInstall: {
 		Code:        CodeUnpinnedPackageInstall,
@@ -727,6 +811,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Replace `pip install pkg` with `pip install -r requirements.txt` (with hashes generated via `pip-compile --generate-hashes`) or pin every package explicitly: `pip install 'pkg==1.2.3'`. Replace `npm install pkg` with `npm ci` once the lockfile is committed. Enable Dependabot or Renovate on the locked manifest so upgrades still flow, reviewed, rather than silently.",
 		DocURL:      docsBaseURL + string(CodeUnpinnedPackageInstall),
 		ControlName: "workflowMustPinPackageInstalls",
+		// Role: hygiene, not entry: a package registry is no action or image ref and the facts layer anchors no path on it; hygiene is the smaller loss.
+		Role: RoleHygiene,
 	},
 	CodeTemplateInjectionVars: {
 		Code:        CodeTemplateInjectionVars,
@@ -736,6 +822,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Replace `${{ vars.X }}` / `${{ inputs.X }}` in the `run:` body with an `env:` binding plus `$X` dereference. Example: `env: { REGISTRY: ${{ vars.REGISTRY }} }` at the step, then `docker login \"$REGISTRY\"` in the script.",
 		DocURL:      docsBaseURL + string(CodeTemplateInjectionVars),
 		ControlName: "workflowMustNotInjectVarsInScripts",
+		// Role: hygiene, not entry: vars.* and inputs.* are maintainer-set, not untrusted input; hygiene is the smaller loss.
+		Role: RoleHygiene,
 	},
 	CodeGitHubEnvInjection: {
 		Code:        CodeGitHubEnvInjection,
@@ -745,6 +833,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Do not write user-controlled values into `$GITHUB_ENV` or `$GITHUB_PATH`. If you must propagate a value derived from user input, bind it through an `env:` block first (`env: { TITLE: ${{ github.event.issue.title }} }`) and validate/escape it before writing, or pass it as a step output instead. Restrict workflows touching these files to non-PR triggers when possible.",
 		DocURL:      docsBaseURL + string(CodeGitHubEnvInjection),
 		ControlName: "workflowMustNotWriteUntrustedContentToGitHubEnv",
+		Role:        RoleEntry,
+		EntryKind:   EntryUntrustedExpression,
 	},
 	CodeArtipacked: {
 		Code:        CodeArtipacked,
@@ -754,6 +844,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Add `with: { persist-credentials: false }` on every `uses: actions/checkout@*` step unless the job legitimately needs to push back. When push is required, scope the token with an explicit `permissions:` block.",
 		DocURL:      docsBaseURL + string(CodeArtipacked),
 		ControlName: "checkoutMustNotPersistCredentials",
+		Role:        RolePrivilege,
 	},
 	CodeArtipackedExfiltrated: {
 		Code:        CodeArtipackedExfiltrated,
@@ -763,6 +854,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Add `with: { persist-credentials: false }` on the `actions/checkout@*` step, or upload a scoped path that excludes `.git` (e.g. `path: dist/` instead of `path: .`). When push is required, scope the token with an explicit `permissions:` block.",
 		DocURL:      docsBaseURL + string(CodeArtipackedExfiltrated),
 		ControlName: "checkoutMustNotPersistCredentials",
+		Role:        RolePrivilege,
 	},
 	CodeUnredactedSecrets: {
 		Code:        CodeUnredactedSecrets,
@@ -772,6 +864,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Pass structured secrets through `env:` bindings that reference each leaf individually (`env: { API_KEY: ${{ secrets.MY_API_KEY }} }`) so log redaction keeps working. If a JSON blob must be split, do it inside a step that never echoes the result and writes only the necessary parts back to the environment.",
 		DocURL:      docsBaseURL + string(CodeUnredactedSecrets),
 		ControlName: "workflowMustNotUnredactSecretsViaFromJSON",
+		Role:        RolePrivilege,
 	},
 	CodeUndocumentedPermissions: {
 		Code:        CodeUndocumentedPermissions,
@@ -781,6 +874,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Declare the narrowest permissions explicitly: `permissions: { contents: read }` at the workflow level and widen per-job only when a step needs to push, comment on issues, etc. This enforces the principle of least privilege regardless of the repo default setting.",
 		DocURL:      docsBaseURL + string(CodeUndocumentedPermissions),
 		ControlName: "workflowsMustDeclarePermissions",
+		// Role: privilege, not hygiene: the fallback default token permissions widen what a reached job holds.
+		Role: RolePrivilege,
 	},
 	CodeSecretsDynamicIndex: {
 		Code:        CodeSecretsDynamicIndex,
@@ -790,6 +885,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Replace `${{ secrets[env.X] }}` with a direct reference `${{ secrets.EXPECTED_NAME }}`. When a matrix really needs to select among N secrets, split the job into N copies with static names rather than indexing; the verbosity is worth the reviewability.",
 		DocURL:      docsBaseURL + string(CodeSecretsDynamicIndex),
 		ControlName: "workflowMustNotIndexSecretsDynamically",
+		Role:        RolePrivilege,
 	},
 	CodeGitHubAppSkipRevoke: {
 		Code:        CodeGitHubAppSkipRevoke,
@@ -799,6 +895,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Remove the `skip-token-revoke: true` input (the default is to revoke). Only keep revocation disabled for workflows that legitimately need to hand the token to a downstream step launched after this workflow, and even then, prefer re-minting it fresh in the downstream workflow.",
 		DocURL:      docsBaseURL + string(CodeGitHubAppSkipRevoke),
 		ControlName: "githubAppTokensMustBeRevokedOnExit",
+		Role:        RolePrivilege,
 	},
 	CodeSecretsOutsideEnv: {
 		Code:        CodeSecretsOutsideEnv,
@@ -808,6 +905,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Put production secrets behind environments. Attach the environment to the deploy job (`environment: production`) and configure required reviewers / wait timers on the environment in the repository settings.",
 		DocURL:      docsBaseURL + string(CodeSecretsOutsideEnv),
 		ControlName: "deployJobsMustUseEnvironmentGate",
+		Role:        RoleGate,
 	},
 	CodeOverprovisionedSecrets: {
 		Code:        CodeOverprovisionedSecrets,
@@ -817,6 +915,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Pass only the specific secrets the step needs, by name: `env: { TOKEN: ${{ secrets.NPM_TOKEN }} }`. If the step forwards credentials to a reusable workflow, name each one in the `secrets:` block of the call rather than using `toJson(secrets)`.",
 		DocURL:      docsBaseURL + string(CodeOverprovisionedSecrets),
 		ControlName: "workflowMustNotExportEntireSecretsContext",
+		Role:        RolePrivilege,
 	},
 	CodeSecretsInherit: {
 		Code:        CodeSecretsInherit,
@@ -826,6 +925,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Replace `secrets: inherit` with an explicit mapping that names only the secrets the reusable workflow needs: `secrets: { NPM_TOKEN: ${{ secrets.NPM_TOKEN }} }`. For internal reusable workflows hosted in the same repository the risk is lower but the principle stands: narrow the scope so a future incident exposes a minimum.",
 		DocURL:      docsBaseURL + string(CodeSecretsInherit),
 		ControlName: "reusableWorkflowsMustNotInheritSecrets",
+		Role:        RolePrivilege,
 	},
 	CodeDangerousTriggers: {
 		Code:        CodeDangerousTriggers,
@@ -835,6 +935,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Prefer the standard `pull_request` trigger unless access to base-repo secrets is strictly required. If a secret-bearing trigger is necessary, never check out fork content and never render github.event.* / github.head_ref into shell commands. For `workflow_run`, keep the job restricted to non-secret-bearing steps.",
 		DocURL:      docsBaseURL + string(CodeDangerousTriggers),
 		ControlName: "workflowMustNotUseDangerousTriggers",
+		Role:        RoleEntry,
+		EntryKind:   EntryPRTarget,
 	},
 	CodeAnonymousDefinition: {
 		Code:        CodeAnonymousDefinition,
@@ -844,6 +946,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Add a human-readable `name: <descriptive-name>` at the top of every workflow. Keep the name stable so branch protections and required status checks continue to match after renames.",
 		DocURL:      docsBaseURL + string(CodeAnonymousDefinition),
 		ControlName: "workflowsMustHaveExplicitName",
+		Role:        RoleHygiene,
 	},
 	CodeWorkflowMisfeature: {
 		Code:        CodeWorkflowMisfeature,
@@ -853,6 +956,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Switch Windows jobs to `shell: pwsh`. Vendor dependencies or use a pinned install step with checksums. Never upload the checkout directory as an artefact: upload the build output only.",
 		DocURL:      docsBaseURL + string(CodeWorkflowMisfeature),
 		ControlName: "workflowMustNotUseKnownMisfeatures",
+		Role:        RoleHygiene,
 	},
 	CodeWorkflowObfuscation: {
 		Code:        CodeWorkflowObfuscation,
@@ -862,6 +966,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Strip non-ASCII characters from workflow scripts and expression references unless strictly necessary (localised strings, user-facing labels). Enable `.gitattributes` pre-commit checks that block zero-width and bidirectional Unicode in source files.",
 		DocURL:      docsBaseURL + string(CodeWorkflowObfuscation),
 		ControlName: "workflowMustNotContainObfuscation",
+		// Role: hygiene, not entry: obfuscated script content matches no entry kind the facts layer produces; hygiene is the smaller loss.
+		Role: RoleHygiene,
 	},
 	CodeUseTrustedPublishing: {
 		Code:        CodeUseTrustedPublishing,
@@ -871,6 +977,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Migrate to trusted publishing: for PyPI set a publisher in the project settings and drop the token; for npm use the `--provenance` flag with OIDC; for Maven Central use the Sonatype portal's trusted publishing. Delete the static token once OIDC is live.",
 		DocURL:      docsBaseURL + string(CodeUseTrustedPublishing),
 		ControlName: "publishWorkflowsMustUseOidcTrustedPublishing",
+		// Role: privilege, not hygiene: a static publish token is a long-lived credential the reached job holds.
+		Role: RolePrivilege,
 	},
 	CodeDependabotMissingCooldown: {
 		Code:        CodeDependabotMissingCooldown,
@@ -880,6 +988,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Add a `cooldown:` block to each update ecosystem: for example `cooldown: { default-days: 3, semver-major-days: 7, include: [\"*\"] }`. Adjust the window to fit the project's patching tolerance but never skip it for ecosystems that auto-merge.",
 		DocURL:      docsBaseURL + string(CodeDependabotMissingCooldown),
 		ControlName: "dependabotEcosystemsMustHaveCooldown",
+		Role:        RoleHygiene,
 	},
 	CodeDependencyUpdateToolMissing: {
 		Code:        CodeDependencyUpdateToolMissing,
@@ -889,6 +998,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Add `.github/dependabot.yml` with at minimum `package-ecosystem: github-actions` and your primary language ecosystem (npm, pip, gomod, etc.). For more configurable flows prefer Renovate: `npx -y renovate-config-validator` validates a `renovate.json` before commit.",
 		DocURL:      docsBaseURL + string(CodeDependencyUpdateToolMissing),
 		ControlName: "repositoriesMustConfigureDependencyUpdates",
+		Role:        RoleHygiene,
 	},
 	CodeSASTWorkflowMissing: {
 		Code:        CodeSASTWorkflowMissing,
@@ -898,6 +1008,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Add a workflow that runs CodeQL (`github/codeql-action/init` + `analyze`, free for public repos), Semgrep, or an equivalent SAST scanner on pushes to the default branch and on pull requests. Enable GitHub's code-scanning alerts so findings open issues rather than sit in log output.",
 		DocURL:      docsBaseURL + string(CodeSASTWorkflowMissing),
 		ControlName: "repositoriesMustRunSAST",
+		Role:        RoleHygiene,
 	},
 	CodeSecurityPolicyMissing: {
 		Code:        CodeSecurityPolicyMissing,
@@ -907,6 +1018,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Add a `SECURITY.md` at the repo root or under `.github/`. GitHub ships a template (New file → security policy). Include: the supported versions, the reporting channel (email / security@ / private advisory), the expected first-response SLA, and any bounty / safe-harbour terms the project honours.",
 		DocURL:      docsBaseURL + string(CodeSecurityPolicyMissing),
 		ControlName: "repositoriesMustPublishSecurityPolicy",
+		Role:        RoleHygiene,
 	},
 	CodeDependabotInsecureExec: {
 		Code:        CodeDependabotInsecureExec,
@@ -916,6 +1028,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Remove the `insecure-external-code-execution: allow` entry. If a specific ecosystem genuinely requires executing upstream scripts to resolve versions, scope the allowance narrowly with `enable-beta-ecosystems: false` and pair it with a dedicated runner isolation review; do not set it repository-wide.",
 		DocURL:      docsBaseURL + string(CodeDependabotInsecureExec),
 		ControlName: "dependabotMustNotAllowInsecureExternalCodeExecution",
+		// Role: hygiene (Repository Hygiene category): Dependabot runs outside the pipeline, so no CI path reaches it.
+		Role: RoleHygiene,
 	},
 	CodeMissingConcurrency: {
 		Code:        CodeMissingConcurrency,
@@ -925,6 +1039,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Add a `concurrency` block that groups runs by ref: `concurrency: { group: ${{ github.workflow }}-${{ github.ref }}, cancel-in-progress: true }`. For deploy workflows, keep `cancel-in-progress: false` so an in-flight deploy finishes cleanly.",
 		DocURL:      docsBaseURL + string(CodeMissingConcurrency),
 		ControlName: "workflowsMustDeclareConcurrency",
+		Role:        RoleHygiene,
 	},
 	CodePullRequestTargetWithHeadCheckout: {
 		Code:        CodePullRequestTargetWithHeadCheckout,
@@ -934,6 +1049,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Either switch to the standard `pull_request` event (runs in the fork's context, no base-repo secrets), or remove the explicit `ref:` input so `actions/checkout` falls back to the base repository's SHA. If cross-context code must be examined, split the job: a small pull_request_target job gathers metadata, then hands off to a separate pull_request workflow that executes the fork code.",
 		DocURL:      docsBaseURL + string(CodePullRequestTargetWithHeadCheckout),
 		ControlName: "pullRequestTargetMustNotCheckoutHead",
+		Role:        RoleEntry,
+		EntryKind:   EntryPRTarget,
 	},
 	CodeRequiredActionMissing: {
 		Code:        CodeRequiredActionMissing,
@@ -943,6 +1060,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Add a `uses: <owner>/<repo>[@<ref>]` step that references the required action, or a `jobs.<name>.uses: <owner>/<repo>/.github/workflows/<file>.yml@<ref>` job that calls the required reusable workflow. The exact path declared in `.plumber.yaml` under `workflowMustIncludeRequiredActions` is matched ref-agnostically, so any pinned ref works.",
 		DocURL:      docsBaseURL + string(CodeRequiredActionMissing),
 		ControlName: "workflowMustIncludeRequiredActions",
+		Role:        RoleGate,
 	},
 	CodeExcessivePermissions: {
 		Code:        CodeExcessivePermissions,
@@ -952,6 +1070,7 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Declare the narrowest permissions block that lets the job do its work. Prefer `permissions: { contents: read }` at the workflow level and grant additional scopes only on the jobs that truly need them.",
 		DocURL:      docsBaseURL + string(CodeExcessivePermissions),
 		ControlName: "workflowMustNotGrantPermissionsWriteAll",
+		Role:        RolePrivilege,
 	},
 }
 

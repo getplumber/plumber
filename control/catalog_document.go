@@ -40,6 +40,15 @@ type CatalogControl struct {
 	RequiresTier string                             `json:"requiresTier,omitempty"`
 	ConfigSchema *configuration.ControlConfigSchema `json:"configSchema,omitempty"`
 	IssueCodes   []string                           `json:"issueCodes"`
+	// IssueCodeRoles maps each of IssueCodes to its role (entry, privilege,
+	// gate, hygiene), the input the contextual score weighs a finding by. A
+	// sibling map so the IssueCodes array keeps its shape for consumers.
+	IssueCodeRoles map[string]string `json:"issueCodeRoles"`
+	// IssueCodeEntryKinds maps each entry-role code in IssueCodes to the
+	// situation fact it anchors to (fork_pr, pr_target, untrusted_expression,
+	// mutable_dependency, unprotected_push). Codes with another role are
+	// absent: a sibling map, same shape rule as IssueCodeRoles.
+	IssueCodeEntryKinds map[string]string `json:"issueCodeEntryKinds"`
 }
 
 // CatalogDocument is the whole exported catalog in one versioned envelope:
@@ -60,6 +69,8 @@ type CatalogDocument struct {
 // constant) so the document itself stays deterministic.
 func Catalog(cliVersion string) CatalogDocument {
 	codesByControl := map[string][]string{}
+	rolesByControl := map[string]map[string]string{}
+	entryKindsByControl := map[string]map[string]string{}
 	issueTypes := make([]CatalogIssueType, 0)
 	for _, info := range AllCodes() {
 		issueTypes = append(issueTypes, CatalogIssueType{
@@ -73,6 +84,16 @@ func Catalog(cliVersion string) CatalogDocument {
 		})
 		if info.ControlName != "" {
 			codesByControl[info.ControlName] = append(codesByControl[info.ControlName], string(info.Code))
+			if rolesByControl[info.ControlName] == nil {
+				rolesByControl[info.ControlName] = map[string]string{}
+			}
+			rolesByControl[info.ControlName][string(info.Code)] = string(RoleForCode(info.Code))
+			if kind, ok := EntryKindForCode(info.Code); ok {
+				if entryKindsByControl[info.ControlName] == nil {
+					entryKindsByControl[info.ControlName] = map[string]string{}
+				}
+				entryKindsByControl[info.ControlName][string(info.Code)] = string(kind)
+			}
 		}
 	}
 	sort.Slice(issueTypes, func(i, j int) bool { return issueTypes[i].Code < issueTypes[j].Code })
@@ -84,15 +105,23 @@ func Catalog(cliVersion string) CatalogDocument {
 	controls := make([]CatalogControl, 0, len(entries))
 	for _, e := range entries {
 		c := CatalogControl{
-			ID:             e.ID,
-			Name:           e.Name,
-			DisplayName:    e.DisplayName,
-			Category:       e.Category,
-			Providers:      e.Providers,
-			Description:    e.Description,
-			RequiresConfig: e.RequiresConfig,
-			RequiresTier:   e.Tier,
-			IssueCodes:     append([]string{}, codesByControl[e.Name]...),
+			ID:                  e.ID,
+			Name:                e.Name,
+			DisplayName:         e.DisplayName,
+			Category:            e.Category,
+			Providers:           e.Providers,
+			Description:         e.Description,
+			RequiresConfig:      e.RequiresConfig,
+			RequiresTier:        e.Tier,
+			IssueCodes:          append([]string{}, codesByControl[e.Name]...),
+			IssueCodeRoles:      map[string]string{},
+			IssueCodeEntryKinds: map[string]string{},
+		}
+		if roles, ok := rolesByControl[e.Name]; ok {
+			c.IssueCodeRoles = roles
+		}
+		if kinds, ok := entryKindsByControl[e.Name]; ok {
+			c.IssueCodeEntryKinds = kinds
 		}
 		if s, ok := configuration.ConfigSchemaFor(e.Name); ok {
 			schema := s

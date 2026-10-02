@@ -31,7 +31,7 @@ deny contains finding if {
 	not _is_authorized(job.image)
 	finding := {
 		"code":     "ISSUE-101",
-		"severity": "critical",
+		"severity": "high",
 		"message":  sprintf("Job `%s` uses image `%s` from an unauthorized source.", [job.name, _full_ref(job.image)]),
 		"job":      job.name,
 		"link":     _full_ref(job.image),

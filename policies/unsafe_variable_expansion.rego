@@ -45,7 +45,7 @@ deny contains finding if {
 	not _is_allowed(line)
 	finding := {
 		"code":         "ISSUE-204",
-		"severity":     "high",
+		"severity":     "medium",
 		"message":      sprintf("Job `%s` expands `$%s` in a script line: `%s`.", [job.name, var_name, trimmed]),
 		"job":          job.name,
 		"variableName": var_name,

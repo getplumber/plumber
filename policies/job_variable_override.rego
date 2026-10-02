@@ -23,7 +23,7 @@ deny contains finding if {
 	job.localVariables[var_name]
 	finding := {
 		"code":            "ISSUE-205",
-		"severity":        "critical",
+		"severity":        "high",
 		"message":         sprintf("Job `%s` overrides the controlled variable `%s` with %q.", [job.name, var_name, job.localVariables[var_name]]),
 		"job":             job.name,
 		"variableName":    var_name,
@@ -44,7 +44,7 @@ deny contains finding if {
 	input.pipeline.localGlobalVariables[var_name]
 	finding := {
 		"code":            "ISSUE-205",
-		"severity":        "critical",
+		"severity":        "high",
 		"message":         sprintf("The root `variables:` keyword of the CI configuration overrides the controlled variable `%s` with %q.", [var_name, input.pipeline.localGlobalVariables[var_name]]),
 		"variableName":    var_name,
 		"value":           input.pipeline.localGlobalVariables[var_name],

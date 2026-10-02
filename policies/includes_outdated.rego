@@ -19,7 +19,7 @@ deny contains finding if {
 	not _ref_is_partial_semver_prefix(inc.ref, inc.current)
 	finding := {
 		"code":                  "ISSUE-403",
-		"severity":              "medium",
+		"severity":              "low",
 		"message":               sprintf("The include `%s` uses version `%s` while the latest is `%s`.", [inc.source, inc.ref, inc.current]),
 		# No "job": an include is not a job. includePath names what this finding
 		# is about (finding/identity). componentName stays as payload: it is a

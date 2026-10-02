@@ -22,7 +22,7 @@ deny contains finding if {
 	jobs := _overridden_jobs(inc)
 	finding := {
 		"code":     "ISSUE-406",
-		"severity": "high",
+		"severity": "medium",
 		"message":  sprintf("The required template `%s` is imported but the project overrides %d of its jobs.", [required, count(inc.overriddenJobs)]),
 		# No "job": an overridden template is not a job. templatePath names what
 		# this finding is about, so its identity does not depend on the message

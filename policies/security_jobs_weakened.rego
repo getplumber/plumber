@@ -28,7 +28,7 @@ deny contains finding if {
 	job.allowFailure == true
 	finding := {
 		"code":     "ISSUE-410",
-		"severity": "high",
+		"severity": "critical",
 		"message":  sprintf("Security job `%s` is weakened by `allow_failure: true`, which masks scan failures.", [job.name]),
 		"job":      job.name,
 		# detail is the identity discriminator (a job can be weakened in
@@ -47,7 +47,7 @@ deny contains finding if {
 	job.when == "manual"
 	finding := {
 		"code":     "ISSUE-410",
-		"severity": "high",
+		"severity": "critical",
 		"message":  sprintf("Security job `%s` is weakened by `when: manual`, which stops the scan from running automatically.", [job.name]),
 		"job":      job.name,
 		"detail":   "when_manual",
@@ -72,7 +72,7 @@ deny contains finding if {
 	_has_blocking_rule(job)
 	finding := {
 		"code":     "ISSUE-410",
-		"severity": "high",
+		"severity": "critical",
 		"message":  sprintf("Security job `%s` is weakened by an overridden `rules:` block that stops the job from running.", [job.name]),
 		"job":      job.name,
 		# One finding per job for the rules case: the weakening is "the

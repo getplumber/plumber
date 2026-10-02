@@ -14,7 +14,11 @@
       "requiresConfig": false,
       "issueCodes": [
         "ISSUE-708"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-708": "hygiene"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-709",
@@ -28,7 +32,11 @@
       "requiresConfig": false,
       "issueCodes": [
         "ISSUE-709"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-709": "hygiene"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-707",
@@ -55,7 +63,13 @@
       },
       "issueCodes": [
         "ISSUE-707"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-707": "entry"
+      },
+      "issueCodeEntryKinds": {
+        "ISSUE-707": "mutable_dependency"
+      }
     },
     {
       "id": "CTRL-701",
@@ -92,7 +106,13 @@
       },
       "issueCodes": [
         "ISSUE-701"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-701": "entry"
+      },
+      "issueCodeEntryKinds": {
+        "ISSUE-701": "mutable_dependency"
+      }
     },
     {
       "id": "CTRL-702",
@@ -119,7 +139,11 @@
       },
       "issueCodes": [
         "ISSUE-702"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-702": "hygiene"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-703",
@@ -146,7 +170,13 @@
       },
       "issueCodes": [
         "ISSUE-703"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-703": "entry"
+      },
+      "issueCodeEntryKinds": {
+        "ISSUE-703": "mutable_dependency"
+      }
     },
     {
       "id": "CTRL-711",
@@ -160,7 +190,11 @@
       "requiresConfig": false,
       "issueCodes": [
         "ISSUE-711"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-711": "hygiene"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-714",
@@ -189,7 +223,17 @@
         "ISSUE-714",
         "ISSUE-715",
         "ISSUE-716"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-714": "entry",
+        "ISSUE-715": "entry",
+        "ISSUE-716": "entry"
+      },
+      "issueCodeEntryKinds": {
+        "ISSUE-714": "mutable_dependency",
+        "ISSUE-715": "mutable_dependency",
+        "ISSUE-716": "mutable_dependency"
+      }
     },
     {
       "id": "CTRL-501",
@@ -265,7 +309,12 @@
       "issueCodes": [
         "ISSUE-501",
         "ISSUE-505"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-501": "gate",
+        "ISSUE-505": "gate"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-307",
@@ -293,7 +342,12 @@
       "issueCodes": [
         "ISSUE-307",
         "ISSUE-310"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-307": "privilege",
+        "ISSUE-310": "privilege"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-202",
@@ -320,7 +374,11 @@
       },
       "issueCodes": [
         "ISSUE-202"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-202": "privilege"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-201",
@@ -347,7 +405,11 @@
       },
       "issueCodes": [
         "ISSUE-201"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-201": "privilege"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-704",
@@ -361,7 +423,11 @@
       "requiresConfig": false,
       "issueCodes": [
         "ISSUE-704"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-704": "privilege"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-101",
@@ -416,7 +482,13 @@
       },
       "issueCodes": [
         "ISSUE-101"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-101": "entry"
+      },
+      "issueCodeEntryKinds": {
+        "ISSUE-101": "mutable_dependency"
+      }
     },
     {
       "id": "CTRL-102",
@@ -463,7 +535,15 @@
       "issueCodes": [
         "ISSUE-102",
         "ISSUE-103"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-102": "entry",
+        "ISSUE-103": "entry"
+      },
+      "issueCodeEntryKinds": {
+        "ISSUE-102": "mutable_dependency",
+        "ISSUE-103": "mutable_dependency"
+      }
     },
     {
       "id": "CTRL-902",
@@ -477,7 +557,11 @@
       "requiresConfig": false,
       "issueCodes": [
         "ISSUE-902"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-902": "hygiene"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-901",
@@ -491,7 +575,11 @@
       "requiresConfig": false,
       "issueCodes": [
         "ISSUE-901"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-901": "hygiene"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-305",
@@ -505,7 +593,11 @@
       "requiresConfig": false,
       "issueCodes": [
         "ISSUE-305"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-305": "gate"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-706",
@@ -519,7 +611,11 @@
       "requiresConfig": false,
       "issueCodes": [
         "ISSUE-706"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-706": "hygiene"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-402",
@@ -547,7 +643,13 @@
       },
       "issueCodes": [
         "ISSUE-402"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-402": "entry"
+      },
+      "issueCodeEntryKinds": {
+        "ISSUE-402": "mutable_dependency"
+      }
     },
     {
       "id": "CTRL-713",
@@ -618,7 +720,13 @@
       },
       "issueCodes": [
         "ISSUE-713"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-713": "entry"
+      },
+      "issueCodeEntryKinds": {
+        "ISSUE-713": "mutable_dependency"
+      }
     },
     {
       "id": "CTRL-306",
@@ -632,7 +740,11 @@
       "requiresConfig": false,
       "issueCodes": [
         "ISSUE-306"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-306": "privilege"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-403",
@@ -660,7 +772,11 @@
       },
       "issueCodes": [
         "ISSUE-403"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-403": "hygiene"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-404",
@@ -707,7 +823,13 @@
       },
       "issueCodes": [
         "ISSUE-404"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-404": "entry"
+      },
+      "issueCodeEntryKinds": {
+        "ISSUE-404": "mutable_dependency"
+      }
     },
     {
       "id": "CTRL-504",
@@ -735,7 +857,11 @@
       },
       "issueCodes": [
         "ISSUE-504"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-504": "gate"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-502",
@@ -770,7 +896,11 @@
       },
       "issueCodes": [
         "ISSUE-502"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-502": "gate"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-503",
@@ -838,7 +968,11 @@
       },
       "issueCodes": [
         "ISSUE-503"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-503": "gate"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-506",
@@ -926,7 +1060,11 @@
       },
       "issueCodes": [
         "ISSUE-506"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-506": "hygiene"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-408",
@@ -975,7 +1113,12 @@
       "issueCodes": [
         "ISSUE-408",
         "ISSUE-409"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-408": "gate",
+        "ISSUE-409": "hygiene"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-405",
@@ -1024,7 +1167,12 @@
       "issueCodes": [
         "ISSUE-405",
         "ISSUE-406"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-405": "gate",
+        "ISSUE-406": "hygiene"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-203",
@@ -1062,7 +1210,11 @@
       },
       "issueCodes": [
         "ISSUE-203"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-203": "privilege"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-411",
@@ -1100,7 +1252,13 @@
       },
       "issueCodes": [
         "ISSUE-411"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-411": "entry"
+      },
+      "issueCodeEntryKinds": {
+        "ISSUE-411": "mutable_dependency"
+      }
     },
     {
       "id": "CTRL-401",
@@ -1128,7 +1286,11 @@
       },
       "issueCodes": [
         "ISSUE-401"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-401": "hygiene"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-205",
@@ -1166,7 +1328,11 @@
       },
       "issueCodes": [
         "ISSUE-205"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-205": "gate"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-412",
@@ -1204,7 +1370,12 @@
       "issueCodes": [
         "ISSUE-412",
         "ISSUE-413"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-412": "privilege",
+        "ISSUE-413": "privilege"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-204",
@@ -1252,7 +1423,13 @@
       },
       "issueCodes": [
         "ISSUE-204"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-204": "entry"
+      },
+      "issueCodeEntryKinds": {
+        "ISSUE-204": "untrusted_expression"
+      }
     },
     {
       "id": "CTRL-601",
@@ -1294,7 +1471,11 @@
       },
       "issueCodes": [
         "ISSUE-601"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-601": "gate"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-421",
@@ -1308,7 +1489,11 @@
       "requiresConfig": false,
       "issueCodes": [
         "ISSUE-421"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-421": "privilege"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-804",
@@ -1335,7 +1520,13 @@
       },
       "issueCodes": [
         "ISSUE-804"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-804": "entry"
+      },
+      "issueCodeEntryKinds": {
+        "ISSUE-804": "pr_target"
+      }
     },
     {
       "id": "CTRL-705",
@@ -1457,7 +1648,12 @@
       "issueCodes": [
         "ISSUE-705",
         "ISSUE-717"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-705": "gate",
+        "ISSUE-717": "gate"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-712",
@@ -1471,7 +1667,11 @@
       "requiresConfig": false,
       "issueCodes": [
         "ISSUE-712"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-712": "hygiene"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-903",
@@ -1485,7 +1685,11 @@
       "requiresConfig": false,
       "issueCodes": [
         "ISSUE-903"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-903": "hygiene"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-905",
@@ -1499,7 +1703,11 @@
       "requiresConfig": false,
       "issueCodes": [
         "ISSUE-905"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-905": "hygiene"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-904",
@@ -1513,7 +1721,11 @@
       "requiresConfig": false,
       "issueCodes": [
         "ISSUE-904"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-904": "hygiene"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-302",
@@ -1540,7 +1752,11 @@
       },
       "issueCodes": [
         "ISSUE-302"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-302": "privilege"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-410",
@@ -1632,7 +1848,11 @@
       },
       "issueCodes": [
         "ISSUE-410"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-410": "gate"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-211",
@@ -1646,7 +1866,11 @@
       "requiresConfig": false,
       "issueCodes": [
         "ISSUE-211"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-211": "hygiene"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-212",
@@ -1660,7 +1884,11 @@
       "requiresConfig": false,
       "issueCodes": [
         "ISSUE-212"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-212": "hygiene"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-417",
@@ -1707,7 +1935,11 @@
       },
       "issueCodes": [
         "ISSUE-417"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-417": "gate"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-420",
@@ -1721,7 +1953,11 @@
       "requiresConfig": false,
       "issueCodes": [
         "ISSUE-420"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-420": "hygiene"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-213",
@@ -1735,7 +1971,13 @@
       "requiresConfig": false,
       "issueCodes": [
         "ISSUE-213"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-213": "entry"
+      },
+      "issueCodeEntryKinds": {
+        "ISSUE-213": "untrusted_expression"
+      }
     },
     {
       "id": "CTRL-309",
@@ -1762,7 +2004,11 @@
       },
       "issueCodes": [
         "ISSUE-309"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-309": "privilege"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-803",
@@ -1789,7 +2035,11 @@
       },
       "issueCodes": [
         "ISSUE-803"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-803": "privilege"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-308",
@@ -1803,7 +2053,11 @@
       "requiresConfig": false,
       "issueCodes": [
         "ISSUE-308"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-308": "privilege"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-207",
@@ -1830,7 +2084,13 @@
       },
       "issueCodes": [
         "ISSUE-207"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-207": "entry"
+      },
+      "issueCodeEntryKinds": {
+        "ISSUE-207": "untrusted_expression"
+      }
     },
     {
       "id": "CTRL-215",
@@ -1844,7 +2104,11 @@
       "requiresConfig": false,
       "issueCodes": [
         "ISSUE-215"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-215": "hygiene"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-208",
@@ -1858,7 +2122,11 @@
       "requiresConfig": false,
       "issueCodes": [
         "ISSUE-208"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-208": "gate"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-210",
@@ -1872,7 +2140,11 @@
       "requiresConfig": false,
       "issueCodes": [
         "ISSUE-210"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-210": "gate"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-303",
@@ -1886,7 +2158,11 @@
       "requiresConfig": false,
       "issueCodes": [
         "ISSUE-303"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-303": "privilege"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-802",
@@ -1913,7 +2189,13 @@
       },
       "issueCodes": [
         "ISSUE-802"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-802": "entry"
+      },
+      "issueCodeEntryKinds": {
+        "ISSUE-802": "pr_target"
+      }
     },
     {
       "id": "CTRL-419",
@@ -1927,7 +2209,11 @@
       "requiresConfig": false,
       "issueCodes": [
         "ISSUE-419"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-419": "hygiene"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-209",
@@ -1954,7 +2240,13 @@
       },
       "issueCodes": [
         "ISSUE-209"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-209": "entry"
+      },
+      "issueCodeEntryKinds": {
+        "ISSUE-209": "untrusted_expression"
+      }
     },
     {
       "id": "CTRL-214",
@@ -1968,7 +2260,11 @@
       "requiresConfig": false,
       "issueCodes": [
         "ISSUE-214"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-214": "hygiene"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-418",
@@ -1982,7 +2278,11 @@
       "requiresConfig": false,
       "issueCodes": [
         "ISSUE-418"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-418": "hygiene"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-801",
@@ -2009,7 +2309,11 @@
       },
       "issueCodes": [
         "ISSUE-801"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-801": "privilege"
+      },
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-422",
@@ -2023,7 +2327,11 @@
       "requiresConfig": false,
       "issueCodes": [
         "ISSUE-422"
-      ]
+      ],
+      "issueCodeRoles": {
+        "ISSUE-422": "hygiene"
+      },
+      "issueCodeEntryKinds": {}
     }
   ],
   "issueTypes": [

@@ -23,7 +23,7 @@ deny contains finding if {
 	jobs := _overridden_jobs(inc)
 	finding := {
 		"code":     "ISSUE-409",
-		"severity": "high",
+		"severity": "medium",
 		"message":  sprintf("The required component `%s` is imported but the project overrides %d of its jobs.", [required, count(inc.overriddenJobs)]),
 		# No "job": an overridden component is not a job. componentPath names
 		# what this finding is about, so its identity does not depend on the

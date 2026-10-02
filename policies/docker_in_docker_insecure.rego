@@ -22,7 +22,7 @@ deny contains finding if {
 	detail := _insecure_detail(job)
 	finding := {
 		"code":     "ISSUE-413",
-		"severity": "critical",
+		"severity": "high",
 		"message":  sprintf("Job `%s` runs Docker-in-Docker with an insecure daemon: %s.", [job.name, detail]),
 		"job":      job.name,
 		"detail":   detail,
