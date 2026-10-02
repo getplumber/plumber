@@ -376,6 +376,7 @@ func TestValidControlNames(t *testing.T) {
 		"mergeRequestApprovalRulesMustRequireMinimumApprovals",
 		"mergeRequestApprovalSettingsMustBeCompliant",
 		"mergeRequestSettingsMustBeCompliant",
+		"numberOfProjectMembersMustRespectQuota",
 		"pipelineMustIncludeComponent",
 		"pipelineMustIncludeTemplate",
 		"pipelineMustNotEnableDebugTrace",

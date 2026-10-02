@@ -186,6 +186,8 @@ var declarations = map[string][]string{
 	"ISSUE-505": {"file", "job", "branchName"},
 	// MR settings not compliant: singleton finding (one per project); the platform IdOnly was empty, so the identity is the code alone. Deliberate consequence: changing WHICH settings deviate does not re-key the finding.
 	"ISSUE-506": {},
+	// Project member quota: one finding per role outside its bounds, keyed on the role name (owner, maintainer, developer, total). The counts and bounds are data: a change in how far outside the quota a role sits does not re-key the finding. Same identity as the v1 platform's role-quota issue.
+	"ISSUE-507": {"role"},
 	// Security policy project not linked: singleton finding (one per project); the platform IdOnly was empty, so the identity is the code alone.
 	"ISSUE-601": {},
 	// Workflow has no explicit name: one finding per workflow file, keyed on the file (benched, not yet live: declaration provisional, revisit on unbench). Renumbered from 601 when the security-policy control took 601 (#417).

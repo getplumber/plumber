@@ -125,6 +125,33 @@ var controlFieldDocs = map[string]FieldDoc{
 	"mergeRequestSettingsMustBeCompliant.resolveOutdatedDiffDiscussions":  {},
 	"mergeRequestSettingsMustBeCompliant.printingMergeRequestLinkEnabled": {},
 	"mergeRequestSettingsMustBeCompliant.removeSourceBranchAfterMerge":    {},
+	"numberOfProjectMembersMustRespectQuota.enabled": {
+		Description: "Turns the control on; when false or absent the control is skipped.",
+	},
+	"numberOfProjectMembersMustRespectQuota.ownerMin": {
+		Description: "Fewest members with the Owner role the project must have. Unset asserts nothing.",
+	},
+	"numberOfProjectMembersMustRespectQuota.ownerMax": {
+		Description: "Most members with the Owner role the project may have. Unset asserts nothing.",
+	},
+	"numberOfProjectMembersMustRespectQuota.maintainerMin": {
+		Description: "Fewest members with the Maintainer role the project must have. Unset asserts nothing.",
+	},
+	"numberOfProjectMembersMustRespectQuota.maintainerMax": {
+		Description: "Most members with the Maintainer role the project may have. Unset asserts nothing.",
+	},
+	"numberOfProjectMembersMustRespectQuota.developerMin": {
+		Description: "Fewest members with the Developer role the project must have. Unset asserts nothing.",
+	},
+	"numberOfProjectMembersMustRespectQuota.developerMax": {
+		Description: "Most members with the Developer role the project may have. Unset asserts nothing.",
+	},
+	"numberOfProjectMembersMustRespectQuota.totalMin": {
+		Description: "Fewest members at any role the project must have, access-token bots excluded. Unset asserts nothing.",
+	},
+	"numberOfProjectMembersMustRespectQuota.totalMax": {
+		Description: "Most members at any role the project may have, access-token bots excluded. Unset asserts nothing.",
+	},
 	"projectMustHaveSecurityPolicySource.enabled": {
 		Description: "Turns the control on; when false or absent the control is skipped.",
 	},

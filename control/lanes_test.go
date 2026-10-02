@@ -506,13 +506,14 @@ func runWithDegraded(t *testing.T, schemaVersion string, degraded ...string) *pl
 				// Present so these cases isolate DEGRADATION. An absent
 				// branch_protection or mr_approvals lane degrades its
 				// controls on its own (lanesWhoseAbsenceIsAFailure), and an
-				// absent project_details or security_policy_project marks
+				// absent project_details, security_policy_project or members marks
 				// its control lane_not_served (lanesWhoseAbsenceIsNotServed);
 				// either would mask what each case is actually asserting.
 				BranchProtection:      json.RawMessage(`{"branches":["main"],"protections":[]}`),
 				MrApprovals:           json.RawMessage(`{"rules":[]}`),
 				ProjectDetails:        &platform.ProjectDetails{DefaultBranch: "main"},
 				SecurityPolicyProject: &platform.SecurityPolicyProject{Known: true},
+				Members:               &platform.MemberCounts{},
 			}},
 		},
 	}
@@ -1038,6 +1039,48 @@ func TestMarkFailedCollections(t *testing.T) {
 		r.MarkFailedCollections(entries)
 		if _, marked := r.NotEvaluableReason(controlBranchMustBeProtected); marked {
 			t.Fatal("a collection that never ran is the other markers' concern, not this one's")
+		}
+	})
+}
+
+// The members lane follows the security-policy pattern: degraded says
+// snapshot_lane_degraded, absent says lane_not_served, disabled says nothing.
+func TestMembersLaneBookkeeping(t *testing.T) {
+	entries := []ControlEntry{{ControlName: "numberOfProjectMembersMustRespectQuota"}}
+
+	t.Run("a degraded members lane abstains with its reason", func(t *testing.T) {
+		r := &AnalysisResult{}
+		r.MarkDegradedSnapshotLanes(entries, runWithDegraded(t, "2", platform.DegradedFieldMembers))
+		if r.NotEvaluable["numberOfProjectMembersMustRespectQuota"] != ReasonSnapshotLaneDegraded {
+			t.Errorf("reason = %v, want %q", r.NotEvaluable, ReasonSnapshotLaneDegraded)
+		}
+	})
+
+	t.Run("an absent members lane says lane_not_served", func(t *testing.T) {
+		r := &AnalysisResult{}
+		run := runWithDegraded(t, "2")
+		run.Context.Snapshot.Data.Members = nil
+		r.MarkDegradedSnapshotLanes(entries, run)
+		if got := r.NotEvaluable["numberOfProjectMembersMustRespectQuota"]; got != ReasonLaneNotServed {
+			t.Errorf("reason = %q, want %q", got, ReasonLaneNotServed)
+		}
+	})
+
+	t.Run("a served members lane marks nothing", func(t *testing.T) {
+		r := &AnalysisResult{}
+		run := runWithDegraded(t, "2")
+		run.Context.Snapshot.Data.Members = &platform.MemberCounts{Total: 3}
+		r.MarkDegradedSnapshotLanes(entries, run)
+		if _, marked := r.NotEvaluable["numberOfProjectMembersMustRespectQuota"]; marked {
+			t.Errorf("a served lane must not be marked: %v", r.NotEvaluable)
+		}
+	})
+
+	t.Run("an uncollected standalone lane says lane_not_collected", func(t *testing.T) {
+		r := &AnalysisResult{}
+		MarkUncollectedLanes(r, entries, configuration.ProviderGitLab)
+		if got := r.NotEvaluable["numberOfProjectMembersMustRespectQuota"]; got != ReasonLaneNotCollected {
+			t.Errorf("reason = %q, want %q", got, ReasonLaneNotCollected)
 		}
 	})
 }

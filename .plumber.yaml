@@ -246,6 +246,14 @@ gitlab:
       printingMergeRequestLinkEnabled: true
       removeSourceBranchAfterMerge: true   # clean up the branch after merge
     # ===========================================
+    # Number of project members must respect a quota
+    # ===========================================
+    # Per-role member bounds, all optional and inclusive. Reads members/all
+    # with the run's token; a CI job token cannot, so it reports not-evaluable
+    # in a plain pipeline run. Off for the self-scan: this repo is GitHub-hosted.
+    numberOfProjectMembersMustRespectQuota:
+      enabled: false
+    # ===========================================
     # Project must have a security policy source
     # ===========================================
     # Requires the project to link a GitLab security policy project (Settings >

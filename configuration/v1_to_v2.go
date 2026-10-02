@@ -75,6 +75,7 @@ func controlsConfigIsZero(c ControlsConfig) bool {
 		c.MergeRequestApprovalRulesMustCoverAllProtectedBranches == nil &&
 		c.MergeRequestApprovalSettingsMustBeCompliant == nil &&
 		c.MergeRequestSettingsMustBeCompliant == nil &&
+		c.NumberOfProjectMembersMustRespectQuota == nil &&
 		c.CicdVariablesMustBeProtected == nil &&
 		c.CicdVariablesMustBeMasked == nil &&
 		c.ProjectMustHaveSecurityPolicySource == nil &&
@@ -107,6 +108,7 @@ func controlsConfigEqual(a, b ControlsConfig) bool {
 		a.MergeRequestApprovalRulesMustCoverAllProtectedBranches == b.MergeRequestApprovalRulesMustCoverAllProtectedBranches &&
 		a.MergeRequestApprovalSettingsMustBeCompliant == b.MergeRequestApprovalSettingsMustBeCompliant &&
 		a.MergeRequestSettingsMustBeCompliant == b.MergeRequestSettingsMustBeCompliant &&
+		a.NumberOfProjectMembersMustRespectQuota == b.NumberOfProjectMembersMustRespectQuota &&
 		a.CicdVariablesMustBeProtected == b.CicdVariablesMustBeProtected &&
 		a.CicdVariablesMustBeMasked == b.CicdVariablesMustBeMasked &&
 		a.ProjectMustHaveSecurityPolicySource == b.ProjectMustHaveSecurityPolicySource &&

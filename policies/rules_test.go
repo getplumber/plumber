@@ -6977,3 +6977,169 @@ func TestUnresolvedImageGuardAbstains(t *testing.T) {
 		}
 	}
 }
+
+func TestIssue507_ProjectMemberQuota(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	counts := &ir.MemberCounts{Owners: 3, Maintainers: 1, Developers: 5, Total: 12}
+	known := &ir.NormalizedPipeline{Provider: ir.ProviderGitLab, ProjectMembersKnown: true, ProjectMembers: counts}
+
+	// Positive: owners above max, maintainers below min, developers inside
+	// their bounds, total exactly on its inclusive max. One finding per
+	// violated role, none for the compliant ones.
+	cfg := map[string]any{
+		"numberOfProjectMembersMustRespectQuota": map[string]any{
+			"ownerMax":      2,
+			"maintainerMin": 2,
+			"developerMin":  1,
+			"developerMax":  10,
+			"totalMax":      12,
+		},
+	}
+	findings, err := evaluateStrict(engine, context.Background(), known, cfg)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if got := countCode(findings, "ISSUE-507"); got != 2 {
+		t.Fatalf("expected 2 ISSUE-507 findings (owner above max, maintainer below min), got %d: %+v", got, findings)
+	}
+	assertSubjectKey(t, findings, "ISSUE-507", "role", []string{"maintainer", "owner"})
+
+	messageForRole := func(role string) (string, map[string]any) {
+		t.Helper()
+		for _, f := range findings {
+			if f.Code == "ISSUE-507" && f.Data["role"] == role {
+				return f.Message, f.Data
+			}
+		}
+		t.Fatalf("no ISSUE-507 finding for role %q", role)
+		return "", nil
+	}
+	ownerMsg, ownerData := messageForRole("owner")
+	if !strings.Contains(ownerMsg, "3 owners") || !strings.Contains(ownerMsg, "above the quota maximum of 2") {
+		t.Errorf("owner message must name the count and the exceeded maximum: %q", ownerMsg)
+	}
+	if ownerData["currentCount"] != json.Number("3") && ownerData["currentCount"] != 3 && ownerData["currentCount"] != float64(3) {
+		t.Errorf("currentCount = %v (%T), want 3", ownerData["currentCount"], ownerData["currentCount"])
+	}
+	if _, has := ownerData["authorizedMin"]; has {
+		t.Errorf("ownerMin is unset, so authorizedMin must be absent from the finding: %v", ownerData)
+	}
+	if v, has := ownerData["authorizedMax"]; !has || fmt.Sprint(v) != "2" {
+		t.Errorf("authorizedMax must be present and equal 2 when ownerMax is 2: %v", ownerData)
+	}
+	maintMsg, maintData := messageForRole("maintainer")
+	if v, has := maintData["authorizedMin"]; !has || fmt.Sprint(v) != "2" {
+		t.Errorf("authorizedMin must be present and equal 2 when maintainerMin is 2: %v", maintData)
+	}
+	if !strings.Contains(maintMsg, "1 maintainer,") || !strings.Contains(maintMsg, "below the quota minimum of 2") {
+		t.Errorf("maintainer message must read as the singular and name the minimum: %q", maintMsg)
+	}
+
+	// Total: the inclusive edge above is silent, one past it fires.
+	over := &ir.NormalizedPipeline{Provider: ir.ProviderGitLab, ProjectMembersKnown: true,
+		ProjectMembers: &ir.MemberCounts{Owners: 1, Maintainers: 2, Developers: 5, Total: 13}}
+	findings, err = evaluateStrict(engine, context.Background(), over, map[string]any{
+		"numberOfProjectMembersMustRespectQuota": map[string]any{"totalMax": 12},
+	})
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if got := countCode(findings, "ISSUE-507"); got != 1 {
+		t.Fatalf("total 13 against totalMax 12: expected 1 finding, got %d", got)
+	}
+	assertSubjectKey(t, findings, "ISSUE-507", "role", []string{"total"})
+	totalMsg, _ := messageForRole("total")
+	if !strings.Contains(totalMsg, "13 members") || !strings.Contains(totalMsg, "above the quota maximum of 12") {
+		t.Errorf("total message must name the count and the exceeded maximum: %q", totalMsg)
+	}
+
+	// quota evaluates one configuration against one set of counts.
+	quota := func(c ir.MemberCounts, bounds map[string]any) []opaengine.Finding {
+		t.Helper()
+		p := &ir.NormalizedPipeline{Provider: ir.ProviderGitLab, ProjectMembersKnown: true, ProjectMembers: &c}
+		out, err := evaluateStrict(engine, context.Background(), p, map[string]any{"numberOfProjectMembersMustRespectQuota": bounds})
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		return out
+	}
+
+	// Min inclusive edge: exactly the minimum is silent.
+	if got := countCode(quota(ir.MemberCounts{Maintainers: 1, Total: 1}, map[string]any{"maintainerMin": 1}), "ISSUE-507"); got != 0 {
+		t.Fatalf("1 maintainer against maintainerMin 1 must be silent, got %d", got)
+	}
+
+	// min == max on one role: on the value is silent, one past fires once
+	// carrying both bounds.
+	if got := countCode(quota(ir.MemberCounts{Developers: 5, Total: 5}, map[string]any{"developerMin": 5, "developerMax": 5}), "ISSUE-507"); got != 0 {
+		t.Fatalf("5 developers against developerMin=developerMax=5 must be silent, got %d", got)
+	}
+	findings = quota(ir.MemberCounts{Developers: 6, Total: 6}, map[string]any{"developerMin": 5, "developerMax": 5})
+	if got := countCode(findings, "ISSUE-507"); got != 1 {
+		t.Fatalf("6 developers against developerMin=developerMax=5: expected 1 finding, got %d", got)
+	}
+	_, devData := messageForRole("developer")
+	if fmt.Sprint(devData["authorizedMin"]) != "5" || fmt.Sprint(devData["authorizedMax"]) != "5" {
+		t.Errorf("min == max finding must carry both bounds: %v", devData)
+	}
+
+	// ownerMax 0 is a real bound (no owners allowed), not an unset one.
+	findings = quota(ir.MemberCounts{Owners: 1, Total: 1}, map[string]any{"ownerMax": 0})
+	if got := countCode(findings, "ISSUE-507"); got != 1 {
+		t.Fatalf("1 owner against ownerMax 0: expected 1 finding, got %d", got)
+	}
+	if _, zeroData := messageForRole("owner"); fmt.Sprint(zeroData["authorizedMax"]) != "0" {
+		t.Errorf("authorizedMax must be present and equal 0: %v", zeroData)
+	}
+
+	// Inverted bounds (min > max; the platform does not validate them) with a
+	// count between them: one finding per role, the max finding wins.
+	findings = quota(ir.MemberCounts{Owners: 3, Total: 3}, map[string]any{"ownerMin": 5, "ownerMax": 2})
+	if got := countCode(findings, "ISSUE-507"); got != 1 {
+		t.Fatalf("inverted owner bounds must yield exactly 1 finding, got %d: %+v", got, findings)
+	}
+	invMsg, invData := messageForRole("owner")
+	if !strings.Contains(invMsg, "above the quota maximum of 2") {
+		t.Errorf("the max finding must win on inverted bounds: %q", invMsg)
+	}
+	if fmt.Sprint(invData["authorizedMax"]) != "2" || fmt.Sprint(invData["authorizedMin"]) != "5" {
+		t.Errorf("inverted-bounds finding must carry both bounds as set: %v", invData)
+	}
+
+	// Unset bounds assert nothing: an enabled block with no key is silent.
+	findings, err = evaluateStrict(engine, context.Background(), known, map[string]any{
+		"numberOfProjectMembersMustRespectQuota": map[string]any{},
+	})
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if got := countCode(findings, "ISSUE-507"); got != 0 {
+		t.Fatalf("no bound set must produce no finding, got %d", got)
+	}
+
+	// Abstain: counts not known (unreadable listing, degraded lane) must not
+	// produce a verdict even when the zero counts would violate a minimum.
+	unknown := &ir.NormalizedPipeline{Provider: ir.ProviderGitLab, ProjectMembersKnown: false}
+	findings, err = evaluateStrict(engine, context.Background(), unknown, map[string]any{
+		"numberOfProjectMembersMustRespectQuota": map[string]any{"ownerMin": 1},
+	})
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if got := countCode(findings, "ISSUE-507"); got != 0 {
+		t.Fatalf("unknown counts must abstain, got %d findings", got)
+	}
+
+	// Provider guard: the same input on GitHub is silent.
+	gh := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, ProjectMembersKnown: true, ProjectMembers: counts}
+	findings, err = evaluateStrict(engine, context.Background(), gh, cfg)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if got := countCode(findings, "ISSUE-507"); got != 0 {
+		t.Fatalf("a GitLab-only rule fired on GitHub: %d findings", got)
+	}
+}

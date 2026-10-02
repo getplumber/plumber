@@ -350,6 +350,21 @@ func mrSettingsUnreadableCaveat(result *control.AnalysisResult) []statLine {
 	}}
 }
 
+// membersUnreadableCaveat returns a single caveat stat line when the member
+// listing could not be read (nil MembersData, or Known false from a 403/404,
+// the page cap or a degraded snapshot lane). The JSON status is already error
+// via StatusFor; this closes the terminal gap so the block never shows a bare
+// green pass over counts nobody read. Returns nil when the listing was read.
+func membersUnreadableCaveat(result *control.AnalysisResult) []statLine {
+	if result != nil && result.MembersData != nil && result.MembersData.Known {
+		return nil
+	}
+	return []statLine{{
+		Label: statCaveatPrefix + " Project members not evaluated",
+		Value: "the members listing could not be read: token lacks permission, GitLab answered with a server error, the project has more than 2000 members, or the platform could not collect it",
+	}}
+}
+
 // renderSkippedControlsSummary prints the "Skipped Controls" section: a
 // top-level section header followed by each skipped control with its
 // skip reason.
@@ -1092,6 +1107,18 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 		}
 		return []statLine{
 			{Label: "Non-Compliant MR Settings", Value: fmt.Sprintf("%d", findingsCount)},
+		}
+	case "numberOfProjectMembersMustRespectQuota":
+		if lines := membersUnreadableCaveat(result); lines != nil {
+			return lines
+		}
+		c := result.MembersData.Counts
+		return []statLine{
+			{Label: "Owners", Value: fmt.Sprintf("%d", c.Owners)},
+			{Label: "Maintainers", Value: fmt.Sprintf("%d", c.Maintainers)},
+			{Label: "Developers", Value: fmt.Sprintf("%d", c.Developers)},
+			{Label: "Total Members", Value: fmt.Sprintf("%d", c.Total)},
+			{Label: "Roles Out Of Quota", Value: fmt.Sprintf("%d", findingsCount)},
 		}
 	case "branchMustBeProtected":
 		total, toProtect, protected, unprotected := _branchProtectionCounts(result, pc)
