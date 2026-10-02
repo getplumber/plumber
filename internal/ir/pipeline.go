@@ -3,6 +3,8 @@
 // the OPA rule engine consumes regardless of the source.
 package ir
 
+import "strings"
+
 // Provider identifies the CI/CD platform that originated a pipeline.
 type Provider string
 
@@ -149,6 +151,11 @@ type NormalizedPipeline struct {
 	AdvisoryWarnings []string `json:"advisoryWarnings,omitempty"`
 
 	Raw map[string]any `json:"raw,omitempty"`
+
+	// Visibility is the repository's exposure as the provider reports it:
+	// VisibilityPublic, VisibilityPrivate or VisibilityUnknown. The situation
+	// facts weigh contributor entries by it; unknown is treated as public.
+	Visibility string `json:"visibility,omitempty"`
 }
 
 // SecurityPolicyProjectState is the GitLab security policy project linkage
@@ -328,6 +335,20 @@ type Job struct {
 	// `environment: production` shorthand and the long form — the
 	// collector keeps only the name. Empty when no environment is set.
 	Environment string `json:"environment,omitempty"`
+
+	// RunsOn is the GitHub runner selector (runs-on), one entry per label;
+	// empty on GitLab, whose runner selection is Tags.
+	RunsOn []string `json:"runsOn,omitempty"`
+	// Needs lists the Job.Name values this job depends on (GitHub: qualified
+	// with the workflow namespace exactly like Name; GitLab: bare job names,
+	// as GitLab names them). The path assembler walks it one hop. A GitLab
+	// `needs: []` and an absent `needs:` both decode to nil.
+	Needs []string `json:"needs,omitempty"`
+	// Caches and Artifacts are the structured cache and artifact uses of the
+	// job: on GitHub derived from actions/cache* and actions/*-artifact steps,
+	// on GitLab from the job's cache:, artifacts: and dependencies: keys.
+	Caches    []CacheRef    `json:"caches,omitempty"`
+	Artifacts []ArtifactRef `json:"artifacts,omitempty"`
 }
 
 // Action is a single invocation of a reusable third-party action.
@@ -663,4 +684,39 @@ type MRSettings struct {
 type AnalyzedWorkflow struct {
 	Path    string
 	Content string
+}
+
+// Repository exposure values carried by NormalizedPipeline.Visibility.
+const (
+	VisibilityPublic  = "public"
+	VisibilityPrivate = "private"
+	VisibilityUnknown = "unknown"
+)
+
+// NormalizeVisibility maps a provider's visibility string to the three values
+// the situation facts understand. GitLab's "internal" is private: an outsider
+// cannot read it.
+func NormalizeVisibility(raw string) string {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "public":
+		return VisibilityPublic
+	case "private", "internal":
+		return VisibilityPrivate
+	}
+	return VisibilityUnknown
+}
+
+// CacheRef is one cache a job restores, saves or both.
+type CacheRef struct {
+	Key   string   `json:"key,omitempty"`
+	Paths []string `json:"paths,omitempty"`
+	Mode  string   `json:"mode"` // "restore", "save" or "both"
+}
+
+// ArtifactRef is one artifact a job produces or consumes. An empty Name on a
+// consume entry means "every artifact of the workflow".
+type ArtifactRef struct {
+	Name  string   `json:"name,omitempty"`
+	Paths []string `json:"paths,omitempty"`
+	Mode  string   `json:"mode"` // "produce" or "consume"
 }
