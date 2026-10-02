@@ -67,6 +67,9 @@ spec:
     image:
       description: "Docker image to use for the job"
       default: "getplumber/plumber@sha256:1154cac2073d49cd313f6245bc4e25a4df7636194f39e8093da80376017f4988" #v0.5.20
+    environment_name:
+      description: "GitLab environment the job is attached to."
+      default: plumber
     allow_failure:
       description: Allow the job to fail without failing the pipeline
       default: false
@@ -126,7 +129,8 @@ spec:
 #      - read_api scope (or api scope if mr_comment is enabled)
 #      - read_repository scope
 #   2. Add it as GITLAB_TOKEN in Settings > CI/CD > Variables
-#      (masked recommended)
+#      (masked recommended), scoped to the `plumber` environment
+#      (see environment_name input).
 #
 # Configuration file priority:
 #   1. If config_file input is set → uses $CI_PROJECT_DIR/<config_file>
@@ -162,6 +166,10 @@ spec:
   image:
     name: $[[ inputs.image ]]
     entrypoint: [""]  # Override ENTRYPOINT to allow shell script execution
+  environment:
+    # Define the environment the job is scoped for.
+    name: $[[ inputs.environment_name ]]
+    action: prepare
   id_tokens:
     # OIDC id-token for the Plumber Score push. The audience MUST equal the
     # score service URL (the service validates `aud`), so it follows the
