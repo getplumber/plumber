@@ -486,6 +486,38 @@ func buildInput(pipeline *ir.NormalizedPipeline, config map[string]any) (map[str
 	}, nil
 }
 
+// EvaluateSituation evaluates the situation module on the same input the
+// controls see and returns data.situation.result as raw JSON. The module is
+// compiled alone, like every control module; it cannot import them and they
+// cannot import it. An undefined result is an error: the facts layer must
+// always answer, even with empty jobs.
+func (e *Engine) EvaluateSituation(ctx context.Context, source string, pipeline *ir.NormalizedPipeline, config map[string]any) (json.RawMessage, error) {
+	if config == nil {
+		config = map[string]any{}
+	}
+	input, err := buildInput(pipeline, config)
+	if err != nil {
+		return nil, fmt.Errorf("situation input: %w", err)
+	}
+	r := rego.New(
+		rego.Query("data.situation.result"),
+		rego.Module("situation.rego", source),
+		rego.Input(input),
+	)
+	rs, err := r.Eval(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("situation eval: %w", err)
+	}
+	if len(rs) == 0 || len(rs[0].Expressions) == 0 {
+		return nil, fmt.Errorf("situation eval: data.situation.result is undefined")
+	}
+	raw, err := json.Marshal(rs[0].Expressions[0].Value)
+	if err != nil {
+		return nil, fmt.Errorf("situation result: %w", err)
+	}
+	return raw, nil
+}
+
 func evalModule(ctx context.Context, name, source string, input map[string]any) ([]Finding, error) {
 	r := rego.New(
 		rego.Query(fmt.Sprintf("data.%s.deny", name)),

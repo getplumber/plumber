@@ -1,0 +1,7 @@
+test:
+  image: node:latest
+  script:
+    - echo "Testing $CI_MERGE_REQUEST_TITLE"
+    - curl -sSL https://example.com/install.sh | bash
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"

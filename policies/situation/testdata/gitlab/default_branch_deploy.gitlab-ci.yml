@@ -1,0 +1,5 @@
+deploy:
+  script:
+    - ./deploy.sh
+  rules:
+    - if: '$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH'

@@ -1,0 +1,7 @@
+test:
+  image: alpine:3.19
+  services:
+    - postgres:latest
+    - name: redis:7
+  script:
+    - echo hello
