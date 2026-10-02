@@ -144,7 +144,7 @@ include:
       score_push: true
 ```
 
-Add `GITLAB_TOKEN` in **Settings -> CI/CD -> Variables**: `read_api` + `read_repository` for scanning, or `api` if you want Plumber to post MR comments or badges.
+Add `GITLAB_TOKEN` in **Settings -> CI/CD -> Variables**: `plumber` environment, `read_api` + `read_repository` for scanning, or `api` if you want Plumber to post MR comments or badges.
 
 **Full guide:** [getplumber.io/docs/cli/gitlab#run-with-the-gitlab-ci-component](https://getplumber.io/docs/cli/gitlab#run-with-the-gitlab-ci-component)
 
