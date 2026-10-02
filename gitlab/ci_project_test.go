@@ -79,6 +79,33 @@ func TestProjectFromCIEnvironment_RefusalBranches(t *testing.T) {
 	}
 }
 
+// ProjectFromCIEnvironment reads visibility from $CI_PROJECT_VISIBILITY,
+// GitLab's predefined variable for public/internal/private. Absent, it
+// comes back empty, and NormalizeVisibility turns that into unknown.
+func TestProjectFromCIEnvironment_Visibility(t *testing.T) {
+	ciJobEnv(t)
+	t.Setenv("CI_PROJECT_VISIBILITY", "internal")
+	p, ok := ProjectFromCIEnvironment("grp/proj", "")
+	if !ok {
+		t.Fatal("a complete CI environment for the analyzed project must be accepted")
+	}
+	if p.Visibility != "internal" {
+		t.Fatalf("Visibility = %q, want %q", p.Visibility, "internal")
+	}
+}
+
+func TestProjectFromCIEnvironment_VisibilityAbsent(t *testing.T) {
+	ciJobEnv(t)
+	t.Setenv("CI_PROJECT_VISIBILITY", "")
+	p, ok := ProjectFromCIEnvironment("grp/proj", "")
+	if !ok {
+		t.Fatal("a complete CI environment for the analyzed project must be accepted")
+	}
+	if p.Visibility != "" {
+		t.Fatalf("Visibility = %q, want empty", p.Visibility)
+	}
+}
+
 // resolveCIConfigPath precedence: the platform snapshot's value wins (the
 // anchor digest was computed against it), then the job's $CI_CONFIG_PATH,
 // then GitLab's default.

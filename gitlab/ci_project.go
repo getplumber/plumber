@@ -69,6 +69,12 @@ func ProjectFromCIEnvironment(analyzed, ciConfigPath string) (*Project, bool) {
 		DefaultBranch: strings.TrimSpace(os.Getenv("CI_DEFAULT_BRANCH")),
 		CiConfPath:    resolveCIConfigPath(ciConfigPath),
 
+		// CI_PROJECT_VISIBILITY is GitLab's predefined variable for the
+		// project's exposure (public, internal or private), already present
+		// in every job, same as the other CI_* reads above. Empty when
+		// absent; NormalizeVisibility turns that into VisibilityUnknown.
+		Visibility: strings.TrimSpace(os.Getenv("CI_PROJECT_VISIBILITY")),
+
 		// LatestHeadCommitSha is the commit this analysis is about, and
 		// $CI_COMMIT_SHA is exactly that. The API answers a different
 		// question - the head of the DEFAULT branch - which is why

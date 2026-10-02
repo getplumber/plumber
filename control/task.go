@@ -288,6 +288,19 @@ func clearProgressLine(conf *configuration.Configuration) {
 // analysisStepCount is the total number of progress steps reported during analysis.
 const analysisStepCount = 18
 
+// applyGitLabVisibility copies the project visibility GitLab already reported
+// onto the pipeline. A nil project means no project at all, which reads as
+// unknown; in platform mode the project comes from the CI environment
+// (ProjectFromCIEnvironment), whose Visibility is read from
+// $CI_PROJECT_VISIBILITY, not from an API fetch.
+func applyGitLabVisibility(pipeline *ir.NormalizedPipeline, project *gitlab.Project) {
+	if project == nil {
+		pipeline.Visibility = ir.VisibilityUnknown
+		return
+	}
+	pipeline.Visibility = ir.NormalizeVisibility(project.Visibility)
+}
+
 // runRegoEngine invokes the experimental Rego/OPA rule engine on the
 // GitLab collector outputs and returns the aggregated findings. The
 // legacy Go controls always run and remain authoritative until parity
@@ -315,6 +328,7 @@ func runRegoEngine(
 		variablesData,
 		securityPolicyData,
 	)
+	applyGitLabVisibility(pipeline, project)
 	// Retained so a later per-policy evaluation can re-run the rules over the
 	// SAME collected data under a different policy's parameters, without
 	// re-collecting anything from the git host.
