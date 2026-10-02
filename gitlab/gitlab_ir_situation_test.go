@@ -100,6 +100,19 @@ mapneed:
   script: [echo]
   needs:
     - job: build
+only_tags:
+  stage: deploy
+  script: [echo]
+  only: [tags]
+only_refs_map:
+  stage: deploy
+  script: [echo]
+  only:
+    refs: [main, merge_requests]
+except_branches:
+  stage: deploy
+  script: [echo]
+  except: [branches]
 `
 
 // pipelineFromYAML is a test helper that builds a NormalizedPipeline from YAML.
@@ -220,5 +233,17 @@ func TestEnrichFromMergedConfSituationFields(t *testing.T) {
 	wantMapneedConsume := []ir.ArtifactRef{{Name: "build", Mode: "consume"}}
 	if got := byName["mapneed"].Artifacts; !reflect.DeepEqual(got, wantMapneedConsume) {
 		t.Errorf("mapneed.Artifacts = %+v, want %+v", got, wantMapneedConsume)
+	}
+	// Legacy only:/except:, string-list form.
+	if got := byName["only_tags"].Only; !reflect.DeepEqual(got, []string{"tags"}) {
+		t.Errorf("only_tags.Only = %v, want [tags]", got)
+	}
+	// Legacy only:, map form: flattens to its refs list.
+	if got := byName["only_refs_map"].Only; !reflect.DeepEqual(got, []string{"main", "merge_requests"}) {
+		t.Errorf("only_refs_map.Only = %v, want [main merge_requests]", got)
+	}
+	// Legacy except:, string-list form.
+	if got := byName["except_branches"].Except; !reflect.DeepEqual(got, []string{"branches"}) {
+		t.Errorf("except_branches.Except = %v, want [branches]", got)
 	}
 }

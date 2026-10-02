@@ -786,6 +786,12 @@ func enrichFromMergedConf(job *ir.Job, name string, conf *GitlabCIConf) {
 	if rules := extractGitLabRules(parsed.Rules); len(rules) > 0 {
 		job.Rules = rules
 	}
+	if only := extractGitLabOnlyExcept(parsed.Only); len(only) > 0 {
+		job.Only = only
+	}
+	if except := extractGitLabOnlyExcept(parsed.Except); len(except) > 0 {
+		job.Except = except
+	}
 	job.Needs = gitlabNeeds(parsed.Needs)
 	job.Caches = gitlabCaches(parsed.Cache)
 	job.Artifacts = gitlabArtifacts(name, parsed.Artifacts, parsed.Needs, parsed.Dependencies)
@@ -808,6 +814,29 @@ func extractGitLabRules(v any) []map[string]any {
 	for _, entry := range list {
 		if m, ok := NormalizeYAMLValue(entry).(map[string]any); ok && len(m) > 0 {
 			out = append(out, m)
+		}
+	}
+	return out
+}
+
+// extractGitLabOnlyExcept normalises the polymorphic legacy only:/except:
+// block (gitlab/models.go GitlabJob.Only/Except) into a flat list of string
+// refs. A list of strings passes through as-is; the map form
+// ({refs: [...], variables: [...], changes: [...]}) flattens to its refs
+// list, since the variables/changes conditions cannot be decided
+// statically and are dropped.
+func extractGitLabOnlyExcept(v any) []string {
+	if m, ok := NormalizeYAMLValue(v).(map[string]any); ok {
+		return extractGitLabOnlyExcept(m["refs"])
+	}
+	list, ok := v.([]any)
+	if !ok {
+		return nil
+	}
+	out := make([]string, 0, len(list))
+	for _, item := range list {
+		if s, ok := item.(string); ok {
+			out = append(out, s)
 		}
 	}
 	return out

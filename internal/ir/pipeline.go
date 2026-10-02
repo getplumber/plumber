@@ -250,10 +250,19 @@ type Job struct {
 	// about effective execution (security-job weakening) read this
 	// list and reject any rule whose terminal `when` would prevent
 	// the job from running.
-	Rules      []map[string]any `json:"rules,omitempty"`
-	OriginFile string           `json:"originFile,omitempty"`
-	OriginLine int              `json:"originLine,omitempty"`
-	OriginKind string           `json:"originKind,omitempty"`
+	Rules []map[string]any `json:"rules,omitempty"`
+	// Only and Except capture GitLab's legacy `only:`/`except:` keywords,
+	// string refs only (branches, tags, merge_requests, schedules, …).
+	// The map form (`only: {refs: [...]}`) flattens to its `refs` list;
+	// the `variables`/`changes` conditions of that map form are dropped,
+	// since they cannot be decided statically. A job with a `rules:`
+	// block never has these: GitLab treats `rules` and `only`/`except`
+	// as mutually exclusive.
+	Only       []string `json:"only,omitempty"`
+	Except     []string `json:"except,omitempty"`
+	OriginFile string   `json:"originFile,omitempty"`
+	OriginLine int      `json:"originLine,omitempty"`
+	OriginKind string   `json:"originKind,omitempty"`
 	// Overridden is true when the job inherits from an upstream
 	// component or template but the project locally redefined some of
 	// its keys. Lets policies distinguish "user-authored override" from
