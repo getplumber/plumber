@@ -119,6 +119,12 @@ type AnalysisResult struct {
 	// Nil on the GitHub path, which has GitHubPipeline below.
 	Pipeline *ir.NormalizedPipeline `json:"-"`
 
+	// Situation carries the per-job situation facts (entries, privilege,
+	// impact, feeds) derived from the pipeline, for the later contextual
+	// score to read. Not user-visible: it never serializes and nothing
+	// downstream of the report changes because of it.
+	Situation *Situation `json:"-"`
+
 	// GitHubPipeline is the normalized IR produced by the GitHub
 	// collector, retained on the result so legacy JSON / PBOM /
 	// CycloneDX builders can read images, action references, and

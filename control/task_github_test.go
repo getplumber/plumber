@@ -83,6 +83,12 @@ jobs:
 	if hits["ISSUE-102:ci/lint"]+hits["ISSUE-102:ci/test"] != 1 {
 		t.Errorf("expected exactly 1 ISSUE-102 finding, got %+v", hits)
 	}
+	if result.Situation == nil {
+		t.Fatal("expected result.Situation to be attached by RunGitHubAnalysis")
+	}
+	if _, ok := result.Situation.Jobs["ci/lint"]; !ok {
+		t.Errorf("expected job %q in result.Situation.Jobs, got %+v", "ci/lint", result.Situation.Jobs)
+	}
 }
 
 // writeMinimalWorkflow lays down a one-job workflow so the scan finds CI.
@@ -217,7 +223,13 @@ func remoteScanStub(host, owner, repo, ref string, enrich, scanMutableExec bool,
 // Remote-path mirror of the forge-wins test: the analyzed ref must not
 // masquerade as the repo default when the real one is known.
 func TestRunGitHubAnalysisRemote_ForgeDefaultBranchWinsOverRef(t *testing.T) {
-	swapRemoteScan(t, remoteScanStub)
+	// remoteScanStub carries no jobs; wrap it with one so this test can
+	// also assert that attachSituation ran on the remote path (Finding C).
+	swapRemoteScan(t, func(host, owner, repo, ref string, enrich, scanMutableExec bool, progressFn githubpkg.ProgressFunc) (*ir.NormalizedPipeline, []error, error) {
+		p, errs, err := remoteScanStub(host, owner, repo, ref, enrich, scanMutableExec, progressFn)
+		p.Jobs = []ir.Job{{Name: "build"}}
+		return p, errs, err
+	})
 	swapDefaultBranchFetch(t, func(host, owner, repo string) (string, error) {
 		return "main", nil
 	})
@@ -232,6 +244,12 @@ func TestRunGitHubAnalysisRemote_ForgeDefaultBranchWinsOverRef(t *testing.T) {
 	}
 	if result.AnalyzeBranch != "feature-x" {
 		t.Errorf("expected AnalyzeBranch %q, got %q", "feature-x", result.AnalyzeBranch)
+	}
+	if result.Situation == nil {
+		t.Fatal("expected result.Situation to be attached by RunGitHubAnalysisRemote")
+	}
+	if _, ok := result.Situation.Jobs["build"]; !ok {
+		t.Errorf("expected job %q in result.Situation.Jobs, got %+v", "build", result.Situation.Jobs)
 	}
 }
 

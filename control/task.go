@@ -337,7 +337,29 @@ func runRegoEngine(
 	}
 	findings, failures := evaluatePolicies(l, conf, "gitlab", pipeline)
 	applyPolicyFailures(result, failures)
+	attachSituation(l, conf, "gitlab", pipeline, result)
 	return findings
+}
+
+// attachSituation runs the situation facts module on pipeline with the same
+// Rego config the controls themselves see (buildEngineConfig over the
+// provider's ControlsConfig) and records the result on result.Situation.
+// EvaluateSituation never fails the run: on error result.Situation still
+// holds the empty, unknown-exposure value and the error is logged at Warn
+// and recorded as a warning on the result, never a fake verdict (I3).
+func attachSituation(l *logrus.Entry, conf *configuration.Configuration, provider string, pipeline *ir.NormalizedPipeline, result *AnalysisResult) {
+	if result == nil {
+		return
+	}
+	controls := conf.PlumberConfig.ControlsFor(provider)
+	ctx, cancel := context.WithTimeout(context.Background(), opaEvaluateTimeout)
+	defer cancel()
+	sit, err := EvaluateSituation(ctx, pipeline, buildEngineConfig(controls))
+	result.Situation = sit
+	if err != nil {
+		l.WithError(err).Warn("situation facts unavailable")
+		result.Warnings = append(result.Warnings, "situation facts unavailable: "+err.Error())
+	}
 }
 
 // evaluatePolicies loads the embedded Rego policies and evaluates them

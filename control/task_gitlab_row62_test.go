@@ -123,6 +123,16 @@ func TestRunAnalysis_Row62_CollectsForThePolicyUnion(t *testing.T) {
 		if !result.SecurityPolicyData.Known {
 			t.Errorf("expected the security-policy linkage to be read authoritatively (Known=true), got %+v", result.SecurityPolicyData)
 		}
+
+		// attachSituation must have run on this GitLab entry point too
+		// (Finding C): the project's own root job must be a key of
+		// result.Situation.Jobs.
+		if result.Situation == nil {
+			t.Fatal("expected result.Situation to be attached by RunAnalysis")
+		}
+		if _, ok := result.Situation.Jobs["local_job"]; !ok {
+			t.Errorf("expected job %q in result.Situation.Jobs, got %+v", "local_job", result.Situation.Jobs)
+		}
 	})
 
 	t.Run("a policy enabling only the variables control collects that lane alone", func(t *testing.T) {

@@ -307,6 +307,7 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 		Warnings:         pipeline.AdvisoryWarnings,
 	}
 	applyPolicyFailures(result, policyFailures)
+	attachSituation(l, conf, "github", pipeline, result)
 	markGitHubLanes(result, conf, conf.ProjectPath, scanMutableExec, branchScope)
 	// Local scans read workflow files from disk, so a skipped file is a
 	// parse/read problem (user-fixable), not a degraded collection — only
@@ -434,6 +435,7 @@ func RunGitHubAnalysisRemote(conf *configuration.Configuration, owner, repo, ref
 		Warnings:         pipeline.AdvisoryWarnings,
 	}
 	applyPolicyFailures(result, policyFailures)
+	attachSituation(l, conf, "github", pipeline, result)
 	markGitHubLanes(result, conf, owner+"/"+repo, scanMutableExec, branchScope)
 	applyGitHubDegraded(result, len(partial), branchFetchFailed)
 	// An enabled control asserting nothing until its substantive fields are set is not a clean
