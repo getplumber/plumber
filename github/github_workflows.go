@@ -490,6 +490,75 @@ func annotateUses(uses []ir.Action, usesLines []int, usesComments map[string]str
 	}
 }
 
+// stringOrList accepts the YAML forms GitHub allows for runs-on and needs: a
+// scalar or a sequence. Non-string items are dropped: a scalar expression
+// such as `${{ matrix.os }}` is kept as the literal label, and the map form
+// `runs-on: {group: ..., labels: [...]}` is not read yet, so it comes back
+// nil.
+func stringOrList(v any) []string {
+	switch x := v.(type) {
+	case string:
+		return []string{x}
+	case []any:
+		var out []string
+		for _, item := range x {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+// cacheAndArtifactRefs derives the structured cache and artifact uses of a job
+// from its actions steps. Only the official actions are recognized; a cache
+// implemented by a third-party action stays an ordinary Uses entry.
+func cacheAndArtifactRefs(uses []ir.Action) (caches []ir.CacheRef, artifacts []ir.ArtifactRef) {
+	for _, a := range uses {
+		name := a.Uses
+		if i := strings.Index(name, "@"); i >= 0 {
+			name = name[:i]
+		}
+		withStr := func(key string) string {
+			if s, ok := a.With[key].(string); ok {
+				return s
+			}
+			return ""
+		}
+		withPaths := func(key string) []string {
+			s := withStr(key)
+			if s == "" {
+				return nil
+			}
+			var out []string
+			for _, line := range strings.Split(s, "\n") {
+				if line = strings.TrimSpace(line); line != "" {
+					out = append(out, line)
+				}
+			}
+			return out
+		}
+		switch name {
+		case "actions/cache":
+			caches = append(caches, ir.CacheRef{Key: withStr("key"), Paths: withPaths("path"), Mode: "both"})
+		case "actions/cache/restore":
+			caches = append(caches, ir.CacheRef{Key: withStr("key"), Paths: withPaths("path"), Mode: "restore"})
+		case "actions/cache/save":
+			caches = append(caches, ir.CacheRef{Key: withStr("key"), Paths: withPaths("path"), Mode: "save"})
+		case "actions/upload-artifact":
+			artName := withStr("name")
+			if artName == "" {
+				artName = "artifact" // the action's documented default
+			}
+			artifacts = append(artifacts, ir.ArtifactRef{Name: artName, Paths: withPaths("path"), Mode: "produce"})
+		case "actions/download-artifact":
+			artifacts = append(artifacts, ir.ArtifactRef{Name: withStr("name"), Mode: "consume"})
+		}
+	}
+	return caches, artifacts
+}
+
 // buildJob converts one raw YAML job section into an ir.Job.
 func buildJob(jobName string, section map[string]any, wfCtx workflowContext, namespace, originFile string) ir.Job {
 	job := ir.Job{
@@ -547,6 +616,14 @@ func buildJob(jobName string, section map[string]any, wfCtx workflowContext, nam
 	if env := extractGitHubJobEnvironment(section["environment"]); env != "" {
 		job.Environment = env
 	}
+	job.RunsOn = stringOrList(section["runs-on"])
+	// Needs is qualified with the same namespace prefix as Name above, so a
+	// bare `needs: [lint]` in workflow "ci" becomes ["ci/lint"] and matches
+	// the Job.Name a path assembler would look it up by.
+	for _, need := range stringOrList(section["needs"]) {
+		job.Needs = append(job.Needs, namespace+"/"+need)
+	}
+	job.Caches, job.Artifacts = cacheAndArtifactRefs(job.Uses)
 	return job
 }
 
