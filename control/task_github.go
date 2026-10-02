@@ -26,6 +26,18 @@ var fetchGitHubDefaultBranch = func(host, owner, repo string) (string, error) {
 // which otherwise needs network and auth.
 var scanGitHubWorkflowsRemote = githubpkg.ScanGitHubWorkflowsRemote
 
+// fetchGitHubVisibility is a test seam over the repo-visibility lookup.
+// The default honors PLUMBER_DISABLE_GITHUB_API (same contract as
+// fetchGitHubDefaultBranch above) so offline test suites never hit the
+// network. FetchGitHubRepoVisibility never errors, so disabled and
+// unreachable both degrade straight to unknown.
+var fetchGitHubVisibility = func(host, owner, repo string) string {
+	if v := os.Getenv(githubpkg.EnvDisableGitHubAPI); v == "1" || v == "true" {
+		return ir.VisibilityUnknown
+	}
+	return githubpkg.FetchGitHubRepoVisibility(host, owner, repo)
+}
+
 // resolveGitHubDefaultBranch overwrites pipeline.DefaultBranch with the
 // forge's answer. The scan seeds the field with the branch being ANALYZED
 // (the --branch flag locally, the fetched ref remotely), which is only a
@@ -51,6 +63,18 @@ func resolveGitHubDefaultBranch(l *logrus.Entry, pipeline *ir.NormalizedPipeline
 	if def != "" {
 		pipeline.DefaultBranch = def
 	}
+}
+
+// applyGitHubVisibility records the repository's exposure on the
+// pipeline. Without an owner/repo there is nothing to ask, and the
+// answer is unknown rather than a lookup on a malformed path.
+func applyGitHubVisibility(pipeline *ir.NormalizedPipeline, host, projectPath string) {
+	owner, repo, ok := strings.Cut(projectPath, "/")
+	if !ok || owner == "" || repo == "" {
+		pipeline.Visibility = ir.VisibilityUnknown
+		return
+	}
+	pipeline.Visibility = fetchGitHubVisibility(host, owner, repo)
 }
 
 // enrichGitHubBranches populates pipeline.Branches via the GitHub
@@ -235,6 +259,7 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 	}
 
 	resolveGitHubDefaultBranch(l, pipeline, conf.GithubAPIHost, conf.ProjectPath)
+	applyGitHubVisibility(pipeline, conf.GithubAPIHost, conf.ProjectPath)
 
 	// The union of every collecting configuration's branchMustBeProtected
 	// scope, so one fetch covers every policy's branches (row 62).
@@ -363,6 +388,7 @@ func RunGitHubAnalysisRemote(conf *configuration.Configuration, owner, repo, ref
 	for _, perr := range partial {
 		l.WithError(perr).Warn("GitHub workflow parse: partial failure (file skipped)")
 	}
+	applyGitHubVisibility(pipeline, conf.GithubAPIHost, owner+"/"+repo)
 
 	resolveGitHubDefaultBranch(l, pipeline, conf.GithubAPIHost, owner+"/"+repo)
 

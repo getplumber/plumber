@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/cli/go-gh/v2/pkg/api"
+	"github.com/sirupsen/logrus"
 
 	"github.com/getplumber/plumber/internal/ir"
 )
@@ -343,11 +344,19 @@ type remoteBranchProtection struct {
 }
 
 // remoteRepoMetadata is the subset of /repos/{o}/{r} we need today —
-// only the default_branch field. Used so the rego rule's
+// the default_branch field (so the rego rule's
 // `defaultMustBeProtected` clause can match against the repo's
-// actual default rather than relying on a possibly-empty CLI flag.
+// actual default rather than relying on a possibly-empty CLI flag)
+// plus the private flag and the visibility field (so the pipeline can
+// carry the repo's exposure as a situation fact). GitHub Enterprise
+// repos can be "internal" (private: false, visibility: "internal"),
+// so visibility, when present, is the field that actually tells
+// public apart from private/internal; private is only a fallback for
+// hosts that omit visibility.
 type remoteRepoMetadata struct {
 	DefaultBranch string `json:"default_branch"`
+	Private       bool   `json:"private"`
+	Visibility    string `json:"visibility"`
 }
 
 // FetchGitHubDefaultBranch resolves the repo's default branch name
@@ -372,6 +381,37 @@ func FetchGitHubDefaultBranch(host, owner, repo string) (string, error) {
 		return "", err
 	}
 	return meta.DefaultBranch, nil
+}
+
+// FetchGitHubRepoVisibility reports whether the repository is public,
+// private or internal as GitHub sees it, normalized to the three
+// situation-fact values, or unknown when the API cannot answer (no
+// token, no access, not found, any other error). It never fails the
+// run: the situation facts treat unknown the same as any other missing
+// fact rather than blocking on it. GitHub Enterprise's "internal" repos
+// report private: false alongside visibility: "internal", so the
+// visibility field, when present, takes precedence over the private
+// boolean; hosts that omit visibility fall back to private as before.
+func FetchGitHubRepoVisibility(host, owner, repo string) string {
+	rest, err := newGitHubRESTClient(host)
+	if err != nil {
+		logrus.WithField("context", "collector").
+			Debugf("visibility lookup failed, recorded as unknown: %v", err)
+		return ir.VisibilityUnknown
+	}
+	var meta remoteRepoMetadata
+	if err := rest.Get(fmt.Sprintf("repos/%s/%s", owner, repo), &meta); err != nil {
+		logrus.WithField("context", "collector").
+			Debugf("visibility lookup failed, recorded as unknown: %v", err)
+		return ir.VisibilityUnknown
+	}
+	if meta.Visibility != "" {
+		return ir.NormalizeVisibility(meta.Visibility)
+	}
+	if meta.Private {
+		return ir.VisibilityPrivate
+	}
+	return ir.VisibilityPublic
 }
 
 // GitHubRepoVisible reports whether repos/{owner}/{repo} is readable with
