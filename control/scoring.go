@@ -67,6 +67,42 @@ type PlumberScoreResult struct {
 	Losses []SeverityLoss `json:"losses"`
 	// CodeLosses is the per-code breakdown that drives the score in scoring-v3.
 	CodeLosses []CodeLoss `json:"codeLosses"`
+
+	// The fields below are scoring-v4 only (ComputePlumberScoreV4): all
+	// omitempty, and left empty by scoring-v3's ComputePlumberScore.
+
+	// Paths is the assembled attack-path set scoring-v4 priced.
+	Paths []AttackPath `json:"paths,omitempty"`
+	// PathLosses is the per (tier, entryKind) breakdown of the path loss
+	// scoring-v4 charges.
+	PathLosses []PathLoss `json:"pathLosses,omitempty"`
+	// GateLosses is the per-code breakdown of the gate-role findings
+	// scoring-v4 priced outside any path (not consumed as a path's
+	// GateHashes). CodeLosses carries the same entries in scoring-v4,
+	// since gates are the only code-keyed loss left once paths are priced
+	// separately.
+	GateLosses []CodeLoss `json:"gateLosses,omitempty"`
+	// HygieneLoss is the single dampened-and-capped loss scoring-v4 charges
+	// for every remaining hygiene/privilege finding, together.
+	HygieneLoss float64 `json:"hygieneLoss,omitempty"`
+	// HygieneCount is the distinct-identity count behind HygieneLoss.
+	HygieneCount int `json:"hygieneCount,omitempty"`
+	// CriticalPaths is how many assembled paths are Tier Critical; > 0 is
+	// what drives scoring-v4's own Critical malus (CriticalMalusApplied),
+	// a gate alone never does.
+	CriticalPaths int `json:"criticalPaths,omitempty"`
+	// PathCounts is how many assembled paths each tier holds, keyed
+	// critical/high/medium/low, non-zero tiers only (spec section 4: the
+	// PBOM carries it); nil when no path assembled.
+	PathCounts map[string]int `json:"pathCounts,omitempty"`
+	// Situation is the plain-language paragraph (ScoreV4WithExplanations)
+	// describing the exposure, the shape of the pipeline and the paths
+	// found, ending in the best fix sentence (or "Nothing to fix."). Empty
+	// under scoring-v3.
+	Situation string `json:"situation,omitempty"`
+	// BestFix is the single highest-value fix ScoreV4WithExplanations found
+	// among the run's non-dismissed findings, nil when none gains points.
+	BestFix *BestFix `json:"bestFix,omitempty"`
 }
 
 // forEachIssueCode invokes fn for every issue code emitted by the

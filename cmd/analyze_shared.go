@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"sort"
 
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
@@ -464,8 +465,25 @@ func buildComplianceSummary(p provider.Provider, result *control.AnalysisResult,
 	// definition of "evaluated" the render and push layers use.
 	evaluatedCount := control.EvaluatedControlCount(providerControlEntries(p, conf), result)
 	score := computeScoreResult(result, scoreMode, evaluatedCount)
+	// Annotate findings with their v4 story (contextual severity, base
+	// severity, role, path ids, path sentence) right after the score that
+	// would carry that story is computed, and only when it actually is a
+	// v4 score: scoreProfileV4 reads score.ProfileID, not the bare
+	// --score-profile flag, so a v4 request that fell back to v3 for lack
+	// of a situation (control.situationUnavailable) annotates nothing,
+	// exactly like a plain v3 run.
+	//
+	// Never in platform mode: there each policy is a run of its own, and
+	// control.ReEvaluateForConfig annotates that policy's findings against
+	// its own paths. The run-level paths here are the local
+	// configuration's, which this mode does not publish, so they are
+	// dropped along with the local score.
+	if scoreProfileV4(score) && !platformMode {
+		control.AnnotateFindingsV4(result)
+	}
 	if platformMode {
 		score = nil
+		result.Paths = nil
 	}
 	return complianceSummary{
 		compliance:   compliance,
@@ -502,7 +520,14 @@ func outputTextWithProvider(p provider.Provider, result *control.AnalysisResult,
 		renderDegradedCaveat(result.DegradedReasons)
 	}
 
-	controls, groups := buildProviderControlSummariesAndGroups(p, result, conf.PlumberConfig, conf.PlatformRun.Active(), controlsFilterList, skipControlsList)
+	// The v4 view (the contextual severities, the Situation, the attack
+	// paths and their Points) is shown only when the run is priced under
+	// scoring-v4 AND its score is shown: a withheld score (a degraded run,
+	// say) states no tier and no best fix either, and the report falls back
+	// to the plain per-control view. scoreWithheld is the banner's own
+	// condition.
+	v4 := scoreProfileV4(s.score) && !scoreWithheld(s.score, s.scoreMode, result.DataCollectionDegraded)
+	controls, groups := buildProviderControlSummariesAndGroups(p, result, conf.PlumberConfig, conf.PlatformRun.Active(), controlsFilterList, skipControlsList, v4)
 	// Nothing was selected, so listing every control as "skipped" is noise
 	// that reads like a misconfiguration.
 	if s.noControls {
@@ -511,7 +536,12 @@ func outputTextWithProvider(p provider.Provider, result *control.AnalysisResult,
 	// On a degraded run the per-control verdict is untrustworthy; render only
 	// the findings we DID surface (a real violation on partial data is still
 	// real) and drop the green stat blocks (#220).
-	renderFindingGroups(filterGroupsForDegraded(groups, result.DataCollectionDegraded))
+	filteredGroups := filterGroupsForDegraded(groups, result.DataCollectionDegraded)
+	if v4 {
+		renderFindingGroupsV4(filteredGroups, s.score)
+	} else {
+		renderFindingGroups(filteredGroups)
+	}
 	renderWarnings(result.Warnings)
 	renderApprovalRulesTierCaveat(result)
 	renderMRApprovalSettingsTierCaveat(result)
@@ -521,7 +551,11 @@ func outputTextWithProvider(p provider.Provider, result *control.AnalysisResult,
 	printSectionHeader("Summary")
 	fmt.Println()
 
-	if crit := control.CriticalIssueCodesSorted(result); len(crit) > 0 {
+	crit := control.CriticalIssueCodesSorted(result)
+	if v4 {
+		crit = contextualCriticalIssueCodes(result)
+	}
+	if len(crit) > 0 {
 		fmt.Printf("  %s▶ Critical issue codes:%s %s\n", colorRed, colorReset, joinStrings(crit))
 		fmt.Println()
 	}
@@ -558,9 +592,20 @@ func outputTextWithProvider(p provider.Provider, result *control.AnalysisResult,
 	if s.noControls {
 		printNoControlsSummary()
 	}
-	printSummaryScoreBanner(s.score, s.scoreMode, result.DataCollectionDegraded)
-	if s.scorePoint && s.score != nil && !result.DataCollectionDegraded {
-		printScoreBreakdown(s.score)
+	// Under scoring-v4 the points breakdown prints before the banner: the
+	// banner is the report's closing line, and the breakdown is one more
+	// reading of what is above it, not a footnote after the verdict. v3
+	// keeps the breakdown-after-banner order it has always had.
+	if v4 {
+		if s.scorePoint {
+			renderPathBreakdown(os.Stdout, s.score)
+		}
+		printSummaryScoreBanner(s.score, s.scoreMode, result.DataCollectionDegraded)
+	} else {
+		printSummaryScoreBanner(s.score, s.scoreMode, result.DataCollectionDegraded)
+		if s.scorePoint && s.score != nil && !result.DataCollectionDegraded {
+			printScoreBreakdown(s.score)
+		}
 	}
 	return nil
 }
@@ -580,6 +625,44 @@ func countNotEvaluated(groups []findingGroup) int {
 	return n
 }
 
+// contextualSeverityCounts tallies the items' contextual severities, the
+// scoring-v4 counterpart of control.SeverityCountsFromIssueCodes: the
+// Summary table's severity cell then reads the strongest contextual
+// severity among a control's findings.
+func contextualSeverityCounts(items []detailedFinding) control.SeverityCounts {
+	var c control.SeverityCounts
+	for _, item := range items {
+		switch control.IssueSeverity(item.ContextualSeverity) {
+		case control.SeverityCritical:
+			c.Critical++
+		case control.SeverityHigh:
+			c.High++
+		case control.SeverityMedium:
+			c.Medium++
+		default:
+			c.Low++
+		}
+	}
+	return c
+}
+
+// contextualCriticalIssueCodes is control.CriticalIssueCodesSorted under
+// scoring-v4: the codes, sorted and deduplicated, of the non-dismissed
+// findings whose contextual severity is critical.
+func contextualCriticalIssueCodes(result *control.AnalysisResult) []string {
+	seen := map[string]bool{}
+	var out []string
+	for _, f := range result.Findings {
+		if f.Dismissed || seen[f.Code] || control.ContextualSeverity(f, result.Paths) != control.SeverityCritical {
+			continue
+		}
+		seen[f.Code] = true
+		out = append(out, f.Code)
+	}
+	sort.Strings(out)
+	return out
+}
+
 // buildProviderControlSummariesAndGroups builds the control summary and finding
 // group slices for any provider using the provider's catalog and registered
 // stats builder.
@@ -594,7 +677,13 @@ func countNotEvaluated(groups []findingGroup) int {
 // 62) - the caller supplies it rather than this function inspecting a
 // *configuration.Configuration itself, because the platform-render caller
 // passes r.Config (the POLICY's configuration), never the run's conf.
-func buildProviderControlSummariesAndGroups(p provider.Provider, result *control.AnalysisResult, pc *configuration.PlumberConfig, linked bool, controlsFilterList, skipControlsList []string) ([]controlSummary, []findingGroup) {
+//
+// v4 is whether the caller renders the scoring-v4 view of this result: every
+// item then carries its contextual severity, role and path ids (read
+// against result.Paths), and a control's Summary severity is the strongest
+// contextual severity among its findings. False renders exactly what v3
+// always has.
+func buildProviderControlSummariesAndGroups(p provider.Provider, result *control.AnalysisResult, pc *configuration.PlumberConfig, linked bool, controlsFilterList, skipControlsList []string, v4 bool) ([]controlSummary, []findingGroup) {
 	findingsByControl := control.FindingsByControl(result.Findings)
 	entries := p.Controls(pc)
 	control.MarkSkippedByFilter(entries, controlsFilterList, skipControlsList)
@@ -607,7 +696,7 @@ func buildProviderControlSummariesAndGroups(p provider.Provider, result *control
 		if e.ControlName == "branchMustBeProtected" {
 			sortBranchProtectionFindingsForDisplay(findings)
 		}
-		codes, items := findingsToItems(findings)
+		codes, items := findingsToItems(findings, result.Paths, v4)
 		dismissed := 0
 		for _, item := range items {
 			if item.Dismissed {
@@ -657,12 +746,16 @@ func buildProviderControlSummariesAndGroups(p provider.Provider, result *control
 		// per-control inventory, not the live verdict. Collapsing the row
 		// count when every finding of a control happens to be dismissed
 		// would make the control's row look emptier than what actually ran.
+		bySeverity := control.SeverityCountsFromIssueCodes(codes)
+		if v4 {
+			bySeverity = contextualSeverityCounts(items)
+		}
 		controls = append(controls, controlSummary{
 			name:       e.DisplayName,
 			issues:     len(items),
 			skipped:    skipped,
 			codes:      uniqueSortedIssueCodeStrings(codes),
-			bySeverity: control.SeverityCountsFromIssueCodes(codes),
+			bySeverity: bySeverity,
 		})
 		groups = append(groups, findingGroup{
 			Title:              e.DisplayName,
@@ -874,7 +967,7 @@ func computeScoreResult(result *control.AnalysisResult, scoreMode bool, evaluate
 	if !scoreMode || evaluatedCount == 0 {
 		return nil
 	}
-	s := control.ComputePlumberScore(control.AggregateIssueCodeCounts(result))
+	s := control.ComputeScoreForProfile(control.ScoreProfile, result)
 	return &s
 }
 

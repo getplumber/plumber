@@ -292,6 +292,23 @@ type Job struct {
 	// care about triggers are GitHub-specific.
 	Triggers []string `json:"triggers,omitempty"`
 
+	// PushBranches, PushBranchesIgnore, PushTags and PushTagsIgnore carry
+	// GitHub's `on.push.branches` / `branches-ignore` / `tags` /
+	// `tags-ignore` filters (PR #513 review): each entry is a glob pattern
+	// exactly as the workflow author wrote it. All four are empty when
+	// `push:` carries no filter at all (the bare "push" string or
+	// list-element form, or a `push:` entry with none of these four keys),
+	// which situation.rego's unprotected_push reads as "every branch",
+	// never as "no push trigger at all". PushTagsIgnore on its own (no
+	// branches, no branches-ignore) reads the same as PushTags alone: a
+	// tag filter with no branch filter at all means the workflow never
+	// runs on a branch push. GitLab carries no equivalent: its push
+	// surface is read off its rules:/only:/except: keywords instead.
+	PushBranches       []string `json:"pushBranches,omitempty"`
+	PushBranchesIgnore []string `json:"pushBranchesIgnore,omitempty"`
+	PushTags           []string `json:"pushTags,omitempty"`
+	PushTagsIgnore     []string `json:"pushTagsIgnore,omitempty"`
+
 	// Uses lists every third-party action referenced by the job's steps
 	// (for GitHub Actions, `jobs.<name>.steps[].uses` with its
 	// accompanying `with:` block). Empty for GitLab jobs, which model
@@ -715,11 +732,14 @@ func NormalizeVisibility(raw string) string {
 	return VisibilityUnknown
 }
 
-// CacheRef is one cache a job restores, saves or both.
+// CacheRef is one cache a job restores, saves or both. A Prefix entry is a
+// restore fallback (GitHub actions/cache restore-keys): it restores the most
+// recent cache whose key starts with Key, not only the one equal to it.
 type CacheRef struct {
-	Key   string   `json:"key,omitempty"`
-	Paths []string `json:"paths,omitempty"`
-	Mode  string   `json:"mode"` // "restore", "save" or "both"
+	Key    string   `json:"key,omitempty"`
+	Paths  []string `json:"paths,omitempty"`
+	Mode   string   `json:"mode"` // "restore", "save" or "both"
+	Prefix bool     `json:"prefix,omitempty"`
 }
 
 // ArtifactRef is one artifact a job produces or consumes. An empty Name on a

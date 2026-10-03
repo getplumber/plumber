@@ -1,0 +1,9 @@
+compare:
+  image: alpine:3.19
+  script:
+    - diff <(curl -s https://example.com/a) <(curl -s https://example.com/b)
+
+doc_echo:
+  image: alpine:3.19
+  script:
+    - echo 'bash -c "$(curl -fsSL https://example.com/i.sh)"'

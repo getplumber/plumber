@@ -1,0 +1,20 @@
+{
+  "source": "https://github.com/ultralytics/ultralytics",
+  "commit": "21162bd870444550286983a601afbfb142f4c198",
+  "captured": "2026-10-03",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [{"name": "main", "protected": true}],
+  "note": "The December 2024 compromise: format.yml runs on pull_request_target and hands two secrets to ultralytics/actions@main, which checked out the fork head and interpolated the branch name in a shell inside the action (invisible from this repository, so no pr_target fact can be proven here); the poisoned cache then reached publish.yml, which publishes to PyPI. From the workflow files the spec gives a High path through the mutable action into the secrets-holding format job, and a Critical path through the mutable PyPI publish action into the publishing job. The setup-python pip cache that carried the poison is not a structured cache in the IR, so the cache edge itself is out of reach.",
+  "expect": {
+    "maxTier": "critical",
+    "paths": [
+      {"entryKind": "mutable_dependency", "tier": "high", "job": "format/format", "subjectContains": "ultralytics/actions@main", "reachKind": "secrets", "state": "proven",
+       "sentenceContains": ["`ultralytics/actions@main`", "`format/format`", "`OPENAI_API_KEY`", "`_GITHUB_TOKEN`"]},
+      {"entryKind": "mutable_dependency", "tier": "critical", "job": "publish/publish", "subjectContains": "pypa/gh-action-pypi-publish@release/v1", "reachKind": "impact:publishes", "state": "proven",
+       "sentenceContains": ["`pypa/gh-action-pypi-publish@release/v1`", "`publish/publish`", "publishes the package"]}
+    ],
+    "letter": "E"
+  }
+}

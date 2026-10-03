@@ -1,0 +1,18 @@
+{
+  "source": "https://github.com/Inled-Pulsar-OS/PKG",
+  "commit": "ffaa15b037251dd8593499c076efdc1f78e7cc56",
+  "captured": "2026-10-03",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [{"name": "main", "protected": false}],
+  "note": "An issue-driven package deploy: the deploy job runs on issues (opened, edited, labeled) and pastes github.event.issue.body and github.event.issue.title into a shell, in a job holding INLED_REPO_PAT (the token that uploads to the package repository) and a declared contents: write token. The admin check is a shell step earlier in the job, which the facts cannot read. An untrusted expression into secrets and a write token with no proven impact is High; main is unprotected and the path's token writes the repository, so the branch gate amplifies it one tier to Critical.",
+  "expect": {
+    "maxTier": "critical",
+    "paths": [
+      {"entryKind": "untrusted_expression", "tier": "critical", "job": "deploy-package/deploy", "subjectContains": "github.event.issue.", "reachKind": "secrets", "state": "proven",
+       "sentenceContains": ["`deploy-package/deploy`", "`INLED_REPO_PAT`", "`main`"]}
+    ],
+    "letter": "E"
+  }
+}

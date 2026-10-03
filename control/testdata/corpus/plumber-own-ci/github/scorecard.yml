@@ -1,0 +1,52 @@
+name: OpenSSF Scorecard
+
+on:
+  push:
+    branches: [main]
+  branch_protection_rule:
+  schedule:
+    - cron: '30 1 * * 1'
+
+permissions: {}
+
+jobs:
+  analysis:
+    name: Scorecard Analysis
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      security-events: write
+      id-token: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # KNOWN MUTABILITY GAP: this SHA pin does not pin the code that
+      # actually runs. The action's own action.yaml is a Docker action
+      # referencing ghcr.io/ossf/scorecard-action:v2.4.3 by mutable tag
+      # (no digest), so a re-pushed tag changes what executes here with
+      # no change to this file. We keep the official action anyway
+      # because publish_results (the OpenSSF badge in the README) only
+      # accepts results produced by it — scorecard.dev validates the
+      # workflow and OIDC claims. A solution is still to be found
+      # (upstream digest pin, or dropping the badge for a pinned CLI).
+      - name: Run Scorecard
+        uses: ossf/scorecard-action@2d1146689b8cda280b9bc96326124645441f03bc # v2.4.4
+        with:
+          results_file: results.sarif
+          results_format: sarif
+          publish_results: true
+
+      - name: Upload SARIF
+        uses: github/codeql-action/upload-sarif@f205ea1c3313d32999d8d6a48b4f6530d4437b38 # v4.37.4
+        with:
+          sarif_file: results.sarif
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: scorecard-results
+          path: results.sarif
+          retention-days: 5

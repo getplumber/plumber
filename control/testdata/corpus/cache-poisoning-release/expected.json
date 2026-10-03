@@ -1,0 +1,21 @@
+{
+  "source": "reconstruction of the release cache poisoning write-ups (2024), on GitLab",
+  "commit": "",
+  "captured": "2026-10-03",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [{"name": "main", "protected": true}],
+  "settingsVariables": [
+    {"name": "NPM_TOKEN", "type": "env_var", "environment": "*", "protected": true, "masked": true}
+  ],
+  "note": "The cache poisoning shape of the 2024 write-ups, reproduced on GitLab (the published cases are GitHub runs that cannot be replayed offline): one cache under default:, keyed on a constant, so the merge request lint job saves the store the tag-triggered publish job restores, with the project's separate caches for protected branches turned off. The lint job installs pnpm by piping a fetched script into sh, so whoever controls that script writes into the cache. Walked one hop along the cache edge, the path reaches the publish job, which holds NPM_TOKEN (a tag pipeline receives protected variables) and runs npm publish: Critical. Neither job declares the cache itself, so the edge exists only through default: inheritance.",
+  "expect": {
+    "maxTier": "critical",
+    "paths": [
+      {"entryKind": "mutable_dependency", "tier": "critical", "job": "lint", "subjectContains": "https://get.pnpm.io/install.sh", "reachKind": "impact:publishes", "state": "proven",
+       "sentenceContains": ["`https://get.pnpm.io/install.sh`", "`lint`", "`NPM_TOKEN`", "publishes the package"]}
+    ],
+    "letter": "E"
+  }
+}

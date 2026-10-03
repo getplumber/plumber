@@ -77,6 +77,11 @@ type JobSituation struct {
 type Situation struct {
 	Exposure string                  `json:"exposure"` // ir.Visibility*
 	Jobs     map[string]JobSituation `json:"jobs"`
+	// DefaultBranch is the pipeline's default branch (input.pipeline.defaultBranch
+	// on the Rego side), empty when the provider never gave it. A gate whose
+	// own branch matches this one amplifies every path, not only paths
+	// through jobs it shares (spec section 2, rule 7).
+	DefaultBranch string `json:"defaultBranch"`
 }
 
 // DecodeSituation parses data.situation.result. Missing jobs decode to an

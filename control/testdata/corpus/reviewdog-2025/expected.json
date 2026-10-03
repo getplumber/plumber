@@ -1,0 +1,17 @@
+{
+  "source": "https://github.com/tj-actions/changed-files",
+  "commit": "3b3041225bddb25fd9637f44aa4e9a5178c6792e",
+  "captured": "2026-10-03",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [{"name": "main", "protected": true}],
+  "note": "The first link of the March 2025 chain (CVE-2025-30154): tj-actions/changed-files' own CI ran tj-actions/eslint-changed-files@v25, which pulled reviewdog/action-setup@v1, in the build job holding PAT_TOKEN (the bot token later used to move the changed-files tags) and the Codacy token. There is no publish step in this job, so the spec gives High through the mutable action into the secrets; the push action that uses the PAT is ad-m/github-push-action, outside the known repository-writer list, so no writes_repo impact is proven.",
+  "expect": {
+    "maxTier": "high",
+    "paths": [
+      {"entryKind": "mutable_dependency", "tier": "high", "job": "test/build", "subjectContains": "tj-actions/eslint-changed-files@v25", "reachKind": "secrets", "state": "proven",
+       "sentenceContains": ["`tj-actions/eslint-changed-files@v25`", "`test/build`", "`PAT_TOKEN`"]}
+    ]
+  }
+}

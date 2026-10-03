@@ -2,11 +2,13 @@ package control
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 	"unicode"
 
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/gitlab"
+	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	"github.com/sirupsen/logrus"
 )
 
@@ -159,6 +161,21 @@ func generateMRComment(result *AnalysisResult, pc *configuration.PlumberConfig, 
 		fmt.Fprintf(&b, "- **Score:** **%s**\n\n", score.Score)
 	}
 
+	// isV4 gates on the computed score's own ProfileID, never on the
+	// package-level ScoreProfile variable: a --score-profile v4 request
+	// that fell back to scoring-v3 for lack of a usable situation must
+	// still render the ordinary v3 comment below.
+	isV4 := score != nil && score.ProfileID == PlumberScoreProfileIDV4
+	if isV4 {
+		b.WriteString(v4CommentSections(result, score))
+	}
+	// renderedPaths is the id set of the attack paths the Attack paths
+	// section above actually printed (the first maxCommentPaths, worst
+	// first); computed once here and threaded into both the otherIssues
+	// tally below and writeIssueDetails, so a finding riding a path beyond
+	// the cap is judged against the same set in both places.
+	renderedPaths := renderedPathIDs(result.Paths)
+
 	// Gather controls from the config-driven catalog joined with the
 	// Rego Findings list. An empty findings list is not automatically a
 	// pass: a control whose data lane supplied nothing has no findings
@@ -174,11 +191,17 @@ func generateMRComment(result *AnalysisResult, pc *configuration.PlumberConfig, 
 	findingsByControl := FindingsByControl(result.Findings)
 	var controls []controlEntry
 	var totalIssues int
+	// otherIssues counts, under v4 only, the findings the Attack paths
+	// list above did not already tell the story of (no pathIds in their
+	// Data): what is left to show under "Other findings". Unused, and so
+	// always zero, under v3.
+	var otherIssues int
 
 	mrEntries := GitLabControls(pc)
 	MarkSkippedByFilter(mrEntries, controlsFilterList, skipControlsList)
 	for _, e := range mrEntries {
-		count := len(findingsByControl[e.ControlName])
+		findings := findingsByControl[e.ControlName]
+		count := len(findings)
 		// Keyed on result.NotEvaluable, not StatusFor: StatusFor also
 		// returns StatusError for the older run-wide degradation signals,
 		// and re-bucketing those would change what a STANDALONE run posts.
@@ -191,6 +214,9 @@ func generateMRComment(result *AnalysisResult, pc *configuration.PlumberConfig, 
 		})
 		if !e.Skipped {
 			totalIssues += count
+			if isV4 {
+				otherIssues += countWithoutPathIDs(findings, renderedPaths)
+			}
 		}
 	}
 
@@ -217,10 +243,19 @@ func generateMRComment(result *AnalysisResult, pc *configuration.PlumberConfig, 
 	// Status line after the table
 	writeMRStatusLine(&b, passed, gateLine)
 
-	// Issue details as a normal section
-	if totalIssues > 0 {
+	// Issue details. Under v4 the Attack paths list above already told the
+	// story of every finding that anchors or walks a path (its own role,
+	// severity and explanation); this section is renamed "Other findings"
+	// and carries only what is left, so nothing is told twice. Under v3
+	// nothing changes: the heading, and every finding able to reach it,
+	// are exactly what they were before v4 existed.
+	switch {
+	case isV4 && otherIssues > 0:
+		b.WriteString("### Other findings\n\n")
+		writeIssueDetails(&b, result, renderedPaths)
+	case !isV4 && totalIssues > 0:
 		b.WriteString("### Issues\n\n")
-		writeIssueDetails(&b, result)
+		writeIssueDetails(&b, result, nil)
 	}
 
 	writeMRFooter(&b)
@@ -331,15 +366,54 @@ func sanitizeMarkdownInline(s string) string {
 	return b.String()
 }
 
+// sanitizeMarkdownKeepCode is sanitizeMarkdownInline for the scoring-v4
+// text that leans on code spans on purpose (a path sentence, the Situation
+// paragraph, the best fix, a path line and a role line): the text OUTSIDE
+// the spans gets exactly the escaping every other line of the comment gets,
+// and the spans are kept, so a name still reads as code. A span cannot
+// carry a backtick (code(), control/explain.go, strips them from every
+// name), so splitting on backticks finds exactly the spans; inside one,
+// control characters still become spaces. An odd number of backticks means
+// the text was not built that way, and it is escaped whole instead.
+func sanitizeMarkdownKeepCode(s string) string {
+	parts := strings.Split(s, "`")
+	if len(parts)%2 == 0 {
+		return sanitizeMarkdownInline(s)
+	}
+	for i, part := range parts {
+		if i%2 == 0 {
+			parts[i] = sanitizeMarkdownInline(part)
+			continue
+		}
+		parts[i] = strings.Map(func(r rune) rune {
+			if unicode.IsControl(r) {
+				return ' '
+			}
+			return r
+		}, part)
+	}
+	return strings.Join(parts, "`")
+}
+
 // writeIssueDetails appends per-control issue details into the builder.
 // Findings are grouped by the ControlName declared in the issue-code
 // registry so the section headings line up with the controls table.
 // Order within each group follows the Rego evaluation order so repeated
 // runs produce stable output.
-func writeIssueDetails(b *strings.Builder, result *AnalysisResult) {
+//
+// rendered is non-nil only for the v4 "Other findings" section: it drops
+// every finding whose pathIds are all within the Attack paths list above
+// (rendered there in full), leaving the gate and hygiene findings no
+// rendered path reached. A finding riding at least one path beyond the
+// cap is kept, since the Attack paths list never told its story. Under v3
+// rendered is always nil and nothing here changes.
+func writeIssueDetails(b *strings.Builder, result *AnalysisResult, rendered map[string]bool) {
 	findingsByControl := FindingsByControl(result.Findings)
 	for _, g := range mrCommentControlOrder {
 		findings := findingsByControl[g.controlName]
+		if rendered != nil {
+			findings = withoutPathIDs(findings, rendered)
+		}
 		if len(findings) == 0 {
 			continue
 		}
@@ -350,6 +424,140 @@ func writeIssueDetails(b *strings.Builder, result *AnalysisResult) {
 		}
 		b.WriteString("\n")
 	}
+}
+
+// maxCommentPaths bounds the Attack paths list of one comment; the rest are
+// counted on one line, worst-first order keeping the ones that matter.
+const maxCommentPaths = 20
+
+// v4CommentSections renders the scoring-v4 additions to the merge-request
+// comment: the plain-language Situation paragraph, then the assembled
+// attack paths, worst-first (AssemblePaths's own order, never re-sorted
+// here), at most maxCommentPaths of them. Each path reads as the terminal
+// does: its ordinal and its id, the jobs it walks, its own PathSentence,
+// then the findings on it, each with its role on THAT path (RoleOnPath),
+// read with the ordinals. Every name in this text is attacker text on a
+// merge-request pipeline (the CI configuration is the author's), so the
+// whole of it goes through sanitizeMarkdownKeepCode: the names stay inside
+// their code spans and everything around them is escaped like any other
+// comment line.
+func v4CommentSections(result *AnalysisResult, score *PlumberScoreResult) string {
+	var b strings.Builder
+	if score.Situation != "" {
+		b.WriteString("\n### Situation\n\n" + sanitizeMarkdownKeepCode(score.Situation) + "\n")
+	}
+	if len(result.Paths) == 0 {
+		return b.String()
+	}
+	ordinal := make(map[string]int, len(result.Paths))
+	for i, p := range result.Paths {
+		ordinal[p.ID] = i + 1
+	}
+	b.WriteString("\n### Attack paths\n\n")
+	for i, p := range result.Paths {
+		if i == maxCommentPaths {
+			rest := len(result.Paths) - maxCommentPaths
+			fmt.Fprintf(&b, "- and %s\n", plural(rest, "more path", "more paths"))
+			break
+		}
+		jobs := make([]string, len(p.Jobs))
+		for j, name := range p.Jobs {
+			jobs[j] = code(name)
+		}
+		// The tier, the ordinal and the id are this package's own values
+		// (a fixed word, a count, a hex digest); only the jobs and the
+		// sentence carry names.
+		fmt.Fprintf(&b, "- **%s** path %d (`%s`), %s\n", p.Tier, i+1, p.ID, sanitizeMarkdownKeepCode(strings.Join(jobs, " -> ")+": "+PathSentence(p)))
+		for _, f := range findingsOnPath(result.Findings, p) {
+			role := RoleOnPath(f, p)
+			for id, n := range ordinal {
+				role = strings.ReplaceAll(role, "path "+id, fmt.Sprintf("path %d", n))
+			}
+			fmt.Fprintf(&b, "  - `%s` %s (%s, [docs](%s))\n", f.Code, sanitizeMarkdownInline(f.Message), sanitizeMarkdownKeepCode(role), ErrorCode(f.Code).DocURL())
+		}
+	}
+	// A blank line closes the list before the next heading.
+	b.WriteString("\n")
+	return b.String()
+}
+
+// findingsOnPath lists the findings PathIDsFor associates with p, the one
+// it anchors first, then the rest in their own order.
+func findingsOnPath(findings []opaengine.Finding, p AttackPath) []opaengine.Finding {
+	var anchor, rest []opaengine.Finding
+	for _, f := range findings {
+		if !slices.Contains(PathIDsFor(f, []AttackPath{p}), p.ID) {
+			continue
+		}
+		if h, ok := findingAnchorHash(f); ok && h == p.AnchorHash {
+			anchor = append(anchor, f)
+			continue
+		}
+		rest = append(rest, f)
+	}
+	return append(anchor, rest...)
+}
+
+// renderedPathIDs is the id set of the attack paths v4CommentSections
+// actually prints: the first maxCommentPaths of result.Paths, worst first
+// (AssemblePaths's own order). A path beyond the cap is only ever
+// summarized on the "and N more paths" line, never told on its own, so its
+// id does not belong in this set.
+func renderedPathIDs(paths []AttackPath) map[string]bool {
+	n := len(paths)
+	if n > maxCommentPaths {
+		n = maxCommentPaths
+	}
+	ids := make(map[string]bool, n)
+	for _, p := range paths[:n] {
+		ids[p.ID] = true
+	}
+	return ids
+}
+
+// findingHasPathIDs reports whether a finding is already told IN FULL by
+// the Attack paths list: AnnotateFindingsV4 writes Data["pathIds"] only
+// when PathIDsFor returned at least one id, and omits the key otherwise.
+// A finding with every one of its path ids in rendered was shown there; a
+// finding with even one id beyond the maxCommentPaths cap was not, and
+// must stay visible somewhere, or it disappears from the comment entirely.
+func findingHasPathIDs(f opaengine.Finding, rendered map[string]bool) bool {
+	ids, ok := f.Data["pathIds"].([]string)
+	if !ok || len(ids) == 0 {
+		return false
+	}
+	for _, id := range ids {
+		if !rendered[id] {
+			return false
+		}
+	}
+	return true
+}
+
+// withoutPathIDs filters out every finding findingHasPathIDs reports true
+// for against rendered, preserving the input order (the Rego evaluation
+// order FindingsByControl already produced).
+func withoutPathIDs(findings []opaengine.Finding, rendered map[string]bool) []opaengine.Finding {
+	out := make([]opaengine.Finding, 0, len(findings))
+	for _, f := range findings {
+		if !findingHasPathIDs(f, rendered) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// countWithoutPathIDs is withoutPathIDs without the allocation, for the
+// otherIssues tally that decides whether the "Other findings" heading
+// renders at all.
+func countWithoutPathIDs(findings []opaengine.Finding, rendered map[string]bool) int {
+	n := 0
+	for _, f := range findings {
+		if !findingHasPathIDs(f, rendered) {
+			n++
+		}
+	}
+	return n
 }
 
 // mrCommentControlOrder drives the per-control detail sections of the MR

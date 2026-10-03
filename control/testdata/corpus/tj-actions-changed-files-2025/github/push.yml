@@ -1,0 +1,267 @@
+name: "@hatchifyjs/push"
+on: push
+
+jobs:
+  linkinator:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: JustinBeckwith/linkinator-action@v1
+        with:
+          paths: "**/*.md"
+          skip: "(^http://localhost/$|:3000)"
+          markdown: true
+
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+  publish-changes:
+    if: ${{ !contains(github.event.head_commit.message, 'skip-publish') && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          token: ${{ secrets.BITOVI_OS_PAT }}
+
+      - name: Get changed files
+        id: changed-files
+        uses: tj-actions/changed-files@v42
+        with:
+          safe_output: false
+
+      - name: Use Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Get changed packages
+        id: changed-packages
+        env:
+          COMMIT_MESSAGE: ${{ github.event.head_commit.message }}
+          TOUCHED_FILES: ${{ steps.changed-files.outputs.all_changed_and_modified_files }}
+        run: npm run --silent get-changed-packages >> $GITHUB_OUTPUT
+
+      - name: Publish crypto
+        if: ${{ steps.changed-packages.outputs.crypto == 'publish' }}
+        uses: ./.github/actions/job-publish
+        with:
+          directory: crypto
+          npm-token: ${{ secrets.NPM_TOKEN }}
+          github-token: ${{ secrets.BITOVI_OS_PAT }}
+          segment: ${{ steps.changed-packages.outputs.segment }}
+
+      - name: Publish core
+        if: ${{ steps.changed-packages.outputs.core == 'publish' }}
+        uses: ./.github/actions/job-publish
+        with:
+          directory: core
+          npm-token: ${{ secrets.NPM_TOKEN }}
+          github-token: ${{ secrets.BITOVI_OS_PAT }}
+          segment: ${{ steps.changed-packages.outputs.segment }}
+
+      - name: Publish node
+        if: ${{ steps.changed-packages.outputs.node == 'publish' }}
+        uses: ./.github/actions/job-publish
+        with:
+          directory: node
+          npm-token: ${{ secrets.NPM_TOKEN }}
+          github-token: ${{ secrets.BITOVI_OS_PAT }}
+          segment: ${{ steps.changed-packages.outputs.segment }}
+
+      - name: Publish express
+        if: ${{ steps.changed-packages.outputs.express == 'publish' }}
+        uses: ./.github/actions/job-publish
+        with:
+          directory: express
+          npm-token: ${{ secrets.NPM_TOKEN }}
+          github-token: ${{ secrets.BITOVI_OS_PAT }}
+          segment: ${{ steps.changed-packages.outputs.segment }}
+
+      - name: Publish koa
+        if: ${{ steps.changed-packages.outputs.koa == 'publish' }}
+        uses: ./.github/actions/job-publish
+        with:
+          directory: koa
+          npm-token: ${{ secrets.NPM_TOKEN }}
+          github-token: ${{ secrets.BITOVI_OS_PAT }}
+          segment: ${{ steps.changed-packages.outputs.segment }}
+
+      - name: Publish rest-client
+        if: ${{ steps.changed-packages.outputs.rest-client == 'publish' }}
+        uses: ./.github/actions/job-publish
+        with:
+          directory: rest-client
+          npm-token: ${{ secrets.NPM_TOKEN }}
+          github-token: ${{ secrets.BITOVI_OS_PAT }}
+          segment: ${{ steps.changed-packages.outputs.segment }}
+
+      - name: Publish react-rest
+        if: ${{ steps.changed-packages.outputs.react-rest == 'publish' }}
+        uses: ./.github/actions/job-publish
+        with:
+          directory: react-rest
+          npm-token: ${{ secrets.NPM_TOKEN }}
+          github-token: ${{ secrets.BITOVI_OS_PAT }}
+          segment: ${{ steps.changed-packages.outputs.segment }}
+
+      - name: Publish rest-client-jsonapi
+        if: ${{ steps.changed-packages.outputs.rest-client-jsonapi == 'publish' }}
+        uses: ./.github/actions/job-publish
+        with:
+          directory: rest-client-jsonapi
+          npm-token: ${{ secrets.NPM_TOKEN }}
+          github-token: ${{ secrets.BITOVI_OS_PAT }}
+          segment: ${{ steps.changed-packages.outputs.segment }}
+
+      - name: Publish react-ui
+        if: ${{ steps.changed-packages.outputs.react-ui == 'publish' }}
+        uses: ./.github/actions/job-publish
+        with:
+          directory: react-ui
+          npm-token: ${{ secrets.NPM_TOKEN }}
+          github-token: ${{ secrets.BITOVI_OS_PAT }}
+          segment: ${{ steps.changed-packages.outputs.segment }}
+
+      - name: Publish react-jsonapi
+        if: ${{ steps.changed-packages.outputs.react-jsonapi == 'publish' }}
+        uses: ./.github/actions/job-publish
+        with:
+          directory: react-jsonapi
+          npm-token: ${{ secrets.NPM_TOKEN }}
+          github-token: ${{ secrets.BITOVI_OS_PAT }}
+          segment: ${{ steps.changed-packages.outputs.segment }}
+
+      - name: Publish design-mui
+        if: ${{ steps.changed-packages.outputs.design-mui == 'publish' }}
+        uses: ./.github/actions/job-publish
+        with:
+          directory: design-mui
+          npm-token: ${{ secrets.NPM_TOKEN }}
+          github-token: ${{ secrets.BITOVI_OS_PAT }}
+          segment: ${{ steps.changed-packages.outputs.segment }}
+
+      - name: Publish react
+        if: ${{ steps.changed-packages.outputs.react == 'publish' }}
+        uses: ./.github/actions/job-publish
+        with:
+          directory: react
+          npm-token: ${{ secrets.NPM_TOKEN }}
+          github-token: ${{ secrets.BITOVI_OS_PAT }}
+          segment: ${{ steps.changed-packages.outputs.segment }}
+
+      - name: Publish create
+        if: ${{ steps.changed-packages.outputs.create == 'publish' }}
+        uses: ./.github/actions/job-publish
+        with:
+          directory: create
+          npm-token: ${{ secrets.NPM_TOKEN }}
+          github-token: ${{ secrets.BITOVI_OS_PAT }}
+          segment: ${{ steps.changed-packages.outputs.segment }}
+
+  verify-example:
+    if: ${{ github.ref == 'refs/heads/main' }}
+    needs: publish-changes
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: ./example/grid-demo
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Install dependencies
+        run: npm install @hatchifyjs/core@latest @hatchifyjs/express@latest @hatchifyjs/koa@latest @hatchifyjs/react@latest
+
+      - name: Run lint
+        run: npm run lint
+
+      - name: Run build
+        run: npm run build
+
+  deploy:
+    needs: verify-example
+    if: ${{ !contains(github.event.head_commit.message, 'skip-publish') && github.ref == 'refs/heads/main' }}
+    runs-on: ubuntu-latest
+    environment:
+      name: ${{ github.ref_name }}
+      url: ${{ steps.deploy.outputs.vm_url }}
+    steps:
+      - id: destroy-deployment
+        name: Destroy Deployment
+        uses: bitovi/github-actions-deploy-docker-to-ec2@v1.0.1
+        with:
+          aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID_SANDBOX }}
+          aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY_SANDBOX }}
+          aws_default_region: us-east-1
+
+          aws_r53_enable: true
+          aws_r53_domain_name: bitovi-sandbox.com
+          aws_r53_sub_domain_name: hatchify-grid-demo
+          aws_elb_app_port: 3000,3001,3002,3003
+          aws_elb_listen_port: 3000,3001,3002,3003
+          aws_elb_healthcheck: "HTTP:3000/"
+
+          aws_ec2_instance_root_vol_size: 40
+          aws_ec2_instance_type: t3.large
+          aws_ec2_create_keypair_sm: true
+          aws_ec2_ami_update: true
+
+          docker_full_cleanup: true
+          docker_repo_app_directory: example/grid-demo
+          docker_repo_app_directory_cleanup: true
+
+          tf_stack_destroy: true
+          tf_state_bucket_destroy: true
+      - id: deploy
+        name: Deploy
+        uses: bitovi/github-actions-deploy-docker-to-ec2@v1.0.1
+        with:
+          aws_access_key_id: ${{ secrets.AWS_ACCESS_KEY_ID_SANDBOX }}
+          aws_secret_access_key: ${{ secrets.AWS_SECRET_ACCESS_KEY_SANDBOX }}
+          aws_default_region: us-east-1
+
+          aws_r53_enable: true
+          aws_r53_domain_name: bitovi-sandbox.com
+          aws_r53_sub_domain_name: hatchify-grid-demo
+          aws_elb_app_port: 3000,3001,3002,3003
+          aws_elb_listen_port: 3000,3001,3002,3003
+          aws_elb_healthcheck: "HTTP:3000/"
+
+          aws_ec2_instance_root_vol_size: 40
+          aws_ec2_instance_type: t3.large
+          aws_ec2_create_keypair_sm: true
+          aws_ec2_ami_update: true
+
+          docker_full_cleanup: true
+          docker_repo_app_directory: example/grid-demo
+          docker_repo_app_directory_cleanup: true

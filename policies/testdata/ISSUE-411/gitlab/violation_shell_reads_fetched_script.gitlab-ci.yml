@@ -1,0 +1,9 @@
+codecov:
+  image: alpine:3.19
+  script:
+    - bash <(curl -s https://codecov.io/bash) -t ${CODECOV_TOKEN}
+
+brew:
+  image: alpine:3.19
+  script:
+    - /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"

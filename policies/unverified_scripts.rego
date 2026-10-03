@@ -27,6 +27,13 @@ import rego.v1
 # Shell interpreters commonly used as pipe targets in CI attacks.
 _shell := `bash|sh|zsh|python[23]?|perl|ruby|dash|ksh`
 
+# Rego's raw (backtick-delimited) strings can't contain a literal
+# backtick, so the character lives in an ordinary double-quoted string
+# instead (backtick carries no special meaning there) and gets spliced
+# into the raw regex patterns below with sprintf, wherever a backtick
+# command substitution needs matching.
+_backtick := "`"
+
 deny contains finding if {
 	some i, j
 	job := input.pipeline.jobs[i]
@@ -41,15 +48,23 @@ deny contains finding if {
 	# echo string, a `#` comment, or a different physical line of the
 	# same `run:` block cannot suppress the finding for the real fetch.
 	not _line_is_verified(visible)
-	not _fetch_target_is_trusted(visible)
+	not _fetch_target_is_trusted(visible, line)
 	finding := {
 		"code":       "ISSUE-411",
 		"severity":   "high",
-		"message":    sprintf("Job `%s` runs a script fetched from the network: `%s`.", [job.name, trim_space(line)]),
+		"message":    sprintf("Job `%s` runs a script fetched from the network: `%s`.", [job.name, _quoted_script_line(line)]),
 		"job":        job.name,
 		"scriptLine": line,
 	}
 }
+
+# The script line as quoted in the message. A backtick command
+# substitution's own closing backtick can land right where the
+# message's wrapping backtick closes too, reading as an empty
+# backquoted token (two backticks back to back) rather than the code it
+# actually is; trimming one trailing backtick before quoting avoids
+# that collision without changing what the excerpt says.
+_quoted_script_line(line) := trim_suffix(trim_space(line), _backtick)
 
 # Strip quoted substrings (double then single quotes) and inline `#`
 # comments so neither a pipe-to-shell hidden in a string literal nor a
@@ -98,6 +113,86 @@ _unsafe_script_line(visible, _) if {
 	regex.match(sprintf(`(?i)(echo|printf)\s+[^|]*\|\s*base64\s+(-d|--decode)\s*\|\s*(sudo\s+)?(%s)\b`, [_shell]), visible)
 }
 
+# A shell reading a fetched script through process substitution
+# (`bash <(curl -s https://codecov.io/bash)`, the Codecov bash uploader)
+# runs it exactly as a pipe would. The shell must be the command itself
+# (optionally path-qualified or under sudo, flags allowed before the
+# substitution), so `diff <(curl a) <(curl b)` is not a match.
+_unsafe_script_line(visible, _) if {
+	regex.match(sprintf(`(?i)(?:^|[\s;&|(])(?:sudo\s+)?(?:\S*/)?(%s)\s+(?:-\S+\s+)*<\(\s*(curl|wget)\b`, [_shell]), visible)
+}
+
+# The command-substitution form (`/bin/bash -c "$(curl -fsSL ...)"`, the
+# Homebrew/Docker installer). The substitution sits inside double quotes,
+# which _visible_line strips, so the fetch is read off the raw line; the
+# shell and its -c must still be on the visible side, so the same text
+# inside an echo string does not match. Flags between the shell and -c are
+# allowed, mirroring the process-substitution rule above: a bundle of
+# boolean flags (`bash -eu -c "$(curl ...)"`) and a flag taking its own
+# argument word (`bash -euo pipefail -c ...`, the hardened-CI idiom) are
+# both still the same invocation, and so is a single bundled flag token
+# whose LAST letter is `c` (`bash -euc "$(curl ...)"`): POSIX short-flag
+# bundling reads a flag that takes an argument only when it is the
+# trailing letter of the bundle, so `-c` need not be its own token. A
+# bundle where `c` is NOT trailing (`-ce`) is a different flag and is not
+# this shell's -c at all. The skip stops at `;`, `&` or `|` so it can't
+# reach past this command into an unrelated one later on the line. The
+# fetch need not be the substitution's first token either: a throwaway
+# command before the real curl/wget (`$(printf ''; curl ...)`, `$(set -e;
+# curl ...)`) still runs once the substitution's output reaches `bash
+# -c`, so the fetch is matched anywhere inside the substitution, stopping
+# at its closing `)` so it can't reach into a later, unrelated one.
+_shell_c_dollar_paren_pattern := sprintf(`(?i)(?:^|[\s;&|(])(?:sudo\s+)?(?:\S*/)?(%s)\s+[^;&|\n]*?-[a-zA-Z]*c\s+["']?\$\([^)]*?\b(curl|wget)\b`, [_shell])
+
+_unsafe_script_line(visible, line) if {
+	regex.match(sprintf(`(?i)(?:^|[\s;&|(])(?:sudo\s+)?(?:\S*/)?(%s)\s+[^;&|\n]*?-[a-zA-Z]*c\b`, [_shell]), visible)
+	regex.match(_shell_c_dollar_paren_pattern, line)
+}
+
+# `eval "$(curl ...)"` / `eval $(wget ...)`: eval runs a command
+# substitution's stdout as if it were typed, the same risk as a shell's
+# own `-c`. Quotes around the substitution are optional and make no
+# difference to what eval executes, so both are accepted. The fetch need
+# not be the substitution's first token, mirroring the shell-c pattern
+# above.
+_eval_dollar_paren_pattern := `(?i)(?:^|[\s;&|(])eval\s+["']?\$\([^)]*?\b(curl|wget)\b`
+
+_unsafe_script_line(visible, line) if {
+	regex.match(`(?i)(?:^|[\s;&|(])eval\b`, visible)
+	regex.match(_eval_dollar_paren_pattern, line)
+}
+
+# `` eval `curl ...` `` / `` <shell> -c `curl ...` ``: backtick command
+# substitution, the older POSIX syntax for the same `$( ... )` construct.
+# The front command (eval, or a shell's -c, bundled flags and all) sits
+# before the opening backtick, which a wrapping double quote would strip
+# from the visible line exactly as it does for `$( ... )`, so the front
+# command is read off the visible line and the backtick-fetch shape off
+# the raw line, mirroring the `$( ... )` rule above. The fetch need not be
+# the substitution's first token, stopping at the closing backtick so it
+# can't reach into a later, unrelated substitution.
+_eval_backtick_pattern := sprintf(`(?i)(?:^|[\s;&|(])eval\s+["']?%s[^%s]*?\b(curl|wget)\b`, [_backtick, _backtick])
+
+_unsafe_script_line(visible, line) if {
+	regex.match(`(?i)(?:^|[\s;&|(])eval\b`, visible)
+	regex.match(_eval_backtick_pattern, line)
+}
+
+_shell_c_backtick_pattern := sprintf(`(?i)(?:^|[\s;&|(])(?:sudo\s+)?(?:\S*/)?(%s)\s+[^;&|\n]*?-[a-zA-Z]*c\s+["']?%s[^%s]*?\b(curl|wget)\b`, [_shell, _backtick, _backtick])
+
+_unsafe_script_line(visible, line) if {
+	regex.match(sprintf(`(?i)(?:^|[\s;&|(])(?:sudo\s+)?(?:\S*/)?(%s)\s+[^;&|\n]*?-[a-zA-Z]*c\b`, [_shell]), visible)
+	regex.match(_shell_c_backtick_pattern, line)
+}
+
+# `source <(curl ...)` / `. <(curl ...)`: the shell builtins that read a
+# process substitution's output as a script, exactly like `<shell>
+# <( ... )` above but fronted by the sourcing builtin instead of an
+# interpreter invocation.
+_unsafe_script_line(visible, _) if {
+	regex.match(`(?i)(?:^|[\s;&|(])(?:sudo\s+)?(?:source|\.)\s+(?:-\S+\s+)*<\(\s*(curl|wget)\b`, visible)
+}
+
 # Generic `<anything> | <shell>` catch-all. Skipped on heredoc-marker
 # lines because `cat <<EOF | bash` is in-tree operator-authored content
 # — but only when the line isn't ALSO matching one of the more specific
@@ -133,12 +228,12 @@ _line_is_verified(line) if {
 
 # Extract every URL or bare-hostname token that appears as a fetch
 # target on a curl/wget command in the visible (quote/comment stripped)
-# line. Trust suppression applies only when ALL extracted targets match
-# a configured pattern, so an attacker cannot grant trust by mentioning
-# a trusted host inside a string or comment alongside a real curl to an
-# untrusted target. If the unsafe line is not a curl/wget download
-# (base64 pipe, generic `| bash`), the set is empty and trust never
-# applies.
+# line. If the unsafe line is not a curl/wget download on its visible
+# side (base64 pipe, generic `| bash`, or a fetch hiding entirely inside
+# a quoted substitution), this yields the empty set: the default below
+# makes that an empty contribution to the union, never an undefined one.
+default _fetch_targets(_) := set()
+
 _fetch_targets(visible) := targets if {
 	regex.match(`(?i)\b(curl|wget)\b`, visible)
 	targets := {t |
@@ -146,11 +241,93 @@ _fetch_targets(visible) := targets if {
 	}
 }
 
-_fetch_target_is_trusted(visible) if {
-	targets := _fetch_targets(visible)
+# The command-substitution form hides its fetch(es) inside double quotes,
+# which _visible_line strips, so the ordinary visible-line extraction
+# above never sees them: without this, an allowlisted host still fires on
+# `bash -c "$(curl -fsSL https://trusted/install.sh)"`. See
+# _command_substitution_fetch_targets below for its own default.
+#
+# Trust is ONE decision over the UNION of both kinds of fetch target on
+# the line, every one of which must match a configured pattern: a
+# visible-line fetch and a command-substitution fetch are gathered into
+# one set first, so a trusted fetch of one kind can never suppress an
+# untrusted fetch of the other kind sitting on the same line (two
+# independent OR'd checks, each granting trust for the whole line from
+# only its own subset, used to let exactly that happen). A line can also
+# carry more than one substitution, so every fetch-bearing one found on
+# it contributes its own targets to the same set: a decoy substitution
+# naming a trusted host as plain text, or a second, untrusted fetch
+# substitution elsewhere on the line, must never hide an untrusted fetch
+# that actually runs.
+_fetch_target_is_trusted(visible, line) if {
+	targets := _fetch_targets(visible) | _command_substitution_fetch_targets(line)
 	count(targets) > 0
 	every target in targets {
 		_target_is_trusted(target)
+	}
+}
+
+# Scoped to lines that actually match one of the recognized command- or
+# backtick-substitution shapes above, so an unrelated $( ... ) on a line
+# that's unsafe for some other reason (a plain `curl | bash` pipe, say)
+# can't accidentally grant or deny trust through this path. Once scoped,
+# every substitution on the line that itself fetches something (not a
+# decoy like `$(echo trusted-host)`, not an unrelated `$(dirname "$0")`)
+# contributes its targets. The default empty set is what makes this an
+# empty (not undefined) contribution to _fetch_target_is_trusted's union
+# when the line carries no command-substitution fetch at all.
+default _command_substitution_fetch_targets(_) := set()
+
+_command_substitution_fetch_targets(line) := targets if {
+	_is_command_substitution_fetch_line(line)
+	spans := _fetch_bearing_spans(line)
+	count(spans) > 0
+	targets := {t |
+		some span in spans
+		some t in _targets_in(span)
+	}
+}
+
+_is_command_substitution_fetch_line(line) if regex.match(_shell_c_dollar_paren_pattern, line)
+
+_is_command_substitution_fetch_line(line) if regex.match(_eval_dollar_paren_pattern, line)
+
+_is_command_substitution_fetch_line(line) if regex.match(_shell_c_backtick_pattern, line)
+
+_is_command_substitution_fetch_line(line) if regex.match(_eval_backtick_pattern, line)
+
+# Every $( ... ) command substitution on the line, as the text each one
+# wraps. The capture group allows one level of nesting (a balanced
+# `\( ... \)` pair inside the body), so a substitution with another
+# substitution inside it ($(curl -s "$(echo ...)...")) is captured whole
+# instead of truncated at the first closing parenthesis: a span that
+# doesn't resolve to a clean, known-trusted target is read as untrusted,
+# never as trusted.
+_dollar_paren_spans(line) := {span |
+	some m in regex.find_all_string_submatch_n(`\$\(((?:[^()]|\([^()]*\))*)\)`, line, -1)
+	span := m[1]
+}
+
+# Every backtick command substitution on the line, as the text each one
+# wraps.
+_backtick_spans(line) := {span |
+	some m in regex.find_all_string_submatch_n(sprintf(`%s([^%s]*)%s`, [_backtick, _backtick, _backtick]), line, -1)
+	span := m[1]
+}
+
+# The subset of this line's substitution spans that actually fetch
+# something: the only ones a trust decision needs to look at.
+_fetch_bearing_spans(line) := {span |
+	some span in (_dollar_paren_spans(line) | _backtick_spans(line))
+	regex.match(`(?i)\b(curl|wget)\b`, span)
+}
+
+# The shared URL/hostname extraction, once a substitution's own span has
+# been isolated: the same regex the visible-line path above uses, just
+# scoped to that span instead of the whole line.
+_targets_in(span) := targets if {
+	targets := {t |
+		some t in regex.find_n(`https?://[^\s|;)'"]+|\b[a-zA-Z0-9][a-zA-Z0-9-]*(?:\.[a-zA-Z0-9][a-zA-Z0-9-]+)+(?:/[^\s|;)'"]*)?`, span, -1)
 	}
 }
 

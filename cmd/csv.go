@@ -99,10 +99,17 @@ func buildCSV(entries []control.ControlEntry, result *control.AnalysisResult, wi
 
 			// The codes registry is the source of truth for severity, matching
 			// how buildGLSAST and buildSARIF resolve it, so the CSV agrees with
-			// the other exports.
+			// the other exports. Same v4 gate as those two: a finding carrying
+			// Data["baseSeverity"] was annotated by AnnotateFindingsV4 under
+			// scoring-v4, and its contextual f.Severity wins; without that key
+			// (v3, or a v4 request that fell back to v3) the registry wins
+			// exactly as before, so a v3 CSV is unchanged.
 			severity := f.Severity
 			if info := control.LookupCode(control.ErrorCode(f.Code)); info != nil {
 				severity = string(info.Severity)
+			}
+			if _, ok := f.Data["baseSeverity"]; ok {
+				severity = f.Severity
 			}
 
 			line := ""

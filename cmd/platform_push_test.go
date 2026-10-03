@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 
 	"errors"
+	"fmt"
 	"gopkg.in/yaml.v2"
 	"io"
 	"net/http"
@@ -626,6 +627,46 @@ func TestPlatformFindingsFor_DismissedMarkerFollowsTheFinding(t *testing.T) {
 	}
 	if dismissed.Status != platformStatusFail || !dismissed.Dismissed {
 		t.Errorf("dismissed finding = %+v, want status=fail, dismissed=true", dismissed)
+	}
+}
+
+// A pushed finding's data.pathIds names only paths the same push carries:
+// score_context stops at maxPushedPaths, so an id past the cap would
+// dangle. The run's own finding (the JSON report) keeps the full list.
+func TestPlatformFindingsFor_PathIDsStayWithinThePushedPaths(t *testing.T) {
+	pc := testDefaultPlumberConfig(t)
+	paths := make([]control.AttackPath, maxPushedPaths+1)
+	for i := range paths {
+		paths[i] = control.AttackPath{ID: "p" + strconv.Itoa(i)}
+	}
+	beyond := "p" + strconv.Itoa(maxPushedPaths)
+	result := &control.AnalysisResult{
+		CiValid: true,
+		Paths:   paths,
+		Findings: []opaengine.Finding{
+			{Code: "ISSUE-101", Severity: "high", Message: "both", Job: "build", File: ".gitlab-ci.yml", Line: 1, Data: map[string]any{"pathIds": []string{"p0", beyond}}},
+			{Code: "ISSUE-101", Severity: "high", Message: "beyond only", Job: "deploy", File: ".gitlab-ci.yml", Line: 2, Data: map[string]any{"pathIds": []string{beyond}}},
+		},
+	}
+	pushed := map[string]map[string]any{}
+	for _, f := range platformFindingsFor(testProvider(t), result, pc, nil, nil) {
+		if f.Control != "containerImageMustComeFromAuthorizedSources" {
+			continue
+		}
+		var data map[string]any
+		if err := json.Unmarshal(f.Data, &data); err != nil {
+			t.Fatalf("finding data does not parse: %v", err)
+		}
+		pushed[data["message"].(string)] = data
+	}
+	if got := fmt.Sprint(pushed["both"]["pathIds"]); got != "[p0]" {
+		t.Errorf("pushed pathIds = %s, want [p0]: %s is past the pushed paths", got, beyond)
+	}
+	if _, ok := pushed["beyond only"]["pathIds"]; ok {
+		t.Errorf("a finding on no pushed path must carry no pathIds, got %v", pushed["beyond only"]["pathIds"])
+	}
+	if got := fmt.Sprint(result.Findings[0].Data["pathIds"]); got != "[p0 "+beyond+"]" {
+		t.Errorf("the run's own finding must keep the full list, got %s", got)
 	}
 }
 
@@ -3572,4 +3613,298 @@ func bomTestServices(n int) []pbom.ContainerImageRef {
 		out = append(out, pbom.ContainerImageRef{Image: "docker.io/team/svc-" + strconv.Itoa(i) + ":1.0"})
 	}
 	return out
+}
+
+// Under v4, each result carries its own score_context (the paths, the
+// situation paragraph, the best fix) next to its score, which carries
+// profile_id; nothing rides at the top level. Gated on the computed score's
+// ProfileID (scoreProfileV4), never on the bare --score-profile flag, as
+// every other v4 output is: a v4 request that fell back to v3 (a
+// scoring-v3 ProfileID) must push a v3-identical body, never this one.
+func TestPlatformPushCarriesScoreContextUnderV4(t *testing.T) {
+	path := control.AttackPath{
+		ID:         "p1",
+		Tier:       control.TierCritical,
+		State:      control.PathProven,
+		EntryKind:  control.EntryMutableDependency,
+		Jobs:       []string{"release"},
+		ReachKind:  "impact:publishes",
+		AnchorHash: "h1",
+		Entry:      control.EntryFact{Subject: "some/action@v1"},
+		Reach:      control.Reach{Executes: true},
+	}
+	result := &control.AnalysisResult{Paths: []control.AttackPath{path}}
+	score := &control.PlumberScoreResult{
+		ProfileID:          control.PlumberScoreProfileIDV4,
+		Score:              "E",
+		RawPointsUnclamped: 70,
+		FinalPoints:        30,
+		Paths:              result.Paths,
+		Situation:          "Public repository, 1 job in 1 workflow. 1 attack path: 1 critical, 0 high, 0 medium, 0 low. Nothing to fix.",
+		BestFix: &control.BestFix{
+			AnchorHash: "h1", Code: "ISSUE-713", Job: "release", Subject: "some/action@v1",
+			PointsGained: 39.96, NewLetter: "B", Sentence: "Fixing Untrusted action (`some/action@v1`) recovers 40 points and moves the score to B.",
+		},
+	}
+	body, err := buildPlatformPush(testProvider(t), nil, result, score, ".plumber.yaml", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(body, &top); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := top["score_context"]; ok {
+		t.Errorf("score_context belongs to each result, never the top level: %s", body)
+	}
+	var got struct {
+		Results []struct {
+			Score        *platformScore        `json:"score"`
+			ScoreContext *platformScoreContext `json:"score_context"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Results) == 0 {
+		t.Fatal("results = empty")
+	}
+	ctx := got.Results[0].ScoreContext
+	if ctx == nil || len(ctx.Paths) != 1 || ctx.Paths[0].ID != "p1" || ctx.Situation == "" {
+		t.Fatalf("results[0].score_context = %+v", ctx)
+	}
+	// The best fix is a wire type: snake_case keys, points to one decimal.
+	var raw struct {
+		Results []struct {
+			ScoreContext struct {
+				BestFix map[string]any `json:"best_fix"`
+			} `json:"score_context"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(body, &raw); err != nil {
+		t.Fatal(err)
+	}
+	fix := raw.Results[0].ScoreContext.BestFix
+	for _, key := range []string{"anchor_hash", "code", "job", "subject", "points_gained", "new_letter", "sentence"} {
+		if _, ok := fix[key]; !ok {
+			t.Errorf("best_fix lacks %q: %v", key, fix)
+		}
+	}
+	if fix["points_gained"] != 40.0 {
+		t.Errorf("best_fix.points_gained = %v, want 40 (one decimal)", fix["points_gained"])
+	}
+	for _, key := range []string{"anchorHash", "pointsGained", "newLetter"} {
+		if _, ok := fix[key]; ok {
+			t.Errorf("best_fix carries the Go casing %q: %v", key, fix)
+		}
+	}
+	pushedPath := ctx.Paths[0]
+	if pushedPath.Sentence == "" {
+		t.Error("sentence is empty, want control.PathSentence(p)")
+	}
+	if len(pushedPath.FindingHashes) != 1 || pushedPath.FindingHashes[0] != "h1" {
+		t.Errorf("finding_hashes = %v, want [h1] (the anchor hash, no gates on this path)", pushedPath.FindingHashes)
+	}
+	if len(got.Results) == 0 || got.Results[0].Score == nil {
+		t.Fatal("results[0].score is missing")
+	}
+	gotScore := got.Results[0].Score
+	if gotScore.ProfileID != "scoring-v4" || gotScore.FinalPoints == nil || *gotScore.FinalPoints != 30 {
+		t.Fatalf("results[0].score = %+v", gotScore)
+	}
+}
+
+// A v3 push (the default, and a v4 request that fell back to v3) must stay
+// byte-identical to the push this file sent before score_context existed:
+// no score_context key anywhere, and no profile_id key on the result's
+// score, since platformScoreFrom only sets it when scoreProfileV4 is true.
+func TestPlatformPushHasNoScoreContextUnderV3(t *testing.T) {
+	score := &control.PlumberScoreResult{ProfileID: control.PlumberScoreProfileID, Score: "A", RawPointsUnclamped: 100, FinalPoints: 100}
+	body, err := buildPlatformPush(testProvider(t), nil, &control.AnalysisResult{}, score, ".plumber.yaml", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(body), "score_context") {
+		t.Fatalf("v3 push must not change: %s", body)
+	}
+	if strings.Contains(string(body), "profile_id") {
+		t.Fatalf("v3 push must not carry profile_id either: %s", body)
+	}
+}
+
+// Paths beyond the 200 cap are dropped worst-last: AssemblePaths already
+// sorts the slice worst-first, so capping is a plain truncation at index
+// 200, never a re-sort.
+func TestBuildPlatformPush_ScoreContextCapsPathsAt200WorstFirst(t *testing.T) {
+	const total = maxPushedPaths + 1
+	paths := make([]control.AttackPath, total)
+	for i := range paths {
+		paths[i] = control.AttackPath{ID: "p" + strconv.Itoa(i), Jobs: []string{"job"}, AnchorHash: "h" + strconv.Itoa(i)}
+	}
+	result := &control.AnalysisResult{Paths: paths}
+	score := &control.PlumberScoreResult{ProfileID: control.PlumberScoreProfileIDV4, Situation: "worst first, 201 paths", Paths: paths}
+	body, err := buildPlatformPush(testProvider(t), nil, result, score, ".plumber.yaml", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Results []struct {
+			ScoreContext *platformScoreContext `json:"score_context"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(body, &got); err != nil {
+		t.Fatal(err)
+	}
+	if len(got.Results) == 0 || got.Results[0].ScoreContext == nil {
+		t.Fatalf("results[0].score_context missing: %s", body)
+	}
+	ctx := got.Results[0].ScoreContext
+	if len(ctx.Paths) != maxPushedPaths {
+		t.Fatalf("len(paths) = %d, want %d: the 201st path (the least severe) is the one dropped", len(ctx.Paths), maxPushedPaths)
+	}
+	wantLastID := "p" + strconv.Itoa(maxPushedPaths-1)
+	if ctx.Paths[0].ID != "p0" || ctx.Paths[maxPushedPaths-1].ID != wantLastID {
+		t.Fatalf("paths = [%s..%s], want [p0..%s]", ctx.Paths[0].ID, ctx.Paths[maxPushedPaths-1].ID, wantLastID)
+	}
+}
+
+// v4ImageResult is imageResult with the situation facts a v4 run prices
+// against: the build job pulls the untrusted image, holds NPM_TOKEN and
+// publishes, so the ISSUE-101 the policy produces (registered High)
+// anchors a Critical path. The pipeline carries the same facts (the
+// publish script, the masked NPM_TOKEN settings variable), since each
+// policy evaluates its own situation from the IR; the hand-built
+// Situation is the run's own.
+func v4ImageResult() *control.AnalysisResult {
+	result := imageResult("evil.registry.io")
+	result.Pipeline.Jobs[0].Scripts = []string{"npm publish"}
+	result.Pipeline.SettingsVariables = []ir.SettingsVariable{{Name: "NPM_TOKEN", Type: "env_var", Environment: "*", Protected: true, Masked: true}}
+	result.Pipeline.SettingsVariablesKnown = true
+	j := control.JobSituation{
+		Entries: []control.EntryFact{{Kind: control.EntryMutableDependency, State: "proven", Evidence: "evil.registry.io/app:1", Subject: "evil.registry.io/app:1"}},
+		Impact:  []control.ImpactFact{{Kind: "publishes", State: "proven", Evidence: "npm publish"}},
+	}
+	j.Privilege.Secrets = []string{"NPM_TOKEN"}
+	j.Privilege.SecretsState = "proven"
+	result.Situation = &control.Situation{Exposure: ir.VisibilityPublic, Jobs: map[string]control.JobSituation{"build": j}}
+	return result
+}
+
+// In platform mode each policy is a run of its own, end to end through the
+// production entry point: under v4 the push carries, per result, the v4
+// score and its score_context, the pushed findings carry their v4 story,
+// and the terminal and every finding-derived artifact (SARIF, GitLab SAST,
+// CSV, OCSF) render the per-policy findings at their contextual severity.
+func TestPlatformModeV4EachPolicyIsARunOfItsOwn(t *testing.T) {
+	origPrint := printOutput
+	origSARIF, origGLSAST, origCSV, origOCSF := sarifFile, glsastFile, csvFile, ocsfFile
+	defer func() {
+		printOutput = origPrint
+		sarifFile, glsastFile, csvFile, ocsfFile = origSARIF, origGLSAST, origCSV, origOCSF
+	}()
+	printOutput = true
+	newGateFlagsCmd(t)
+	withScoreProfile(t, "v4")
+	dir := t.TempDir()
+	sarifFile, glsastFile, csvFile, ocsfFile = dir+"/r.sarif", dir+"/r.glsast.json", dir+"/r.csv", dir+"/r.ocsf.json"
+
+	var gotBody []byte
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotBody, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusAccepted)
+	}))
+	defer srv.Close()
+	restore := withPlatformTestEnv(t, srv.URL, "tok-123")
+	defer restore()
+
+	conf := configuration.NewDefaultConfiguration()
+	conf.ConfigFilePath = ".plumber.yaml"
+	conf.PlumberConfig = testDefaultPlumberConfig(t)
+	conf.PlatformRun = runContextWith(dismissalPolicy())
+	conf.PlatformRun.Endpoint = srv.URL
+
+	var stdout string
+	_ = captureStderr(t, func() {
+		stdout = captureStdout(t, func() {
+			_ = runWithProvider(stubRunProvider{Provider: testProvider(t), result: v4ImageResult()}, nil, conf, nil, nil)
+		})
+	})
+
+	if len(gotBody) == 0 {
+		t.Fatal("nothing was POSTed")
+	}
+	var top map[string]json.RawMessage
+	if err := json.Unmarshal(gotBody, &top); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok := top["score_context"]; ok {
+		t.Errorf("no run-level score_context: %s", gotBody)
+	}
+	var push struct {
+		Results []struct {
+			Findings []struct {
+				Control string         `json:"control"`
+				Data    map[string]any `json:"data"`
+			} `json:"findings"`
+			Score        *platformScore        `json:"score"`
+			ScoreContext *platformScoreContext `json:"score_context"`
+		} `json:"results"`
+	}
+	if err := json.Unmarshal(gotBody, &push); err != nil {
+		t.Fatal(err)
+	}
+	if len(push.Results) != 1 {
+		t.Fatalf("results = %d, want one per policy", len(push.Results))
+	}
+	res := push.Results[0]
+	if res.Score == nil || res.Score.ProfileID != control.PlumberScoreProfileIDV4 {
+		t.Fatalf("results[0].score = %+v, want the policy's v4 score", res.Score)
+	}
+	if res.ScoreContext == nil || len(res.ScoreContext.Paths) != 1 || res.ScoreContext.Situation == "" {
+		t.Fatalf("results[0].score_context = %+v, want the policy's own path and situation", res.ScoreContext)
+	}
+	var issue map[string]any
+	for _, f := range res.Findings {
+		if f.Data != nil && f.Data["code"] == "ISSUE-101" {
+			issue = f.Data
+		}
+	}
+	if issue == nil {
+		t.Fatalf("ISSUE-101 missing from the pushed findings: %s", gotBody)
+	}
+	if issue["severity"] != "critical" || issue["baseSeverity"] != "high" {
+		t.Errorf("pushed ISSUE-101 severity/baseSeverity = %v/%v, want critical/high", issue["severity"], issue["baseSeverity"])
+	}
+	if role, _ := issue["role"].(string); !strings.HasPrefix(role, "Entry of path ") {
+		t.Errorf("pushed role = %v", issue["role"])
+	}
+
+	// The terminal renders the policy's section in the v4 shape.
+	for _, want := range []string{"Attack paths (1)", "[critical] [ISSUE-101]"} {
+		if !strings.Contains(stdout, want) {
+			t.Errorf("terminal lacks %q:\n%s", want, stdout)
+		}
+	}
+
+	// Every finding-derived artifact reads the policy's annotated findings.
+	read := func(path string) string {
+		t.Helper()
+		b, err := os.ReadFile(path)
+		if err != nil {
+			t.Fatalf("read %s: %v", path, err)
+		}
+		return string(b)
+	}
+	if s := read(sarifFile); !strings.Contains(s, `"plumber/baseSeverity":"high"`) && !strings.Contains(s, `"plumber/baseSeverity": "high"`) {
+		t.Errorf("SARIF carries no contextual severity:\n%s", s)
+	}
+	if s := read(glsastFile); !strings.Contains(s, `"severity": "Critical"`) && !strings.Contains(s, `"severity":"Critical"`) {
+		t.Errorf("GitLab SAST carries no contextual Critical:\n%s", s)
+	}
+	if s := read(csvFile); !strings.Contains(s, "ISSUE-101") || !strings.Contains(s, "critical") {
+		t.Errorf("CSV carries no contextual critical:\n%s", s)
+	}
+	if s := read(ocsfFile); !strings.Contains(s, `"severity_id": 5`) {
+		t.Errorf("OCSF carries no contextual severity_id 5:\n%s", s)
+	}
 }

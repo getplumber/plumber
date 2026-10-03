@@ -1,0 +1,20 @@
+{
+  "source": "https://github.com/bitovi/hatchify",
+  "commit": "2f937a12994756a85b81fbd28c2eeca69bae9121",
+  "captured": "2026-10-03",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [{"name": "main", "protected": true}],
+  "note": "A consumer of tj-actions/changed-files at the time of the March 2025 tag compromise (push.yml as it stood from April 2024 until after the incident): the publish-changes job resolves changed-files@v42 by tag, then publishes the npm packages through a local composite action holding NPM_TOKEN and a personal access token. The compromised tag ran with both secrets in reach. The publish step lives inside ./.github/actions/job-publish, which the workflow scan does not read, so no publishes impact is proven and the spec gives High (secrets, no impact) rather than Critical. The deploy job's own-organization deploy action, pinned by tag into an environment with AWS keys, is the Critical path of the file.",
+  "expect": {
+    "maxTier": "critical",
+    "paths": [
+      {"entryKind": "mutable_dependency", "tier": "high", "job": "push/publish-changes", "subjectContains": "tj-actions/changed-files@v42", "reachKind": "secrets", "state": "proven",
+       "sentenceContains": ["`tj-actions/changed-files@v42`", "`push/publish-changes`", "`NPM_TOKEN`", "`BITOVI_OS_PAT`"]},
+      {"entryKind": "mutable_dependency", "tier": "critical", "job": "push/deploy", "subjectContains": "bitovi/github-actions-deploy-docker-to-ec2@v1.0.1", "reachKind": "impact:deploys", "state": "proven",
+       "sentenceContains": ["`bitovi/github-actions-deploy-docker-to-ec2@v1.0.1`", "`push/deploy`", "`AWS_SECRET_ACCESS_KEY_SANDBOX`"]}
+    ],
+    "letter": "E"
+  }
+}

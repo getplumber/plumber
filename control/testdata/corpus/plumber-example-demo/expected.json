@@ -1,0 +1,26 @@
+{
+  "source": "https://github.com/getplumber-examples/plumber-example-demo",
+  "commit": "9f539175551bc1fa2c830ded9fef19d270388bcf",
+  "captured": "2026-10-03",
+  "group": "own",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [{"name": "main", "protected": false}],
+  "pending": "QUESTIONS rows 413, 414 and 418",
+  "note": "The spec's worked example (section 2): the pull request title in a shell, node:latest, curl | bash and the tj-actions pin into ci/build, which holds a read token and no secret, so every path is Medium; main unprotected is a gate on no path (25, no E cap); letter C. The worked example assumed the repository holds nothing, but plumber.yml runs on push to main with id-token: write, which the spec's fact table makes a write token and the signs_or_releases impact at once (row 414), and the worked example prices the Medium paths in one group while the formula line groups them by entry kind (row 413). The same push job also makes the unprotected main the anchor of an unprotected_push path, so the gate starts a path of its own and, with that write token, can set the E cap alone, against section 9 and ruling 2 (row 418). Offline the tj-actions advisory is not fetched, so its path comes from the unauthorized-source finding alone.",
+  "expect": {
+    "maxTier": "medium",
+    "paths": [
+      {"entryKind": "untrusted_expression", "tier": "medium", "job": "ci/build", "subjectContains": "github.event.pull_request.title", "reachKind": "execution", "state": "proven",
+       "sentenceContains": ["`github.event.pull_request.title`", "`ci/build`", "holds no secret"]},
+      {"entryKind": "mutable_dependency", "tier": "medium", "job": "ci/build", "subjectContains": "node:latest", "reachKind": "execution",
+       "sentenceContains": ["`node:latest`", "`ci/build`"]},
+      {"entryKind": "mutable_dependency", "tier": "medium", "job": "ci/build", "subjectContains": "https://example.com/install.sh", "reachKind": "execution",
+       "sentenceContains": ["`https://example.com/install.sh`", "`ci/build`"]},
+      {"entryKind": "mutable_dependency", "tier": "medium", "job": "ci/build", "subjectContains": "tj-actions/changed-files@2d756ea4c53f7f6b397767d8723b3a10a9f35bf2", "reachKind": "execution",
+       "sentenceContains": ["`tj-actions/changed-files@2d756ea4c53f7f6b397767d8723b3a10a9f35bf2`", "`ci/build`"]}
+    ],
+    "noPathAbove": "medium",
+    "letter": "C"
+  }
+}
