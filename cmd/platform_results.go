@@ -48,6 +48,9 @@ func buildPolicyResults(runs []policyRun, p providerPkg.Provider, conf *configur
 			s := platformScoreFrom(run.Score)
 			score = &s
 		}
+		// Each run is a policy's own analysis: under scoring-v4 its paths,
+		// situation and best fix ride next to its own score.
+		scoreContext := platformScoreContextFrom(run.Score)
 		for _, pol := range run.Policies {
 			out = append(out, platformPolicyResult{
 				Policy: pol.Name,
@@ -60,6 +63,7 @@ func buildPolicyResults(runs []policyRun, p providerPkg.Provider, conf *configur
 				EffectiveConfig: effective,
 				Findings:        findings,
 				Score:           score,
+				ScoreContext:    scoreContext,
 			})
 		}
 	}
@@ -308,5 +312,6 @@ func standalonePolicyResult(
 		EffectiveConfig: platformEffectiveConfigRaw(pc, p.Name()),
 		Findings:        platformFindingsFor(p, result, pc, includeOnly, skip),
 		Score:           wireScore,
+		ScoreContext:    platformScoreContextFrom(score),
 	}
 }

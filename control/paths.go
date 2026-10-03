@@ -78,6 +78,16 @@ type AttackPath struct {
 	GateHashes []string  `json:"gateHashes"` // findings that amplified this path
 	Exposure   string    `json:"exposure"`
 
+	// Sentence, FindingIDs and Loss are the report fields spec section 4
+	// lists, filled by ScoreV4WithExplanations once the path is priced
+	// (AssemblePaths leaves them empty): the path's plain-language
+	// sentence; the anchor's hash, then the gates', then the consumed
+	// privilege findings'; and the path's share of its group's capped
+	// loss, rounded to one decimal.
+	Sentence   string   `json:"sentence"`
+	FindingIDs []string `json:"findingIds"`
+	Loss       float64  `json:"loss"`
+
 	// cause is set alongside the "unresolvable" modifier when neither the
 	// entry fact nor an impact fact is itself the unresolvable one, so
 	// explain.go's modifierSentences can name the real cause. Never
@@ -93,11 +103,18 @@ type AttackPath struct {
 	// job the platform rules already stripped would wrongly ride the
 	// path's tier. Never serialized, never read outside this package.
 	survivingJobs []string
+
+	// gateBranches is the branch each branch-protection gate on Modifiers
+	// is about (gate code to Data["branchName"]), so explain.go's gate
+	// sentence can name it. Never serialized, never read outside this
+	// package.
+	gateBranches map[string]string
 }
 
-// MarshalJSON writes modifiers and gateHashes as arrays, empty when the
-// path has none, never null: the JSON report is a public contract, and a
-// consumer iterating a path's modifiers must not have to null-check them.
+// MarshalJSON writes modifiers, gateHashes and findingIds as arrays, empty
+// when the path has none, never null: the JSON report is a public contract,
+// and a consumer iterating a path's modifiers must not have to null-check
+// them.
 func (p AttackPath) MarshalJSON() ([]byte, error) {
 	type wire AttackPath // no methods: marshals with the field tags above
 	w := wire(p)
@@ -106,6 +123,9 @@ func (p AttackPath) MarshalJSON() ([]byte, error) {
 	}
 	if w.GateHashes == nil {
 		w.GateHashes = []string{}
+	}
+	if w.FindingIDs == nil {
+		w.FindingIDs = []string{}
 	}
 	return json.Marshal(w)
 }
@@ -204,6 +224,12 @@ func AssemblePaths(findings []opaengine.Finding, sit *Situation) []AttackPath {
 				for _, g := range gatesOnPath(gates, jobs, sit, anchor, a.kind, reach) {
 					p.Tier = tierShift(p.Tier, 1)
 					p.Modifiers = append(p.Modifiers, "gate:"+g.Code)
+					if branch, ok := g.Data["branchName"].(string); ok && branch != "" {
+						if p.gateBranches == nil {
+							p.gateBranches = map[string]string{}
+						}
+						p.gateBranches[g.Code] = branch
+					}
 					if gateHash, ok := findingAnchorHash(g); ok {
 						p.GateHashes = append(p.GateHashes, gateHash)
 					}
@@ -777,15 +803,35 @@ func reachWritesRepo(r Reach) bool {
 	return false
 }
 
+// branchGateTouchesPath is the one predicate behind both branch-gate
+// clauses: the gate's branch is the pipeline's default branch, or the
+// subject of an unprotected_push fact on a walked job, AND the path's reach
+// writes the repository. An unprotected branch protects nothing on a path
+// that only executes or reads, whichever way the path touches the branch.
+func branchGateTouchesPath(branch string, jobs []string, sit *Situation, reach Reach) bool {
+	if !reachWritesRepo(reach) {
+		return false
+	}
+	if sit.DefaultBranch != "" && branch == sit.DefaultBranch {
+		return true
+	}
+	for _, j := range jobs {
+		for _, e := range sit.Jobs[j].Entries {
+			if e.Kind == EntryUnprotectedPush && e.Subject == branch {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 // gatesOnPath is rule 7's gate amplification: a gate finding on a walked job
-// (f.Job in jobs, which also covers ISSUE-305), a branch gate whose
-// Data["branchName"] names an unprotected_push subject of a walked job, or
-// a branch gate whose Data["branchName"] is the pipeline's default branch
-// and the path's own reach writes the repository (reachWritesRepo): such
-// a gate amplifies every other path that touches the default branch
-// that way, not only a path through a push-triggered job, and never a path
-// that only executes or reads (sit.DefaultBranch, decoded from the Rego
-// result's "defaultBranch"). Exclusions hold regardless of how many ways a
+// (f.Job in jobs, which also covers ISSUE-305), or a branch gate whose
+// Data["branchName"] names an unprotected_push subject of a walked job or
+// the pipeline's default branch (sit.DefaultBranch, decoded from the Rego
+// result's "defaultBranch"), in both cases only when the path's own reach
+// writes the repository (branchGateTouchesPath): such a gate never
+// amplifies a path that only executes or reads. Exclusions hold regardless of how many ways a
 // gate matches: the path's own anchoring finding never amplifies the path
 // it anchors (ISSUE-501 and ISSUE-505 are both RoleGate AND entry-anchoring
 // codes); a gate amplifies a path at most once even when it matches
@@ -818,19 +864,7 @@ func gatesOnPath(gates []opaengine.Finding, jobs []string, sit *Situation, ancho
 		matched := onPath[g.Job]
 		if !matched {
 			branch, bok := g.Data["branchName"].(string)
-			if bok && branch != "" {
-				if sit.DefaultBranch != "" && branch == sit.DefaultBranch && reachWritesRepo(reach) {
-					matched = true // only a path whose reach writes the repository
-				}
-				for j := 0; !matched && j < len(jobs); j++ {
-					for _, e := range sit.Jobs[jobs[j]].Entries {
-						if e.Kind == EntryUnprotectedPush && e.Subject == branch {
-							matched = true
-							break
-						}
-					}
-				}
-			}
+			matched = bok && branch != "" && branchGateTouchesPath(branch, jobs, sit, reach)
 		}
 		if !matched {
 			continue

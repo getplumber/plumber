@@ -1,6 +1,7 @@
 package control
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"sort"
@@ -60,13 +61,38 @@ func entryClause(p AttackPath) string {
 	case EntryPRTarget:
 		return fmt.Sprintf("A pull request from anyone runs inside %s with the base repository's privileges (%s)", job, code(p.Entry.Evidence))
 	case EntryUntrustedExpression:
-		return fmt.Sprintf("Anyone who can open a pull request or push a commit controls %s, which %s passes to a shell", code(p.Entry.Subject), job)
+		return fmt.Sprintf("%s controls %s, which %s passes to a shell", expressionController(p.Entry.Subject), code(p.Entry.Subject), job)
 	case EntryMutableDependency:
 		return fmt.Sprintf("A new version of %s runs inside %s without any change in this repository", code(p.Entry.Subject), job)
 	case EntryUnprotectedPush:
 		return fmt.Sprintf("Anyone who can push to %s runs %s", code(p.Entry.Subject), job)
 	}
 	return "An attacker can reach " + job
+}
+
+// expressionControllers maps the event payload an untrusted expression
+// reads to who writes it, so the entry clause names the right population:
+// an issue body is written by whoever opens the issue, not by someone
+// opening a pull request. First match wins; anything else (pull request,
+// head ref and commit fields, GitLab commit variables) keeps the general
+// wording.
+var expressionControllers = []struct{ prefix, who string }{
+	{"github.event.issue.", "Anyone who can open or edit an issue"},
+	{"github.event.comment.", "Anyone who can comment on an issue or a pull request"},
+	{"github.event.review.", "Anyone who can review a pull request"},
+	{"github.event.review_comment.", "Anyone who can review a pull request"},
+	{"github.event.discussion.", "Anyone who can open or edit a discussion"},
+	{"github.event.pages", "Anyone who can edit the wiki"},
+	{"CI_MERGE_REQUEST_", "Anyone who can open a merge request"},
+}
+
+func expressionController(subject string) string {
+	for _, c := range expressionControllers {
+		if strings.HasPrefix(subject, c.prefix) {
+			return c.who
+		}
+	}
+	return "Anyone who can open a pull request or push a commit"
 }
 
 // foldList renders at most three names and folds the rest into a count.
@@ -134,13 +160,24 @@ func reachClause(r Reach) string {
 	return hold
 }
 
-// consequence is the path's tier read out loud.
-func consequence(t PathTier) string {
+// consequence is the path's tier read out loud. At TierHigh the wording
+// follows what the reach actually holds (control/paths.go's baseTier can
+// land here with a secret, a write token and no secret, or an impact and
+// neither), never the tier alone: a secret in scope reads as read-and-
+// reused, a write token without a secret reads as repository/package
+// write, and an impact with neither reads as what the job itself does.
+func consequence(t PathTier, r Reach) string {
 	switch t {
 	case TierCritical:
 		return "a compromise here ships a malicious release to your users or into production"
 	case TierHigh:
-		return "the secrets can be read and reused elsewhere"
+		switch {
+		case len(r.Secrets) > 0:
+			return "the secrets can be read and reused elsewhere"
+		case len(r.TokenWrite) > 0:
+			return "the token can write to the repository or its packages"
+		}
+		return "what this job deploys or publishes can be altered"
 	case TierMedium:
 		return "the runner can be abused and anything it caches or uploads can be poisoned"
 	}
@@ -167,6 +204,9 @@ func modifierSentences(p AttackPath) []string {
 			leadIn := "A protection is missing on this job"
 			if ErrorCode(gateCode) == CodeBranchUnprotected || ErrorCode(gateCode) == CodeBranchNonCompliant {
 				leadIn = "Nothing stands between this and the default branch"
+				if branch := p.gateBranches[gateCode]; branch != "" {
+					title += " on " + code(branch)
+				}
 			}
 			out = append(out, fmt.Sprintf("%s: %s.", leadIn, title))
 		}
@@ -194,8 +234,8 @@ func unresolvableEvidence(p AttackPath) string {
 
 // unresolvableSentence renders the "unresolvable" modifier's trailing
 // sentence: an unresolvable entry or impact fact's own evidence, quoted as
-// a name, as today; "the secrets in scope", quoted the same way, for an
-// unresolvable SecretsState, as today; or, for a bare default token with
+// a name, as today; a plain sentence saying which secrets are in scope is
+// unknown, for an unresolvable SecretsState (prose, never a code span); or, for a bare default token with
 // nothing else on the path to go on, a plain-language sentence naming the
 // real cause rather than quoting a secret that does not exist.
 func unresolvableSentence(p AttackPath) string {
@@ -205,7 +245,7 @@ func unresolvableSentence(p AttackPath) string {
 	if p.cause == unresolvableDefaultToken {
 		return "Plumber could not verify that `GITHUB_TOKEN` is really writable (no `permissions` block), so this path is unverified."
 	}
-	return fmt.Sprintf("Plumber could not verify %s, so this path is unverified.", code("the secrets in scope"))
+	return "Plumber could not verify which secrets are in scope, so this path is unverified."
 }
 
 // PathSentence renders one attack path as a single plain-language sentence
@@ -223,7 +263,7 @@ func PathSentence(p AttackPath) string {
 	// unresolvable modifier gets its own trailing sentence instead (below),
 	// so the consequence clause itself never claims a reach the path does
 	// not have.
-	s := entryClause(p) + ", " + reachClause(p.Reach) + ": " + consequence(p.BaseTier) + "."
+	s := entryClause(p) + ", " + reachClause(p.Reach) + ": " + consequence(p.BaseTier, p.Reach) + "."
 	for _, m := range modifierSentences(p) {
 		s += " " + m
 	}
@@ -476,6 +516,16 @@ type BestFix struct {
 	Sentence     string    `json:"sentence"`
 }
 
+// MarshalJSON writes pointsGained rounded to one decimal, the precision
+// the best-fix sentence prints and the push sends; the struct keeps the
+// raw gain, which ComputeBestFix compares candidates on.
+func (b BestFix) MarshalJSON() ([]byte, error) {
+	type wire BestFix // no methods: marshals with the field tags above
+	w := wire(b)
+	w.PointsGained = math.Round(w.PointsGained*10) / 10
+	return json.Marshal(w)
+}
+
 // bestFixSubjectKeys are the structured-data fields that name a finding's
 // subject without ever carrying a secret or settings value: the exact key
 // list and order subjectMatches (paths.go) reads, includePath included,
@@ -689,5 +739,60 @@ func ScoreV4WithExplanations(result *AnalysisResult) PlumberScoreResult {
 		pipeline = &ir.NormalizedPipeline{}
 	}
 	s.Situation = SituationParagraph(sit, pipeline, s)
+	fillPathReportFields(s.Paths, s.PathLosses, result.Findings)
 	return s
+}
+
+// fillPathReportFields writes each priced path's report fields in place
+// (spec section 4): its sentence, its findingIds (the anchor's hash, then
+// the gates' in GateHashes order, then the hashes of the non-dismissed
+// privilege findings riding the path, sorted) and its loss, the group's
+// capped loss divided by the group's path count, rounded to one decimal.
+// paths is the slice the score and the result share, so both see them.
+// The formula itself (ComputePlumberScoreV4) never reads these fields.
+func fillPathReportFields(paths []AttackPath, losses []PathLoss, findings []opaengine.Finding) {
+	share := map[string]float64{}
+	for _, pl := range losses {
+		if pl.Count == 0 {
+			continue
+		}
+		for _, id := range pl.PathIDs {
+			share[id] = math.Round(pl.CappedLoss/float64(pl.Count)*10) / 10
+		}
+	}
+	privileges := map[string][]string{} // path id -> privilege hashes
+	for _, f := range findings {
+		if f.Dismissed {
+			continue
+		}
+		hash, ok := findingAnchorHash(f)
+		if !ok {
+			continue
+		}
+		for _, p := range privilegeWalkedPaths(f, paths) {
+			privileges[p.ID] = append(privileges[p.ID], hash)
+		}
+	}
+	for i := range paths {
+		p := &paths[i]
+		p.Sentence = PathSentence(*p)
+		p.Loss = share[p.ID]
+		ids := []string{p.AnchorHash}
+		seen := map[string]bool{p.AnchorHash: true}
+		for _, h := range p.GateHashes {
+			if !seen[h] {
+				seen[h] = true
+				ids = append(ids, h)
+			}
+		}
+		priv := append([]string(nil), privileges[p.ID]...)
+		sort.Strings(priv)
+		for _, h := range priv {
+			if !seen[h] {
+				seen[h] = true
+				ids = append(ids, h)
+			}
+		}
+		p.FindingIDs = ids
+	}
 }

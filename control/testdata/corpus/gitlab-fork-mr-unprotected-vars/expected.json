@@ -1,0 +1,24 @@
+{
+  "source": "reconstruction of a GitLab merge request preview job with an injected title",
+  "commit": "",
+  "captured": "2026-10-03",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [{"name": "main", "protected": true}],
+  "settingsVariables": [
+    {"name": "NPM_TOKEN", "type": "env_var", "environment": "*", "protected": false, "masked": true},
+    {"name": "PREVIEW_DEPLOY_TOKEN", "type": "env_var", "environment": "*", "protected": false, "masked": true},
+    {"name": "RELEASE_SIGNING_KEY", "type": "file", "environment": "*", "protected": true, "masked": false},
+    {"name": "PROD_DEPLOY_KEY", "type": "env_var", "environment": "production", "protected": true, "masked": true}
+  ],
+  "note": "Settings variables of a third-party GitLab project cannot be read, so this is a faithful minimal reproduction of the pattern: a merge-request-only preview job re-parses $CI_MERGE_REQUEST_TITLE through sh -c, and the project left two masked variables unprotected. A merge request pipeline from a fork sees every variable except the protected ones (spec section 2, platform rules), so the title reaches NPM_TOKEN and PREVIEW_DEPLOY_TOKEN: High. The protected signing key and the production-scoped deploy key never reach this job and must not be named.",
+  "expect": {
+    "maxTier": "high",
+    "paths": [
+      {"entryKind": "untrusted_expression", "tier": "high", "job": "preview", "subjectContains": "CI_MERGE_REQUEST_TITLE", "reachKind": "secrets", "state": "proven",
+       "sentenceContains": ["`CI_MERGE_REQUEST_TITLE`", "`preview`", "`NPM_TOKEN`", "`PREVIEW_DEPLOY_TOKEN`"],
+       "sentenceOmits": ["RELEASE_SIGNING_KEY", "PROD_DEPLOY_KEY"]}
+    ]
+  }
+}

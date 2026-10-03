@@ -305,7 +305,8 @@ func TestBranchNonCompliantAlsoAnchorsUnprotectedPush(t *testing.T) {
 }
 
 // One gate finding amplifies a path at most once, even when it matches
-// through more than one walked job.
+// through more than one walked job. The fed job's declared "contents"
+// write token is what lets a branch gate amplify the path at all.
 func TestGateMatchingTwoWalkedJobsAmplifiesOnlyOnce(t *testing.T) {
 	sit := &Situation{Exposure: ir.VisibilityPublic, Jobs: map[string]JobSituation{}}
 	sit.Jobs["build"] = JobSituation{
@@ -315,9 +316,12 @@ func TestGateMatchingTwoWalkedJobsAmplifiesOnlyOnce(t *testing.T) {
 		},
 		Feeds: []string{"deploy"},
 	}
-	sit.Jobs["deploy"] = JobSituation{
+	deploy := JobSituation{
 		Entries: []EntryFact{{Kind: EntryUnprotectedPush, State: "proven", Evidence: "push: branches: [main]", Subject: "main"}},
 	}
+	deploy.Privilege.TokenWrite = []string{"contents"}
+	deploy.Privilege.TokenWriteSource = "declared"
+	sit.Jobs["deploy"] = deploy
 	findings := []opaengine.Finding{
 		finding("ISSUE-713", "build", map[string]any{"uses": "some/action@v1"}),
 		finding(string(CodeBranchUnprotected), "", map[string]any{"branchName": "main"}),
@@ -384,6 +388,35 @@ func TestDefaultBranchGateAmplifiesAForkPRPathThatReachesAContentsWriteToken(t *
 	}
 }
 
+// A branch gate's sentence names the branch it is about, the slot the
+// spec's modifier clause carries ("and `main` accepts unreviewed pushes"):
+// the gate's title alone does not say which branch is unprotected.
+func TestBranchGateSentenceNamesTheBranch(t *testing.T) {
+	sit := injectionSituation(ir.VisibilityPublic, nil)
+	build := sit.Jobs["build"]
+	build.Feeds = []string{"deploy"}
+	sit.Jobs["build"] = build
+	deploy := JobSituation{}
+	deploy.Privilege.TokenWrite = []string{"contents"}
+	deploy.Privilege.TokenWriteSource = "declared"
+	sit.Jobs["deploy"] = deploy
+	sit.DefaultBranch = "main"
+	findings := []opaengine.Finding{
+		finding("ISSUE-207", "build", map[string]any{"expression": "github.event.pull_request.title"}),
+		finding(string(CodeBranchUnprotected), "", map[string]any{"branchName": "main"}),
+	}
+	for _, p := range AssemblePaths(findings, sit) {
+		if p.AnchorCode != "ISSUE-207" {
+			continue
+		}
+		if got := PathSentence(p); !strings.Contains(got, "Nothing stands between this and the default branch: Branch protection missing on `main`.") {
+			t.Errorf("want the gate sentence to name `main`, got %q", got)
+		}
+		return
+	}
+	t.Fatal("want a path anchored by ISSUE-207")
+}
+
 // An unprotected default branch protects nothing on a path that never
 // writes to it. The demo's shape (a fork_pr entry on ci/build, execution
 // only, no secret, no write token) is not amplified by a 501 on `main`.
@@ -406,6 +439,37 @@ func TestDefaultBranchGateDoesNotAmplifyAnExecutionOnlyPath(t *testing.T) {
 	}
 	if p.Tier != p.BaseTier || len(p.Modifiers) != 0 || len(p.GateHashes) != 0 {
 		t.Errorf("want an execution-only path untouched by the default-branch gate, got %+v", p)
+	}
+}
+
+// A branch gate matched through a walked push-triggered job obeys the same
+// rule as the default-branch clause: it amplifies only a path whose reach
+// writes the repository. The most common CI shape (on: [push,
+// pull_request] with an injection, holding nothing) stays Medium with no
+// gate modifier, since the 501 already prices the branch on its own
+// unprotected_push path.
+func TestPushTriggeredBranchGateDoesNotAmplifyAnExecutionOnlyPath(t *testing.T) {
+	sit := injectionSituation(ir.VisibilityPublic, nil)
+	build := sit.Jobs["build"]
+	build.Entries = append(build.Entries, EntryFact{Kind: EntryUnprotectedPush, State: "proven", Evidence: "on: [push, pull_request]", Subject: "main"})
+	sit.Jobs["build"] = build
+	sit.DefaultBranch = "main"
+	findings := []opaengine.Finding{
+		finding("ISSUE-207", "build", map[string]any{"expression": "github.event.pull_request.title"}),
+		finding(string(CodeBranchUnprotected), "", map[string]any{"branchName": "main"}),
+	}
+	var p *AttackPath
+	paths := AssemblePaths(findings, sit)
+	for i := range paths {
+		if paths[i].AnchorCode == "ISSUE-207" {
+			p = &paths[i]
+		}
+	}
+	if p == nil {
+		t.Fatalf("want a path anchored by ISSUE-207, got %+v", paths)
+	}
+	if p.Tier != TierMedium || len(p.Modifiers) != 0 || len(p.GateHashes) != 0 {
+		t.Errorf("want the execution-only path Medium with no gate modifier, got %+v", p)
 	}
 }
 
@@ -949,5 +1013,58 @@ func TestUnresolvableSecretsStateRecordsTheSecretsCause(t *testing.T) {
 	}
 	if paths[0].cause != unresolvableSecrets {
 		t.Errorf("cause = %q, want secrets, paths=%+v", paths[0].cause, paths)
+	}
+}
+
+// Spec section 9: no path without an anchoring finding. Over a situation
+// offering every kind of entry fact and a finding set that mixes entry,
+// gate, privilege, role-less and dismissed findings, every assembled
+// path's AnchorHash is the hash of a non-dismissed input finding, under
+// any input order.
+func TestNoPathWithoutAnAnchoringFinding(t *testing.T) {
+	sit := releaseSituation(ir.VisibilityPublic)
+	for name, j := range injectionSituation(ir.VisibilityPublic, []string{"DEPLOY_KEY"}).Jobs {
+		sit.Jobs[name] = j
+	}
+	build := sit.Jobs["build"]
+	build.Entries = append(build.Entries, EntryFact{Kind: EntryUnprotectedPush, State: "proven", Evidence: "push: branches: [main]", Subject: "main"})
+	build.Feeds = []string{"release"}
+	sit.Jobs["build"] = build
+	sit.DefaultBranch = "main"
+
+	dismissedEntry := finding("ISSUE-713", "release", map[string]any{"uses": "some/action@v1"})
+	dismissedEntry.Dismissed = true
+	dismissedGate := finding(string(CodeBranchNonCompliant), "", map[string]any{"branchName": "main"})
+	dismissedGate.Dismissed = true
+	findings := []opaengine.Finding{
+		dismissedEntry,
+		dismissedGate,
+		finding("ISSUE-207", "build", map[string]any{"expression": "github.event.pull_request.title"}),
+		finding(string(CodeBranchUnprotected), "", map[string]any{"branchName": "main"}),
+		finding("ISSUE-305", "release", nil),
+		finding("ISSUE-307", "release", nil),
+		finding("ISSUE-999", "release", nil),
+		finding("ISSUE-713", "nowhere", map[string]any{"uses": "some/action@v1"}),
+		finding("ISSUE-102", "build", map[string]any{"link": "node:latest"}),
+	}
+	live := map[string]bool{}
+	for _, f := range findings {
+		if h, ok := findingAnchorHash(f); ok && !f.Dismissed {
+			live[h] = true
+		}
+	}
+	for seed := int64(0); seed < 50; seed++ {
+		shuffled := append([]opaengine.Finding(nil), findings...)
+		r := rand.New(rand.NewSource(seed))
+		r.Shuffle(len(shuffled), func(i, k int) { shuffled[i], shuffled[k] = shuffled[k], shuffled[i] })
+		paths := AssemblePaths(shuffled, sit)
+		if len(paths) == 0 {
+			t.Fatal("fixture drifted: want paths to check")
+		}
+		for _, p := range paths {
+			if !live[p.AnchorHash] {
+				t.Fatalf("seed %d: path %s (%s) is anchored by %s, not a non-dismissed input finding", seed, p.ID, p.AnchorCode, p.AnchorHash)
+			}
+		}
 	}
 }

@@ -1,0 +1,7 @@
+# clean: a substitution that mentions no curl/wget at all is not
+# fetch-bearing and must not block the trustedUrls exemption for a
+# separate, actually-trusted fetch substitution on the same line.
+install:
+  image: alpine:3.19
+  script:
+    - cd $(dirname "$0") && bash -c "$(curl -fsSL https://get.docker.com/install.sh)"

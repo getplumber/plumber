@@ -11,6 +11,7 @@ import (
 
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	"github.com/getplumber/plumber/internal/ir"
+	"github.com/getplumber/plumber/internal/testsupport/pipelines"
 	"github.com/getplumber/plumber/policies/situation"
 )
 
@@ -69,7 +70,7 @@ func githubFixture(t *testing.T, name, visibility string) *ir.NormalizedPipeline
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := parseGitHubActions(t, data, ".github/workflows/"+name)
+	p := pipelines.ParseGitHubWorkflow(t, data, ".github/workflows/"+name)
 	p.Visibility = visibility
 	return p
 }
@@ -91,7 +92,7 @@ func gitlabFixture(t *testing.T, name, visibility string) *ir.NormalizedPipeline
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := parseGitLabCI(t, data)
+	p := pipelines.ParseGitLabCI(t, data)
 	p.Visibility = visibility
 	return p
 }
@@ -240,7 +241,7 @@ func TestReleaseMutableActionEntry(t *testing.T) {
 
 // TestPushToUnprotectedDefaultBranch pins unprotected_push on GitHub. The
 // fixture's on: push: branches: [main] reaches the IR as Job.PushBranches
-// through the real YAML reading (parseGitHubActions mirrors the production
+// through the real YAML reading (pipelines.ParseGitHubWorkflow mirrors the production
 // collector's extractGitHubPushFilters, PR #513 review), so a push to the
 // default branch is proven on an unprotected default branch, not merely
 // unresolvable; a protected default branch still removes the entry
@@ -733,6 +734,56 @@ func TestGitLabSettingsVariablesArePrivilege(t *testing.T) {
 	p.SettingsVariablesKnown = false
 	if got := evaluate(t, p, nil).Jobs["release"].Privilege.SecretsState; got != "unresolvable" {
 		t.Errorf("unknown settings variables must be unresolvable, got %q", got)
+	}
+}
+
+// TestGitLabMergeRequestOnlyJobHoldsNoProtectedVariable pins the "whether
+// the protection that gates them applies to this run" half of the GitLab
+// secrets fact: GitLab exports a protected variable only to pipelines on a
+// protected branch or tag, so a job whose every way to run is a merge
+// request pipeline (rules on $CI_PIPELINE_SOURCE == "merge_request_event"
+// or the presence of $CI_MERGE_REQUEST_IID, or only: [merge_requests])
+// never holds one, whoever opened the merge request. A job that also runs
+// on a branch push, or that has no rules at all, still does.
+func TestGitLabMergeRequestOnlyJobHoldsNoProtectedVariable(t *testing.T) {
+	vars := []ir.SettingsVariable{
+		{Name: "PYPI_TOKEN", Type: "env_var", Environment: "*", Protected: true, Masked: true},
+		{Name: "SENTRY_DSN", Type: "env_var", Environment: "*", Masked: true},
+	}
+	mrRule := map[string]any{"if": `$CI_PIPELINE_SOURCE == "merge_request_event"`}
+	iidRule := map[string]any{"if": `$CI_MERGE_REQUEST_IID`}
+	never := map[string]any{"if": `$CI_COMMIT_TAG`, "when": "never"}
+	mainRule := map[string]any{"if": `$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH`}
+	either := map[string]any{"if": `$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == "main"`}
+	p := &ir.NormalizedPipeline{
+		Provider:               ir.ProviderGitLab,
+		DefaultBranch:          "main",
+		SettingsVariablesKnown: true,
+		SettingsVariables:      vars,
+		Jobs: []ir.Job{
+			{Name: "mr_rules", Rules: []map[string]any{never, mrRule}},
+			{Name: "mr_iid", Rules: []map[string]any{iidRule}},
+			{Name: "mr_only_keyword", Only: []string{"merge_requests"}},
+			{Name: "mr_and_main", Rules: []map[string]any{mrRule, mainRule}},
+			{Name: "or_in_one_rule", Rules: []map[string]any{either}},
+			{Name: "no_rules"},
+		},
+	}
+	r := evaluate(t, p, nil)
+	for name, want := range map[string][]string{
+		"mr_rules":        {"SENTRY_DSN"},
+		"mr_iid":          {"SENTRY_DSN"},
+		"mr_only_keyword": {"SENTRY_DSN"},
+		"mr_and_main":     {"PYPI_TOKEN", "SENTRY_DSN"},
+		"or_in_one_rule":  {"PYPI_TOKEN", "SENTRY_DSN"},
+		"no_rules":        {"PYPI_TOKEN", "SENTRY_DSN"},
+	} {
+		if got := r.Jobs[name].Privilege.Secrets; !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: secrets = %v, want %v", name, got, want)
+		}
+	}
+	if got := r.Jobs["mr_rules"].Privilege.ProtectedSecrets; len(got) != 0 {
+		t.Errorf("mr_rules: protectedSecrets = %v, want none (it holds no protected variable)", got)
 	}
 }
 
@@ -1383,7 +1434,7 @@ func TestZeroJobsPipeline(t *testing.T) {
 	}
 }
 
-// TestResultCarriesTheDefaultBranch pins S5: result.defaultBranch mirrors
+// TestResultCarriesTheDefaultBranch pins that result.defaultBranch mirrors
 // input.pipeline.defaultBranch, empty when the pipeline never gave one, so
 // the Go side can amplify a branch gate against any path, not only paths
 // through push-triggered jobs.

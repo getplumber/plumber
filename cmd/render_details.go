@@ -3,6 +3,8 @@ package cmd
 import (
 	"cmp"
 	"fmt"
+	"io"
+	"os"
 	"slices"
 	"strings"
 	"unicode"
@@ -50,6 +52,22 @@ type detailedFinding struct {
 	// dropped (see renderFailedControl for the tag and the count it
 	// changes).
 	Dismissed bool
+	// ContextualSeverity, Role and PathIDs are scoring-v4 only
+	// (findingsToItems sets them when the run's score actually carries
+	// the contextual formula's shape, control/score_profile.go's
+	// scoreProfileV4): the finding's severity in the context of the
+	// attack paths it anchors, gates or walks (control.ContextualSeverity),
+	// the one-line role control.FindingLine reads out loud, and the path
+	// ids control.PathIDsFor associates it with. Empty under v3, so every
+	// existing branch that only checks Code stays byte-identical.
+	ContextualSeverity string
+	Role               string
+	PathIDs            []string
+	// RoleOnPath is the finding's role relative to each path it is listed
+	// under (control.RoleOnPath), keyed by path id: the Attack paths
+	// section reads it so a finding nested under a path it does not
+	// anchor never says "Entry of" that path. Nil under v3.
+	RoleOnPath map[string]string
 }
 
 // findingGroup collects everything needed to render one per-rule
@@ -197,7 +215,20 @@ func filterGroupsForDegraded(groups []findingGroup, degraded bool) []findingGrou
 // Groups with no findings, no stats and not marked skipped are dropped
 // (they would just be empty noise).
 func renderFindingGroups(groups []findingGroup) {
-	var passed, skipped, notEvaluated, failed []findingGroup
+	passed, skipped, notEvaluated, failed := bucketFindingGroups(groups)
+	sortFindingGroupsWorstLast(failed)
+
+	renderPassedControlsSummary(passed)
+	renderSkippedControlsSummary(skipped)
+	renderNotEvaluatedControlsSummary(notEvaluated)
+	renderFailedControlsSection(failed)
+}
+
+// bucketFindingGroups is renderFindingGroups' own classification switch,
+// pulled out so the scoring-v4 report flow (renderFindingGroupsV4) can
+// reuse the exact same bucketing for Passed/Skipped/Not Evaluated and only
+// diverge on how the Failed bucket renders.
+func bucketFindingGroups(groups []findingGroup) (passed, skipped, notEvaluated, failed []findingGroup) {
 	for _, g := range groups {
 		switch {
 		case g.Skipped:
@@ -214,13 +245,115 @@ func renderFindingGroups(groups []findingGroup) {
 			// else: no findings, no stats, not skipped — nothing to show.
 		}
 	}
+	return passed, skipped, notEvaluated, failed
+}
 
-	sortFindingGroupsWorstLast(failed)
+// renderFindingGroupsV4 is renderFindingGroups' scoring-v4 counterpart:
+// Passed/Skipped/Not Evaluated render exactly as under v3, but the Failed
+// bucket renders as Situation, "Attack paths",
+// "Protections missing" and "Hygiene" instead of one flat "Failed
+// Controls" section. A finding already shown nested under its path is
+// removed before the remaining groups are split into the last two
+// sections, so nothing repeats.
+func renderFindingGroupsV4(groups []findingGroup, score *control.PlumberScoreResult) {
+	passed, skipped, notEvaluated, failed := bucketFindingGroups(groups)
 
 	renderPassedControlsSummary(passed)
 	renderSkippedControlsSummary(skipped)
 	renderNotEvaluatedControlsSummary(notEvaluated)
-	renderFailedControlsSection(failed)
+
+	renderSituation(os.Stdout, score.Situation)
+	renderAttackPaths(os.Stdout, score.Paths, failed)
+
+	remaining := removeFindingsShownUnderAPath(failed)
+	protections, hygiene := splitProtectionsAndHygiene(remaining)
+	renderFailedSubsection("Protections missing", protections)
+	renderFailedSubsection("Hygiene", hygiene)
+}
+
+// removeFindingsShownUnderAPath drops, from every group's Findings, any
+// finding renderAttackPaths already nested under a path (PathIDs set by
+// findingsToItems from control.PathIDsFor): anchored, gated or walked, the
+// id always names a path renderAttackPaths rendered, since both read the
+// same score.Paths. A group left with no findings is dropped entirely:
+// there is nothing left for it to report in these later sections.
+func removeFindingsShownUnderAPath(groups []findingGroup) []findingGroup {
+	out := make([]findingGroup, 0, len(groups))
+	for _, g := range groups {
+		var kept []detailedFinding
+		dismissed := 0
+		for _, f := range g.Findings {
+			if len(f.PathIDs) > 0 {
+				continue
+			}
+			kept = append(kept, f)
+			if f.Dismissed {
+				dismissed++
+			}
+		}
+		if len(kept) == 0 {
+			continue
+		}
+		g.Findings = kept
+		g.Dismissed = dismissed
+		out = append(out, g)
+	}
+	return out
+}
+
+// splitProtectionsAndHygiene divides the groups left after
+// removeFindingsShownUnderAPath into "Protections missing" (gate findings
+// on no path, control.FindingLine's "Gate:" lead-in) and "Hygiene" (every
+// other finding). A control whose findings span both buckets is listed
+// under each, once per bucket, with only the findings that belong there:
+// the split is by finding, not by control.
+func splitProtectionsAndHygiene(groups []findingGroup) (protections, hygiene []findingGroup) {
+	for _, g := range groups {
+		var gateFindings, restFindings []detailedFinding
+		gateDismissed, restDismissed := 0, 0
+		for _, f := range g.Findings {
+			if strings.HasPrefix(f.Role, "Gate:") {
+				gateFindings = append(gateFindings, f)
+				if f.Dismissed {
+					gateDismissed++
+				}
+				continue
+			}
+			restFindings = append(restFindings, f)
+			if f.Dismissed {
+				restDismissed++
+			}
+		}
+		if len(gateFindings) > 0 {
+			gg := g
+			gg.Findings = gateFindings
+			gg.Dismissed = gateDismissed
+			protections = append(protections, gg)
+		}
+		if len(restFindings) > 0 {
+			hg := g
+			hg.Findings = restFindings
+			hg.Dismissed = restDismissed
+			hygiene = append(hygiene, hg)
+		}
+	}
+	return protections, hygiene
+}
+
+// renderFailedSubsection prints one of the v4-only sections that replace
+// "Failed Controls": same header and per-control rendering
+// (renderFailedControl) as the v3 section, just a different title and a
+// filtered group list.
+func renderFailedSubsection(title string, groups []findingGroup) {
+	if len(groups) == 0 {
+		return
+	}
+	sortFindingGroupsWorstLast(groups)
+	printStatusSectionHeader(fmt.Sprintf("%s (%d)", title, len(groups)), "✗", colorRed)
+	fmt.Println()
+	for _, g := range groups {
+		renderFailedControl(g)
+	}
 }
 
 // renderNotEvaluatedControlsSummary prints the "Not Evaluated" section: the
@@ -407,26 +540,49 @@ func renderFailedControl(g findingGroup) {
 	}
 	fmt.Printf("\n      %sIssues Found:%s\n", colorYellow, colorReset)
 	for _, f := range g.Findings {
-		tag := severityTag(f.Code)
-		message := sanitizeTerminal(f.Message)
-		if f.Dismissed {
-			message += " [dismissed on the platform]"
-		}
-		fmt.Printf("        %s [%s] %s\n", tag, f.Code, message)
-		for _, line := range f.DetailLines {
-			fmt.Printf("         └─ %s\n", sanitizeTerminal(line))
-		}
-		if f.Location != "" {
-			// The bare path is emitted last so VS Code, iTerm
-			// and similar tools detect it as a clickable
-			// file:line reference and jump straight to the job.
-			fmt.Printf("         %s↳ at %s%s\n", colorDim, sanitizeTerminal(f.Location), colorReset)
-		}
-		if f.DocURL != "" {
-			fmt.Printf("         %s↳ docs: %s%s\n", colorDim, f.DocURL, colorReset)
-		}
+		renderFindingBlock(os.Stdout, f, "        ", f.Role)
 	}
 	fmt.Println()
+}
+
+// renderFindingBlock prints one finding the way every finding listing in
+// the report prints it, indented by indent: the "[sev] [CODE] message"
+// line (with the dismissed tag), the role line when there is one, the
+// detail lines, the location and the doc URL. The Failed Controls listing
+// and the Attack paths section both call it, so a finding nested under a
+// path keeps everything the listing shows; role is passed in because under
+// a path it is the role on THAT path.
+func renderFindingBlock(out io.Writer, f detailedFinding, indent, role string) {
+	// Under scoring-v4 the tag is the plain contextual-severity word
+	// (ContextualSeverity, set by findingsToItems), not the registered
+	// severity's colored badge: a gate finding that amplifies nothing
+	// today can read Medium here even though its own code is Critical.
+	// Under v3 ContextualSeverity stays empty and this is unchanged.
+	tag := severityTag(f.Code)
+	if f.ContextualSeverity != "" {
+		tag = "[" + f.ContextualSeverity + "]"
+	}
+	message := sanitizeTerminal(f.Message)
+	if f.Dismissed {
+		message += " [dismissed on the platform]"
+	}
+	// Errors discarded: out is the terminal (os.Stdout) or a test buffer.
+	_, _ = fmt.Fprintf(out, "%s%s [%s] %s\n", indent, tag, f.Code, message)
+	if role != "" {
+		_, _ = fmt.Fprintf(out, "%s  %s\n", indent, sanitizeTerminal(role))
+	}
+	for _, line := range f.DetailLines {
+		_, _ = fmt.Fprintf(out, "%s └─ %s\n", indent, sanitizeTerminal(line))
+	}
+	if f.Location != "" {
+		// The bare path is emitted last so VS Code, iTerm
+		// and similar tools detect it as a clickable
+		// file:line reference and jump straight to the job.
+		_, _ = fmt.Fprintf(out, "%s %s↳ at %s%s\n", indent, colorDim, sanitizeTerminal(f.Location), colorReset)
+	}
+	if f.DocURL != "" {
+		_, _ = fmt.Fprintf(out, "%s %s↳ docs: %s%s\n", indent, colorDim, f.DocURL, colorReset)
+	}
 }
 
 // findingGroupSeverity tallies the severities of a group's findings from
@@ -1543,4 +1699,138 @@ func originKindMatches(originType, kindFilter string) bool {
 	default:
 		return false
 	}
+}
+
+// renderSituation prints the scoring-v4 Situation paragraph
+// (control.SituationParagraph, carried on the score as score.Situation):
+// exposure and pipeline shape, the assembled paths by tier, and the best
+// fix. No-op on an empty string, which is what a v3 score (or the v3
+// fallback control/score_profile.go's situationUnavailable triggers)
+// always carries.
+func renderSituation(out io.Writer, situation string) {
+	if situation == "" {
+		return
+	}
+	// Errors discarded: out is the terminal (os.Stdout) or a test buffer,
+	// neither of which this renderer can usefully react to failing.
+	_, _ = fmt.Fprintln(out, styleTitle.Render("Situation"))
+	// The paragraph names jobs and subjects read off the workflow:
+	// sanitized like every other repo-controlled text the terminal prints.
+	_, _ = fmt.Fprintf(out, fmtIndentPara, sanitizeTerminal(situation))
+}
+
+// renderAttackPaths prints the scoring-v4 "Attack paths" section, the one
+// the report shows right after the Situation: every assembled path, worst
+// tier first then id, each path's own plain-language sentence
+// (control.PathSentence), and the findings on it nested underneath, each
+// in the same block the Failed Controls listing prints
+// (renderFindingBlock), with its contextual severity and its role on THAT
+// path (control.RoleOnPath, carried as RoleOnPath; Role when absent). The
+// terminal numbers the paths worst-first ("path 1", "path 2", ...) and
+// prints the hex id after it in parentheses; every role line below a path
+// reads that same ordinal rather than the raw id (displayRole): control's
+// role lines and the JSON output keep returning ids, the ordinal is this
+// renderer's own display concern. Job names and sentences are read off the
+// workflow and go through sanitizeTerminal like every finding message. A
+// nil or empty paths slice (no attack path assembled this run) prints
+// nothing.
+func renderAttackPaths(out io.Writer, paths []control.AttackPath, groups []findingGroup) {
+	if len(paths) == 0 {
+		return
+	}
+	byPath := map[string][]detailedFinding{}
+	for _, g := range groups {
+		for _, f := range g.Findings {
+			for _, id := range f.PathIDs {
+				byPath[id] = append(byPath[id], f)
+			}
+		}
+	}
+	// A path's own anchor (control.FindingLine's exact "Entry of path
+	// <id>", the finding AssemblePaths built this path from) reads first
+	// under it; a gate or privilege finding that also walks this path
+	// (control.PathIDsFor lists it here too) stays in control order after
+	// it, since nothing orders those relative to each other.
+	for id, findings := range byPath {
+		slices.SortStableFunc(findings, func(a, b detailedFinding) int {
+			aAnchor, bAnchor := roleUnder(a, id) == "Entry of path "+id, roleUnder(b, id) == "Entry of path "+id
+			switch {
+			case aAnchor == bAnchor:
+				return 0
+			case aAnchor:
+				return -1
+			default:
+				return 1
+			}
+		})
+		byPath[id] = findings
+	}
+
+	sorted := append([]control.AttackPath(nil), paths...)
+	slices.SortFunc(sorted, func(a, b control.AttackPath) int {
+		if d := control.TierRank(b.Tier) - control.TierRank(a.Tier); d != 0 {
+			return d
+		}
+		return cmp.Compare(a.ID, b.ID)
+	})
+	ordinalFor := make(map[string]int, len(sorted))
+	for i, p := range sorted {
+		ordinalFor[p.ID] = i + 1
+	}
+
+	// Errors discarded throughout this function, same reason as
+	// renderSituation above: out is the terminal or a test buffer.
+	_, _ = fmt.Fprintln(out, styleTitle.Render(fmt.Sprintf("Attack paths (%d)", len(sorted))))
+	for _, p := range sorted {
+		state := ""
+		if p.State == control.PathUnverified {
+			state = " (unverified)"
+		}
+		_, _ = fmt.Fprintf(out, "  %s path %d (%s)%s: %s\n", pathTierTag(p.Tier), ordinalFor[p.ID], p.ID, state, sanitizeTerminal(strings.Join(p.Jobs, " -> ")))
+		_, _ = fmt.Fprintf(out, "    %s\n", sanitizeTerminal(control.PathSentence(p)))
+		for _, f := range byPath[p.ID] {
+			renderFindingBlock(out, f, "    ", displayRole(roleUnder(f, p.ID), ordinalFor))
+		}
+		_, _ = fmt.Fprintln(out)
+	}
+}
+
+// roleUnder is the finding's role on the path with this id: its RoleOnPath
+// entry, or its Role when the item carries none (an item built without
+// the per-path roles).
+func roleUnder(f detailedFinding, id string) string {
+	if role, ok := f.RoleOnPath[id]; ok {
+		return role
+	}
+	return f.Role
+}
+
+// pathTierTag renders an attack path's tier as the same filled severity
+// badge the Issues Found listing uses for a code's registered severity
+// (renderSeverityBadge, cmd/analyze_gitlab.go): PathTier and IssueSeverity
+// share their string values ("critical"|"high"|"medium"|"low"), so the
+// tier reads straight through without a second color scheme.
+func pathTierTag(t control.PathTier) string {
+	switch t {
+	case control.TierCritical:
+		return renderSeverityBadge(control.SeverityCritical, " CRIT ")
+	case control.TierHigh:
+		return renderSeverityBadge(control.SeverityHigh, " HIGH ")
+	case control.TierMedium:
+		return renderSeverityBadge(control.SeverityMedium, " MED  ")
+	default:
+		return renderSeverityBadge(control.SeverityLow, " LOW  ")
+	}
+}
+
+// displayRole swaps a role line's raw path ids (control.FindingLine's own
+// vocabulary, e.g. "Entry of path a1b2c3d4") for the ordinal this renderer
+// numbered them under ("Entry of path 1"): the id is what control.
+// PathIDsFor and the JSON output keep returning, the ordinal is this
+// terminal's own display concern.
+func displayRole(role string, ordinalFor map[string]int) string {
+	for id, ordinal := range ordinalFor {
+		role = strings.ReplaceAll(role, "path "+id, fmt.Sprintf("path %d", ordinal))
+	}
+	return role
 }

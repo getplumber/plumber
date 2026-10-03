@@ -7,7 +7,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -727,6 +729,22 @@ func validateScoreProfile(p string) error {
 		return nil
 	}
 	return fmt.Errorf("--score-profile must be v3 or v4 (got %q)", p)
+}
+
+// scoreProfileV4 reports whether score was actually priced under the
+// contextual (attack-path) formula, not merely whether --score-profile v4
+// was requested: control.ComputeScoreForProfile falls back to plain v3
+// pricing when the situation facts never evaluated (invariant I3, never a
+// fake verdict; control/score_profile.go's situationUnavailable), and the
+// fallback's ProfileID stays "scoring-v3" even though control.ScoreProfile
+// itself still reads "v4". Gating every v4-only render block on the bare
+// flag would show that fallback's real v3-priced findings under this
+// run's v4 severity defaults (Low for everything but a gate code),
+// understating a finding the banner's own v3 score prices at its full
+// registered severity. Every render decision in this file and in
+// render_details.go reads this, never control.ScoreProfile directly.
+func scoreProfileV4(score *control.PlumberScoreResult) bool {
+	return score != nil && score.ProfileID == control.PlumberScoreProfileIDV4
 }
 
 func envFloat64Fallback(cmd *cobra.Command, flag, envKey string, dest *float64) error {
@@ -1823,21 +1841,43 @@ func printNoControlsWarning(result *control.AnalysisResult) {
 }
 
 // findingsToItems converts a slice of OPA findings into the parallel
-// (codes, items) slices used by the table and group renderers.
-func findingsToItems(findings []opaengine.Finding) ([]control.ErrorCode, []detailedFinding) {
+// (codes, items) slices used by the table and group renderers. v4 is
+// scoreProfileV4(score) read at the call site: when true, every item also
+// carries the contextual severity, role line, path ids and role on each of
+// those paths control/explain.go derives from paths
+// (control.ContextualSeverity, control.FindingLine, control.PathIDsFor,
+// control.RoleOnPath). Under v3 (v4 false) these
+// fields stay at their zero value and the rest of this function is
+// unchanged, so a v3 run renders byte-identical to before this.
+func findingsToItems(findings []opaengine.Finding, paths []control.AttackPath, v4 bool) ([]control.ErrorCode, []detailedFinding) {
 	codes := make([]control.ErrorCode, 0, len(findings))
 	items := make([]detailedFinding, 0, len(findings))
 	for _, f := range findings {
 		code := control.ErrorCode(f.Code)
 		codes = append(codes, code)
-		items = append(items, detailedFinding{
+		item := detailedFinding{
 			Code:        code,
 			Message:     f.Message,
 			DocURL:      code.DocURL(),
 			Location:    formatFindingLocation(f),
 			DetailLines: detailLinesFromFinding(f),
 			Dismissed:   f.Dismissed,
-		})
+		}
+		if v4 {
+			item.ContextualSeverity = string(control.ContextualSeverity(f, paths))
+			item.Role = control.FindingLine(f, paths)
+			item.PathIDs = control.PathIDsFor(f, paths)
+			for _, p := range paths {
+				if !slices.Contains(item.PathIDs, p.ID) {
+					continue
+				}
+				if item.RoleOnPath == nil {
+					item.RoleOnPath = map[string]string{}
+				}
+				item.RoleOnPath[p.ID] = control.RoleOnPath(f, p)
+			}
+		}
+		items = append(items, item)
 	}
 	return codes, items
 }
@@ -1968,6 +2008,35 @@ func printCodeLossTable(losses []control.CodeLoss) float64 {
 	return totalLoss
 }
 
+// renderPathBreakdown prints the --score-point breakdown under
+// scoring-v4: the per (tier, entryKind) path losses, the per-code gate
+// losses, and the single hygiene bucket (control.PathLoss/control.
+// CodeLoss on the score). Deliberately a plain list, not
+// printCodeLossTable's bordered table: scoring-v4 groups into a handful
+// of buckets rather than one row per code, so the table's own columns
+// (Cap, per-row Severity) would mostly repeat. No-op when score was not
+// actually priced under v4 (scoreProfileV4): printScoreBreakdown, with
+// its v3 CodeLosses shape, is this function's job on a v3 run, and on the
+// v3 fallback a request can still land on (control/score_profile.go's
+// situationUnavailable: no situation facts to price against).
+func renderPathBreakdown(out io.Writer, score *control.PlumberScoreResult) {
+	if !scoreProfileV4(score) {
+		return
+	}
+	// Errors discarded: out is the terminal (os.Stdout) or a test buffer.
+	_, _ = fmt.Fprintln(out, styleTitle.Render("Points"))
+	for _, pl := range score.PathLosses {
+		_, _ = fmt.Fprintf(out, "  %-8s %-22s x%-3d -%.1f\n", pl.Tier, pl.EntryKind, pl.Count, pl.CappedLoss)
+	}
+	for _, gl := range score.GateLosses {
+		_, _ = fmt.Fprintf(out, "  gate     %-22s x%-3d -%.1f\n", gl.Code, gl.Count, gl.CappedLoss)
+	}
+	if score.HygieneCount > 0 {
+		_, _ = fmt.Fprintf(out, "  hygiene  %-22s x%-3d -%.1f\n", "", score.HygieneCount, score.HygieneLoss)
+	}
+	_, _ = fmt.Fprintln(out)
+}
+
 func printScoreBreakdown(score *control.PlumberScoreResult) {
 	printSectionHeader("Points breakdown (beta)")
 	fmt.Println()
@@ -2071,7 +2140,28 @@ func printScoreWithheld(headline, hint string) {
 	fmt.Println()
 }
 
+// scoreWithheld reports whether the run shows no score at all: score mode
+// is off (--no-controls), collection degraded, or nothing was evaluated
+// (a nil score). It is the banner's one condition, and every block that
+// states the score in other words (the scoring-v4 Situation, attack paths
+// and Points) reads it too, so none of them can show what the banner
+// withholds.
+func scoreWithheld(score *control.PlumberScoreResult, scoreMode, degraded bool) bool {
+	return !scoreMode || degraded || score == nil
+}
+
 func printSummaryScoreBanner(score *control.PlumberScoreResult, scoreMode, degraded bool) {
+	if scoreWithheld(score, scoreMode, degraded) {
+		printScoreWithheldNotice(scoreMode, degraded)
+		return
+	}
+	printScoreBadge(score)
+}
+
+// printScoreWithheldNotice says why printSummaryScoreBanner shows no score:
+// nothing under --no-controls (the header already says so), the degraded
+// notice, or the nothing-evaluated one.
+func printScoreWithheldNotice(scoreMode, degraded bool) {
 	if !scoreMode {
 		return
 	}
@@ -2102,14 +2192,15 @@ func printSummaryScoreBanner(score *control.PlumberScoreResult, scoreMode, degra
 	// deduction-score a perfect 100/A, which reads as a clean pass rather
 	// than as nothing having been checked. Say so in the same withheld
 	// wording family as the degraded case above (platform decision row 45).
-	if score == nil {
-		printScoreWithheld(
-			"Score withheld: no control was evaluated",
-			"Nothing was checked, so this run makes no claim about the pipeline.",
-		)
-		return
-	}
+	printScoreWithheld(
+		"Score withheld: no control was evaluated",
+		"Nothing was checked, so this run makes no claim about the pipeline.",
+	)
+}
 
+// printScoreBadge prints the shown score: the block-letter badge, the
+// points, the bar and the severity chips.
+func printScoreBadge(score *control.PlumberScoreResult) {
 	letterColor := scoreLetterLipglossColor(score.Score)
 
 	// Block-letter ASCII badge — six lines tall, matches the project
@@ -2155,10 +2246,16 @@ func printSummaryScoreBanner(score *control.PlumberScoreResult, scoreMode, degra
 	fmt.Println(indentBlock(body, " "))
 
 	if score.CriticalMalusApplied {
+		// Under scoring-v4 the cap follows a Critical attack path, not a
+		// Critical issue, so the line says so; v3 keeps its wording.
+		remains := "any Critical remains"
+		if score.ProfileID == control.PlumberScoreProfileIDV4 {
+			remains = "a Critical attack path remains"
+		}
 		fmt.Println()
 		fmt.Printf(" %s  %s\n",
 			styleFail.Render("▲ Critical malus applied"),
-			styleMuted.Render(fmt.Sprintf("(final points capped at %.0f while any Critical remains)", score.CriticalMalusMax)))
+			styleMuted.Render(fmt.Sprintf("(final points capped at %.0f while %s)", score.CriticalMalusMax, remains)))
 	}
 
 	fmt.Println()

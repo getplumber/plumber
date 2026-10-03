@@ -940,12 +940,20 @@ fetched_script_line(line) if {
 fetched_script_line(line) if unverified_script_line(_visible_line(line), line)
 
 # Copied verbatim from policies/unverified_scripts.rego (ISSUE-411): the
-# interpreter list, the quote and comment stripping, and the five line
+# interpreter list, the quote and comment stripping, the seven line
 # patterns with their heredoc and local-echo exemptions on the generic
 # form. The control's verification and trusted-URL exemptions are not
 # copied: a verified or trusted fetch still runs code that can change
 # without a change in the repository.
 _shell := `bash|sh|zsh|python[23]?|perl|ruby|dash|ksh`
+
+# Rego's raw (backtick-delimited) strings can't contain a literal
+# backtick, so the character lives in an ordinary double-quoted string
+# instead (backtick carries no special meaning there) and gets spliced
+# into the raw regex patterns below with sprintf, wherever a backtick
+# command substitution needs matching. Copied verbatim from
+# policies/unverified_scripts.rego.
+_backtick := "`"
 
 _visible_line(line) := stripped if {
 	once := regex.replace(line, `"[^"]*"`, "")
@@ -973,6 +981,49 @@ unverified_script_line(visible, _) if {
 	regex.match(sprintf(`(?i)(echo|printf)\s+[^|]*\|\s*base64\s+(-d|--decode)\s*\|\s*(sudo\s+)?(%s)\b`, [_shell]), visible)
 }
 
+unverified_script_line(visible, _) if {
+	regex.match(sprintf(`(?i)(?:^|[\s;&|(])(?:sudo\s+)?(?:\S*/)?(%s)\s+(?:-\S+\s+)*<\(\s*(curl|wget)\b`, [_shell]), visible)
+}
+
+# Mirrors ISSUE-411 verbatim: flags between the shell and -c are
+# allowed, including a single bundled flag token whose LAST letter is
+# `c` (`bash -euc "$(curl ...)"`); a bundle where c is NOT trailing
+# (`-ce`) is a different flag and is not this shell's -c at all. The
+# fetch need not be the substitution's first token either: a throwaway
+# command before the real curl/wget still runs once the substitution's
+# output reaches `bash -c`, so the fetch is matched anywhere inside the
+# substitution, stopping at its closing `)`.
+unverified_script_line(visible, line) if {
+	regex.match(sprintf(`(?i)(?:^|[\s;&|(])(?:sudo\s+)?(?:\S*/)?(%s)\s+[^;&|\n]*?-[a-zA-Z]*c\b`, [_shell]), visible)
+	regex.match(sprintf(`(?i)(?:^|[\s;&|(])(?:sudo\s+)?(?:\S*/)?(%s)\s+[^;&|\n]*?-[a-zA-Z]*c\s+["']?\$\([^)]*?\b(curl|wget)\b`, [_shell]), line)
+}
+
+# `eval "$(curl ...)"` / `eval $(wget ...)`: mirrors ISSUE-411 verbatim
+# (see policies/unverified_scripts.rego): eval runs a command
+# substitution's stdout as if it were typed, the same risk as a shell's
+# own `-c`. The fetch need not be the substitution's first token.
+unverified_script_line(visible, line) if {
+	regex.match(`(?i)(?:^|[\s;&|(])eval\b`, visible)
+	regex.match(`(?i)(?:^|[\s;&|(])eval\s+["']?\$\([^)]*?\b(curl|wget)\b`, line)
+}
+
+# `` eval `curl ...` `` / `` <shell> -c `curl ...` ``: the older POSIX
+# backtick form of the same command substitution, mirrored verbatim.
+unverified_script_line(visible, line) if {
+	regex.match(`(?i)(?:^|[\s;&|(])eval\b`, visible)
+	regex.match(sprintf(`(?i)(?:^|[\s;&|(])eval\s+["']?%s[^%s]*?\b(curl|wget)\b`, [_backtick, _backtick]), line)
+}
+
+unverified_script_line(visible, line) if {
+	regex.match(sprintf(`(?i)(?:^|[\s;&|(])(?:sudo\s+)?(?:\S*/)?(%s)\s+[^;&|\n]*?-[a-zA-Z]*c\b`, [_shell]), visible)
+	regex.match(sprintf(`(?i)(?:^|[\s;&|(])(?:sudo\s+)?(?:\S*/)?(%s)\s+[^;&|\n]*?-[a-zA-Z]*c\s+["']?%s[^%s]*?\b(curl|wget)\b`, [_shell, _backtick, _backtick]), line)
+}
+
+# `source <(curl ...)` / `. <(curl ...)`: mirrored verbatim.
+unverified_script_line(visible, _) if {
+	regex.match(`(?i)(?:^|[\s;&|(])(?:sudo\s+)?(?:source|\.)\s+(?:-\S+\s+)*<\(\s*(curl|wget)\b`, visible)
+}
+
 unverified_script_line(visible, line) if {
 	not _has_heredoc(line)
 	not _echo_of_local_data(visible, line)
@@ -984,8 +1035,11 @@ _echo_of_local_data(visible, line) if {
 	not regex.match(`(?i)\b(curl|wget|base64)\b`, line)
 }
 
+# first_url_or_line: the first URL on the line, cut where ISSUE-411's own
+# fetch-target reading cuts one, so a substitution's closing parenthesis or
+# quote, or a pipe written without a space, never ends up in the subject.
 first_url_or_line(line) := url if {
-	urls := regex.find_n(`https?://[^\s'"]+`, line, 1)
+	urls := regex.find_n(`https?://[^\s|;)'"]+`, line, 1)
 	count(urls) > 0
 	url := urls[0]
 } else := line
@@ -1436,6 +1490,7 @@ secrets(job) := sort({name |
 } else := sort({v.name |
 	some v in object.get(input.pipeline, "settingsVariables", [])
 	variable_in_scope(v, job)
+	variable_reaches_job(v, job)
 	secret_variable(v)
 }) if {
 	input.pipeline.provider == "gitlab"
@@ -1450,8 +1505,67 @@ protected_secrets(job) := sort({v.name |
 	input.pipeline.provider == "gitlab"
 	some v in object.get(input.pipeline, "settingsVariables", [])
 	variable_in_scope(v, job)
+	variable_reaches_job(v, job)
 	v.protected == true
 })
+
+# variable_reaches_job: whether the protection that gates a settings
+# variable lets it into the job's runs at all. GitLab exports a protected
+# variable only to pipelines on a protected branch or tag, so a job whose
+# every way to run is a merge request pipeline (gitlab_merge_request_only)
+# never receives one; an unprotected variable reaches every run. A merge
+# request whose source branch is itself protected does receive protected
+# variables, a case the rules alone cannot see and that this reading
+# leaves out.
+variable_reaches_job(v, _) if v.protected != true
+
+variable_reaches_job(v, job) if {
+	v.protected == true
+	not gitlab_merge_request_only(job)
+}
+
+# gitlab_merge_request_only: every rule that can run the job is a merge
+# request rule ($CI_PIPELINE_SOURCE == "merge_request_event", or the bare
+# presence of $CI_MERGE_REQUEST_IID), with no || alternative on the same
+# rule, and at least one such rule exists; or, without rules:, only: lists
+# merge_requests and nothing else.
+gitlab_merge_request_only(job) if {
+	rules := object.get(job, "rules", [])
+	count(rules) > 0
+	some r in rules
+	_merge_request_rule(r)
+	every rule in rules {
+		_merge_request_rule_or_never(rule)
+	}
+}
+
+gitlab_merge_request_only(job) if {
+	count(object.get(job, "rules", [])) == 0
+	only := object.get(job, "only", [])
+	count(only) > 0
+	every o in only {
+		o == "merge_requests"
+	}
+}
+
+_merge_request_rule_or_never(rule) if object.get(rule, "when", "") == "never"
+
+_merge_request_rule_or_never(rule) if _merge_request_rule(rule)
+
+_merge_request_rule(rule) if {
+	object.get(rule, "when", "") != "never"
+	cond := object.get(rule, "if", "")
+	not contains(cond, "||")
+	regex.match(`\$CI_PIPELINE_SOURCE\s*==\s*['"]merge_request_event['"]`, cond)
+}
+
+_merge_request_rule(rule) if {
+	object.get(rule, "when", "") != "never"
+	cond := object.get(rule, "if", "")
+	not contains(cond, "||")
+	regex.match(`\$CI_MERGE_REQUEST_I?ID\b`, cond)
+	not regex.match(`\$CI_MERGE_REQUEST_I?ID\s*==\s*(null|"")`, cond)
+}
 
 # secret_variable: a GitLab settings variable is a secret when it is
 # protected or masked. A plain variable (DOCKER_DRIVER and the like) is

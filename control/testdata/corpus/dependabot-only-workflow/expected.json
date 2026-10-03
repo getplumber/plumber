@@ -1,0 +1,15 @@
+{
+  "source": "https://github.com/autoreject/autoreject",
+  "commit": "570a6e5c81849149004ade9b3eec074c8fd117b7",
+  "captured": "2026-10-03",
+  "group": "clean",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [{"name": "main", "protected": true}],
+  "note": "A Dependabot auto-merge workflow on its own: pull_request_target with contents and pull-requests write, gated on the pull request's author being dependabot[bot] and on the repository, and running only gh pr merge with the pull request URL passed through env. Nothing from the fork is checked out or interpolated into the shell and no action runs, so no entry fact exists and no path is anchored.",
+  "expect": {
+    "maxTier": "none",
+    "noPathAbove": "medium",
+    "letterAtLeast": "B"
+  }
+}

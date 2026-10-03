@@ -1,0 +1,7 @@
+---
+est_file:
+  image: alpine:latest
+  stage: test
+  script:
+  - echo $MY_FILE
+  - cat $MY_FILE

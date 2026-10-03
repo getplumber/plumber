@@ -1,0 +1,32 @@
+{
+  "source": "https://gitlab.com/thomasboni/test2",
+  "commit": "9a42294df766fae93ad75a23f9876c8dfdd5baf4",
+  "captured": "2026-10-03",
+  "group": "own",
+  "visibility": "private",
+  "defaultBranch": "master",
+  "branches": [{"name": "master", "protected": true}],
+  "settingsVariables": [
+    {"name": "PASSWORD", "type": "env_var", "environment": "*", "protected": false, "masked": true},
+    {"name": "SSH_PRIVATE_KEY", "type": "env_var", "environment": "*", "protected": false, "masked": false},
+    {"name": "CI_PROJECT_TOKEN", "type": "env_var", "environment": "*", "protected": false, "masked": false},
+    {"name": "TEST", "type": "env_var", "environment": "*", "protected": false, "masked": false},
+    {"name": "SCW_CONF", "type": "file", "environment": "*", "protected": false, "masked": false},
+    {"name": "LW_ACCESS_TOKEN", "type": "env_var", "environment": "*", "protected": false, "masked": true},
+    {"name": "LW_ACCOUNT_NAME", "type": "env_var", "environment": "*", "protected": false, "masked": true},
+    {"name": "REGISTRY_PASSWORD", "type": "env_var", "environment": "*", "protected": false, "masked": true},
+    {"name": "TEST", "type": "env_var", "environment": "master", "protected": true, "masked": false},
+    {"name": "LEVEL", "type": "env_var", "environment": "*", "protected": true, "masked": false},
+    {"name": "GITLAB_TOKEN", "type": "env_var", "environment": "*", "protected": false, "masked": true},
+    {"name": "MY_FILE", "type": "file", "environment": "*", "protected": true, "masked": false}
+  ],
+  "note": "Our GitLab test project: one job on alpine:latest (a forbidden tag, no digest) that runs on every push and holds every masked or protected variable scoped to all environments. A mutable image into a job holding secrets with no impact is High; the private visibility does not lower a third-party entry. The branch is protected, so no push path. The two image findings (forbidden tag, no digest) price one path or two depending on QUESTIONS row 415, so only the letter floor is labelled: one or two High paths and at most 10 points of hygiene keep it at C or better.",
+  "expect": {
+    "maxTier": "high",
+    "paths": [
+      {"entryKind": "mutable_dependency", "tier": "high", "job": "est_file", "subjectContains": "alpine:latest", "reachKind": "secrets", "state": "proven",
+       "sentenceContains": ["`docker.io/alpine:latest`", "`est_file`", "`GITLAB_TOKEN`"]}
+    ],
+    "letterAtLeast": "C"
+  }
+}

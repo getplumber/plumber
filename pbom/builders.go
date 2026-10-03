@@ -147,6 +147,7 @@ func BuildPlumberScoreSummary(score *control.PlumberScoreResult, scoreMode bool)
 			Medium:   score.Counts.Medium,
 			Low:      score.Counts.Low,
 		},
+		PathCounts: score.PathCounts,
 	}
 }
 

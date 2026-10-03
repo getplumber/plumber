@@ -1,0 +1,17 @@
+{
+  "source": "spec worked example (section 2, a release workflow)",
+  "commit": "",
+  "captured": "2026-10-02",
+  "group": "own",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [{"name": "main", "protected": true}],
+  "expect": {
+    "maxTier": "critical",
+    "paths": [
+      {"entryKind": "mutable_dependency", "tier": "critical", "job": "release/release", "subjectContains": "some/action@v1", "reachKind": "impact:publishes", "state": "proven",
+       "sentenceContains": ["`some/action@v1`", "`release/release`", "`NPM_TOKEN`", "publishes the package", "malicious release"]}
+    ],
+    "letter": "E"
+  }
+}

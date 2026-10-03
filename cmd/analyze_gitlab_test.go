@@ -8,6 +8,8 @@ import (
 	"testing"
 
 	"github.com/getplumber/plumber/control"
+	opaengine "github.com/getplumber/plumber/internal/engine/opa"
+	"github.com/getplumber/plumber/internal/ir"
 	"github.com/getplumber/plumber/utils"
 	"github.com/spf13/cobra"
 )
@@ -605,5 +607,70 @@ func TestCheckoutIsAnalyzedProject_Row51UserinfoStripped(t *testing.T) {
 	conf := buildGitLabConf(cleanURL, "glcbt-xxxx", analyzeFlags{}, remote, nil, nil, nil)
 	if !conf.CheckoutIsAnalyzedProject {
 		t.Errorf("CheckoutIsAnalyzedProject = false, want true (parsed remote URL %q vs %q)", parsed.URL, cleanURL)
+	}
+}
+
+// TestFindingsToItemsPopulatesRoleOnPathPerPathForABranchGate drives
+// findingsToItems with real findings, through control.AssemblePaths, in
+// the branch-gate dual-role shape: ISSUE-501 both anchors its own
+// unprotected_push path (on "build") and amplifies a second, repository-
+// writing path (the mutable dependency on "release", via the default-
+// branch rule: TestBranchGatesNeverAmplifyEachOthersUnprotectedPushPath in
+// control/paths_test.go proves gatesOnPath picks this up). The renderer's
+// own test (TestRenderAttackPathsRoleIsRelativeToEachPathAndKeepsTheFindingBlock
+// in cmd/render_paths_test.go) only ever exercises a hand-built RoleOnPath
+// map; this is the one test that proves findingsToItems itself (cmd/
+// analyze_gitlab.go's loop at the end of the function) fills it correctly
+// from real findings and paths, so a regression there (e.g. reading
+// control.FindingLine instead of the per-path control.RoleOnPath) is
+// caught.
+func TestFindingsToItemsPopulatesRoleOnPathPerPathForABranchGate(t *testing.T) {
+	sit := &control.Situation{
+		Exposure:      ir.VisibilityPublic,
+		DefaultBranch: "main",
+		Jobs:          map[string]control.JobSituation{},
+	}
+	sit.Jobs["build"] = control.JobSituation{
+		Entries: []control.EntryFact{{Kind: control.EntryUnprotectedPush, State: "proven", Evidence: "push: branches: [main]", Subject: "main"}},
+	}
+	release := control.JobSituation{
+		Entries: []control.EntryFact{{Kind: control.EntryMutableDependency, State: "proven", Evidence: "some/action@v1", Subject: "some/action@v1"}},
+	}
+	release.Privilege.TokenWrite = []string{"contents"}
+	sit.Jobs["release"] = release
+
+	gateFinding := opaengine.Finding{Code: string(control.CodeBranchUnprotected), Data: map[string]any{"branchName": "main"}}
+	findings := []opaengine.Finding{
+		gateFinding,
+		{Code: "ISSUE-713", Job: "release", Data: map[string]any{"uses": "some/action@v1"}},
+	}
+	paths := control.AssemblePaths(findings, sit)
+
+	var pushPath, releasePath *control.AttackPath
+	for i := range paths {
+		switch paths[i].AnchorCode {
+		case control.CodeBranchUnprotected:
+			pushPath = &paths[i]
+		case "ISSUE-713":
+			releasePath = &paths[i]
+		}
+	}
+	if pushPath == nil || releasePath == nil {
+		t.Fatalf("want one unprotected_push path and one mutable_dependency path, got %+v", paths)
+	}
+	if len(releasePath.GateHashes) == 0 {
+		t.Fatalf("fixture drifted: ISSUE-501 must amplify the repository-writing release path, got %+v", releasePath)
+	}
+
+	_, items := findingsToItems(findings, paths, true)
+	gate := items[0]
+	if gate.Code != control.CodeBranchUnprotected {
+		t.Fatalf("items[0] = %+v, want the ISSUE-501 finding first", gate)
+	}
+	if got, want := gate.RoleOnPath[pushPath.ID], "Entry of path "+pushPath.ID; got != want {
+		t.Errorf("RoleOnPath[pushPath] = %q, want %q", got, want)
+	}
+	if got, want := gate.RoleOnPath[releasePath.ID], "Gate: amplifies path "+releasePath.ID; got != want {
+		t.Errorf("RoleOnPath[releasePath] = %q, want %q", got, want)
 	}
 }

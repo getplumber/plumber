@@ -1,0 +1,18 @@
+{
+  "source": "https://github.com/pytorch/pytorch",
+  "commit": "f0f0f709046123340f28c5d3c7f661b53bd88276",
+  "captured": "2026-10-03",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [{"name": "main", "protected": true}],
+  "pending": "QUESTIONS row 416",
+  "note": "The 2023 PyTorch research (persistent self-hosted runners reachable from fork pull requests): check-labels.yml runs on pull_request_target on the self-hosted linux.20_04.4x runner with the repository-default token. The workflow checks out the base, not the fork head, so no pr_target fact is proven, and the runner itself is compromised CI infrastructure, which the first iteration leaves out (spec ruling 2: it waits for facts the IR does not have). What the engine does see is the organization's own checkout action pinned to @main in a job holding only an assumed default token: High lowered to Medium and unverified. Section 7 asks every group (a) incident to score High or above, so the case is labelled High and waits on row 416 (is a self-hosted runner an impact).",
+  "expect": {
+    "maxTier": "high",
+    "paths": [
+      {"entryKind": "mutable_dependency", "tier": "medium", "job": "check-labels/check-labels", "subjectContains": "pytorch/pytorch/.github/actions/checkout-pytorch@main", "reachKind": "token", "state": "unverified",
+       "sentenceContains": ["`pytorch/pytorch/.github/actions/checkout-pytorch@main`", "`check-labels/check-labels`", "`GITHUB_TOKEN`"]}
+    ]
+  }
+}

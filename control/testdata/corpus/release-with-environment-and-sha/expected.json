@@ -1,0 +1,14 @@
+{
+  "source": "https://github.com/praw-dev/praw",
+  "commit": "54583aaa61c309392c998d230f617a7f996b4fe2",
+  "captured": "2026-10-03",
+  "group": "clean",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [{"name": "main", "protected": true}],
+  "note": "A release done right: it runs on a published release, in the release environment, with contents: read at the workflow level and id-token: write only on the publishing job for PyPI trusted publishing, every action pinned by SHA from a trusted owner and the checkout credentials not persisted. The job holds privilege and has an impact, but nothing mutable enters it and nothing amplifies, so no path exists and the letter is A.",
+  "expect": {
+    "maxTier": "none",
+    "letter": "A"
+  }
+}

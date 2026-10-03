@@ -1,0 +1,22 @@
+stages:
+- test
+- deploy
+preview:
+  stage: test
+  image: node:20.11.1-alpine3.19@sha256:9a1b6ed2bd0d7a3e5c3d8c3b7c8f2e1d0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d
+  rules:
+  - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  script:
+  - npm ci
+  - sh -c "echo Building a preview for $CI_MERGE_REQUEST_TITLE"
+  - npm run build:preview
+  - npx --no-install preview-deploy --token "$PREVIEW_DEPLOY_TOKEN"
+deploy:
+  stage: deploy
+  image: node:20.11.1-alpine3.19@sha256:9a1b6ed2bd0d7a3e5c3d8c3b7c8f2e1d0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d
+  environment: production
+  rules:
+  - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  script:
+  - npm ci
+  - npm run deploy

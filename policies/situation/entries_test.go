@@ -835,6 +835,39 @@ func TestFetchedScriptsMirrorUnverifiedScripts(t *testing.T) {
 		{`wget -qO- https://example.com/x.pl | perl`, true},
 		{`echo "aGVsbG8K" | base64 -d | bash`, true},
 		{`curl -sSLo /tmp/i.sh https://example.com/i.sh && bash /tmp/i.sh`, true},
+		// A shell reading a fetched script through process substitution
+		// (the Codecov bash uploader form) or command substitution (the
+		// Homebrew installer form) runs it exactly as a pipe would.
+		{`bash <(curl -s https://codecov.io/bash) -t ${CODECOV_TOKEN}`, true},
+		{`/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`, true},
+		// Shell flags between the interpreter and -c must not evade this
+		// branch either, mirroring ISSUE-411's own flag allowance.
+		{`bash -eu -c "$(curl -fsSL https://example.com/i.sh)"`, true},
+		{`bash -euo pipefail -c "$(curl -fsSL https://example.com/i.sh)"`, true},
+		// -c bundled as the trailing letter of a single flag token is the
+		// same invocation as a standalone -c; a bundle where c is NOT the
+		// trailing letter (-ce) is a different flag and is not this form.
+		{`bash -euc "$(curl -fsSL https://example.com/i.sh)"`, true},
+		{`sh -xc "$(curl -fsSL https://example.com/i.sh)"`, true},
+		{`bash -ce "$(curl -fsSL https://example.com/i.sh)"`, false},
+		// The fetch need not be the substitution's first token: a
+		// throwaway command before the real curl/wget still runs once
+		// the substitution's output reaches `bash -c`.
+		{`bash -c "$(printf ''; curl -fsSL https://example.com/i.sh)"`, true},
+		{`bash -c "$(:; wget -qO- https://example.com/i.sh)"`, true},
+		// eval runs a command substitution's stdout as if it were typed,
+		// the same risk as `<shell> -c`; the backtick forms are the older
+		// POSIX syntax for the same $( ... ) construct; source and . are
+		// the shell builtins that read a process substitution as a
+		// script, exactly like `<shell> <( ... )` above.
+		{`eval "$(curl -fsSL https://example.com/i.sh)"`, true},
+		{`eval $(wget -qO- https://example.com/i.sh)`, true},
+		{"eval `curl -s https://example.com/i.sh`", true},
+		{"bash -c \"`curl -s https://example.com/i.sh`\"", true},
+		{`source <(curl -s https://example.com/i.sh)`, true},
+		{`. <(curl -s https://example.com/i.sh)`, true},
+		{`diff <(curl -s https://example.com/a) <(curl -s https://example.com/b)`, false},
+		{`echo 'bash -c "$(curl -fsSL https://example.com/i.sh)"'`, false},
 		{`npx -y cowsay`, false},
 		{`npx -y cowsay@1.2.3`, false},
 	}
@@ -846,6 +879,28 @@ func TestFetchedScriptsMirrorUnverifiedScripts(t *testing.T) {
 		got := entriesOfKind(evaluate(t, p, nil).Jobs["test"].Entries, "mutable_dependency")
 		if (len(got) > 0) != tc.wantEntry {
 			t.Errorf("%s: mutable_dependency = %+v, want entry %v", tc.script, got, tc.wantEntry)
+		}
+	}
+}
+
+// TestFetchedScriptSubjectIsTheBareURL pins the subject a fetched-script
+// entry carries: the URL alone, cut where ISSUE-411's own fetch-target
+// reading cuts it (whitespace, a pipe, a semicolon, a closing parenthesis
+// or a quote), so the substitution forms do not glue their closing
+// parenthesis or quote onto the URL the sentence quotes.
+func TestFetchedScriptSubjectIsTheBareURL(t *testing.T) {
+	for script, want := range map[string]string{
+		`bash <(curl -s https://codecov.io/bash) -t ${CODECOV_TOKEN}`:                                     "https://codecov.io/bash",
+		`/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"`: "https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh",
+		`curl -sSL https://example.com/install.sh|bash`:                                                   "https://example.com/install.sh",
+	} {
+		p := &ir.NormalizedPipeline{
+			Provider: ir.ProviderGitLab,
+			Jobs:     []ir.Job{{Name: "test", Scripts: []string{script}}},
+		}
+		got := entriesOfKind(evaluate(t, p, nil).Jobs["test"].Entries, "mutable_dependency")
+		if len(got) != 1 || got[0].Subject != want {
+			t.Errorf("%s: entries = %+v, want one with subject %q", script, got, want)
 		}
 	}
 }

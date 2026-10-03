@@ -1,0 +1,19 @@
+{
+  "source": "https://github.com/terser/html-minifier-terser",
+  "commit": "289fcec2fc9ee53fe8da89366ed8e14b28289640",
+  "captured": "2026-10-03",
+  "group": "clean",
+  "visibility": "public",
+  "defaultBranch": "master",
+  "branches": [{"name": "master", "protected": true}],
+  "note": "A manual benchmark: workflow_dispatch only, permissions: contents: read, no secret, and peter-evans/create-pull-request@v7 by tag to propose the refreshed report. Only someone with write access can start it, and a new create-pull-request release reaches a job that holds a read token and nothing else (the action's own pull request cannot be pushed with it): Medium, runner abuse at worst.",
+  "expect": {
+    "maxTier": "medium",
+    "paths": [
+      {"entryKind": "mutable_dependency", "tier": "medium", "job": "benchmarks/benchmark", "subjectContains": "peter-evans/create-pull-request@v7", "reachKind": "execution", "state": "proven",
+       "sentenceContains": ["`peter-evans/create-pull-request@v7`", "`benchmarks/benchmark`", "holds no secret"]}
+    ],
+    "noPathAbove": "medium",
+    "letterAtLeast": "B"
+  }
+}

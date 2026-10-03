@@ -1,0 +1,19 @@
+{
+  "source": "reconstruction of a private repository with every action pinned",
+  "commit": "",
+  "captured": "2026-10-03",
+  "group": "clean",
+  "visibility": "private",
+  "defaultBranch": "main",
+  "branches": [{"name": "main", "protected": true}],
+  "note": "A private repository's workflows cannot be published in this corpus, so this is a minimal reproduction of the shape: every action pinned by SHA from GitHub's own owners, checkout credentials not persisted, main protected, a tag-triggered release in an environment. The one entry is the pull request title echoed into the step summary of a test job holding a read token: Medium on a public repository, and one tier down to Low here, since visibility is proven private and a contributor entry then needs an account with access (spec ruling 3).",
+  "expect": {
+    "maxTier": "low",
+    "paths": [
+      {"entryKind": "untrusted_expression", "tier": "low", "job": "ci/test", "subjectContains": "github.event.pull_request.title", "reachKind": "execution", "state": "proven",
+       "sentenceContains": ["`github.event.pull_request.title`", "`ci/test`", "The repository is private"]}
+    ],
+    "noPathAbove": "medium",
+    "letterAtLeast": "B"
+  }
+}

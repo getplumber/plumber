@@ -12,245 +12,23 @@ import (
 	"strings"
 	"testing"
 
-	"gopkg.in/yaml.v2"
-
 	"github.com/getplumber/plumber/finding/identity"
 	githubpkg "github.com/getplumber/plumber/github"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	"github.com/getplumber/plumber/internal/ir"
+	"github.com/getplumber/plumber/internal/testsupport/pipelines"
 	"github.com/getplumber/plumber/policies"
 )
 
-// reservedTopLevelKeys are GitLab CI top-level keys that must not be
-// interpreted as jobs by the mini-parser below.
-var reservedTopLevelKeys = map[string]struct{}{
-	"stages":        {},
-	"variables":     {},
-	"default":       {},
-	"include":       {},
-	"workflow":      {},
-	"image":         {},
-	"services":      {},
-	"before_script": {},
-	"after_script":  {},
-	"cache":         {},
-}
+// parseGitLabCI and parseGitHubActions are the shared test-time parsers
+// (internal/testsupport/pipelines), under the names these tests were
+// written with. The fixtures here never need a workflow file path on their
+// jobs, so the GitHub one is called without one.
+var parseGitLabCI = pipelines.ParseGitLabCI
 
-// parseGitLabCI is a deliberately narrow parser that extracts only what the
-// currently ported rules need (jobs + jobs.*.image). It is the test-time
-// substitute for the full collector, which depends on the GitLab API.
-// Limitations: no include/extend resolution, no default image propagation,
-// no variable expansion. Extend as new rules require it.
-func parseGitLabCI(t *testing.T, data []byte) *ir.NormalizedPipeline {
-	t.Helper()
-
-	var raw map[string]any
-	if err := yaml.Unmarshal(data, &raw); err != nil {
-		t.Fatalf("parse yaml: %v", err)
-	}
-
-	var jobs []ir.Job
-	for key, value := range raw {
-		if _, reserved := reservedTopLevelKeys[key]; reserved {
-			continue
-		}
-		section, ok := toStringMap(value)
-		if !ok {
-			continue
-		}
-		job := ir.Job{Name: key}
-		if img, ok := parseImageField(section["image"]); ok {
-			job.Image = &img
-		}
-		if svc := parseServicesField(section["services"]); len(svc) > 0 {
-			job.Services = svc
-		}
-		if vars := parseVariablesField(section["variables"]); len(vars) > 0 {
-			job.Variables = vars
-			// Fixtures are user-authored .gitlab-ci.yml files: every
-			// `variables:` block on a job is the project's own. Mirror
-			// the production collector by exposing them as
-			// LocalVariables too so policies that distinguish "user
-			// wrote this" from merged-in upstream see them.
-			job.LocalVariables = vars
-		}
-		if af, ok := section["allow_failure"].(bool); ok {
-			job.AllowFailure = af
-		}
-		if w, ok := section["when"].(string); ok {
-			job.When = w
-		}
-		if scripts := parseScriptsField(section["script"]); len(scripts) > 0 {
-			job.Scripts = scripts
-		}
-		jobs = append(jobs, job)
-	}
-
-	sort.Slice(jobs, func(i, j int) bool { return jobs[i].Name < jobs[j].Name })
-	return &ir.NormalizedPipeline{Provider: ir.ProviderGitLab, Jobs: jobs}
-}
-
-// parseServicesField accepts the GitLab services polymorphic form:
-// list of strings or list of {name: …} maps.
-func parseServicesField(v any) []ir.Image {
-	list, ok := v.([]any)
-	if !ok {
-		return nil
-	}
-	out := make([]ir.Image, 0, len(list))
-	for _, item := range list {
-		switch s := item.(type) {
-		case string:
-			out = append(out, splitNameTag(s))
-		case map[any]any:
-			m, _ := toStringMap(s)
-			if name, ok := m["name"].(string); ok {
-				out = append(out, splitNameTag(name))
-			}
-		}
-	}
-	return out
-}
-
-// parseScriptsField normalises the GitLab script: block into a list.
-func parseScriptsField(v any) []string {
-	switch s := v.(type) {
-	case string:
-		return []string{s}
-	case []any:
-		out := make([]string, 0, len(s))
-		for _, item := range s {
-			if str, ok := item.(string); ok {
-				out = append(out, str)
-			}
-		}
-		return out
-	}
-	return nil
-}
-
-// parseVariablesField stringifies the variables map for policy consumption.
-func parseVariablesField(v any) map[string]string {
-	m, ok := toStringMap(v)
-	if !ok {
-		return nil
-	}
-	out := make(map[string]string, len(m))
-	for k, val := range m {
-		if s, ok := val.(string); ok {
-			out[k] = s
-			continue
-		}
-		out[k] = fmt.Sprintf("%v", val)
-	}
-	return out
-}
-
-// parseGitHubActions is the GitHub counterpart of parseGitLabCI. It walks
-// workflow `jobs.<name>.container`, which may be either a string shortcut
-// ("alpine:latest") or a map ({"image": "...", ...}), and maps each job to
-// the shared IR so policies remain provider-agnostic.
-// Limitations: `steps[].uses` and matrix strategies are not modeled yet.
 func parseGitHubActions(t *testing.T, data []byte) *ir.NormalizedPipeline {
 	t.Helper()
-
-	var raw map[string]any
-	if err := yaml.Unmarshal(data, &raw); err != nil {
-		t.Fatalf("parse yaml: %v", err)
-	}
-
-	jobsMap, ok := toStringMap(raw["jobs"])
-	if !ok {
-		t.Fatalf("workflow is missing a top-level jobs: mapping")
-	}
-
-	var jobs []ir.Job
-	for name, v := range jobsMap {
-		section, ok := toStringMap(v)
-		if !ok {
-			continue
-		}
-		job := ir.Job{Name: name}
-		if img, ok := parseGitHubContainer(section["container"]); ok {
-			job.Image = &img
-		}
-		if uses := parseGitHubStepsUses(section["steps"]); len(uses) > 0 {
-			job.Uses = uses
-		}
-		if jobUses, ok := section["uses"].(string); ok && jobUses != "" {
-			job.ReusableWorkflowUses = jobUses
-		}
-		jobs = append(jobs, job)
-	}
-
-	sort.Slice(jobs, func(i, j int) bool { return jobs[i].Name < jobs[j].Name })
-	return &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: jobs}
-}
-
-// parseGitHubContainer accepts both `container: "name:tag"` and
-// `container: { image: "name:tag" }`.
-func parseGitHubContainer(v any) (ir.Image, bool) {
-	switch c := v.(type) {
-	case string:
-		return splitNameTag(c), true
-	case map[any]any:
-		m, _ := toStringMap(c)
-		if img, ok := m["image"].(string); ok {
-			return splitNameTag(img), true
-		}
-	}
-	return ir.Image{}, false
-}
-
-// toStringMap normalizes the yaml.v2 untyped map form to map[string]any.
-func toStringMap(v any) (map[string]any, bool) {
-	m, ok := v.(map[any]any)
-	if !ok {
-		return nil, false
-	}
-	out := make(map[string]any, len(m))
-	for k, vv := range m {
-		ks, ok := k.(string)
-		if !ok {
-			continue
-		}
-		out[ks] = vv
-	}
-	return out, true
-}
-
-// parseImageField accepts both the `image: "name:tag"` shorthand and the
-// `image: { name: "...", tag: "..." }` long form.
-func parseImageField(v any) (ir.Image, bool) {
-	switch img := v.(type) {
-	case string:
-		return splitNameTag(img), true
-	case map[any]any:
-		m, _ := toStringMap(img)
-		name, _ := m["name"].(string)
-		tag, _ := m["tag"].(string)
-		if name == "" {
-			return ir.Image{}, false
-		}
-		if tag == "" && strings.Contains(name, ":") {
-			// Sometimes the whole reference lands in `name`.
-			return splitNameTag(name), true
-		}
-		return ir.Image{Name: name, Tag: tag}, true
-	default:
-		return ir.Image{}, false
-	}
-}
-
-func splitNameTag(ref string) ir.Image {
-	// Digest form takes precedence: "alpine@sha256:..."
-	if at := strings.Index(ref, "@"); at > 0 {
-		return ir.Image{Name: ref[:at], Digest: ref[at+1:]}
-	}
-	if idx := strings.LastIndex(ref, ":"); idx > 0 {
-		return ir.Image{Name: ref[:idx], Tag: ref[idx+1:]}
-	}
-	return ir.Image{Name: ref}
+	return pipelines.ParseGitHubWorkflow(t, data, "")
 }
 
 // TestIssue102_ImageMutableTag drives the embedded image_mutable_tag policy
@@ -993,6 +771,13 @@ func TestIssue411_UnverifiedScripts(t *testing.T) {
 		// substitution ("$(curl ...)") is a real fetch and must fire
 		// despite the leading echo — the exemption checks the raw line.
 		{"violation_echo_quoted_curl_subst.gitlab-ci.yml", []string{"exfil"}},
+		// A shell reading a fetched script through process substitution
+		// (the Codecov bash uploader) or command substitution (the
+		// Homebrew installer) runs it as surely as a pipe does.
+		{"violation_shell_reads_fetched_script.gitlab-ci.yml", []string{"brew", "codecov"}},
+		// Substitution feeding something other than a shell, or sitting
+		// inside a quoted string, is not a fetch-and-execute.
+		{"clean_substitution_without_shell.gitlab-ci.yml", nil},
 		{"clean_checksum.gitlab-ci.yml", nil},
 		// Regression for issue #236: echo/printf of in-workflow data
 		// piped into an interpreter is not a remote fetch.
@@ -1023,6 +808,151 @@ func TestIssue411_UnverifiedScripts_TrustedBareHostname(t *testing.T) {
 		// the same line as a real curl|bash to an untrusted host must
 		// still fire. Trust scopes to the curl/wget target.
 		{"violation_trusted_hostname_decoy_in_echo.gitlab-ci.yml", []string{"install"}},
+	}, cfg)
+}
+
+// TestIssue411_UnverifiedScripts_TrustedCommandSubstitution is a regression
+// pinning that the trustedUrls exemption also applies to the command-
+// substitution form (`bash -c "$(curl ...)"`, the Homebrew/Docker installer
+// idiom), which fetches its URL from inside a quoted substitution that
+// _visible_line strips for every other pattern.
+func TestIssue411_UnverifiedScripts_TrustedCommandSubstitution(t *testing.T) {
+	cfg := map[string]any{
+		"unverifiedScripts": map[string]any{
+			"trustedUrls": []string{"https://get.docker.com/*"},
+		},
+	}
+	runGitLabPolicyCases(t, "ISSUE-411", []policyCase{
+		// Allowlisted host via command substitution: must not fire.
+		{"clean_trusted_command_substitution.gitlab-ci.yml", nil},
+	}, cfg)
+}
+
+// TestIssue411_UnverifiedScripts_CommandSubstitutionShellFlags is a
+// regression pinning that shell flags between the interpreter and `-c`
+// must not evade the command-substitution rule, mirroring the process-
+// substitution rule's own flag allowance. This covers both a separate
+// `-c` token (`bash -eu -c ...`) and `-c` bundled as the trailing
+// letter of a single flag token (`bash -euc ...`); a bundle where `c`
+// is NOT the trailing letter (`-ce`) is a different flag entirely and
+// must not be read as this shell's -c.
+func TestIssue411_UnverifiedScripts_CommandSubstitutionShellFlags(t *testing.T) {
+	runGitLabPolicyCases(t, "ISSUE-411", []policyCase{
+		{"violation_command_substitution_with_flags.gitlab-ci.yml", []string{"flags_short", "flags_long", "flags_bundled", "flags_bundled_trailing_c"}},
+		{"clean_bundled_flag_c_not_last.gitlab-ci.yml", nil},
+	}, nil)
+}
+
+// TestIssue411_UnverifiedScripts_CommandSubstitutionTrustScopedToSubstitution
+// is a regression pinning that the command-substitution trust scan reads
+// only the text inside the $( ... ) span: a trailing comment naming an
+// unrelated host must not defeat an allowlisted fetch, and an untrusted
+// fetch inside the substitution must still fire despite the same comment.
+func TestIssue411_UnverifiedScripts_CommandSubstitutionTrustScopedToSubstitution(t *testing.T) {
+	cfg := map[string]any{
+		"unverifiedScripts": map[string]any{
+			"trustedUrls": []string{"https://get.docker.com/*"},
+		},
+	}
+	runGitLabPolicyCases(t, "ISSUE-411", []policyCase{
+		{"clean_trusted_command_substitution_trailing_comment.gitlab-ci.yml", nil},
+		{"violation_untrusted_command_substitution_trailing_comment.gitlab-ci.yml", []string{"install"}},
+	}, cfg)
+}
+
+// TestIssue411_UnverifiedScripts_CommandSubstitutionTrustEveryFetchSubstitution
+// is a regression pinning that the command-substitution trust decision
+// reads EVERY fetch-bearing substitution on the line, not just the first
+// substitution it finds: a decoy substitution that only mentions a
+// trusted host as plain text must not grant trust for a real fetch
+// elsewhere on the line, a second untrusted fetch substitution must not
+// be covered by a trusted one earlier on the line, a substitution that
+// fetches nothing must not block trust for an actually-trusted fetch
+// substitution elsewhere, and a fetch nested inside another substitution
+// must still fire when its own target is untrusted.
+func TestIssue411_UnverifiedScripts_CommandSubstitutionTrustEveryFetchSubstitution(t *testing.T) {
+	cfg := map[string]any{
+		"unverifiedScripts": map[string]any{
+			// The bare "get.docker.com" pattern is included so a decoy
+			// substitution's bare-hostname text (no scheme, no path) is
+			// itself a trust match if a span scan ever reads it as the
+			// fetch target: this proves the decoy is excluded because it
+			// fetches nothing, not because its text happens to miss an
+			// unrelated trust pattern.
+			"trustedUrls": []string{"https://get.docker.com/*", "get.docker.com"},
+		},
+	}
+	runGitLabPolicyCases(t, "ISSUE-411", []policyCase{
+		{"violation_decoy_substitution_before_trusted_fetch.gitlab-ci.yml", []string{"install"}},
+		{"violation_two_fetch_substitutions_one_untrusted.gitlab-ci.yml", []string{"install"}},
+		{"clean_trusted_fetch_with_nonfetch_substitution.gitlab-ci.yml", nil},
+		{"violation_nested_command_substitution.gitlab-ci.yml", []string{"install"}},
+	}, cfg)
+}
+
+// TestIssue411_UnverifiedScripts_TrustIsOverTheUnionOfBothFetchKinds is a
+// regression pinning that a trusted fetch of one kind (a visible-line
+// pipe, or a command-substitution fetch) never suppresses an untrusted
+// fetch of the other kind on the same line: the trust decision reads
+// every fetch target found on the line, from the visible-line pass AND
+// from every fetch-bearing substitution, as one set, not two independent
+// checks either of which alone can grant trust for the whole line.
+func TestIssue411_UnverifiedScripts_TrustIsOverTheUnionOfBothFetchKinds(t *testing.T) {
+	cfg := map[string]any{
+		"unverifiedScripts": map[string]any{
+			"trustedUrls": []string{"https://get.docker.com/*"},
+		},
+	}
+	runGitLabPolicyCases(t, "ISSUE-411", []policyCase{
+		{"violation_mixed_trusted_substitution_and_untrusted_pipe.gitlab-ci.yml", []string{"install"}},
+		{"violation_mixed_untrusted_substitution_and_trusted_pipe.gitlab-ci.yml", []string{"install"}},
+		{"clean_mixed_line_both_kinds_trusted.gitlab-ci.yml", nil},
+	}, cfg)
+}
+
+// TestIssue411_UnverifiedScripts_LeadingCommandBeforeFetchInSubstitution is
+// a regression pinning that a command substitution's fetch need not be the
+// substitution's first token: a throwaway command before the real curl or
+// wget (an empty-argument printf, a bare colon no-op) still runs the
+// fetch once the substitution's output reaches `bash -c`, so it must
+// still fire.
+func TestIssue411_UnverifiedScripts_LeadingCommandBeforeFetchInSubstitution(t *testing.T) {
+	runGitLabPolicyCases(t, "ISSUE-411", []policyCase{
+		{"violation_leading_command_before_fetch_in_substitution.gitlab-ci.yml", []string{"printf_prefix", "colon_prefix"}},
+	}, nil)
+}
+
+// TestIssue411_UnverifiedScripts_EvalSourceAndBacktickForms is a regression
+// pinning that the command-substitution and process-substitution rules
+// also cover eval, the backtick form of command substitution, and the
+// source/. builtins reading a process substitution: each one executes a
+// network-fetched script exactly like the already-covered `<shell> -c
+// "$( ... )"` and `<shell> <( ... )` forms.
+func TestIssue411_UnverifiedScripts_EvalSourceAndBacktickForms(t *testing.T) {
+	runGitLabPolicyCases(t, "ISSUE-411", []policyCase{
+		{"violation_eval_source_backtick_forms.gitlab-ci.yml", []string{
+			"eval_dollar",
+			"eval_dollar_unquoted",
+			"eval_backtick",
+			"shell_backtick",
+			"source_procsub",
+			"dot_procsub",
+		}},
+	}, nil)
+}
+
+// TestIssue411_UnverifiedScripts_TrustedEvalAndBacktickCommandSubstitution
+// is a regression pinning that the trustedUrls exemption reaches the new
+// eval and backtick command-substitution forms the same way it already
+// reaches the `<shell> -c "$( ... )"` form.
+func TestIssue411_UnverifiedScripts_TrustedEvalAndBacktickCommandSubstitution(t *testing.T) {
+	cfg := map[string]any{
+		"unverifiedScripts": map[string]any{
+			"trustedUrls": []string{"https://get.docker.com/*"},
+		},
+	}
+	runGitLabPolicyCases(t, "ISSUE-411", []policyCase{
+		{"clean_trusted_eval_and_backtick_command_substitution.gitlab-ci.yml", nil},
 	}, cfg)
 }
 
@@ -3911,29 +3841,6 @@ func TestIssue406_TemplateOverridden(t *testing.T) {
 			t.Fatalf("expected 1 ISSUE-406 finding matched by template identity, got %d", hits)
 		}
 	})
-}
-
-// parseGitHubStepsUses extracts `steps[].uses` entries from a workflow
-// job. Only `uses` is needed for the currently ported policies; the
-// accompanying `with:` block is left empty since no rule reads it yet.
-func parseGitHubStepsUses(v any) []ir.Action {
-	list, ok := v.([]any)
-	if !ok {
-		return nil
-	}
-	out := make([]ir.Action, 0, len(list))
-	for _, item := range list {
-		step, ok := toStringMap(item)
-		if !ok {
-			continue
-		}
-		uses, ok := step["uses"].(string)
-		if !ok || uses == "" {
-			continue
-		}
-		out = append(out, ir.Action{Uses: uses})
-	}
-	return out
 }
 
 // TestIssue302_SecretsInherit flags reusable-workflow calls that

@@ -1,0 +1,17 @@
+{
+  "source": "https://github.com/metrue/fx",
+  "commit": "525e19b4acf6dd14fd8c37ca1cf2978b85d90696",
+  "captured": "2026-10-03",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "master",
+  "branches": [{"name": "master", "protected": true}],
+  "note": "The Codecov bash uploader shape of the 2021 compromise: the Test job pipes https://codecov.io/bash straight into bash in the same step that holds CODECOV_TOKEN and the Docker credentials, and the job also holds the remote-host and AKS secrets. Whoever controls that URL runs code next to every secret of the job: a fetched script into a job holding secrets with no proven impact is High.",
+  "expect": {
+    "maxTier": "high",
+    "paths": [
+      {"entryKind": "mutable_dependency", "tier": "high", "job": "ci/Test", "subjectContains": "https://codecov.io/bash", "reachKind": "secrets", "state": "proven",
+       "sentenceContains": ["`https://codecov.io/bash`", "`ci/Test`", "`CODECOV_TOKEN`", "`DOCKER_PASSWORD`"]}
+    ]
+  }
+}

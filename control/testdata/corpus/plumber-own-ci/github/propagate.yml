@@ -1,0 +1,304 @@
+name: Propagate Release
+
+# Pushes a published release out to the repos that reference it:
+#  - gitlab.com/getplumber/plumber (CI/CD Catalog component): sync
+#    templates/plumber.yml, rewrite "pinned plumber version" marked README
+#    lines, write RELEASE_NOTES.md, commit to main and tag v${VERSION}. The
+#    GitLab tag pipeline then creates the release (Catalog publish requires
+#    a CI-created release, so the tag pipeline is the only valid path).
+#    Two commits land on main: the content sync (untagged), then a
+#    follow-up commit that pins the README's own SHA-pinned usage examples
+#    to that first commit's SHA -- and it's this second commit that gets
+#    tagged v${VERSION}, not the first. See the comment on the "Sync
+#    component repo and tag" step for why.
+#  - getplumber/getplumber.io: rewrite "pinned plumber version" marked
+#    lines -- including the same component SHA-pin lines, using the
+#    component job's output -- on a release/auto-bump-v${VERSION} branch
+#    (distinctively named so a stale-PR sweep only ever touches branches
+#    this workflow itself created), and open a PR for manual review. Runs
+#    after propagate-component (needs it for that SHA), not in parallel.
+# Called from release.yml once the release is published and its image
+# tagged, or run via workflow_dispatch to re-propagate the latest release.
+# Dispatching an older version fails the template pin check on purpose:
+# templates/plumber.yml on main only ever carries the latest release's digest.
+
+on:
+  workflow_call:
+    inputs:
+      version:
+        description: Release version to propagate (no leading v)
+        required: true
+        type: string
+      digest:
+        description: "Image digest (sha256:...) to cross-check against templates/plumber.yml"
+        required: false
+        type: string
+        default: ""
+    secrets:
+      GITLAB_COMPONENT_TOKEN:
+        description: GitLab token used by propagate-component to push the component repo
+        required: true
+      RELEASE_APP_CLIENT_ID:
+        description: Release GitHub App client ID, used by propagate-website
+        required: true
+      RELEASE_APP_PRIVATE_KEY:
+        description: Release GitHub App private key, used by propagate-website
+        required: true
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release version to propagate (no leading v)
+        required: true
+        type: string
+
+permissions: {}
+
+jobs:
+  propagate-component:
+    name: Publish GitLab component
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: propagate-component
+    permissions:
+      contents: read
+    outputs:
+      component_sha: ${{ steps.sync.outputs.component_sha }}
+    steps:
+      - name: Checkout main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Resolve release refs
+        id: refs
+        env:
+          VERSION: ${{ inputs.version }}
+          DIGEST_INPUT: ${{ inputs.digest }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          SHA="$(git rev-parse "v${VERSION}^{commit}")"
+          DIGEST="$(bash scripts/release-template-digest.sh "$VERSION" templates/plumber.yml)"
+          if [ -n "$DIGEST_INPUT" ] && [ "$DIGEST_INPUT" != "$DIGEST" ]; then
+            echo "digest mismatch: docker job says ${DIGEST_INPUT}, template has ${DIGEST}" >&2
+            exit 1
+          fi
+          gh release view "v${VERSION}" --json body --jq .body > /tmp/release-notes.md
+          test -s /tmp/release-notes.md
+          { echo "sha=${SHA}"; echo "digest=${DIGEST}"; } >> "$GITHUB_OUTPUT"
+
+      # The token is supplied through a credential helper that reads it from
+      # the step env (same pattern as release.yml): .git/config only ever
+      # stores the literal helper script, never the token.
+      #
+      # A commit's SHA is a hash of its own tree, so it can never embed its
+      # own SHA. Two commits: the first (untagged) syncs the template,
+      # README pins, and release notes -- everything except its own
+      # SHA-pinned usage examples, which the script defers with no
+      # <component-sha> yet. Once that commit exists, its SHA is known
+      # locally (git commit computes the hash client-side; no push or
+      # round-trip needed), so the second commit rewrites just those
+      # deferred lines to point at it. It's the SECOND commit that gets
+      # tagged v${VERSION}, not the first -- so the tag (and the GitLab
+      # Catalog page, which renders the README from the tag) always shows
+      # its own usage examples pointing at a real, current commit, never a
+      # stale one from a previous release. That referenced commit is one
+      # behind the tag, but it's not "behind" in any way that matters: it
+      # already contains this release's actual template and release notes
+      # (the only thing the second commit adds is the self-pin fix, which
+      # has zero effect on how the component behaves), so pinning to it
+      # gives identical behavior to pinning the tag itself.
+      - name: Sync component repo and tag
+        id: sync
+        env:
+          VERSION: ${{ inputs.version }}
+          SHA: ${{ steps.refs.outputs.sha }}
+          DIGEST: ${{ steps.refs.outputs.digest }}
+          GITLAB_COMPONENT_TOKEN: ${{ secrets.GITLAB_COMPONENT_TOKEN }}
+        run: |
+          set -euo pipefail
+          helper='!f() { echo "username=plumber-release-bot"; echo "password=${GITLAB_COMPONENT_TOKEN}"; }; f'
+          git -c credential.helper="$helper" clone --depth 20 https://gitlab.com/getplumber/plumber.git /tmp/component
+          cd /tmp/component
+          git config credential.helper "$helper"
+          # Distinguish "tag absent" (empty output) from "probe failed"
+          # (network/auth error): a failed ls-remote must fail the step,
+          # not masquerade as absence and fall through to a doomed push.
+          tag_probe="$(git ls-remote --tags origin "refs/tags/v${VERSION}")"
+          if [ -n "$tag_probe" ]; then
+            echo "tag v${VERSION} already exists on GitLab; nothing to do."
+            EXISTING_SHA="$(git ls-remote origin "refs/tags/v${VERSION}" | cut -f1)"
+            [[ "$EXISTING_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::ls-remote sha for existing tag is invalid: '${EXISTING_SHA}'" >&2; exit 1; }
+            echo "component_sha=${EXISTING_SHA}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          git config user.name "plumber-release-bot"
+          git config user.email "plumber-release-bot@users.noreply.gitlab.com"
+
+          # First commit: sync content, no self-reference yet. The trailing
+          # "" is deliberate, not an omitted argument: this pass MUST run
+          # without a component sha (it doesn't exist until this commit is
+          # made), so the SHA-pinned component lines defer. Passing ""
+          # explicitly says so, rather than relying on the arg just being
+          # absent. Left untagged -- see the step comment above.
+          cp "$GITHUB_WORKSPACE/templates/plumber.yml" templates/plumber.yml
+          bash "$GITHUB_WORKSPACE/scripts/release-propagate-pins.sh" "$VERSION" "$SHA" "$DIGEST" . ""
+          cp /tmp/release-notes.md RELEASE_NOTES.md
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(release): sync component template and notes for v${VERSION}" \
+              -m "Syncs templates/plumber.yml and RELEASE_NOTES.md from github.com/getplumber/plumber@${SHA}. The README's own SHA-pinned usage examples are pinned to this commit in the next one, which is what actually gets tagged v${VERSION}."
+          else
+            echo "no content changes"
+          fi
+          SYNC_SHA="$(git rev-parse HEAD)"
+          [[ "$SYNC_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::sync commit sha is invalid: '${SYNC_SHA}'" >&2; exit 1; }
+
+          # Second commit: now that the sync commit's SHA is known, embed
+          # it in the README's SHA-pinned component usage examples. This
+          # commit is what gets tagged.
+          bash "$GITHUB_WORKSPACE/scripts/release-propagate-pins.sh" "$VERSION" "$SHA" "$DIGEST" . "$SYNC_SHA"
+          git add -A
+          if ! git diff --cached --quiet; then
+            git commit -m "chore(release): v${VERSION}" \
+              -m "Pins the README's own usage examples to this release's sync commit (${SYNC_SHA})."
+          else
+            echo "no self-pin changes; tagging current HEAD"
+          fi
+          git tag "v${VERSION}"
+          COMPONENT_SHA="$(git rev-parse HEAD)"
+          # Used by propagate-website to SHA-pin its own copies of these
+          # usage examples: silently falling through to a blank/malformed
+          # value here would leave those lines stale with no warning.
+          [[ "$COMPONENT_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::computed component sha is invalid: '${COMPONENT_SHA}'" >&2; exit 1; }
+          echo "component_sha=${COMPONENT_SHA}" >> "$GITHUB_OUTPUT"
+
+          # --atomic: main and the tag land together or not at all, so a
+          # rejected main push can never publish a tag whose sync commit
+          # is missing (the tag-exists guard would then mask it forever).
+          git push --atomic origin main "refs/tags/v${VERSION}"
+
+      # Pushing the tag only proves git accepted it -- it says nothing about
+      # whether GitLab's own tag pipeline ran, whether release-cli succeeded,
+      # or whether the Catalog resource is still enabled. Without this check
+      # this job goes green the moment the push succeeds, which is not the
+      # same as "the component actually published." Poll the public
+      # Releases API (getplumber/plumber is public, no auth needed) until
+      # the release for this tag exists, or fail loudly. Runs regardless of
+      # which branch of the previous step was taken, so it also re-confirms
+      # the release on an idempotent re-dispatch.
+      - name: Confirm the GitLab Release was actually published
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          url="https://gitlab.com/api/v4/projects/getplumber%2Fplumber/releases/v${VERSION}"
+          for i in $(seq 1 30); do
+            if curl -fsS "$url" >/dev/null 2>&1; then
+              echo "GitLab release v${VERSION} confirmed"
+              exit 0
+            fi
+            sleep 20
+          done
+          echo "::error::GitLab release v${VERSION} not found after timeout -- check the component's tag pipeline at https://gitlab.com/getplumber/plumber/-/pipelines" >&2
+          exit 1
+
+  propagate-website:
+    name: Open website bump PR
+    runs-on: ubuntu-24.04
+    concurrency:
+      group: propagate-website
+    permissions:
+      contents: read
+    # Needs the component's own sync-commit SHA (propagate-component's
+    # output) to SHA-pin the website's GitLab component usage examples --
+    # so this can no longer run independently of that job. If
+    # propagate-component fails, there's no real component SHA to
+    # advertise anyway.
+    needs: propagate-component
+    steps:
+      - name: Generate website App token
+        id: app-token
+        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+        with:
+          client-id: ${{ secrets.RELEASE_APP_CLIENT_ID }}
+          private-key: ${{ secrets.RELEASE_APP_PRIVATE_KEY }}
+          owner: getplumber
+          repositories: getplumber.io
+
+      - name: Checkout main
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+
+      - name: Resolve release refs
+        id: refs
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          SHA="$(git rev-parse "v${VERSION}^{commit}")"
+          DIGEST="$(bash scripts/release-template-digest.sh "$VERSION" templates/plumber.yml)"
+          { echo "sha=${SHA}"; echo "digest=${DIGEST}"; } >> "$GITHUB_OUTPUT"
+
+      - name: Checkout website
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          repository: getplumber/getplumber.io
+          token: ${{ steps.app-token.outputs.token }}
+          path: website
+          persist-credentials: false
+
+      - name: Rewrite pins and open PR
+        env:
+          VERSION: ${{ inputs.version }}
+          SHA: ${{ steps.refs.outputs.sha }}
+          DIGEST: ${{ steps.refs.outputs.digest }}
+          COMPONENT_SHA: ${{ needs.propagate-component.outputs.component_sha }}
+          APP_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+        run: |
+          set -euo pipefail
+          # This job only runs once propagate-component succeeded (needs:),
+          # so COMPONENT_SHA should always be a real sha here -- but assert
+          # it rather than let a missing/malformed value silently defer the
+          # website's SHA-pinned lines with no warning.
+          [[ "$COMPONENT_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::component sha from propagate-component is invalid: '${COMPONENT_SHA}'" >&2; exit 1; }
+          cd website
+          BRANCH="release/auto-bump-v${VERSION}"
+          git checkout -b "$BRANCH"
+          bash ../scripts/release-propagate-pins.sh "$VERSION" "$SHA" "$DIGEST" . "$COMPONENT_SHA" | tee /tmp/rewrite-log.txt
+          if git diff --quiet; then
+            echo "no marked lines changed; skipping PR."
+            exit 0
+          fi
+          git config user.name "plumber-release-bot[bot]"
+          git config user.email "plumber-release-bot[bot]@users.noreply.github.com"
+          git config credential.helper '!f() { echo "username=x-access-token"; echo "password=${APP_TOKEN}"; }; f'
+          git add -A
+          git diff --cached --stat > /tmp/diff-stat.txt
+          git commit -m "chore(release): bump Plumber pins to v${VERSION}"
+          git push -f origin "HEAD:${BRANCH}"
+          for old in $(gh pr list --repo getplumber/getplumber.io --state open \
+              --json headRefName --jq '.[].headRefName' | grep '^release/auto-bump-v' | grep -vx "release/auto-bump-v${VERSION}" || true); do
+            gh pr close --repo getplumber/getplumber.io "$old" --comment "Superseded by v${VERSION}." || true
+          done
+          if [ -z "$(gh pr list --repo getplumber/getplumber.io --head "$BRANCH" --state open --json number --jq '.[].number')" ]; then
+            {
+              echo "Automated pin bump for [v${VERSION}](https://github.com/getplumber/plumber/releases/tag/v${VERSION})."
+              echo
+              echo '```'
+              cat /tmp/diff-stat.txt
+              echo '```'
+            } > /tmp/pr-body.md
+            gh pr create --repo getplumber/getplumber.io \
+              --head "$BRANCH" --base main \
+              --title "chore(release): bump Plumber pins to v${VERSION}" \
+              --body-file /tmp/pr-body.md
+          fi

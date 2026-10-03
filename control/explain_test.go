@@ -1,6 +1,7 @@
 package control
 
 import (
+	"encoding/json"
 	"fmt"
 	"math"
 	"math/rand"
@@ -10,6 +11,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/getplumber/plumber/configuration"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	"github.com/getplumber/plumber/internal/ir"
 )
@@ -53,6 +55,37 @@ func TestPathSentenceMediumInjectionWithModifiers(t *testing.T) {
 	}
 }
 
+// The entry clause of an untrusted expression names who actually controls
+// it: an issue body is written by whoever opens or edits the issue, not by
+// someone opening a pull request. Pull request and commit expressions keep
+// the general wording.
+func TestUntrustedExpressionEntryClauseNamesWhoControlsIt(t *testing.T) {
+	for subject, want := range map[string]string{
+		"github.event.issue.title":                 "Anyone who can open or edit an issue controls `github.event.issue.title`",
+		"github.event.issue.body":                  "Anyone who can open or edit an issue controls `github.event.issue.body`",
+		"github.event.comment.body":                "Anyone who can comment on an issue or a pull request controls `github.event.comment.body`",
+		"github.event.review.body":                 "Anyone who can review a pull request controls `github.event.review.body`",
+		"github.event.review_comment.body":         "Anyone who can review a pull request controls `github.event.review_comment.body`",
+		"github.event.discussion.title":            "Anyone who can open or edit a discussion controls `github.event.discussion.title`",
+		"github.event.pages[0].page_name":          "Anyone who can edit the wiki controls `github.event.pages[0].page_name`",
+		"github.event.pull_request.title":          "Anyone who can open a pull request or push a commit controls `github.event.pull_request.title`",
+		"github.head_ref":                          "Anyone who can open a pull request or push a commit controls `github.head_ref`",
+		"github.event.head_commit.message":         "Anyone who can open a pull request or push a commit controls `github.event.head_commit.message`",
+		"CI_MERGE_REQUEST_TITLE":                   "Anyone who can open a merge request controls `CI_MERGE_REQUEST_TITLE`",
+		"CI_COMMIT_MESSAGE":                        "Anyone who can open a pull request or push a commit controls `CI_COMMIT_MESSAGE`",
+		"github.event.issue.pull_request.html_url": "Anyone who can open or edit an issue controls `github.event.issue.pull_request.html_url`",
+	} {
+		p := AttackPath{
+			Tier: TierMedium, BaseTier: TierMedium, EntryKind: EntryUntrustedExpression,
+			Entry: EntryFact{Kind: EntryUntrustedExpression, Subject: subject},
+			Jobs:  []string{"build"}, Reach: Reach{Executes: true}, ReachKind: "execution",
+		}
+		if got := PathSentence(p); !strings.HasPrefix(got, want+", which `build` passes to a shell") {
+			t.Errorf("%s: sentence = %q, want prefix %q", subject, got, want)
+		}
+	}
+}
+
 // A Medium-base path amplified to High by a gate on a walked job
 // (ISSUE-305, not the default-branch rule) still renders its Medium
 // consequence, never the High one: the gate sentence carries the
@@ -92,7 +125,7 @@ func TestNoSentenceClaimsBothNoSecretAndSecretsCanBeRead(t *testing.T) {
 	}
 }
 
-func TestPathSentenceNeverExceedsTheCapAndNeverEchoesAValue(t *testing.T) {
+func TestPathSentenceNeverExceedsTheCapAndFoldsALongSecretList(t *testing.T) {
 	p := criticalReleasePath()
 	for i := 0; i < 200; i++ {
 		p.Reach.Secrets = append(p.Reach.Secrets, "SECRET_"+strings.Repeat("X", 40))
@@ -186,7 +219,7 @@ func TestEntryClauseByKind(t *testing.T) {
 		{
 			name: "untrusted_expression",
 			p:    AttackPath{EntryKind: EntryUntrustedExpression, Jobs: []string{"build"}, Entry: EntryFact{Subject: "github.event.issue.title"}},
-			want: "Anyone who can open a pull request or push a commit controls `github.event.issue.title`, which `build` passes to a shell",
+			want: "Anyone who can open or edit an issue controls `github.event.issue.title`, which `build` passes to a shell",
 		},
 		{
 			name: "mutable_dependency",
@@ -209,22 +242,89 @@ func TestEntryClauseByKind(t *testing.T) {
 }
 
 // TestConsequenceByTier pins the exact wording per tier (spec section 3).
+// Critical, Medium and Low never depend on the reach's own shape; High
+// does, so each case carries the Reach that produces it.
 func TestConsequenceByTier(t *testing.T) {
 	cases := []struct {
 		tier PathTier
+		r    Reach
 		want string
 	}{
-		{TierCritical, "a compromise here ships a malicious release to your users or into production"},
-		{TierHigh, "the secrets can be read and reused elsewhere"},
-		{TierMedium, "the runner can be abused and anything it caches or uploads can be poisoned"},
-		{TierLow, "no exploitable reach was found"},
+		{TierCritical, Reach{}, "a compromise here ships a malicious release to your users or into production"},
+		{TierHigh, Reach{Secrets: []string{"S"}}, "the secrets can be read and reused elsewhere"},
+		{TierMedium, Reach{}, "the runner can be abused and anything it caches or uploads can be poisoned"},
+		{TierLow, Reach{}, "no exploitable reach was found"},
 	}
 	for _, tc := range cases {
 		t.Run(string(tc.tier), func(t *testing.T) {
-			if got := consequence(tc.tier); got != tc.want {
+			if got := consequence(tc.tier, tc.r); got != tc.want {
 				t.Errorf("got %q, want %q", got, tc.want)
 			}
 		})
+	}
+}
+
+// TestConsequenceHighFollowsTheReachNotTheTierAlone pins the three ways a
+// High-tier path can actually reach something (spec section 3): secrets
+// win when present, a write token stands in when there is no secret, and
+// an impact alone (the deploy/publish/write/sign itself is the damage,
+// control/paths.go's baseTier) names the thing altered rather than
+// claiming secrets or a token that the path does not have.
+func TestConsequenceHighFollowsTheReachNotTheTierAlone(t *testing.T) {
+	cases := []struct {
+		name string
+		r    Reach
+		want string
+	}{
+		{"secrets", Reach{Secrets: []string{"NPM_TOKEN"}}, "the secrets can be read and reused elsewhere"},
+		{"secrets and token, secrets still wins", Reach{Secrets: []string{"NPM_TOKEN"}, TokenWrite: []string{"contents"}}, "the secrets can be read and reused elsewhere"},
+		{"token, no secret", Reach{TokenWrite: []string{"contents"}}, "the token can write to the repository or its packages"},
+		{"impact, neither secret nor token", Reach{Impacts: []ImpactFact{{Kind: "deploys"}}}, "what this job deploys or publishes can be altered"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := consequence(TierHigh, tc.r); got != tc.want {
+				t.Errorf("got %q, want %q", got, tc.want)
+			}
+		})
+	}
+}
+
+// TestPathSentenceHighTokenOnlyNeverClaimsSecrets renders a full High-tier
+// path whose reach is a write token alone (control/paths.go's baseTier:
+// tokenWrite without impact, no secret in scope): the sentence must name
+// the token, never fabricate a secret the path does not hold.
+func TestPathSentenceHighTokenOnlyNeverClaimsSecrets(t *testing.T) {
+	p := AttackPath{
+		ID: "tok1", Tier: TierHigh, BaseTier: TierHigh, State: PathProven,
+		EntryKind: EntryMutableDependency,
+		Entry:     EntryFact{Subject: "some/action@v1"},
+		Jobs:      []string{"release"},
+		Reach:     Reach{TokenWrite: []string{"contents"}},
+	}
+	got := PathSentence(p)
+	want := "A new version of `some/action@v1` runs inside `release` without any change in this repository, holding a token with `contents` write: the token can write to the repository or its packages."
+	if got != want {
+		t.Fatalf("\n got  %q\n want %q", got, want)
+	}
+}
+
+// TestPathSentenceHighImpactOnlyNeverClaimsSecretsOrToken renders a full
+// High-tier path whose reach is an impact alone, no secret and no write
+// token (a public deploy job with no declared privilege, the deliberate
+// scope decision baseTier's comment names): the sentence must name what
+// the job does, never fabricate a secret or a token it does not hold.
+func TestPathSentenceHighImpactOnlyNeverClaimsSecretsOrToken(t *testing.T) {
+	p := AttackPath{
+		ID: "imp1", Tier: TierHigh, BaseTier: TierHigh, State: PathProven,
+		EntryKind: EntryForkPR,
+		Jobs:      []string{"deploy"},
+		Reach:     Reach{Impacts: []ImpactFact{{Kind: "deploys", Evidence: "environment: production"}}},
+	}
+	got := PathSentence(p)
+	want := "A fork pull request can start `deploy`, but it holds no secret and cannot write anything, and it deploys to `production`: what this job deploys or publishes can be altered."
+	if got != want {
+		t.Fatalf("\n got  %q\n want %q", got, want)
 	}
 }
 
@@ -273,7 +373,7 @@ func TestUnresolvableSentencePicksTheRealCause(t *testing.T) {
 
 	secretsPath := AttackPath{}
 	secretsPath.cause = unresolvableSecrets
-	if got := unresolvableSentence(secretsPath); got != "Plumber could not verify `the secrets in scope`, so this path is unverified." {
+	if got := unresolvableSentence(secretsPath); got != "Plumber could not verify which secrets are in scope, so this path is unverified." {
 		t.Errorf("secrets cause: %q", got)
 	}
 
@@ -312,7 +412,7 @@ func TestUnresolvableSecretsStateRendersTheSecretsSentence(t *testing.T) {
 	if len(paths) != 1 {
 		t.Fatalf("want one path, got %+v", paths)
 	}
-	want := "Plumber could not verify `the secrets in scope`, so this path is unverified."
+	want := "Plumber could not verify which secrets are in scope, so this path is unverified."
 	if got := PathSentence(paths[0]); !strings.Contains(got, want) {
 		t.Errorf("sentence = %q, want it to contain %q", got, want)
 	}
@@ -771,5 +871,180 @@ func TestRoleOnPathIsRelativeToThePath(t *testing.T) {
 	walked := AttackPath{ID: "cccc", Tier: TierCritical, AnchorHash: "x", Jobs: []string{"release"}, survivingJobs: []string{"release"}}
 	if got := RoleOnPath(priv, walked); got != "Privilege: on path cccc" {
 		t.Errorf("privilege finding on a walked path: %q", got)
+	}
+}
+
+// twoActionReleaseResult is the release job of releaseSituation pulling two
+// mutable actions, with a gate (ISSUE-305) and a privilege finding
+// (ISSUE-307) on the same job: two Critical mutable_dependency paths that
+// share one loss group, each amplified by the gate and carrying the
+// privilege finding.
+func twoActionReleaseResult() *AnalysisResult {
+	sit := releaseSituation(ir.VisibilityPublic)
+	j := sit.Jobs["release"]
+	j.Entries = append(j.Entries, EntryFact{Kind: EntryMutableDependency, State: "proven", Evidence: "other/action@v2", Subject: "other/action@v2"})
+	sit.Jobs["release"] = j
+	return &AnalysisResult{
+		Situation: sit,
+		Findings: []opaengine.Finding{
+			finding("ISSUE-713", "release", map[string]any{"uses": "some/action@v1"}),
+			finding("ISSUE-713", "release", map[string]any{"uses": "other/action@v2"}),
+			finding("ISSUE-305", "release", nil),
+			finding("ISSUE-307", "release", nil),
+		},
+	}
+}
+
+// The JSON report's plumberScore.paths[] carries the fields spec section 4
+// lists: the path's sentence, its findingIds (the anchor's hash, then the
+// gates', then the consumed privilege findings') and its loss, the path's
+// share of its group's capped loss rounded to one decimal.
+func TestScoreJSONPathsCarrySentenceFindingIDsAndLoss(t *testing.T) {
+	result := twoActionReleaseResult()
+	score := ScoreV4WithExplanations(result)
+	if len(score.Paths) != 2 {
+		t.Fatalf("fixture drifted: want two paths, got %+v", score.Paths)
+	}
+	hashOf := func(code string) string {
+		for _, f := range result.Findings {
+			if f.Code == code {
+				h, _ := findingAnchorHash(f)
+				return h
+			}
+		}
+		t.Fatalf("no %s finding", code)
+		return ""
+	}
+	raw, err := json.Marshal(score)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got struct {
+		Paths []struct {
+			ID         string   `json:"id"`
+			AnchorHash string   `json:"anchorHash"`
+			Sentence   string   `json:"sentence"`
+			FindingIDs []string `json:"findingIds"`
+			Loss       *float64 `json:"loss"`
+		} `json:"paths"`
+	}
+	if err := json.Unmarshal(raw, &got); err != nil {
+		t.Fatal(err)
+	}
+	wantLoss := math.Round(dampened(30, 2)/2*10) / 10 // 45 over two paths
+	for i, p := range got.Paths {
+		if p.Sentence == "" || p.Sentence != PathSentence(score.Paths[i]) {
+			t.Errorf("path %s sentence = %q, want PathSentence's %q", p.ID, p.Sentence, PathSentence(score.Paths[i]))
+		}
+		want := []string{p.AnchorHash, hashOf("ISSUE-305"), hashOf("ISSUE-307")}
+		if !reflect.DeepEqual(p.FindingIDs, want) {
+			t.Errorf("path %s findingIds = %v, want anchor, gate, privilege %v", p.ID, p.FindingIDs, want)
+		}
+		if p.Loss == nil || *p.Loss != wantLoss {
+			t.Errorf("path %s loss = %v, want %v", p.ID, p.Loss, wantLoss)
+		}
+	}
+}
+
+// A path that never went through the scoring step still marshals
+// findingIds as an array, never null.
+func TestAttackPathFindingIDsMarshalAsAnArray(t *testing.T) {
+	raw, err := json.Marshal(AttackPath{ID: "p"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"findingIds":[]`) {
+		t.Errorf("want findingIds as an empty array: %s", raw)
+	}
+}
+
+// bestFix.pointsGained in the JSON report is rounded to one decimal, the
+// same rounding the best-fix sentence and the push apply.
+func TestBestFixJSONRoundsPointsGainedToOneDecimal(t *testing.T) {
+	raw, err := json.Marshal(BestFix{PointsGained: 49.03421571533792})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(raw), `"pointsGained":49`) || strings.Contains(string(raw), "49.03") {
+		t.Errorf("want pointsGained rounded to 49.0: %s", raw)
+	}
+	raw, _ = json.Marshal(BestFix{PointsGained: 2.25001})
+	if !strings.Contains(string(raw), `"pointsGained":2.3`) {
+		t.Errorf("want pointsGained rounded to 2.3: %s", raw)
+	}
+}
+
+// Spec section 9: no sentence contains a SettingsVariables value. The
+// reason is structural: ir.SettingsVariable carries a variable's name and
+// flags and no value field at all (the collector never projects one, per
+// the #370 variable-sensitivity tiers), so nothing downstream can echo a
+// value it was never given. The field check pins that structure; the run
+// below drives a GitLab pipeline whose settings variables TOKEN_A and
+// TOKEN_B reach a path, and checks that every sentence, the situation
+// paragraph and the best fix name the variables and never carry the
+// decoy, the value those variables hold at the provider, which is nowhere
+// in the IR.
+func TestNoSentenceContainsASettingsVariableValue(t *testing.T) {
+	typ := reflect.TypeOf(ir.SettingsVariable{})
+	var fields []string
+	for i := 0; i < typ.NumField(); i++ {
+		fields = append(fields, typ.Field(i).Name)
+	}
+	if want := []string{"Name", "Type", "Environment", "Protected", "Masked"}; !reflect.DeepEqual(fields, want) {
+		t.Fatalf("ir.SettingsVariable fields = %v, want %v: a new field must never carry a value", fields, want)
+	}
+
+	old := ScoreProfile
+	ScoreProfile = "v4"
+	defer func() { ScoreProfile = old }()
+	const decoy = "decoy-value-7f3a91"
+	pipeline := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitLab, ProjectPath: "grp/app", DefaultBranch: "main",
+		Jobs: []ir.Job{{
+			Name: "release", OriginFile: ".gitlab-ci.yml",
+			Image:   &ir.Image{Name: "node", Tag: "latest"},
+			Scripts: []string{"npm publish --token $TOKEN_A"},
+		}},
+		SettingsVariables: []ir.SettingsVariable{
+			{Name: "TOKEN_A", Type: "env_var", Environment: "*", Protected: true, Masked: true},
+			{Name: "TOKEN_B", Type: "env_var", Environment: "*", Masked: true},
+		},
+		SettingsVariablesKnown: true,
+	}
+	raw, err := json.Marshal(pipeline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), decoy) {
+		t.Fatal("fixture drifted: the decoy must be nowhere in the IR")
+	}
+	pc := defaultGitHubConfig(t)
+	scoped, score, ok := ReEvaluateForConfig(&AnalysisResult{CiValid: true, Pipeline: pipeline}, &configuration.Configuration{PlumberConfig: pc}, "gitlab", pc)
+	if !ok || score.ProfileID != PlumberScoreProfileIDV4 || len(score.Paths) == 0 {
+		t.Fatalf("fixture drifted: want a v4 score with paths, got ok=%v %+v", ok, score)
+	}
+	texts := []string{score.Situation}
+	if score.BestFix != nil {
+		texts = append(texts, score.BestFix.Sentence)
+	}
+	for _, p := range score.Paths {
+		texts = append(texts, PathSentence(p), p.Sentence)
+	}
+	for _, f := range scoped.Findings {
+		if e, ok := f.Data["explanation"].(string); ok {
+			texts = append(texts, e)
+		}
+	}
+	named := false
+	for _, txt := range texts {
+		if strings.Contains(txt, decoy) {
+			t.Errorf("a sentence carries a settings variable value: %q", txt)
+		}
+		if strings.Contains(txt, "`TOKEN_A`") || strings.Contains(txt, "`TOKEN_B`") {
+			named = true
+		}
+	}
+	if !named {
+		t.Errorf("want the settings variables named in at least one sentence, got %q", texts)
 	}
 }

