@@ -64,10 +64,11 @@ func TestEvaluateSituationDecodesTheRegoResult(t *testing.T) {
 	}
 }
 
-// TestEvaluateSituationDecodesTheDefaultBranch pins S5: the Rego result
-// carries the pipeline's default branch under "defaultBranch", decoded onto
-// Situation.DefaultBranch, so gatesOnPath can match a branch gate against it
-// regardless of which jobs are walked.
+// TestEvaluateSituationDecodesTheDefaultBranch pins the default-branch
+// decoding rule: the Rego result carries the pipeline's default branch
+// under "defaultBranch", decoded onto Situation.DefaultBranch, so
+// gatesOnPath can match a branch gate against it regardless of which jobs
+// are walked.
 func TestEvaluateSituationDecodesTheDefaultBranch(t *testing.T) {
 	p := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, DefaultBranch: "main"}
 	s, err := EvaluateSituation(context.Background(), p, map[string]any{})

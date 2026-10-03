@@ -874,7 +874,7 @@ func computeScoreResult(result *control.AnalysisResult, scoreMode bool, evaluate
 	if !scoreMode || evaluatedCount == 0 {
 		return nil
 	}
-	s := control.ComputePlumberScore(control.AggregateIssueCodeCounts(result))
+	s := control.ComputeScoreForProfile(control.ScoreProfile, result)
 	return &s
 }
 

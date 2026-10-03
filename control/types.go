@@ -125,6 +125,13 @@ type AnalysisResult struct {
 	// downstream of the report changes because of it.
 	Situation *Situation `json:"-"`
 
+	// Paths is set by ComputeScoreForProfile under scoring-v4: the attack
+	// paths assembled from Findings and Situation, kept on the result for
+	// the outputs that read them. Unset under scoring-v3. Not user-visible
+	// on this type: it never serializes, the same way Situation above does
+	// not.
+	Paths []AttackPath `json:"-"`
+
 	// GitHubPipeline is the normalized IR produced by the GitHub
 	// collector, retained on the result so legacy JSON / PBOM /
 	// CycloneDX builders can read images, action references, and

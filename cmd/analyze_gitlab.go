@@ -82,7 +82,16 @@ var (
 	// surface is a property of the whole flag set, not of this flag.
 	noControls   bool
 	ciConfigPath string
+	// scoreProfile selects the scoring formula: "v3" (per-code severities;
+	// stays the default until the flip to v4) or "v4" (attack paths,
+	// contextual severity, explanations). Case-insensitive, trimmed;
+	// validated by validateScoreProfile.
+	scoreProfile string
 )
+
+// defaultScoreProfile is the --score-profile default: "v3" until the
+// formula flips; v4 is opt-in until then.
+const defaultScoreProfile = "v3"
 
 const (
 	errConfigFileNotFound = "configuration file not found: %w. Create one with `plumber config generate` or `plumber config init`"
@@ -238,6 +247,7 @@ func init() {
 	analyzeCmd.Flags().BoolVar(&noControls, "no-controls", false, "Run no controls at all: collect the pipeline and write the requested inventory artifacts (PBOM, JSON, CSV, OCSF), skip evaluation, withhold the score, and never fail the gate")
 	analyzeCmd.Flags().BoolVar(&failWarnings, "fail-warnings", false, "Treat configuration warnings as errors (exit 2)")
 	analyzeCmd.Flags().StringVar(&ciConfigPath, "ci-config-path", "", "Override the CI configuration file path (default: auto-detected from GitLab project settings, usually .gitlab-ci.yml)")
+	analyzeCmd.Flags().StringVar(&scoreProfile, "score-profile", defaultScoreProfile, "Scoring formula: v3 (per-code severities) or v4 (attack paths, contextual severity, explanations)")
 
 	for flag, envKey := range envKeys {
 		if f := analyzeCmd.Flags().Lookup(flag); f != nil {
@@ -640,6 +650,7 @@ var envKeys = map[string]string{
 	"fail-warnings":       "PLUMBER_ANALYZE_FAIL_WARNINGS",
 	"ci-config-path":      "PLUMBER_ANALYZE_CI_CONFIG_PATH",
 	"verbose":             "PLUMBER_ANALYZE_VERBOSE",
+	"score-profile":       "PLUMBER_ANALYZE_SCORE_PROFILE",
 }
 
 func envStringFallback(cmd *cobra.Command, flag, envKey string, dest *string) error {
@@ -707,6 +718,17 @@ func resolveGateFlags(cmd *cobra.Command) error {
 	return nil
 }
 
+// validateScoreProfile refuses anything but "v3" or "v4", case-insensitive
+// and trimmed; everything downstream (control.ScoreProfile, the formula
+// switch in control.ComputeScoreForProfile) trusts this already ran.
+func validateScoreProfile(p string) error {
+	switch strings.ToLower(strings.TrimSpace(p)) {
+	case "v3", "v4":
+		return nil
+	}
+	return fmt.Errorf("--score-profile must be v3 or v4 (got %q)", p)
+}
+
 func envFloat64Fallback(cmd *cobra.Command, flag, envKey string, dest *float64) error {
 	if !cmd.Flags().Changed(flag) {
 		if v := os.Getenv(envKey); v != "" {
@@ -761,6 +783,9 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		func() error {
 			return envStringFallback(cmd, "ci-config-path", envKeys["ci-config-path"], &ciConfigPath)
 		},
+		func() error {
+			return envStringFallback(cmd, "score-profile", envKeys["score-profile"], &scoreProfile)
+		},
 		func() error { return envFloat64Fallback(cmd, "threshold", envKeys["threshold"], &threshold) },
 		func() error { return envStringFallback(cmd, "min-score", envKeys["min-score"], &minScore) },
 		func() error { return envFloat64Fallback(cmd, "min-points", envKeys["min-points"], &minPoints) },
@@ -804,6 +829,11 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	if err := resolveGateFlags(cmd); err != nil {
 		return err
 	}
+
+	if err := validateScoreProfile(scoreProfile); err != nil {
+		return err
+	}
+	control.ScoreProfile = strings.ToLower(strings.TrimSpace(scoreProfile))
 
 	controlsFilterList, skipControlsList, err := parseControlsFilters()
 	if err != nil {
