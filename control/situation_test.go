@@ -64,6 +64,31 @@ func TestEvaluateSituationDecodesTheRegoResult(t *testing.T) {
 	}
 }
 
+// TestEvaluateSituationDecodesTheDefaultBranch pins S5: the Rego result
+// carries the pipeline's default branch under "defaultBranch", decoded onto
+// Situation.DefaultBranch, so gatesOnPath can match a branch gate against it
+// regardless of which jobs are walked.
+func TestEvaluateSituationDecodesTheDefaultBranch(t *testing.T) {
+	p := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, DefaultBranch: "main"}
+	s, err := EvaluateSituation(context.Background(), p, map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.DefaultBranch != "main" {
+		t.Errorf("DefaultBranch = %q, want %q", s.DefaultBranch, "main")
+	}
+}
+
+func TestEvaluateSituationDefaultBranchEmptyWhenAbsent(t *testing.T) {
+	s, err := EvaluateSituation(context.Background(), &ir.NormalizedPipeline{Provider: ir.ProviderGitHub}, map[string]any{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.DefaultBranch != "" {
+		t.Errorf("DefaultBranch = %q, want empty when the pipeline never gave one", s.DefaultBranch)
+	}
+}
+
 func TestEvaluateSituationNeverPanicsOnEmptyPipeline(t *testing.T) {
 	s, err := EvaluateSituation(context.Background(), &ir.NormalizedPipeline{}, nil)
 	if err != nil {

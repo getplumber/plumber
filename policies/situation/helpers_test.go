@@ -207,6 +207,7 @@ func parseGitHubActions(t *testing.T, data []byte, originFile string) *ir.Normal
 	triggers := parseOnTriggers(raw["on"])
 	workflowPerms := parseGitHubPermissions(raw["permissions"])
 	workflowEnv := parseGitHubEnv(raw["env"])
+	pushBranches, pushBranchesIgnore, pushTags, pushTagsIgnore := parseGitHubPushFilters(raw["on"])
 
 	jobsMap, ok := toStringMap(raw["jobs"])
 	if !ok {
@@ -219,7 +220,15 @@ func parseGitHubActions(t *testing.T, data []byte, originFile string) *ir.Normal
 		if !ok {
 			continue
 		}
-		job := ir.Job{Name: name, Triggers: triggers, OriginFile: originFile}
+		job := ir.Job{
+			Name:               name,
+			Triggers:           triggers,
+			OriginFile:         originFile,
+			PushBranches:       pushBranches,
+			PushBranchesIgnore: pushBranchesIgnore,
+			PushTags:           pushTags,
+			PushTagsIgnore:     pushTagsIgnore,
+		}
 		if img, ok := parseGitHubContainer(section["container"]); ok {
 			job.Image = &img
 		}
@@ -453,6 +462,44 @@ func parseOnTriggers(v any) []string {
 			}
 		}
 		sort.Strings(out)
+		return out
+	}
+	return nil
+}
+
+// parseGitHubPushFilters mirrors github/github_workflows.go's
+// extractGitHubPushFilters: on.push.branches/branches-ignore/tags/
+// tags-ignore, each a glob pattern list exactly as written, all nil when
+// `on:` carries no push entry at all, when push is written as a bare
+// string/list element (no filter map), or when the filter map does not
+// declare that particular key. Added for the situation facts: the fixture
+// tests need the real filter reading, not a hand-built IR, to exercise the
+// YAML path end to end (PR #513 review).
+func parseGitHubPushFilters(v any) (branches, branchesIgnore, tags, tagsIgnore []string) {
+	m, ok := toStringMap(v)
+	if !ok {
+		return nil, nil, nil, nil
+	}
+	pushMap, ok := toStringMap(m["push"])
+	if !ok {
+		return nil, nil, nil, nil
+	}
+	return pushFilterList(pushMap["branches"]), pushFilterList(pushMap["branches-ignore"]), pushFilterList(pushMap["tags"]), pushFilterList(pushMap["tags-ignore"])
+}
+
+// pushFilterList mirrors github/github_workflows.go's stringOrList: a
+// push filter value is either a bare string or a list of strings.
+func pushFilterList(v any) []string {
+	switch x := v.(type) {
+	case string:
+		return []string{x}
+	case []any:
+		var out []string
+		for _, item := range x {
+			if s, ok := item.(string); ok {
+				out = append(out, s)
+			}
+		}
 		return out
 	}
 	return nil

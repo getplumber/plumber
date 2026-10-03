@@ -253,6 +253,7 @@ type GitlabJob struct {
 	When         interface{}            `yaml:"when,omitempty"`
 	AllowFailure interface{}            `yaml:"allow_failure,omitempty"`
 	Extends      interface{}            `yaml:"extends,omitempty"`
+	Inherit      interface{}            `yaml:"inherit,omitempty"`
 }
 
 type Image struct {
@@ -352,4 +353,7 @@ type CIConfVariable struct {
 
 type CIConfDefault struct {
 	Image interface{} `yaml:"image,omitempty"`
+	// Cache is the default cache every job that declares none of its own
+	// runs with (enrichFromMergedConf applies it).
+	Cache interface{} `yaml:"cache,omitempty"`
 }

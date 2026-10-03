@@ -7,7 +7,7 @@ package situation
 
 import rego.v1
 
-result := {"exposure": exposure, "jobs": jobs}
+result := {"exposure": exposure, "jobs": jobs, "defaultBranch": default_branch_name}
 
 exposure := v if {
 	v := input.pipeline.visibility
@@ -280,26 +280,41 @@ ref_subject(ref) := trim_space(trim_suffix(trim_prefix(ref, "${{"), "}}"))
 
 # untrusted_expression: attacker-controlled input reaching a script or a with value.
 #
-# Scripts are scanned per line, dropping any whole-line comment first (see
-# script_lines below): ISSUE-204 (unsafe_variable_expansion.rego) does the
-# same before its own variable match, and a commented-out script line must
-# not fire a fact a commented-out control line would never flag either.
-# This deliberately does NOT reuse _visible_line (the comment/quote
-# stripper further below): that helper also strips quoted strings, which
-# would hide eval "$CI_COMMIT_MESSAGE", the exact pattern ISSUE-204 flags.
-# A trailing comment after real code on the same line still counts: only a
-# whole-line comment (trim_space starts with "#") is dropped. Step with:
-# values are not shell lines handed to a shell, so they get no comment
-# handling, scanned as the whole value, as before. ISSUE-207 does not skip
-# comments either: a 207 hit on a commented-out GitHub script line is a
-# false positive of 207, so this fact deliberately does not reproduce it.
+# GitHub scripts are scanned on EVERY line, comments included
+# (github_all_script_lines below): GitHub substitutes "${{ }}" before the
+# shell ever reads the script file (the runner expands it as a templating
+# step over the raw file text, upstream of the shell entirely), so an
+# expression sitting inside a shell comment line is still injected (PR
+# #513 review). ISSUE-207 does not skip comments either, so this fact
+# matches it exactly on that point.
+#
+# GitLab scripts are scanned per line, dropping any whole-line comment
+# first (script_lines below): ISSUE-204 (unsafe_variable_expansion.rego)
+# does the same before its own variable match, and GitLab's shell reads
+# "$VAR" verbatim, so a shell comment really is inert there; a
+# commented-out script line must not fire a fact a commented-out control
+# line would never flag either. script_lines deliberately does NOT reuse
+# _visible_line (the comment/quote stripper further below): that helper
+# also strips quoted strings, which would hide eval "$CI_COMMIT_MESSAGE",
+# the exact pattern ISSUE-204 flags. A trailing comment after real code on
+# the same line still counts: only a whole-line comment (trim_space starts
+# with "#") is dropped.
+#
+# Step with: values are not shell lines handed to a shell (on either
+# provider), so they get no comment handling, scanned as the whole value.
 #
 # GitHub: the patterns are policies/template_injection.rego's
 # unsafe_patterns (ISSUE-207), copied verbatim. Two passes, as for
 # secrets below: the first isolates each "${{ ..." expression up to its
 # first "}" (the same span ISSUE-207's `[^}]*` allows), the second runs
 # the control's patterns inside it. The subject is the expression with
-# its "${{ }}" and surrounding spaces removed.
+# its "${{ }}" and surrounding spaces removed. ISSUE-213's context-dump
+# pattern (unsafe_github_context_dump.rego) is matched separately, further
+# below: that control scans the raw text directly, with no "${{ }}"
+# requirement at all, so a call like format('{0}', toJson(github)) (whose
+# own "}" in "{0}" would end this isolation span before toJson ever
+# appears) still needs catching; folding it into this span-isolated list
+# would miss it.
 github_unsafe_patterns := [
 	`\${{[^}]*github\.event\.[^}]*\.(title|body)\b`,
 	`\${{[^}]*github\.head_ref\b`,
@@ -312,6 +327,22 @@ github_unsafe_patterns := [
 	`\${{[^}]*github\.event\.[^}]*(author|committer)\.(name|email)\b`,
 	`\${{[^}]*github\.event\.[^}]*page_name\b`,
 ]
+
+# github_context_dump_pattern mirrors policies/unsafe_github_context_dump.rego's
+# (ISSUE-213) context_dump_pattern verbatim: toJson(github) and
+# toJson(github.event) serialise every attacker-controllable field GitHub
+# exposes in one shot, whatever field a downstream consumer later reads
+# out of it. Matched directly against the raw text below (scripts, with:
+# values, job variables), exactly as 213 itself does: no "${{ }}"
+# requirement, so a form like format('{0}', toJson(github)) is caught
+# whatever wraps the call.
+github_context_dump_pattern := `(?i)to\s*json\s*\(\s*github(\.event)?\s*\)`
+
+# github_context_dump_matches: the matched substrings themselves (the bare
+# toJson(...) call, e.g. "toJson(github)"), used both as the test for
+# whether text dumps the context and, directly, as the entry's subject:
+# unlike expression_subject, there is no "${{ }}" wrapper to trim off.
+github_context_dump_matches(text) := regex.find_n(github_context_dump_pattern, text, -1)
 
 # GitLab: the variable names ISSUE-204 (policies/unsafe_variable_expansion.rego)
 # reads from input.config.unsafeVariableExpansion.dangerousVariables, the
@@ -333,7 +364,7 @@ gitlab_dangerous_variables := object.get(object.get(input.config, "unsafeVariabl
 
 untrusted_expressions(job) := {entry("untrusted_expression", "proven", short_evidence(line), expression_subject(expr), job) |
 	input.pipeline.provider == "github"
-	some line in script_lines(job)
+	some line in github_all_script_lines(job)
 	some expr in regex.find_n(`\$\{\{[^}]*`, line, -1)
 	github_unsafe(expr)
 } | {entry("untrusted_expression", "proven", evidence, expression_subject(expr), job) |
@@ -342,6 +373,45 @@ untrusted_expressions(job) := {entry("untrusted_expression", "proven", short_evi
 	some expr in regex.find_n(`\$\{\{[^}]*`, text, -1)
 	github_unsafe(expr)
 	evidence := evidence_line(text, [l | some l in split(text, "\n"); contains(l, expr)])
+} | {entry("untrusted_expression", "proven", evidence, expression_subject(expr), job) |
+	# job variables/localVariables values: ISSUE-209's (github_env_injection.rego)
+	# env-bound sinks bind an attacker-controlled expression through env:
+	# before a later script writes it to $GITHUB_ENV/$GITHUB_PATH; the
+	# value sits here before any script runs, independent of whether a
+	# later script line ever reads it back out.
+	input.pipeline.provider == "github"
+	some text in job_env_texts(job)
+	some expr in regex.find_n(`\$\{\{[^}]*`, text, -1)
+	github_unsafe(expr)
+	evidence := evidence_line(text, [l | some l in split(text, "\n"); contains(l, expr)])
+} | {entry("untrusted_expression", "proven", evidence, match, job) |
+	# ISSUE-213's context-dump pattern, matched against each whole scripts
+	# entry rather than split per line: github_context_dump_pattern's \s*
+	# crosses newlines, so a call broken across two lines by a run: |
+	# block (toJson(\n  github)) is still one match here, which splitting
+	# on "\n" first (as github_all_script_lines does for the other GitHub
+	# patterns) would never see, since neither half carries the whole
+	# pattern on its own. evidence_line still picks the first line that
+	# contains the match when the call sits on one line, same as the
+	# with:/env branches below; it falls back to the whole (cut) text
+	# only for the multi-line case, where no single line contains it.
+	input.pipeline.provider == "github"
+	some text in object.get(job, "scripts", [])
+	some match in github_context_dump_matches(text)
+	evidence := evidence_line(text, [l | some l in split(text, "\n"); contains(l, match)])
+} | {entry("untrusted_expression", "proven", evidence, match, job) |
+	input.pipeline.provider == "github"
+	some text in job_with_values(job)
+	some match in github_context_dump_matches(text)
+	evidence := evidence_line(text, [l | some l in split(text, "\n"); contains(l, match)])
+} | {entry("untrusted_expression", "proven", evidence, match, job) |
+	# job variables/localVariables values: ISSUE-213's env-binding branch
+	# does the same toJson(github) match for a value bound through env:
+	# before a later script ever reads it back out.
+	input.pipeline.provider == "github"
+	some text in job_env_texts(job)
+	some match in github_context_dump_matches(text)
+	evidence := evidence_line(text, [l | some l in split(text, "\n"); contains(l, match)])
 } | {entry("untrusted_expression", "proven", short_evidence(line), name, job) |
 	input.pipeline.provider == "gitlab"
 	some line in script_lines(job)
@@ -355,11 +425,21 @@ untrusted_expressions(job) := {entry("untrusted_expression", "proven", short_evi
 	evidence := evidence_line(text, [l | some l in split(text, "\n"); gitlab_variable_used(l, name)])
 }
 
+# github_all_script_lines: every line of every scripts entry, split on
+# "\n", comments included. See the note above untrusted_expressions:
+# GitHub's own "${{ }}" substitution happens upstream of the shell, so a
+# shell comment is not a safe place to hide an expression on GitHub.
+github_all_script_lines(job) := [line |
+	some text in object.get(job, "scripts", [])
+	some line in split(text, "\n")
+]
+
 # script_lines: the non-comment lines of every scripts entry, split on
 # "\n" and with a whole-line comment dropped (trim_space starts with "#"),
-# mirroring ISSUE-204 at the line level. A trailing comment after real
-# code on the same line is not stripped here, so it still counts for
-# whatever scans the line.
+# mirroring ISSUE-204 at the line level. GitLab only (see the note
+# above untrusted_expressions): a trailing comment after real code on the
+# same line is not stripped here, so it still counts for whatever scans
+# the line.
 script_lines(job) := [line |
 	some text in object.get(job, "scripts", [])
 	some line in split(text, "\n")
@@ -393,9 +473,11 @@ gitlab_variable_used(text, name) if regex.match(sprintf(`\$%s($|[^a-zA-Z0-9_])`,
 # job_texts: the shell sinks (run scripts) and the step with values, each
 # returned whole (no comment handling: untrusted_expressions above reads
 # the scripts half through script_lines instead for its own line-level
-# comment skipping; the callers here, the secrets scan, want the whole
-# text). A step if: is evaluated by the runner, never handed to a shell,
-# so it is not scanned for untrusted input.
+# comment skipping, but only for GitLab; GitHub reads every line through
+# github_all_script_lines, comments included, so there is no whole-line
+# skip to mirror there. The callers here, the secrets scan, want the
+# whole text either way). A step if: is evaluated by the runner, never
+# handed to a shell, so it is not scanned for untrusted input.
 job_texts(job) := array.concat(object.get(job, "scripts", []), job_with_values(job))
 
 # job_with_values: the step with values alone, a string per with: entry.
@@ -405,8 +487,108 @@ job_with_values(job) := [v |
 	is_string(v)
 ]
 
+# job_env_texts: the job's own variables/localVariables values, a string per
+# entry. Scanned by untrusted_expressions for GitHub (ISSUE-209's env-bound
+# sinks, ISSUE-213's env-binding branch), whole-value like job_with_values
+# above, no comment handling: these are env: bindings, not shell lines.
+job_env_texts(job) := array.concat(
+	obj_values(object.get(job, "variables", {})),
+	obj_values(object.get(job, "localVariables", {})),
+)
+
 # mutable_dependency: a ref, image, include or fetched script that can change under the project.
-mutable_dependencies(job) := mutable_actions(job) | mutable_reusable_workflow(job) | mutable_images(job) | fetched_scripts(job)
+mutable_dependencies(job) := mutable_actions(job) | mutable_reusable_workflow(job) | mutable_images(job) | fetched_scripts(job) | include_mutable_dependencies(job)
+
+# include_mutable_dependencies: one entry per pipeline include whose ref
+# is mutable by 404's or 402's own criteria (include_is_mutable below),
+# attached to this job when the job carries the include's file
+# (job.originFile == inc.source, the jobs the include contributes), or to
+# every job when no job in the pipeline carries that file at all (the
+# include then shapes the whole pipeline). file/line are taken from the
+# include's own origin (the include directive in the user's file) when
+# known, the more precise pointer, mirroring how mutable_actions overrides
+# line with the action's own line above.
+include_mutable_dependencies(job) := {object.union(
+	entry("mutable_dependency", "proven", include_mutable_evidence(inc), include_subject(inc), job),
+	include_origin(inc),
+) |
+	some inc in input.pipeline.includes
+	object.get(inc, "source", "") != ""
+	include_is_mutable(inc)
+	include_targets_job(inc, job)
+}
+
+include_is_mutable(inc) if {
+	object.get(inc, "kind", "") != "hardcoded"
+	object.get(inc, "ref", "") != ""
+	_include_version_is_forbidden(inc.ref)
+}
+
+include_is_mutable(inc) if object.get(inc, "refIsAmbiguous", false) == true
+
+# _include_version_is_forbidden mirrors includes_forbidden_version.rego's
+# (ISSUE-404) _version_is_forbidden: a configured forbiddenVersions glob
+# pattern, or (unless opted out) the project's own default branch, ruling
+# R6 of the 2026-09-22 issues-page review (unset means forbidden). This
+# fact fires on that default with no configuration at all, which is a
+# superset of 404 itself: 404's own _default_branch_is_forbidden
+# dereferences input.config.includesForbiddenVersions directly
+# (object.get's own default never applies when that outer key is
+# undefined), so 404 stays silent, with no finding at all, on a pipeline
+# that never configured the control (PR #513 review); this fact still
+# carries the signal either way.
+_include_version_is_forbidden(ref) if {
+	some pattern in object.get(object.get(input.config, "includesForbiddenVersions", {}), "forbiddenVersions", [])
+	glob.match(pattern, null, ref)
+}
+
+_include_version_is_forbidden(ref) if {
+	_include_default_branch_is_forbidden
+	default_branch_name != ""
+	ref == default_branch_name
+}
+
+_include_default_branch_is_forbidden if {
+	object.get(object.get(input.config, "includesForbiddenVersions", {}), "defaultBranchIsForbiddenVersion", true) == true
+}
+
+# include_targets_job: the job carries the include's file directly, or no
+# job in the pipeline does and it is therefore attached everywhere. The
+# per-job branch can only ever match for a "local" include, whose Source
+# really is a file path: a "project" include's Source is the other
+# project's path (gitlab/gitlab_ir.go's GitlabIncludeOrigin.Location), not
+# a file, and the GitLab collector sets every job's OriginFile to the
+# scanned project's own CI config path (gitlab/gitlab_ir.go), never to an
+# include's source. So today, with the collector as it stands, a
+# "project" include always falls through to the second body below and is
+# attached to every job; that is harmless (a superset, never a false
+# negative) but it means no one should rely on the per-job match actually
+# narrowing anything until the collector carries a local include's real
+# origin file (PR #513 review).
+include_targets_job(inc, job) if object.get(job, "originFile", "") == inc.source
+
+include_targets_job(inc, job) if not _any_job_carries_include_file(inc.source)
+
+_any_job_carries_include_file(source) if {
+	some other in input.pipeline.jobs
+	object.get(other, "originFile", "") == source
+}
+
+# include_subject: the include path plus its ref, so a job-less 404/402
+# finding can later be matched against this fact by the include path it
+# already carries.
+include_subject(inc) := sprintf("%s@%s", [inc.source, inc.ref]) if object.get(inc, "ref", "") != "" else := inc.source
+
+include_mutable_evidence(inc) := sprintf("include %s uses the forbidden version %s", [inc.source, inc.ref]) if {
+	object.get(inc, "kind", "") != "hardcoded"
+	object.get(inc, "ref", "") != ""
+	_include_version_is_forbidden(inc.ref)
+} else := sprintf("include %s ref %s resolves as both a tag and a branch upstream", [inc.source, object.get(inc, "ref", "")])
+
+include_origin(inc) := {"file": f, "line": object.get(inc, "originLine", 0)} if {
+	f := object.get(inc, "originFile", "")
+	f != ""
+} else := {}
 
 # Local actions ("./…", a bare "/…") live in the repository itself, outside
 # any external trust boundary; docker-image actions ("docker://…") are
@@ -418,22 +600,46 @@ local_or_docker(uses) if startswith(uses, "/")
 
 local_or_docker(uses) if startswith(uses, "docker://")
 
-mutable_actions(job) := {object.union(entry("mutable_dependency", state, action.uses, action.uses, job), {"line": object.get(action, "line", 0)}) |
+mutable_actions(job) := {object.union(entry("mutable_dependency", "proven", action.uses, action.uses, job), {"line": object.get(action, "line", 0)}) |
 	some action in object.get(job, "uses", [])
 	not local_or_docker(action.uses)
-	state := action_state(action)
+	not sha_pinned(action.uses)
+} | {object.union(entry("mutable_dependency", action_sha_pinned_state(action), action_sha_pinned_evidence(action), action.uses, job), {"line": object.get(action, "line", 0)}) |
+	some action in object.get(job, "uses", [])
+	not local_or_docker(action.uses)
+	sha_pinned(action.uses)
+	count(action_sha_pinned_reasons(action)) > 0
 }
 
 # mutable_reusable_workflow: the job-level reusable-workflow call
 # (reusableWorkflowUses, "owner/repo/.github/workflows/x.yml@ref"), which
 # ISSUE-701 holds to the same pin-by-SHA rule as a step action. A ref that
 # is not a SHA is mutable by construction; a local call is exempt. No
-# metadata is fetched for a reusable workflow, so a SHA pin yields nothing.
+# metadata is fetched for a reusable workflow, so a SHA pin on its own
+# yields nothing; a SHA pin from an untrusted owner still does, through
+# the second branch below.
 mutable_reusable_workflow(job) := {entry("mutable_dependency", "proven", uses, uses, job) |
 	uses := object.get(job, "reusableWorkflowUses", "")
 	uses != ""
 	not local_or_docker(uses)
 	not sha_pinned(uses)
+} | {entry("mutable_dependency", "proven", uses, uses, job) |
+	# ISSUE-713 (action_authorized_sources.rego) also flags a SHA-pinned
+	# reusable workflow from an owner outside the trust conditions, the
+	# same mirror action_untrusted_source already applies to a step
+	# action below. action_untrusted_source only needs a ".uses" field,
+	# so a plain {"uses": uses} object stands in for the action, exactly
+	# as 713's own second deny rule does for a reusable-workflow call: no
+	# per-action metadata exists for one, so all four trust conditions
+	# still apply the same way they do for a step action (official owner,
+	# same org, allowlist, minimumStars); minimumStars simply abstains
+	# with no metadata to compare against, the same as it does on a step
+	# action with no fetched stargazer count.
+	uses := object.get(job, "reusableWorkflowUses", "")
+	uses != ""
+	not local_or_docker(uses)
+	sha_pinned(uses)
+	action_untrusted_source({"uses": uses})
 }
 
 # ref_of mirrors policies/action_unpinned.rego's _ref_of: the substring
@@ -452,35 +658,123 @@ sha_pinned(uses) if regex.match(`^[0-9a-f]{40}$`, lower(ref_of(uses)))
 
 action_tier(action) := object.get(object.get(object.get(action, "metadata", {}), "mutableRemoteExec", {}), "tier", "")
 
-# action_state answers from positive signals only, never from the absence
-# of one. A ref that is not SHA-pinned (a branch or a tag, "@main", "@v4")
-# is mutable by construction: no metadata lookup is needed to know a tag
-# can move, so it is always "proven". A SHA-pinned ref needs its own
-# positive signal from ActionMetadata.MutableRemoteExec, resolved by
-# fetching the action's source: "unverified" (ISSUE-716: the source could
-# not be fetched to check) is "unresolvable"; "exec" or "obfuscated"
-# (ISSUE-714/715: the action's own source fetches and runs mutable remote
-# code at runtime even though its ref is pinned) is "proven". Any other
-# tier (including "data", a non-executed mutable manifest, or no
-# MutableRemoteExec at all) yields no value here, so the comprehension
-# above produces no entry for that action: a pinned ref with no positive
-# signal found is not a mutable dependency. The three bodies below are
-# mutually exclusive by construction (the first requires "not sha_pinned",
-# the other two require "sha_pinned" with disjoint tier sets), so they
-# never conflict as alternative values for the same action.
-action_state(action) := "proven" if {
-	not sha_pinned(action.uses)
-}
-
-action_state(action) := "unresolvable" if {
-	sha_pinned(action.uses)
+# action_sha_pinned_signals: every independent positive signal that
+# overrides a SHA pin's default assumption of immutability, as a set of
+# {state, label} pairs, one pair per signal. A set, not a single value,
+# because more than one control can flag the same pinned action for
+# different reasons at once (an unverified source AND an advisory, say).
+# PR #513 review: a pinned ref is one subject, so it gets exactly one
+# mutable_dependency entry, never one per reason (two reasons on the same
+# subject with different states is a conflict that would otherwise need
+# a tie-break); action_sha_pinned_state below collapses the states, and
+# action_sha_pinned_evidence joins every label that applied, so no
+# reason is silently dropped even though only one entry comes out.
+#   - ActionMetadata.MutableRemoteExec: "unverified" (ISSUE-716, the
+#     source could not be fetched to check) is unresolvable, who controls
+#     the content is unknown; "exec"/"obfuscated" (ISSUE-714/715, the
+#     action's own source fetches and runs mutable remote code at runtime
+#     despite the pin) is proven. Any other tier (including "data", a
+#     non-executed mutable manifest, or no MutableRemoteExec at all)
+#     contributes nothing.
+#   - ActionMetadata.RefKnownAbsent (ISSUE-707, impostor_commit.rego): the
+#     collector confirmed the pinned commit does not exist upstream, so
+#     who controls what actually runs (the runner falls back to the
+#     default branch) is unknown: unresolvable, not proven.
+#   - ActionMetadata.Advisories non-empty (ISSUE-703,
+#     known_vulnerable_action.rego): a published vulnerability is itself
+#     the positive signal, proven.
+#   - action_untrusted_source (ISSUE-713, action_authorized_sources.rego):
+#     an owner outside every configured trust condition, proven.
+# A pinned ref with none of these signals contributes no pair at all, so
+# mutable_actions' second branch produces no entry for that action: a
+# pinned ref with no positive signal found is not a mutable dependency.
+action_sha_pinned_signals(action) := {{"state": "unresolvable", "label": "source could not be verified (ISSUE-716)"} |
 	action_tier(action) == "unverified"
+} | {{"state": "proven", "label": "source fetches and executes mutable remote code at runtime (ISSUE-714/715)"} |
+	action_tier(action) in {"exec", "obfuscated"}
+} | {{"state": "unresolvable", "label": "pinned commit is known absent upstream (ISSUE-707)"} |
+	object.get(action, "metadata", {}).refKnownAbsent == true
+} | {{"state": "proven", "label": "has a published advisory (ISSUE-703)"} |
+	count(object.get(object.get(action, "metadata", {}), "advisories", [])) > 0
+} | {{"state": "proven", "label": "owner is outside every authorized source (ISSUE-713)"} |
+	action_untrusted_source(action)
 }
 
-action_state(action) := "proven" if {
-	sha_pinned(action.uses)
-	action_tier(action) in {"exec", "obfuscated"}
+action_sha_pinned_reasons(action) := {s.state | some s in action_sha_pinned_signals(action)}
+
+# action_sha_pinned_state: proven if any signal proves, else unresolvable,
+# collapsing action_sha_pinned_reasons to the single value mutable_actions'
+# second branch now emits (PR #513 review). Only ever called
+# where action_sha_pinned_reasons is non-empty (mutable_actions guards on
+# that), so the else is never reached with nothing to collapse.
+action_sha_pinned_state(action) := "proven" if {
+	"proven" in action_sha_pinned_reasons(action)
+} else := "unresolvable"
+
+# action_sha_pinned_evidence: every label that applied, sorted for a
+# deterministic order and joined with "; ", so a reason is never silently
+# dropped even though only one entry carries it.
+action_sha_pinned_evidence(action) := concat("; ", sort({s.label | some s in action_sha_pinned_signals(action)}))
+
+# action_untrusted_source mirrors policies/action_authorized_sources.rego's
+# (ISSUE-713) per-action _authorized predicate: proven when the action
+# names an external owner/repo and none of 713's four trust conditions
+# hold. Runs only when that policy is configured
+# (input.config.githubActionMustComeFromAuthorizedSources), reading the
+# exact keys 713 itself reads, exactly as 713 gates on that key.
+action_untrusted_source(action) if {
+	input.config.githubActionMustComeFromAuthorizedSources
+	action_owner_repo(action.uses) != ""
+	not action_authorized(action)
 }
+
+action_authorized(action) if {
+	input.config.githubActionMustComeFromAuthorizedSources.trustGithubOfficialActions == true
+	action_owner(action.uses) in {"actions", "github"}
+}
+
+action_authorized(action) if {
+	object.get(input.config.githubActionMustComeFromAuthorizedSources, "trustSameOrgActions", true) == true
+	repo_owner := action_owner(object.get(input.pipeline, "projectPath", ""))
+	lower(action_owner(action.uses)) == lower(repo_owner)
+}
+
+action_authorized(action) if {
+	some pattern in input.config.githubActionMustComeFromAuthorizedSources.trustedGithubActions
+	glob.match(pattern, ["/"], action_owner_repo(action.uses))
+}
+
+action_authorized(action) if {
+	min := object.get(input.config.githubActionMustComeFromAuthorizedSources, "minimumStars", 0)
+	min > 0
+	object.get(object.get(action, "metadata", {}), "stargazersCount", 0) >= min
+}
+
+# action_owner/action_owner_repo mirror action_authorized_sources.rego's
+# _owner_of/_owner_repo_of: the owner (and "owner/repo") of a
+# "owner/repo[/path]@ref" uses string, "" when unparseable.
+action_owner(uses) := owner if {
+	parts := split(_action_uses_head(uses), "/")
+	count(parts) >= 1
+	parts[0] != ""
+	owner := parts[0]
+} else := ""
+
+action_owner_repo(uses) := sprintf("%s/%s", [parts[0], parts[1]]) if {
+	parts := split(_action_uses_head(uses), "/")
+	count(parts) >= 2
+	parts[0] != ""
+	parts[1] != ""
+} else := ""
+
+# _action_uses_head: the "owner/repo[/path]" substring before "@ref", the
+# whole uses string when it carries no "@" at all. Mirrors
+# action_authorized_sources.rego's _strip_ref.
+_action_uses_head(uses) := head if {
+	idx := indexof(uses, "@")
+	idx >= 0
+	head := substring(uses, 0, idx)
+} else := uses
 
 # An image that still held an unresolved `$VARIABLE` when it was parsed
 # cannot be judged mutable or not: Name/Tag/Digest describe the raw
@@ -493,8 +787,24 @@ mutable_images(job) := {entry("mutable_dependency", "unresolvable", image_ref(im
 	some img in job_images(job)
 	not object.get(img, "unresolved", false)
 	mutable_image(img)
+} | {entry("mutable_dependency", "proven", image_ref(img), image_ref(img), job) |
+	# Mirrors policies/image_authorized_sources.rego (ISSUE-101): proven
+	# when the image's registry is outside the configured trusted list,
+	# even when it carries a digest (101 flags the source, not the pin).
+	# Runs only when that policy is configured
+	# (input.config.imageAuthorizedSources), the same gate 101 itself uses.
+	# job_images below also carries services, and 101 itself checks only
+	# job.image, so a proven fact on a service image has no 101 finding
+	# behind it (PR #513 review): a deliberate superset, never a
+	# false negative, acceptable because a service image is just as able
+	# to pull from an untrusted registry as the job's own image.
+	some img in job_images(job)
+	not object.get(img, "unresolved", false)
+	image_untrusted_source(img)
 }
 
+# job_images: the job's own image plus its services, every container 101
+# itself does not check beyond job.image (see the comment above).
 job_images(job) := array.concat(image_list(object.get(job, "image", null)), object.get(job, "services", []))
 
 image_list(null) := []
@@ -546,6 +856,51 @@ mutable_image(img) if {
 	some pattern in forbidden_tags
 	glob.match(pattern, null, image_tag(img))
 }
+
+# image_untrusted_source mirrors policies/image_authorized_sources.rego's
+# (ISSUE-101) _is_authorized predicate: proven unauthorized when the image
+# matches none of 101's two trust conditions. Reads the exact config keys
+# 101 reads (input.config.imageAuthorizedSources.*), gated on that same key.
+image_untrusted_source(img) if {
+	input.config.imageAuthorizedSources
+	not image_source_authorized(img)
+}
+
+image_source_authorized(img) if {
+	some pattern in input.config.imageAuthorizedSources.trustedUrls
+	glob.match(_image_auth_normalize(pattern), null, _image_auth_normalize(image_auth_ref(img)))
+}
+
+image_source_authorized(img) if {
+	input.config.imageAuthorizedSources.trustDockerHubOfficial == true
+	image_is_docker_hub_official(img)
+}
+
+# image_is_docker_hub_official/image_registry_is_docker_hub mirror 101's
+# _is_docker_hub_official/_registry_is_docker_hub: only a single-segment
+# name (no slash) on the docker.io registry (or no registry at all) counts.
+image_is_docker_hub_official(img) if {
+	image_registry_is_docker_hub(img)
+	not contains(image_name(img), "/")
+}
+
+image_registry_is_docker_hub(img) if image_registry(img) == "docker.io"
+
+image_registry_is_docker_hub(img) if image_registry(img) == ""
+
+image_registry(img) := object.get(img, "registry", "")
+
+# image_auth_ref: the tagless-digest "<registry>/<name>:<tag>" text 101's
+# own _full_ref builds (registry and "unknown" dropped the same way
+# image_registry_prefix already does), so a trustedUrls pattern matches the
+# same text 101 itself matches, never the digest suffix the subject above
+# also carries for other mutable_dependency image entries.
+image_auth_ref(img) := concat("", [image_registry_prefix(img), image_name(img), image_tag_suffix(img)])
+
+# _image_auth_normalize mirrors 101's _normalize_var: "${VAR}" and "$VAR"
+# compare equal, whichever notation the pipeline or the trustedUrls pattern
+# used.
+_image_auth_normalize(s) := regex.replace(s, `\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}`, `$$$1`)
 
 # fetched_scripts: a line that fetches and runs, or installs, remote code
 # at execution time, so what runs today may not be what runs tomorrow even
@@ -645,23 +1000,19 @@ first_url_or_line(line) := url if {
 default_branch_name := object.get(input.pipeline, "defaultBranch", "")
 
 # unprotected_push: a push-triggered job while the default branch is
-# unprotected. GitHub's on: push carries branches:/tags: filters the IR
-# drops (parseOnTriggers and the collector it mirrors read only the
-# event name), so a job gated to push: tags: ['v*'] looks here exactly
-# like one that runs on every push to the default branch. A GitHub entry
-# is therefore never proven, only unresolvable, until the IR carries
-# those filters; a protected default branch still removes the entry
-# outright, the one case a missing filter cannot turn into a false
-# negative. GitLab's push state here comes from an explicit rules:
-# condition (an inclusive $CI_PIPELINE_SOURCE == "push", the
+# unprotected. GitHub's state comes from github_push_trigger_state below,
+# which reads Job.PushBranches/PushBranchesIgnore/PushTags/PushTagsIgnore
+# (PR #513 review) to tell whether the push trigger's own filters actually
+# reach the default branch, before folding in the branch's protection; a job
+# whose filters rule the default branch out entirely (push_job below) never
+# gets an entry at all. GitLab's push state here comes from an explicit
+# rules: condition (an inclusive $CI_PIPELINE_SOURCE == "push", the
 # "exclude then run" idiom, or the $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
 # idiom and its variants, see gitlab_push_state/gitlab_rules_branch_state
 # below), the no-rules default, or the legacy only:/except: keywords
-# (gitlab_only_except_state), none of which hides a filter the same way,
-# so it keeps today's states except where the rules: or only:/except:
-# reading itself cannot be decided statically. unprotected_push_decidable
-# below draws the line on an unknown default branch name differently per
-# provider: GitHub's default_branch_state needs the name to find a match in
+# (gitlab_only_except_state). unprotected_push_decidable below draws the
+# line on an unknown default branch name differently per provider: GitHub's
+# default_branch_state needs the name to find a match in
 # input.pipeline.branches, so without it there is nothing to resolve;
 # GitLab's determination does not, and lands on unresolvable on its own
 # when a named branch cannot be ruled in or out.
@@ -678,24 +1029,155 @@ unprotected_push_decidable(job) if {
 	default_branch_name != ""
 }
 
+# push_entry_state: unresolvable when the provider's own trigger reading
+# cannot be decided (GitLab's rules:, or GitHub's push filters carrying an
+# expression); otherwise default_branch_state decides it (proven, protected
+# or unresolvable per the branch's own protection). GitHub falls straight
+# to default_branch_state once the filters are known to reach the default
+# branch at all (push_job already excludes the case where they do not), so
+# an unprotected default branch with no filter, or a filter that includes
+# it, is now proven rather than forced unresolvable.
 push_entry_state(job) := "unresolvable" if {
 	input.pipeline.provider == "gitlab"
 	gitlab_push_state(job) == "unresolvable"
 } else := "unresolvable" if {
 	input.pipeline.provider == "github"
-	default_branch_state == "proven"
+	github_push_trigger_state(job) == "unresolvable"
 } else := default_branch_state
 
-push_entry_evidence(job) := sprintf("on push; default branch %s %s; push filters (branches/tags) not visible", [default_branch_name, default_branch_state]) if {
+push_entry_evidence(job) := sprintf("on push; default branch %s %s; push filter %s", [default_branch_name, default_branch_state, github_push_trigger_state(job)]) if {
 	input.pipeline.provider == "github"
 } else := sprintf("on push; default branch %s %s", [default_branch_name, push_entry_state(job)])
 
-push_job(job) if "push" in object.get(job, "triggers", [])
+push_job(job) if {
+	"push" in object.get(job, "triggers", [])
+	input.pipeline.provider != "github"
+}
+
+push_job(job) if {
+	"push" in object.get(job, "triggers", [])
+	input.pipeline.provider == "github"
+	github_push_trigger_state(job) != "absent"
+}
 
 push_job(job) if {
 	input.pipeline.provider == "gitlab"
 	gitlab_push_state(job) != "absent"
 }
+
+# github_push_trigger_state: whether the push trigger's own filters
+# (Job.PushBranches/PushBranchesIgnore/PushTags/PushTagsIgnore) let a push
+# to the default branch run the job, total and single-valued over any
+# GitHub job:
+#   - unresolvable: a filter entry is an unresolved workflow expression
+#     ("${{"), which cannot be judged against a branch name statically;
+#   - proven: no filter at all (push: with none of the four keys), or a
+#     branches:/branches-ignore: filter that reaches the default branch
+#     (github_push_branch_filter_state below decides which);
+#   - absent otherwise: a branches:/branches-ignore: filter rules the
+#     default branch out, or only tags:/tags-ignore: is set (a tag push,
+#     or a filter that never admits a branch push at all, per GitHub: a
+#     workflow that defines only a tag filter never runs on a branch push).
+#
+# glob.match is called throughout with ["/"] as the path delimiter: a
+# single "*" does not cross a branch-name segment, "**" does, mirroring
+# GitHub's own branches:/tags: glob semantics for those two wildcards.
+# Two of GitHub's own quantifiers are not translated and are a documented
+# divergence instead: GitHub reads "?" as "zero or one of the preceding
+# character" and "+" as "one or more of the preceding character", while
+# OPA's glob reads "?" as exactly one arbitrary character and "+" as a
+# literal "+"; OPA's "{a,b}" alternation has no GitHub equivalent either.
+# A character class ("[abc]") agrees between the two.
+github_push_trigger_state(job) := "unresolvable" if {
+	github_push_filter_has_expression(job)
+} else := "proven" if {
+	github_push_filters_absent(job)
+} else := "absent" if {
+	github_push_tags_only(job)
+} else := github_push_branch_filter_state(job)
+
+github_push_filter_has_expression(job) if {
+	some v in array.concat(array.concat(array.concat(
+		object.get(job, "pushBranches", []),
+		object.get(job, "pushBranchesIgnore", []),
+	), object.get(job, "pushTags", [])), object.get(job, "pushTagsIgnore", []))
+	contains(v, "${{")
+}
+
+github_push_filters_absent(job) if {
+	count(object.get(job, "pushBranches", [])) == 0
+	count(object.get(job, "pushBranchesIgnore", [])) == 0
+	count(object.get(job, "pushTags", [])) == 0
+	count(object.get(job, "pushTagsIgnore", [])) == 0
+}
+
+# github_push_tags_only: a tag filter (tags: or tags-ignore:, either one)
+# with no branch filter at all (neither branches: nor branches-ignore:).
+# GitHub's own rule: defining only a tag filter means the workflow never
+# runs on a branch push, tags-ignore-only reading exactly like tags-only
+# (PR #513 review).
+github_push_tags_only(job) if {
+	count(object.get(job, "pushBranches", [])) == 0
+	count(object.get(job, "pushBranchesIgnore", [])) == 0
+	count(array.concat(object.get(job, "pushTags", []), object.get(job, "pushTagsIgnore", []))) > 0
+}
+
+# github_push_branch_filter_state(job): decides proven/absent once it is
+# already known that a branch filter is present (pushBranches or
+# pushBranchesIgnore is non-empty; github_push_trigger_state above never
+# calls this otherwise). branches: is an allowlist: the default branch
+# must be the last-matching pattern's positive match, or it is excluded,
+# whatever pushBranchesIgnore separately holds (GitHub does not allow both
+# on the same push: block, so pushBranches alone decides when present).
+# branches-ignore: is a denylist: a last-matching PLAIN pattern excludes
+# the default branch; a last-matching NEGATED ("!") pattern, or no match at
+# all, lets it through.
+github_push_branch_filter_state(job) := "proven" if {
+	count(object.get(job, "pushBranches", [])) > 0
+	_branch_filter_decision(object.get(job, "pushBranches", []), default_branch_name) == "included"
+} else := "absent" if {
+	count(object.get(job, "pushBranches", [])) > 0
+} else := "absent" if {
+	_branch_filter_decision(object.get(job, "pushBranchesIgnore", []), default_branch_name) == "included"
+} else := "proven"
+
+# _branch_filter_decision(patterns, name): GitHub walks branches:/
+# branches-ignore: patterns in the order written and the LAST pattern that
+# matches decides, a leading "!" negating that one pattern (PR #513
+# review): ['**', '!main'] excludes main (the negated pattern matches
+# last), ['!main', '**'] includes it (the plain catch-all matches last).
+# "included"/"excluded" name the sign of that last match, not the final
+# branches-ignore verdict (github_push_branch_filter_state above inverts
+# it for the ignore list, where a plain match means excluded from the
+# run, not included in it). "no_match" when nothing in the list matches
+# the name at all, or the list is empty. Total: an if/else chain whose
+# branches are mutually exclusive by construction (_last_matching_branch_
+# pattern_index is single-valued, via max, so at most one sign can apply).
+_branch_filter_decision(patterns, name) := "no_match" if {
+	count(patterns) == 0
+} else := "included" if {
+	idx := _last_matching_branch_pattern_index(patterns, name)
+	_branch_pattern_sign(patterns[idx]) == "positive"
+} else := "excluded" if {
+	idx := _last_matching_branch_pattern_index(patterns, name)
+	_branch_pattern_sign(patterns[idx]) == "negative"
+} else := "no_match"
+
+# _last_matching_branch_pattern_index: the highest index of a pattern that
+# matches name, undefined (not 0) when none does, so the else chain above
+# falls through to "no_match" rather than mistaking "no match" for index 0.
+_last_matching_branch_pattern_index(patterns, name) := max({i |
+	some i, p in patterns
+	_branch_pattern_matches(p, name)
+})
+
+_branch_pattern_matches(pattern, name) if glob.match(_branch_pattern_glob(pattern), ["/"], name)
+
+_branch_pattern_sign(pattern) := "negative" if startswith(pattern, "!") else := "positive"
+
+# _branch_pattern_glob: the glob to match against, the leading "!" of a
+# negated pattern stripped (it marks the pattern, it is never part of it).
+_branch_pattern_glob(pattern) := substring(pattern, 1, -1) if startswith(pattern, "!") else := pattern
 
 # gitlab_push_branch_refs: ref values that always mean "pushes to the
 # default branch run", whatever the default branch's name: the
@@ -1296,4 +1778,16 @@ feeds_job(job, other) if {
 	restored.mode in {"restore", "both"}
 	restored.key == saved.key
 	restored.key != ""
+}
+
+# A restore-keys prefix (restored.prefix) restores the most recent cache
+# whose key starts with it, so it is fed by every job saving such a key.
+feeds_job(job, other) if {
+	some saved in object.get(job, "caches", [])
+	saved.mode in {"save", "both"}
+	some restored in object.get(other, "caches", [])
+	restored.mode in {"restore", "both"}
+	object.get(restored, "prefix", false) == true
+	restored.key != ""
+	startswith(saved.key, restored.key)
 }

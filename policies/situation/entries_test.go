@@ -1,6 +1,7 @@
 package situation_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/getplumber/plumber/internal/ir"
@@ -785,6 +786,39 @@ func TestMutableReusableWorkflowMirrorsActionUnpinned(t *testing.T) {
 	}
 }
 
+// TestMutableReusableWorkflowUntrustedSourceIsProven pins a finding from
+// the PR #513 review: ISSUE-713 (action_authorized_sources.rego) also flags a
+// SHA-pinned reusable workflow from an owner outside the trust conditions,
+// the same way it flags a step action; mutable_reusable_workflow must carry
+// that fact too, not just the unpinned-ref case.
+func TestMutableReusableWorkflowUntrustedSourceIsProven(t *testing.T) {
+	const sha = "08c6903cd8c0fde910a37f88322edcfb5dd907a8"
+	cfg := map[string]any{"githubActionMustComeFromAuthorizedSources": map[string]any{
+		"trustGithubOfficialActions": true,
+		"trustedGithubActions":       []string{"trusted-org/*"},
+	}}
+	untrusted := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitHub,
+		Jobs:     []ir.Job{{Name: "call", ReusableWorkflowUses: "random-org/repo/.github/workflows/x.yml@" + sha}},
+	}
+	got := entriesOfKind(evaluate(t, untrusted, cfg).Jobs["call"].Entries, "mutable_dependency")
+	if len(got) != 1 || got[0].State != "proven" {
+		t.Errorf("untrusted owner: mutable_dependency = %+v", got)
+	}
+
+	trusted := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitHub,
+		Jobs:     []ir.Job{{Name: "call", ReusableWorkflowUses: "trusted-org/repo/.github/workflows/x.yml@" + sha}},
+	}
+	if got := entriesOfKind(evaluate(t, trusted, cfg).Jobs["call"].Entries, "mutable_dependency"); len(got) != 0 {
+		t.Errorf("allowlisted owner: mutable_dependency = %+v, want none", got)
+	}
+
+	if got := entriesOfKind(evaluate(t, untrusted, nil).Jobs["call"].Entries, "mutable_dependency"); len(got) != 0 {
+		t.Errorf("policy not configured: mutable_dependency = %+v, want none", got)
+	}
+}
+
 // TestFetchedScriptsMirrorUnverifiedScripts pins the fetched-script forms
 // of ISSUE-411 (unverified_scripts.rego) beyond curl | sh: interpreters
 // other than a shell, the inline base64 payload, and download-then-execute.
@@ -1064,9 +1098,9 @@ func TestUntrustedExpressionGitLabMirrorsUnsafeVariableExpansion(t *testing.T) {
 	}
 }
 
-// TestUntrustedExpressionGitLabSkipsWholeLineComments pins finding A of the
-// round-8 review: a GitLab script line whose trimmed form starts with "#" is
-// never scanned for a dangerous variable, mirroring ISSUE-204
+// TestUntrustedExpressionGitLabSkipsWholeLineComments pins that a GitLab
+// script line whose trimmed form starts with "#" is never scanned for a
+// dangerous variable, mirroring ISSUE-204
 // (unsafe_variable_expansion.rego) at the line level. A trailing comment
 // after real code on the same line still counts: only a whole-line comment
 // is skipped.
@@ -1097,12 +1131,16 @@ func TestUntrustedExpressionGitLabSkipsWholeLineComments(t *testing.T) {
 	}
 }
 
-// TestUntrustedExpressionGitHubSkipsWholeLineComments pins the GitHub half
-// of finding A: a commented-out script line (whole-line, trim_space applied
-// so indentation does not matter) never yields an untrusted_expression
-// entry, but a step with: value holding the same unsafe expression still
-// does: with: values are not shell lines and get no comment handling.
-func TestUntrustedExpressionGitHubSkipsWholeLineComments(t *testing.T) {
+// TestUntrustedExpressionGitHubCommentsAreStillSubstituted pins a ruling
+// of the PR #513 review, specific to GitHub: GitHub substitutes "${{ }}"
+// before the shell ever reads the script (the runner expands it as a
+// templating step over the raw file text), so an expression sitting
+// inside a shell comment line is still injected and must still yield an
+// entry, whole-line comment or not.
+// GitLab's shell reads "$VAR" verbatim and a shell comment really is inert
+// there, so TestUntrustedExpressionGitLabSkipsWholeLineComments above is
+// unaffected: the comment skip stays GitLab-only.
+func TestUntrustedExpressionGitHubCommentsAreStillSubstituted(t *testing.T) {
 	p := &ir.NormalizedPipeline{
 		Provider: ir.ProviderGitHub,
 		Jobs: []ir.Job{{
@@ -1110,8 +1148,8 @@ func TestUntrustedExpressionGitHubSkipsWholeLineComments(t *testing.T) {
 			Scripts: []string{"# echo ${{ github.event.issue.title }}"},
 		}},
 	}
-	if got := entriesOfKind(evaluate(t, p, nil).Jobs["build"].Entries, "untrusted_expression"); len(got) != 0 {
-		t.Errorf("commented script line: untrusted_expression = %+v, want none", got)
+	if got := entriesOfKind(evaluate(t, p, nil).Jobs["build"].Entries, "untrusted_expression"); len(got) != 1 {
+		t.Errorf("commented script line: untrusted_expression = %+v, want one (GitHub expands ${{ }} before the shell reads the comment)", got)
 	}
 
 	p.Jobs[0].Scripts = []string{"echo ${{ github.event.issue.title }}"}
@@ -1119,13 +1157,15 @@ func TestUntrustedExpressionGitHubSkipsWholeLineComments(t *testing.T) {
 		t.Errorf("uncommented script line: untrusted_expression = %+v, want one", got)
 	}
 
-	// An indented comment line is skipped too (trim_space).
+	// An indented comment line is substituted just the same (trim_space
+	// has no bearing on whether GitHub expands it).
 	p.Jobs[0].Scripts = []string{"echo ok\n    # echo ${{ github.event.issue.title }}"}
-	if got := entriesOfKind(evaluate(t, p, nil).Jobs["build"].Entries, "untrusted_expression"); len(got) != 0 {
-		t.Errorf("indented commented line: untrusted_expression = %+v, want none", got)
+	if got := entriesOfKind(evaluate(t, p, nil).Jobs["build"].Entries, "untrusted_expression"); len(got) != 1 {
+		t.Errorf("indented commented line: untrusted_expression = %+v, want one", got)
 	}
 
-	// A with: value is not a shell line: comment logic never applies to it.
+	// A with: value is not a shell line: comment handling never applied to
+	// it in the first place, nothing changes here.
 	p.Jobs[0].Scripts = nil
 	p.Jobs[0].Uses = []ir.Action{{Uses: "some/action@v1", With: map[string]any{"body": "# ${{ github.event.issue.title }}"}}}
 	if got := entriesOfKind(evaluate(t, p, nil).Jobs["build"].Entries, "untrusted_expression"); len(got) != 1 {
@@ -1133,9 +1173,9 @@ func TestUntrustedExpressionGitHubSkipsWholeLineComments(t *testing.T) {
 	}
 }
 
-// TestGitLabExcludeThenRunRequiresGenuineCatchAll pins finding B of the
-// round-8 review: the "exclude every other source, then run" idiom (a rule
-// excluding every OTHER source with when: never) only proves an inclusion of
+// TestGitLabExcludeThenRunRequiresGenuineCatchAll pins that the "exclude
+// every other source, then run" idiom (a rule excluding every OTHER
+// source with when: never) only proves an inclusion of
 // <source> when the later rule is a genuine catch-all, with no if: of its
 // own. A later rule that carries its own if: is not statically decidable
 // (it might or might not match a <source> pipeline), so it must not be read
@@ -1217,5 +1257,530 @@ func TestGitLabExcludeThenRunReviewerProtectedBranchExample(t *testing.T) {
 	got := entriesOfKind(evaluate(t, p, nil).Jobs["deploy"].Entries, "unprotected_push")
 	if len(got) != 0 {
 		t.Errorf("unprotected_push: %+v, want none (the later rule is gated on protected branch, not a catch-all)", got)
+	}
+}
+
+// ---------------------------------------------------------- PR #513 review
+
+// TestUntrustedExpressionGitHubContextDump pins the 213
+// (unsafe_github_context_dump.rego) context-dump pattern, toJson(github) and
+// toJson(github.event), matched directly against the raw text the same way
+// 213 itself does (PR #513 review): a script line, a job
+// variable value, or a step with: value that serialises the whole github
+// context is just as attacker-controlled as any single field it would
+// otherwise have to name, whatever else surrounds the call in the text.
+func TestUntrustedExpressionGitHubContextDump(t *testing.T) {
+	for _, expr := range []string{"toJson(github)", "toJson(github.event)", "toJSON( github )"} {
+		p := &ir.NormalizedPipeline{
+			Provider: ir.ProviderGitHub,
+			Jobs:     []ir.Job{{Name: "build", Scripts: []string{"echo '${{ " + expr + " }}'"}}},
+		}
+		got := entriesOfKind(evaluate(t, p, nil).Jobs["build"].Entries, "untrusted_expression")
+		if len(got) != 1 || got[0].State != "proven" {
+			t.Errorf("%s: untrusted_expression = %+v", expr, got)
+		}
+	}
+
+	// A field that is not a context dump and not otherwise on the unsafe
+	// list (github.run_id) is not an entry.
+	p := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitHub,
+		Jobs:     []ir.Job{{Name: "build", Scripts: []string{"echo '${{ github.run_id }}'"}}},
+	}
+	if got := entriesOfKind(evaluate(t, p, nil).Jobs["build"].Entries, "untrusted_expression"); len(got) != 0 {
+		t.Errorf("github.run_id: untrusted_expression = %+v, want none", got)
+	}
+
+	// format('{0}', toJson(github)): the inner "}" of "{0}" ends a naive
+	// "${{[^}]*" isolation span before it ever reaches toJson(github), so
+	// this form needs the direct, unisolated match 213 itself uses, not
+	// the two-pass "${{ ... }}" span the other GitHub patterns go through.
+	obfuscated := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitHub,
+		Jobs:     []ir.Job{{Name: "build", Scripts: []string{"echo '${{ format('{0}', toJson(github)) }}'"}}},
+	}
+	if got := entriesOfKind(evaluate(t, obfuscated, nil).Jobs["build"].Entries, "untrusted_expression"); len(got) != 1 {
+		t.Errorf("format('{0}', toJson(github)): untrusted_expression = %+v, want one", got)
+	}
+
+	// The same obfuscated form in a step with: value and in a job
+	// variable, 213's other two sources.
+	withValue := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitHub,
+		Jobs: []ir.Job{{
+			Name: "build",
+			Uses: []ir.Action{{Uses: "some/action@v1", With: map[string]any{"body": "${{ format('{0}', toJson(github)) }}"}}},
+		}},
+	}
+	if got := entriesOfKind(evaluate(t, withValue, nil).Jobs["build"].Entries, "untrusted_expression"); len(got) != 1 {
+		t.Errorf("with value, format('{0}', toJson(github)): untrusted_expression = %+v, want one", got)
+	}
+
+	envValue := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitHub,
+		Jobs:     []ir.Job{{Name: "build", Variables: map[string]string{"DUMP": "${{ format('{0}', toJson(github)) }}"}}},
+	}
+	if got := entriesOfKind(evaluate(t, envValue, nil).Jobs["build"].Entries, "untrusted_expression"); len(got) != 1 {
+		t.Errorf("variable, format('{0}', toJson(github)): untrusted_expression = %+v, want one", got)
+	}
+}
+
+// TestUntrustedExpressionGitHubContextDumpSplitAcrossLines pins that a
+// toJson(github) call broken onto two lines by a run: | block (213's own
+// pattern uses \s* between "toJson(" and "github)", which crosses
+// newlines) is caught the same as the single-line form. Matching only
+// against split script lines, as the dump branch below used to, would
+// never see the call: neither half contains the whole pattern on its own.
+func TestUntrustedExpressionGitHubContextDumpSplitAcrossLines(t *testing.T) {
+	p := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitHub,
+		Jobs:     []ir.Job{{Name: "build", Scripts: []string{"echo 'toJson(\n  github)'"}}},
+	}
+	got := entriesOfKind(evaluate(t, p, nil).Jobs["build"].Entries, "untrusted_expression")
+	if len(got) != 1 || got[0].State != "proven" {
+		t.Errorf("toJson(\\n  github): untrusted_expression = %+v, want one proven entry", got)
+	}
+}
+
+// TestUntrustedExpressionScansJobVariables pins that untrusted_expression
+// also scans job variables/localVariables values (PR #513 review):
+// ISSUE-209 (github_env_injection.rego) binds an attacker-controlled
+// expression through env: before writing it to $GITHUB_ENV, and ISSUE-213's
+// env-binding branch does the same for toJson(github); either way the value
+// sits in the job's variables before any script runs, so this fact must see
+// it there, independent of whether a script later writes it to a sink.
+func TestUntrustedExpressionScansJobVariables(t *testing.T) {
+	p := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitHub,
+		Jobs: []ir.Job{{
+			Name:      "build",
+			Variables: map[string]string{"BODY": "${{ github.event.issue.body }}"},
+		}},
+	}
+	got := entriesOfKind(evaluate(t, p, nil).Jobs["build"].Entries, "untrusted_expression")
+	if len(got) != 1 || got[0].Subject != "github.event.issue.body" || got[0].State != "proven" {
+		t.Errorf("variables: untrusted_expression = %+v", got)
+	}
+
+	p.Jobs[0].Variables = nil
+	p.Jobs[0].LocalVariables = map[string]string{"DUMP": "${{ toJson(github) }}"}
+	got = entriesOfKind(evaluate(t, p, nil).Jobs["build"].Entries, "untrusted_expression")
+	if len(got) != 1 || got[0].Subject != "toJson(github)" {
+		t.Errorf("localVariables: untrusted_expression = %+v", got)
+	}
+
+	p.Jobs[0].LocalVariables = map[string]string{"SAFE": "${{ github.run_id }}"}
+	if got := entriesOfKind(evaluate(t, p, nil).Jobs["build"].Entries, "untrusted_expression"); len(got) != 0 {
+		t.Errorf("safe variable: untrusted_expression = %+v, want none", got)
+	}
+}
+
+// TestMutableActionRefKnownAbsentIsUnresolvable pins the 707
+// (impostor_commit.rego) signal on a SHA-pinned action: a commit the
+// collector confirmed absent upstream cannot be judged as controlled by
+// anyone in particular (a typo, or a removed commit; the runner falls back
+// to the default branch), so the entry is unresolvable, never proven.
+func TestMutableActionRefKnownAbsentIsUnresolvable(t *testing.T) {
+	const sha = "08c6903cd8c0fde910a37f88322edcfb5dd907a8"
+	p := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitHub,
+		Jobs: []ir.Job{{
+			Name: "build",
+			Uses: []ir.Action{{Uses: "some/action@" + sha, Metadata: &ir.ActionMetadata{RefKnownAbsent: true}}},
+		}},
+	}
+	got := entriesOfKind(evaluate(t, p, nil).Jobs["build"].Entries, "mutable_dependency")
+	if len(got) != 1 || got[0].State != "unresolvable" || got[0].Subject != "some/action@"+sha {
+		t.Errorf("mutable_dependency: %+v", got)
+	}
+
+	p.Jobs[0].Uses[0].Metadata = &ir.ActionMetadata{RefKnownAbsent: false}
+	if got := entriesOfKind(evaluate(t, p, nil).Jobs["build"].Entries, "mutable_dependency"); len(got) != 0 {
+		t.Errorf("refKnownAbsent false: mutable_dependency = %+v, want none", got)
+	}
+}
+
+// TestMutableActionAdvisoryIsProven pins the 703
+// (known_vulnerable_action.rego) signal: a SHA-pinned action carrying a
+// published advisory is a proven mutable dependency even though its ref
+// cannot move; the advisory itself is the positive signal.
+func TestMutableActionAdvisoryIsProven(t *testing.T) {
+	const sha = "08c6903cd8c0fde910a37f88322edcfb5dd907a8"
+	p := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitHub,
+		Jobs: []ir.Job{{
+			Name: "build",
+			Uses: []ir.Action{{Uses: "some/action@" + sha, Metadata: &ir.ActionMetadata{Advisories: []string{"GHSA-aaaa-bbbb-cccc"}}}},
+		}},
+	}
+	got := entriesOfKind(evaluate(t, p, nil).Jobs["build"].Entries, "mutable_dependency")
+	if len(got) != 1 || got[0].State != "proven" {
+		t.Errorf("mutable_dependency: %+v", got)
+	}
+
+	p.Jobs[0].Uses[0].Metadata = &ir.ActionMetadata{}
+	if got := entriesOfKind(evaluate(t, p, nil).Jobs["build"].Entries, "mutable_dependency"); len(got) != 0 {
+		t.Errorf("no advisories: mutable_dependency = %+v, want none", got)
+	}
+}
+
+// TestMutableActionUntrustedSourceIsProven pins the 713
+// (action_authorized_sources.rego) signal on a SHA-pinned action: an owner
+// outside every trust condition 713 reads from
+// input.config.githubActionMustComeFromAuthorizedSources is a proven mutable
+// dependency even though its ref is pinned, because 713 flags the source
+// alone; the check only runs when that policy is configured.
+func TestMutableActionUntrustedSourceIsProven(t *testing.T) {
+	const sha = "08c6903cd8c0fde910a37f88322edcfb5dd907a8"
+	cfg := map[string]any{"githubActionMustComeFromAuthorizedSources": map[string]any{
+		"trustGithubOfficialActions": true,
+		"trustedGithubActions":       []string{"trusted-org/*"},
+	}}
+	untrusted := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitHub,
+		Jobs:     []ir.Job{{Name: "build", Uses: []ir.Action{{Uses: "random-org/action@" + sha}}}},
+	}
+	got := entriesOfKind(evaluate(t, untrusted, cfg).Jobs["build"].Entries, "mutable_dependency")
+	if len(got) != 1 || got[0].State != "proven" {
+		t.Errorf("untrusted owner: mutable_dependency = %+v", got)
+	}
+
+	trusted := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitHub,
+		Jobs:     []ir.Job{{Name: "build", Uses: []ir.Action{{Uses: "trusted-org/action@" + sha}}}},
+	}
+	if got := entriesOfKind(evaluate(t, trusted, cfg).Jobs["build"].Entries, "mutable_dependency"); len(got) != 0 {
+		t.Errorf("allowlisted owner: mutable_dependency = %+v, want none", got)
+	}
+
+	if got := entriesOfKind(evaluate(t, untrusted, nil).Jobs["build"].Entries, "mutable_dependency"); len(got) != 0 {
+		t.Errorf("policy not configured: mutable_dependency = %+v, want none", got)
+	}
+}
+
+// TestMutableActionMultipleReasonsCollapseToOneProvenEntry pins a finding
+// from the PR #513 review: a pinned action with two independent reasons
+// (refKnownAbsent, unresolvable on its own, plus an advisory, proven on its
+// own) must not get two conflicting mutable_dependency entries on the same
+// subject. One entry comes out, proven (any proven reason wins), and its
+// evidence names both reasons.
+func TestMutableActionMultipleReasonsCollapseToOneProvenEntry(t *testing.T) {
+	const sha = "08c6903cd8c0fde910a37f88322edcfb5dd907a8"
+	p := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitHub,
+		Jobs: []ir.Job{{
+			Name: "build",
+			Uses: []ir.Action{{Uses: "some/action@" + sha, Metadata: &ir.ActionMetadata{
+				RefKnownAbsent: true,
+				Advisories:     []string{"GHSA-aaaa-bbbb-cccc"},
+			}}},
+		}},
+	}
+	got := entriesOfKind(evaluate(t, p, nil).Jobs["build"].Entries, "mutable_dependency")
+	if len(got) != 1 {
+		t.Fatalf("mutable_dependency = %+v, want exactly one entry", got)
+	}
+	if got[0].State != "proven" {
+		t.Errorf("state = %q, want proven (an advisory is a proven reason)", got[0].State)
+	}
+	if !strings.Contains(got[0].Evidence, "advisory") && !strings.Contains(got[0].Evidence, "703") {
+		t.Errorf("evidence = %q, want it to name the advisory reason", got[0].Evidence)
+	}
+	if !strings.Contains(got[0].Evidence, "absent") && !strings.Contains(got[0].Evidence, "707") {
+		t.Errorf("evidence = %q, want it to name the refKnownAbsent reason", got[0].Evidence)
+	}
+}
+
+// TestMutableImageUntrustedRegistryIsProvenEvenDigestPinned pins the 101
+// (image_authorized_sources.rego) signal: an image from a registry outside
+// imageAuthorizedSources.trustedUrls is a proven mutable dependency even
+// when it carries a digest, because 101 flags the source, not the pin; the
+// check only runs when that policy is configured.
+func TestMutableImageUntrustedRegistryIsProvenEvenDigestPinned(t *testing.T) {
+	digest := "sha256:" + strings.Repeat("a", 64)
+	cfg := map[string]any{"imageAuthorizedSources": map[string]any{
+		"trustedUrls": []string{"registry.trusted.example.com/*"},
+	}}
+	untrusted := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitLab,
+		Jobs: []ir.Job{{
+			Name:  "build",
+			Image: &ir.Image{Registry: "registry.evil.example.com", Name: "team/app", Tag: "v1", Digest: digest},
+		}},
+	}
+	got := entriesOfKind(evaluate(t, untrusted, cfg).Jobs["build"].Entries, "mutable_dependency")
+	if len(got) != 1 || got[0].State != "proven" {
+		t.Errorf("untrusted registry: mutable_dependency = %+v", got)
+	}
+
+	trusted := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitLab,
+		Jobs: []ir.Job{{
+			Name:  "build",
+			Image: &ir.Image{Registry: "registry.trusted.example.com", Name: "team/app", Tag: "v1", Digest: digest},
+		}},
+	}
+	if got := entriesOfKind(evaluate(t, trusted, cfg).Jobs["build"].Entries, "mutable_dependency"); len(got) != 0 {
+		t.Errorf("trusted registry, digest-pinned, no forbidden tag: mutable_dependency = %+v, want none", got)
+	}
+
+	if got := entriesOfKind(evaluate(t, untrusted, nil).Jobs["build"].Entries, "mutable_dependency"); len(got) != 0 {
+		t.Errorf("policy not configured: mutable_dependency = %+v, want none", got)
+	}
+}
+
+// TestGitHubPushTriggerFiltersDecideTheEntry pins unprotected_push's new
+// GitHub trigger-filter reading (PR #513 review): Job.PushBranches/
+// PushBranchesIgnore/PushTags/PushTagsIgnore decide whether a push trigger
+// actually reaches the default branch, replacing the old blanket
+// "unresolvable" the IR's missing filters used to force.
+func TestGitHubPushTriggerFiltersDecideTheEntry(t *testing.T) {
+	newPipeline := func(job ir.Job) *ir.NormalizedPipeline {
+		return &ir.NormalizedPipeline{
+			Provider:      ir.ProviderGitHub,
+			DefaultBranch: "main",
+			Branches:      []ir.Branch{{Name: "main", Protected: false}},
+			Jobs:          []ir.Job{job},
+		}
+	}
+
+	t.Run("no filter at all is proven", func(t *testing.T) {
+		p := newPipeline(ir.Job{Name: "deploy", Triggers: []string{"push"}})
+		got := entriesOfKind(evaluate(t, p, nil).Jobs["deploy"].Entries, "unprotected_push")
+		if len(got) != 1 || got[0].State != "proven" {
+			t.Errorf("unprotected_push: %+v", got)
+		}
+	})
+
+	t.Run("branches filter including the default branch is proven", func(t *testing.T) {
+		p := newPipeline(ir.Job{Name: "deploy", Triggers: []string{"push"}, PushBranches: []string{"main", "release/*"}})
+		got := entriesOfKind(evaluate(t, p, nil).Jobs["deploy"].Entries, "unprotected_push")
+		if len(got) != 1 || got[0].State != "proven" {
+			t.Errorf("unprotected_push: %+v", got)
+		}
+	})
+
+	t.Run("branches filter excluding the default branch is absent", func(t *testing.T) {
+		p := newPipeline(ir.Job{Name: "deploy", Triggers: []string{"push"}, PushBranches: []string{"release/*"}})
+		got := entriesOfKind(evaluate(t, p, nil).Jobs["deploy"].Entries, "unprotected_push")
+		if len(got) != 0 {
+			t.Errorf("unprotected_push: %+v, want none", got)
+		}
+	})
+
+	t.Run("branches-ignore naming the default branch is absent", func(t *testing.T) {
+		p := newPipeline(ir.Job{Name: "deploy", Triggers: []string{"push"}, PushBranchesIgnore: []string{"main"}})
+		got := entriesOfKind(evaluate(t, p, nil).Jobs["deploy"].Entries, "unprotected_push")
+		if len(got) != 0 {
+			t.Errorf("unprotected_push: %+v, want none", got)
+		}
+	})
+
+	t.Run("tags only is absent", func(t *testing.T) {
+		p := newPipeline(ir.Job{Name: "deploy", Triggers: []string{"push"}, PushTags: []string{"v*"}})
+		got := entriesOfKind(evaluate(t, p, nil).Jobs["deploy"].Entries, "unprotected_push")
+		if len(got) != 0 {
+			t.Errorf("unprotected_push: %+v, want none", got)
+		}
+	})
+
+	t.Run("an expression filter is unresolvable", func(t *testing.T) {
+		p := newPipeline(ir.Job{Name: "deploy", Triggers: []string{"push"}, PushBranches: []string{"${{ env.TARGET_BRANCH }}"}})
+		got := entriesOfKind(evaluate(t, p, nil).Jobs["deploy"].Entries, "unprotected_push")
+		if len(got) != 1 || got[0].State != "unresolvable" {
+			t.Errorf("unprotected_push: %+v", got)
+		}
+	})
+
+	// PR #513 review: branches-ignore that does not name the
+	// default branch must not drop the entry. GitHub still runs the
+	// workflow on every push that the ignore list does not exclude.
+	t.Run("branches-ignore naming another branch is proven", func(t *testing.T) {
+		p := newPipeline(ir.Job{Name: "deploy", Triggers: []string{"push"}, PushBranchesIgnore: []string{"experimental"}})
+		got := entriesOfKind(evaluate(t, p, nil).Jobs["deploy"].Entries, "unprotected_push")
+		if len(got) != 1 || got[0].State != "proven" {
+			t.Errorf("unprotected_push: %+v, want one proven entry", got)
+		}
+	})
+
+	t.Run("branches-ignore plus tags, other branch, is proven", func(t *testing.T) {
+		p := newPipeline(ir.Job{Name: "deploy", Triggers: []string{"push"}, PushBranchesIgnore: []string{"experimental"}, PushTags: []string{"v*"}})
+		got := entriesOfKind(evaluate(t, p, nil).Jobs["deploy"].Entries, "unprotected_push")
+		if len(got) != 1 || got[0].State != "proven" {
+			t.Errorf("unprotected_push: %+v, want one proven entry", got)
+		}
+	})
+
+	// PR #513 review: GitHub evaluates branches:/branches-ignore:
+	// patterns in the order written, and the LAST pattern that matches
+	// decides; a leading "!" negates. The two orderings of the same two
+	// patterns must give opposite results.
+	t.Run("negation: a later plain pattern re-excludes main", func(t *testing.T) {
+		p := newPipeline(ir.Job{Name: "deploy", Triggers: []string{"push"}, PushBranches: []string{"**", "!main"}})
+		got := entriesOfKind(evaluate(t, p, nil).Jobs["deploy"].Entries, "unprotected_push")
+		if len(got) != 0 {
+			t.Errorf("unprotected_push: %+v, want none (['**', '!main'] excludes main)", got)
+		}
+	})
+
+	t.Run("negation: a later catch-all re-includes main", func(t *testing.T) {
+		p := newPipeline(ir.Job{Name: "deploy", Triggers: []string{"push"}, PushBranches: []string{"!main", "**"}})
+		got := entriesOfKind(evaluate(t, p, nil).Jobs["deploy"].Entries, "unprotected_push")
+		if len(got) != 1 || got[0].State != "proven" {
+			t.Errorf("unprotected_push: %+v, want one proven entry (['!main', '**'] includes main)", got)
+		}
+	})
+
+	t.Run("negation: branches-ignore's own '!' re-includes main", func(t *testing.T) {
+		p := newPipeline(ir.Job{Name: "deploy", Triggers: []string{"push"}, PushBranchesIgnore: []string{"main", "!main"}})
+		got := entriesOfKind(evaluate(t, p, nil).Jobs["deploy"].Entries, "unprotected_push")
+		if len(got) != 1 || got[0].State != "proven" {
+			t.Errorf("unprotected_push: %+v, want one proven entry (['main', '!main'] re-includes main)", got)
+		}
+	})
+
+	t.Run("negation: branches-ignore order matters, plain pattern wins last", func(t *testing.T) {
+		p := newPipeline(ir.Job{Name: "deploy", Triggers: []string{"push"}, PushBranchesIgnore: []string{"!main", "main"}})
+		got := entriesOfKind(evaluate(t, p, nil).Jobs["deploy"].Entries, "unprotected_push")
+		if len(got) != 0 {
+			t.Errorf("unprotected_push: %+v, want none (['!main', 'main'] excludes main)", got)
+		}
+	})
+
+	// PR #513 review: tags-ignore alone (no branches, no
+	// branches-ignore) reads exactly like tags alone: a tag-only filter
+	// never runs on a branch push.
+	t.Run("tags-ignore only is absent", func(t *testing.T) {
+		p := newPipeline(ir.Job{Name: "deploy", Triggers: []string{"push"}, PushTagsIgnore: []string{"v*-rc"}})
+		got := entriesOfKind(evaluate(t, p, nil).Jobs["deploy"].Entries, "unprotected_push")
+		if len(got) != 0 {
+			t.Errorf("unprotected_push: %+v, want none", got)
+		}
+	})
+
+	// PR #513 review: glob.match with ["/"] delimiters mirrors
+	// GitHub's branches:/tags: semantics closely but not exactly.
+	t.Run("** alone includes main", func(t *testing.T) {
+		p := newPipeline(ir.Job{Name: "deploy", Triggers: []string{"push"}, PushBranches: []string{"**"}})
+		got := entriesOfKind(evaluate(t, p, nil).Jobs["deploy"].Entries, "unprotected_push")
+		if len(got) != 1 || got[0].State != "proven" {
+			t.Errorf("unprotected_push: %+v, want one proven entry", got)
+		}
+	})
+
+	t.Run("releases/** does not include main", func(t *testing.T) {
+		p := newPipeline(ir.Job{Name: "deploy", Triggers: []string{"push"}, PushBranches: []string{"releases/**"}})
+		got := entriesOfKind(evaluate(t, p, nil).Jobs["deploy"].Entries, "unprotected_push")
+		if len(got) != 0 {
+			t.Errorf("unprotected_push: %+v, want none", got)
+		}
+	})
+
+	// mai?n matches main on GitHub (? means "zero or one of the preceding
+	// character" there), but not through OPA's glob.match, which reads ?
+	// as "exactly one arbitrary character" instead: documented divergence
+	// (PR #513 review), not translated.
+	t.Run("mai?n does not match main (OPA glob semantics, documented divergence)", func(t *testing.T) {
+		p := newPipeline(ir.Job{Name: "deploy", Triggers: []string{"push"}, PushBranches: []string{"mai?n"}})
+		got := entriesOfKind(evaluate(t, p, nil).Jobs["deploy"].Entries, "unprotected_push")
+		if len(got) != 0 {
+			t.Errorf("unprotected_push: %+v, want none (OPA's ? is not GitHub's optional-preceding-character ?)", got)
+		}
+	})
+}
+
+// TestIncludeForbiddenVersionIsMutableDependency pins the 404
+// (includes_forbidden_version.rego) signal on a pipeline include: a ref
+// matching includesForbiddenVersions.forbiddenVersions is a proven
+// mutable_dependency, attached to every job whose originFile is the
+// include's source (the jobs the include contributes).
+func TestIncludeForbiddenVersionIsMutableDependency(t *testing.T) {
+	cfg := map[string]any{"includesForbiddenVersions": map[string]any{"forbiddenVersions": []string{"main", "master"}}}
+	p := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitLab,
+		Includes: []ir.Include{{Kind: "project", Source: "group/ci-templates", Ref: "main"}},
+		Jobs: []ir.Job{
+			{Name: "build", OriginFile: "group/ci-templates"},
+			{Name: "lint", OriginFile: ".gitlab-ci.yml"},
+		},
+	}
+	r := evaluate(t, p, cfg)
+	build := entriesOfKind(r.Jobs["build"].Entries, "mutable_dependency")
+	if len(build) != 1 || build[0].State != "proven" || build[0].Subject != "group/ci-templates@main" {
+		t.Errorf("build: mutable_dependency = %+v", build)
+	}
+	if got := entriesOfKind(r.Jobs["lint"].Entries, "mutable_dependency"); len(got) != 0 {
+		t.Errorf("lint: mutable_dependency = %+v, want none (does not carry the include's file)", got)
+	}
+
+	// When no job carries the include's file, it is attached to every job.
+	p.Jobs[0].OriginFile = "something/else"
+	p.Jobs[1].OriginFile = "something/else/too"
+	r = evaluate(t, p, cfg)
+	for _, name := range []string{"build", "lint"} {
+		if got := entriesOfKind(r.Jobs[name].Entries, "mutable_dependency"); len(got) != 1 {
+			t.Errorf("%s: no job carries the include's file, want it on every job, got %+v", name, got)
+		}
+	}
+}
+
+// TestIncludeHardcodedIsNeverAMutableDependency pins 404's own exclusion: a
+// hardcoded include (no pinnable version) never counts, whatever its ref.
+func TestIncludeHardcodedIsNeverAMutableDependency(t *testing.T) {
+	p := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitLab,
+		Includes: []ir.Include{{Kind: "hardcoded", Source: "group/ci-templates", Ref: "main"}},
+		Jobs:     []ir.Job{{Name: "build"}},
+	}
+	cfg := map[string]any{"includesForbiddenVersions": map[string]any{"forbiddenVersions": []string{"main"}}}
+	if got := entriesOfKind(evaluate(t, p, cfg).Jobs["build"].Entries, "mutable_dependency"); len(got) != 0 {
+		t.Errorf("hardcoded include: mutable_dependency = %+v, want none", got)
+	}
+}
+
+// TestIncludeDefaultBranchIsForbiddenByDefault pins 404's ruling R6: with no
+// explicit forbiddenVersions configured, an include pinned to the project's
+// own default branch is still forbidden by default, and
+// defaultBranchIsForbiddenVersion: false opts out of that default. The
+// nil-config case is a superset of 404 itself, not a mirror of its exact
+// finding: 404's own _default_branch_is_forbidden dereferences
+// input.config.includesForbiddenVersions directly (object.get's own
+// default never applies when that outer key is undefined), so 404 stays
+// silent, with no finding at all, on a nil config (PR #513 review);
+// this fact still fires, by design.
+func TestIncludeDefaultBranchIsForbiddenByDefault(t *testing.T) {
+	p := &ir.NormalizedPipeline{
+		Provider:      ir.ProviderGitLab,
+		DefaultBranch: "main",
+		Includes:      []ir.Include{{Kind: "project", Source: "group/ci-templates", Ref: "main"}},
+		Jobs:          []ir.Job{{Name: "build"}},
+	}
+	if got := entriesOfKind(evaluate(t, p, nil).Jobs["build"].Entries, "mutable_dependency"); len(got) != 1 {
+		t.Errorf("mutable_dependency = %+v, want one (default branch forbidden by default)", got)
+	}
+
+	cfg := map[string]any{"includesForbiddenVersions": map[string]any{"defaultBranchIsForbiddenVersion": false}}
+	if got := entriesOfKind(evaluate(t, p, cfg).Jobs["build"].Entries, "mutable_dependency"); len(got) != 0 {
+		t.Errorf("defaultBranchIsForbiddenVersion: false: mutable_dependency = %+v, want none", got)
+	}
+}
+
+// TestIncludeRefConfusionIsMutableDependency pins the 402 (ref_confusion.rego)
+// signal: an include whose ref resolves as both a tag and a branch upstream
+// is a proven mutable_dependency, independent of the forbidden-version list.
+func TestIncludeRefConfusionIsMutableDependency(t *testing.T) {
+	p := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitLab,
+		Includes: []ir.Include{{Kind: "project", Source: "group/ci-templates", Ref: "v1.2.3", RefIsAmbiguous: true}},
+		Jobs:     []ir.Job{{Name: "build"}},
+	}
+	got := entriesOfKind(evaluate(t, p, nil).Jobs["build"].Entries, "mutable_dependency")
+	if len(got) != 1 || got[0].State != "proven" || got[0].Subject != "group/ci-templates@v1.2.3" {
+		t.Errorf("mutable_dependency = %+v", got)
+	}
+
+	p.Includes[0].RefIsAmbiguous = false
+	if got := entriesOfKind(evaluate(t, p, nil).Jobs["build"].Entries, "mutable_dependency"); len(got) != 0 {
+		t.Errorf("ref not ambiguous, not forbidden: mutable_dependency = %+v, want none", got)
 	}
 }

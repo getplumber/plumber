@@ -41,8 +41,9 @@ type jobFacts struct {
 	Feeds     []string  `json:"feeds"`
 }
 type result struct {
-	Exposure string              `json:"exposure"`
-	Jobs     map[string]jobFacts `json:"jobs"`
+	Exposure      string              `json:"exposure"`
+	Jobs          map[string]jobFacts `json:"jobs"`
+	DefaultBranch string              `json:"defaultBranch"`
 }
 
 func evaluate(t *testing.T, p *ir.NormalizedPipeline, cfg map[string]any) result {
@@ -238,20 +239,22 @@ func TestReleaseMutableActionEntry(t *testing.T) {
 }
 
 // TestPushToUnprotectedDefaultBranch pins unprotected_push on GitHub. The
-// IR drops the on: push branches:/tags: filters (see parseOnTriggers and
-// the production collector it mirrors), so a job gated to, say, push:
-// tags: ['v*'] looks here exactly like one that runs on every push to
-// the default branch. Until the IR carries those filters, a GitHub entry
-// is never proven, only unresolvable, on an unprotected default branch;
-// a protected default branch still removes the entry outright, since no
-// missing filter can turn a protected branch into an unprotected one.
+// fixture's on: push: branches: [main] reaches the IR as Job.PushBranches
+// through the real YAML reading (parseGitHubActions mirrors the production
+// collector's extractGitHubPushFilters, PR #513 review), so a push to the
+// default branch is proven on an unprotected default branch, not merely
+// unresolvable; a protected default branch still removes the entry
+// outright, and unknown protection (no branches collected) stays
+// unresolvable. A second fixture whose branches: filter excludes the
+// default branch entirely proves the YAML path can also rule the entry out,
+// not merely let the "no filter" default carry it through by accident.
 func TestPushToUnprotectedDefaultBranch(t *testing.T) {
 	p := githubFixture(t, "push_unprotected.workflow.yml", "public")
 	p.DefaultBranch = "main"
 	p.Branches = []ir.Branch{{Name: "main", Protected: false}}
 	r := evaluate(t, p, nil)
 	k := kinds(r.Jobs["deploy"].Entries)
-	if e, ok := k["unprotected_push"]; !ok || e.State != "unresolvable" || e.Subject != "main" {
+	if e, ok := k["unprotected_push"]; !ok || e.State != "proven" || e.Subject != "main" {
 		t.Errorf("unprotected_push: %+v", e)
 	}
 	p.Branches = []ir.Branch{{Name: "main", Protected: true}}
@@ -261,6 +264,19 @@ func TestPushToUnprotectedDefaultBranch(t *testing.T) {
 	p.Branches = nil
 	if e, ok := kinds(evaluate(t, p, nil).Jobs["deploy"].Entries)["unprotected_push"]; !ok || e.State != "unresolvable" {
 		t.Errorf("unknown protection must be unresolvable: %+v", e)
+	}
+}
+
+// TestPushBranchesFilterExcludingDefaultBranchThroughYAML pins the other
+// outcome of the same YAML path: a branches: filter that does not match the
+// default branch at all removes the entry, whatever the branch's
+// protection, because the push trigger itself never reaches that branch.
+func TestPushBranchesFilterExcludingDefaultBranchThroughYAML(t *testing.T) {
+	p := githubFixture(t, "push_branches_excluded.workflow.yml", "public")
+	p.DefaultBranch = "main"
+	p.Branches = []ir.Branch{{Name: "main", Protected: false}}
+	if e, ok := kinds(evaluate(t, p, nil).Jobs["deploy"].Entries)["unprotected_push"]; ok {
+		t.Errorf("unprotected_push: %+v, want none (branches: ['release/*'] does not reach main)", e)
 	}
 }
 
@@ -584,6 +600,32 @@ func TestCacheKeyFeeds(t *testing.T) {
 	}
 	if got := r.Jobs["empty-saver"].Feeds; len(got) != 0 {
 		t.Errorf("an empty key must feed nothing even when another job restores an empty key, got %v", got)
+	}
+}
+
+// TestCacheRestorePrefixFeeds pins the restore-keys half of the cache
+// edges: a restore entry marked as a prefix (actions/cache restore-keys)
+// restores any saved key that starts with it, so the job saving such a key
+// feeds the job restoring the prefix. A prefix that no saved key starts
+// with, an exact (non-prefix) restore of a longer key, and an empty prefix
+// feed nothing.
+func TestCacheRestorePrefixFeeds(t *testing.T) {
+	p := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitHub,
+		Jobs: []ir.Job{
+			{Name: "pr", Caches: []ir.CacheRef{{Key: "Linux-pip-${{ hashFiles('requirements.txt') }}", Mode: "both"}}},
+			{Name: "release", Caches: []ir.CacheRef{
+				{Key: "Linux-pip-release", Mode: "restore"},
+				{Key: "Linux-pip-", Mode: "restore", Prefix: true},
+			}},
+			{Name: "unrelated", Caches: []ir.CacheRef{{Key: "Linux-npm-", Mode: "restore", Prefix: true}}},
+			{Name: "exact", Caches: []ir.CacheRef{{Key: "Linux-pip-", Mode: "restore"}}},
+			{Name: "empty", Caches: []ir.CacheRef{{Key: "", Mode: "restore", Prefix: true}}},
+		},
+	}
+	r := evaluate(t, p, nil)
+	if got := r.Jobs["pr"].Feeds; !reflect.DeepEqual(got, []string{"release"}) {
+		t.Errorf("pr.feeds = %v, want [release] (restore-keys prefix match only)", got)
 	}
 }
 
@@ -1338,6 +1380,24 @@ func TestZeroJobsPipeline(t *testing.T) {
 	r := evaluate(t, &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Visibility: "public"}, nil)
 	if r.Exposure != "public" || r.Jobs == nil || len(r.Jobs) != 0 {
 		t.Errorf("result = %+v", r)
+	}
+}
+
+// TestResultCarriesTheDefaultBranch pins S5: result.defaultBranch mirrors
+// input.pipeline.defaultBranch, empty when the pipeline never gave one, so
+// the Go side can amplify a branch gate against any path, not only paths
+// through push-triggered jobs.
+func TestResultCarriesTheDefaultBranch(t *testing.T) {
+	r := evaluate(t, &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, DefaultBranch: "main"}, nil)
+	if r.DefaultBranch != "main" {
+		t.Errorf("defaultBranch = %q, want %q", r.DefaultBranch, "main")
+	}
+}
+
+func TestResultDefaultBranchEmptyWhenAbsent(t *testing.T) {
+	r := evaluate(t, &ir.NormalizedPipeline{Provider: ir.ProviderGitHub}, nil)
+	if r.DefaultBranch != "" {
+		t.Errorf("defaultBranch = %q, want empty when the pipeline never gave one", r.DefaultBranch)
 	}
 }
 

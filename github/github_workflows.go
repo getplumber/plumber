@@ -448,14 +448,18 @@ type ghWorkflowHeader struct {
 // job in the workflow. Grouping them avoids passing many parameters to the
 // per-job builder.
 type workflowContext struct {
-	perms          any
-	env            map[string]string
-	triggers       []string
-	name           string
-	hasConcurrency bool
-	jobLines       map[string]int
-	usesLines      map[string][]int
-	usesComments   map[string]string
+	perms              any
+	env                map[string]string
+	triggers           []string
+	pushBranches       []string
+	pushBranchesIgnore []string
+	pushTags           []string
+	pushTagsIgnore     []string
+	name               string
+	hasConcurrency     bool
+	jobLines           map[string]int
+	usesLines          map[string][]int
+	usesComments       map[string]string
 }
 
 // mergedEnv combines workflow-level, job-level, and step-level env maps into
@@ -539,11 +543,24 @@ func cacheAndArtifactRefs(uses []ir.Action) (caches []ir.CacheRef, artifacts []i
 			}
 			return out
 		}
+		// restoreFallbacks is one restore entry per restore-keys line: when
+		// the exact key misses, the action restores the most recent cache
+		// whose key starts with one of them, so each prefix is its own way in
+		// for whoever saved a matching key.
+		restoreFallbacks := func() []ir.CacheRef {
+			var out []ir.CacheRef
+			for _, prefix := range withPaths("restore-keys") {
+				out = append(out, ir.CacheRef{Key: prefix, Paths: withPaths("path"), Mode: "restore", Prefix: true})
+			}
+			return out
+		}
 		switch name {
 		case "actions/cache":
 			caches = append(caches, ir.CacheRef{Key: withStr("key"), Paths: withPaths("path"), Mode: "both"})
+			caches = append(caches, restoreFallbacks()...)
 		case "actions/cache/restore":
 			caches = append(caches, ir.CacheRef{Key: withStr("key"), Paths: withPaths("path"), Mode: "restore"})
+			caches = append(caches, restoreFallbacks()...)
 		case "actions/cache/save":
 			caches = append(caches, ir.CacheRef{Key: withStr("key"), Paths: withPaths("path"), Mode: "save"})
 		case "actions/upload-artifact":
@@ -566,6 +583,10 @@ func buildJob(jobName string, section map[string]any, wfCtx workflowContext, nam
 		OriginFile:             originFile,
 		OriginLine:             wfCtx.jobLines[jobName],
 		Triggers:               wfCtx.triggers,
+		PushBranches:           wfCtx.pushBranches,
+		PushBranchesIgnore:     wfCtx.pushBranchesIgnore,
+		PushTags:               wfCtx.pushTags,
+		PushTagsIgnore:         wfCtx.pushTagsIgnore,
 		WorkflowName:           wfCtx.name,
 		WorkflowHasConcurrency: wfCtx.hasConcurrency,
 	}
@@ -636,15 +657,20 @@ func parseGitHubWorkflowJobs(data []byte, namespace, originFile string) ([]ir.Jo
 		return nil, nil
 	}
 
+	pushBranches, pushBranchesIgnore, pushTags, pushTagsIgnore := extractGitHubPushFilters(wf.On)
 	wfCtx := workflowContext{
-		perms:          wf.Permissions,
-		env:            normalizeGitHubEnv(wf.Env),
-		triggers:       extractGitHubTriggers(wf.On),
-		name:           wf.Name,
-		hasConcurrency: wf.Concurrency != nil,
-		jobLines:       scanGitHubJobLines(data),
-		usesLines:      scanGitHubUsesLines(data),
-		usesComments:   scanGitHubUsesComments(data),
+		perms:              wf.Permissions,
+		env:                normalizeGitHubEnv(wf.Env),
+		triggers:           extractGitHubTriggers(wf.On),
+		pushBranches:       pushBranches,
+		pushBranchesIgnore: pushBranchesIgnore,
+		pushTags:           pushTags,
+		pushTagsIgnore:     pushTagsIgnore,
+		name:               wf.Name,
+		hasConcurrency:     wf.Concurrency != nil,
+		jobLines:           scanGitHubJobLines(data),
+		usesLines:          scanGitHubUsesLines(data),
+		usesComments:       scanGitHubUsesComments(data),
 	}
 
 	jobs := make([]ir.Job, 0, len(wf.Jobs))
@@ -958,6 +984,29 @@ func extractGitHubTriggers(v any) []string {
 		return out
 	}
 	return nil
+}
+
+// extractGitHubPushFilters reads on.push.branches, branches-ignore, tags and
+// tags-ignore. Each return slice is nil when `on:` carries no push entry at
+// all, when push is written as a bare string/list element (no filter map),
+// or when the filter map does not declare that particular key: all four
+// mean "no filter", not "matches nothing". The map form keyed by event name
+// is the only shape that can carry filters; the bare string/list forms
+// never do.
+func extractGitHubPushFilters(v any) (branches, branchesIgnore, tags, tagsIgnore []string) {
+	m, ok := v.(map[any]any)
+	if !ok {
+		return nil, nil, nil, nil
+	}
+	pushMap, ok := m["push"].(map[any]any)
+	if !ok {
+		return nil, nil, nil, nil
+	}
+	ps, ok := ghCastStringMap(pushMap)
+	if !ok {
+		return nil, nil, nil, nil
+	}
+	return stringOrList(ps["branches"]), stringOrList(ps["branches-ignore"]), stringOrList(ps["tags"]), stringOrList(ps["tags-ignore"])
 }
 
 // normalizeGitHubPermissions converts YAML's untyped map[any]any into a
