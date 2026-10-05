@@ -243,6 +243,11 @@ func parseImageField(v any) (ir.Image, bool) {
 }
 
 func splitNameTag(ref string) ir.Image {
+	// Mirror the production splitImageRef behaviour: a GitHub expression
+	// template cannot be resolved at static analysis time.
+	if strings.Contains(ref, "${{") {
+		return ir.Image{Name: ref, Unresolved: true}
+	}
 	// Digest form takes precedence: "alpine@sha256:..."
 	if at := strings.Index(ref, "@"); at > 0 {
 		return ir.Image{Name: ref[:at], Digest: ref[at+1:]}
@@ -837,6 +842,8 @@ func TestIssue103_ImagePinnedByDigest(t *testing.T) {
 			fixtures: []fixture{
 				{"violation_tagged.workflow.yml", []string{"build"}},
 				{"clean_pinned.workflow.yml", nil},
+				// Regression: matrix variable in container image must not fire (issue #396).
+				{"clean_matrix_container.workflow.yml", nil},
 			},
 		},
 	}

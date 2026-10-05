@@ -1,0 +1,20 @@
+# Regression test for https://github.com/getplumber/plumber/issues/396
+# A container image supplied via a matrix variable cannot be resolved at
+# static analysis time. splitImageRef should return Unresolved: true,
+# causing the image_pinned_by_digest policy to abstain rather than fire
+# a false positive against the placeholder text.
+# Expected: 0 findings.
+name: CI
+on: push
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: ${{ matrix.image }}
+    strategy:
+      matrix:
+        image:
+          - alpine:3.19@sha256:a8560b36e8b8210634f77d9f7f9efd7ffa463e380b75e2e74aff4511df3ef88c
+    steps:
+      - run: echo build
