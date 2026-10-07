@@ -259,6 +259,8 @@ gitlab:
       enabled: true
     cicdVariablesMustBeMasked:
       enabled: true
+    pipelineMustNotSendSecretsToUntrustedHosts:
+      enabled: true
     projectMustHaveSecurityPolicySource:
       enabled: true
     containerImageMustNotUseForbiddenTags:

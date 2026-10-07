@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"io/fs"
+	"net/url"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/getplumber/plumber/configuration"
@@ -189,14 +191,24 @@ func protectionDataNeeded(conf *configuration.Configuration) bool {
 const controlCicdVariablesMustBeProtected = "cicdVariablesMustBeProtected"
 const controlCicdVariablesMustBeMasked = "cicdVariablesMustBeMasked"
 
-// cicdVariableControlEnabled reports whether either settings-variable control
-// is active for this run, so the variable listing is fetched only when a
-// control needs it.
+// controlSecretEgress is the .plumber.yaml key of the secret egress control
+// (ISSUE-311). On GitLab it reads the masked flags of the same settings
+// variable listing, so it shares that collection and its lane.
+const controlSecretEgress = "pipelineMustNotSendSecretsToUntrustedHosts"
+
+// cicdVariableControlEnabled reports whether a control that reads the
+// settings-variable listing is active for this run, so the listing is
+// fetched only when a control needs it: the two settings-variable controls,
+// and the secret egress control, which reads the masked flags of the same
+// listing.
 func cicdVariableControlEnabled(conf *configuration.Configuration) bool {
 	if p := conf.PlumberConfig.GetCicdVariablesMustBeProtectedConfig(); p != nil && p.IsEnabled() && shouldRunControl(controlCicdVariablesMustBeProtected, conf) {
 		return true
 	}
 	if m := conf.PlumberConfig.GetCicdVariablesMustBeMaskedConfig(); m != nil && m.IsEnabled() && shouldRunControl(controlCicdVariablesMustBeMasked, conf) {
+		return true
+	}
+	if s := conf.PlumberConfig.GetPipelineMustNotSendSecretsToUntrustedHostsConfig(); s != nil && s.IsEnabled() && shouldRunControl(controlSecretEgress, conf) {
 		return true
 	}
 	return false
@@ -342,8 +354,9 @@ func runRegoEngine(
 }
 
 // attachSituation runs the situation facts module on pipeline with the same
-// Rego config the controls themselves see (buildEngineConfig over the
-// provider's ControlsConfig) and records the result on result.Situation.
+// Rego config the controls themselves see (buildEngineConfigForRun over the
+// provider's ControlsConfig and the run's provider facts) and records the
+// result on result.Situation.
 // EvaluateSituation never fails the run: on error result.Situation still
 // holds the empty, unknown-exposure value and the error is logged at Warn
 // and recorded as a warning on the result, never a fake verdict (I3).
@@ -354,7 +367,7 @@ func attachSituation(l *logrus.Entry, conf *configuration.Configuration, provide
 	controls := conf.PlumberConfig.ControlsFor(provider)
 	ctx, cancel := context.WithTimeout(context.Background(), opaEvaluateTimeout)
 	defer cancel()
-	sit, err := EvaluateSituation(ctx, pipeline, buildEngineConfig(controls))
+	sit, err := EvaluateSituation(ctx, pipeline, buildEngineConfigForRun(controls, provider, instanceURLFor(conf, provider)))
 	result.Situation = sit
 	if err != nil {
 		l.WithError(err).Warn("situation facts unavailable")
@@ -402,7 +415,7 @@ func evaluatePolicies(l *logrus.Entry, conf *configuration.Configuration, provid
 	controls := conf.PlumberConfig.ControlsFor(provider)
 	ctx, cancel := context.WithTimeout(context.Background(), opaEvaluateTimeout)
 	defer cancel()
-	findings, failed, err := engine.EvaluateModules(ctx, pipeline, buildEngineConfig(controls))
+	findings, failed, err := engine.EvaluateModules(ctx, pipeline, buildEngineConfigForRun(controls, provider, instanceURLFor(conf, provider)))
 	if err != nil {
 		// Nothing could run at all (nil pipeline, unbuildable input): the
 		// failure carries no controls, applyPolicyFailures records it as a
@@ -433,11 +446,17 @@ func evaluatePolicies(l *logrus.Entry, conf *configuration.Configuration, provid
 	return findings, failures
 }
 
-// buildEngineConfig projects the relevant bits of the user's .plumber.yaml
-// onto a Rego-friendly map. Policies read it as `input.config.<rule>.<key>`.
-// Only the sections consumed by already-ported policies are included;
-// additional entries land with each new policy.
-func buildEngineConfig(controls *configuration.ControlsConfig) map[string]any {
+// buildEngineConfigForRun projects the relevant bits of the user's
+// .plumber.yaml onto a Rego-friendly map. Policies read it as
+// `input.config.<rule>.<key>`. Only the sections consumed by already-ported
+// policies are included; additional entries land with each new policy.
+//
+// It also carries the run facts a rule needs that are not in the controls:
+// the provider and the instance URL the VCS host set is derived from (the
+// GitLab URL, or the GitHub API host; see instanceURLFor). It is the only production builder; the tests keep a
+// buildEngineConfig(controls) shorthand (engine_config_helpers_test.go)
+// for cases that only need controls.
+func buildEngineConfigForRun(controls *configuration.ControlsConfig, provider, instanceURL string) map[string]any {
 	if controls == nil {
 		return nil
 	}
@@ -707,10 +726,74 @@ func buildEngineConfig(controls *configuration.ControlsConfig) map[string]any {
 		}
 	}
 
+	if c := controls.PipelineMustNotSendSecretsToUntrustedHosts; c != nil && c.IsEnabled() {
+		trustVcs := true
+		if c.TrustVcsHosts != nil {
+			trustVcs = *c.TrustVcsHosts
+		}
+		trusted := c.TrustedHosts
+		if trusted == nil {
+			trusted = []string{}
+		}
+		cfg["secretEgress"] = map[string]any{
+			"trustVcsHosts": trustVcs,
+			"trustedHosts":  trusted,
+			"vcsHosts":      vcsHostsFor(provider, instanceURL),
+		}
+	}
+
 	if len(cfg) == 0 {
 		return nil
 	}
 	return cfg
+}
+
+// vcsHostsFor lists the hosts the secret-egress control may trust as "the
+// VCS itself". GitLab's are the instance host and its registry, derived
+// from the configured URL (GitLab's default layout). GitHub's are the fixed
+// public list, plus, on GitHub Enterprise Server (an instance host other
+// than github.com), that host and its subdomains.
+func vcsHostsFor(provider, instanceURL string) []string {
+	if provider == configuration.ProviderGitLab {
+		host := hostFromURL(instanceURL)
+		if host == "" {
+			return []string{}
+		}
+		return []string{host, "registry." + host}
+	}
+	hosts := []string{"github.com", "api.github.com", "uploads.github.com", "ghcr.io", "*.githubusercontent.com"}
+	trimmed := strings.TrimSpace(instanceURL)
+	if trimmed != "" && !strings.Contains(trimmed, "://") {
+		trimmed = "https://" + trimmed
+	}
+	switch host := hostFromURL(trimmed); host {
+	case "", "github.com", "api.github.com":
+		return hosts
+	default:
+		return append(hosts, host, "*."+host)
+	}
+}
+
+// instanceURLFor is the instance the run analyses, as the provider spells
+// it: conf.GitlabURL on GitLab, conf.GithubAPIHost on GitHub (empty for
+// github.com; a GHES host from --github-url, its env fallback or the git
+// remote, sometimes with an /api/v3 path).
+func instanceURLFor(conf *configuration.Configuration, provider string) string {
+	if provider == configuration.ProviderGitLab {
+		return conf.GitlabURL
+	}
+	return conf.GithubAPIHost
+}
+
+// hostFromURL returns the lower-case host of an instance base URL, or ""
+// when it cannot be parsed. A path (https://host/gitlab, host/api/v3) and a
+// port are dropped.
+func hostFromURL(instanceURL string) string {
+	u, err := url.Parse(strings.TrimSpace(instanceURL))
+	if err != nil || u.Host == "" {
+		return ""
+	}
+	return strings.ToLower(u.Hostname())
 }
 
 // toAnyGroups converts a [][]string (DNF requiredGroups) into a nested

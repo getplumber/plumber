@@ -248,6 +248,8 @@ func ApplyGitHubFindingCounts(stats *GitHubAnalysisStats, findings []opaengine.F
 		switch f.Code {
 		case string(CodeUnverifiedScriptExecution):
 			stats.UnverifiedScriptsFound++
+		case string(CodeSecretEgress):
+			stats.SecretEgressFound++
 		case string(CodeDangerousTriggers):
 			dangerousWorkflows[dangerousTriggerWorkflowKey(f)] = struct{}{}
 		}

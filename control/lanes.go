@@ -598,6 +598,7 @@ var snapshotLaneControls = map[string][]string{
 	platform.DegradedFieldVariables: {
 		"cicdVariablesMustBeProtected",
 		"cicdVariablesMustBeMasked",
+		"pipelineMustNotSendSecretsToUntrustedHosts",
 	},
 	platform.DegradedFieldProjectDetails:        {"mergeRequestSettingsMustBeCompliant"},
 	platform.DegradedFieldSecurityPolicyProject: {"projectMustHaveSecurityPolicySource"},

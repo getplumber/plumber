@@ -136,6 +136,18 @@ func StatusFor(e ControlEntry, result *AnalysisResult, findingCount int) string 
 		}
 		return StatusPassed
 	}
+	if e.ControlName == "pipelineMustNotSendSecretsToUntrustedHosts" && result.GitHubStats == nil {
+		// GitLab run (GitHubStats is always set on the GitHub path). The
+		// control reads the masked flags of the settings variables, so it is
+		// only as authoritative as that listing: nil (never collected) or
+		// Known=false (401/403, degraded lane) must not read as a pass. With
+		// the listing known it falls through to the ordinary pipeline-rule
+		// path below (an invalid CI file is still an error). On GitHub the
+		// control needs nothing collected and goes straight there.
+		if result.VariablesData == nil || !result.VariablesData.Known {
+			return StatusError
+		}
+	}
 	if e.ControlName == "cicdVariablesMustBeProtected" || e.ControlName == "cicdVariablesMustBeMasked" {
 		// Settings-variable controls are independent of the CI file: they
 		// evaluate the project's settings variables, not the pipeline, so

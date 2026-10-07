@@ -1041,3 +1041,28 @@ func TestMarkFailedCollections(t *testing.T) {
 		}
 	})
 }
+
+func TestSecretEgressJoinsTheVariablesLane(t *testing.T) {
+	entries := []ControlEntry{{ControlName: "pipelineMustNotSendSecretsToUntrustedHosts"}}
+	t.Run("degraded variables lane", func(t *testing.T) {
+		r := &AnalysisResult{}
+		r.MarkDegradedSnapshotLanes(entries, runWithDegraded(t, "2", platform.DegradedFieldVariables))
+		if r.NotEvaluable["pipelineMustNotSendSecretsToUntrustedHosts"] != ReasonSnapshotLaneDegraded {
+			t.Errorf("reason = %v, want %q", r.NotEvaluable, ReasonSnapshotLaneDegraded)
+		}
+	})
+	t.Run("uncollected standalone lane", func(t *testing.T) {
+		r := &AnalysisResult{}
+		MarkUncollectedLanes(r, entries, configuration.ProviderGitLab)
+		if got := r.NotEvaluable["pipelineMustNotSendSecretsToUntrustedHosts"]; got != ReasonLaneNotCollected {
+			t.Errorf("reason = %q, want %q", got, ReasonLaneNotCollected)
+		}
+	})
+	t.Run("github has no lane", func(t *testing.T) {
+		r := &AnalysisResult{}
+		MarkUncollectedLanes(r, entries, configuration.ProviderGitHub)
+		if _, marked := r.NotEvaluable["pipelineMustNotSendSecretsToUntrustedHosts"]; marked {
+			t.Errorf("GitHub must not mark a lane: %v", r.NotEvaluable)
+		}
+	})
+}

@@ -174,6 +174,18 @@ func TestGitLabCollectionGates_Row62_FireForAPolicyTheLocalConfigDisables(t *tes
 		}
 	})
 
+	t.Run("a collection config that enables only secret egress fires the variables gate", func(t *testing.T) {
+		egressOnly := allControls(off)
+		egressOnly.PipelineMustNotSendSecretsToUntrustedHosts = &configuration.SecretEgressControlConfig{Enabled: on}
+		conf := &configuration.Configuration{
+			PlumberConfig:     localDisablesAll,
+			CollectionConfigs: []*configuration.PlumberConfig{{GitLab: &configuration.ProviderConfig{Controls: egressOnly}}},
+		}
+		if !anyCollectionConfig(conf, cicdVariableControlEnabled) {
+			t.Fatal("expected the cicd variable gate to fire for a policy that enables only secret egress (ISSUE-311 reads the masked flags)")
+		}
+	})
+
 	t.Run("every config disabled leaves all three gates closed", func(t *testing.T) {
 		conf := &configuration.Configuration{
 			PlumberConfig: localDisablesAll,

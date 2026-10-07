@@ -168,3 +168,33 @@ func TestCodesForControl(t *testing.T) {
 		t.Errorf("unknown control should return no codes")
 	}
 }
+
+func TestStatusForSecretEgress(t *testing.T) {
+	e := ControlEntry{ControlName: "pipelineMustNotSendSecretsToUntrustedHosts"}
+	// GitLab (GitHubStats nil, StatusFor's provider idiom): the variables
+	// lane decides.
+	if got := StatusFor(e, &AnalysisResult{CiValid: true}, 0); got != StatusError {
+		t.Errorf("gitlab, no variables collection: %q, want %q", got, StatusError)
+	}
+	unknown := &AnalysisResult{CiValid: true, VariablesData: &gitlab.GitlabVariablesAnalysisData{Known: false}}
+	if got := StatusFor(e, unknown, 0); got != StatusError {
+		t.Errorf("gitlab, variables unknown: %q, want %q", got, StatusError)
+	}
+	known := &AnalysisResult{CiValid: true, VariablesData: &gitlab.GitlabVariablesAnalysisData{Known: true}}
+	if got := StatusFor(e, known, 0); got != StatusPassed {
+		t.Errorf("gitlab, variables known, no finding: %q, want %q", got, StatusPassed)
+	}
+	if got := StatusFor(e, known, 1); got != StatusFailed {
+		t.Errorf("gitlab, one finding: %q, want %q", got, StatusFailed)
+	}
+	// Still a pipeline rule: an invalid CI file is an error, as for every
+	// pipeline rule.
+	if got := StatusFor(e, &AnalysisResult{CiValid: false, VariablesData: &gitlab.GitlabVariablesAnalysisData{Known: true}}, 0); got != StatusError {
+		t.Errorf("gitlab, invalid CI file: %q, want %q", got, StatusError)
+	}
+	// GitHub: a plain pipeline rule, no lane.
+	gh := &AnalysisResult{CiValid: true, GitHubStats: &GitHubAnalysisStats{}}
+	if got := StatusFor(e, gh, 0); got != StatusPassed {
+		t.Errorf("github, no finding: %q, want %q", got, StatusPassed)
+	}
+}
