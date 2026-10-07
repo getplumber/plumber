@@ -24,6 +24,8 @@
     <td align="center"><a href="https://github.com/bunkerity/bunkerweb"><img src="https://avatars.githubusercontent.com/u/86405535?s=96" width="48" height="48" alt="Bunkerity"></a><br><sub><b>Bunkerity</b><br>&#9733; 11k</sub></td>
     <td align="center"><a href="https://github.com/Stellarium/stellarium"><img src="https://avatars.githubusercontent.com/u/7320160?s=96" width="48" height="48" alt="Stellarium"></a><br><sub><b>Stellarium</b><br>&#9733; 10k</sub></td>
     <td align="center"><a href="https://github.com/intuitem/ciso-assistant-community"><img src="https://avatars.githubusercontent.com/u/71849524?s=96" width="48" height="48" alt="intuitem"></a><br><sub><b>intuitem</b><br>&#9733; 4.4k</sub></td>
+    <td align="center"><a href="https://github.com/outscale"><img src="https://avatars.githubusercontent.com/u/8233735?s=96" width="48" height="48" alt="Outscale"></a><br><sub><b>Outscale</b><br>&#9733; &nbsp;</sub></td>
+    <td align="center"><a href="https://github.com/telstra"><img src="https://avatars.githubusercontent.com/u/3914896?s=96" width="48" height="48" alt="Telstra"></a><br><sub><b>Telstra</b><br>&#9733; &nbsp;</sub></td>
   </tr>
 </table>
 
