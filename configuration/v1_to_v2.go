@@ -83,6 +83,8 @@ func controlsConfigIsZero(c ControlsConfig) bool {
 		c.IncludesMustNotUseForbiddenVersions == nil &&
 		c.PipelineMustIncludeComponent == nil &&
 		c.PipelineMustIncludeTemplate == nil &&
+		c.ComponentMustComeFromAuthorizedSources == nil &&
+		c.FunctionMustComeFromAuthorizedSources == nil &&
 		c.PipelineMustNotEnableDebugTrace == nil &&
 		c.PipelineMustNotUseUnsafeVariableExpansion == nil &&
 		c.SecurityJobsMustNotBeWeakened == nil &&
@@ -115,6 +117,8 @@ func controlsConfigEqual(a, b ControlsConfig) bool {
 		a.IncludesMustNotUseForbiddenVersions == b.IncludesMustNotUseForbiddenVersions &&
 		a.PipelineMustIncludeComponent == b.PipelineMustIncludeComponent &&
 		a.PipelineMustIncludeTemplate == b.PipelineMustIncludeTemplate &&
+		a.ComponentMustComeFromAuthorizedSources == b.ComponentMustComeFromAuthorizedSources &&
+		a.FunctionMustComeFromAuthorizedSources == b.FunctionMustComeFromAuthorizedSources &&
 		a.PipelineMustNotEnableDebugTrace == b.PipelineMustNotEnableDebugTrace &&
 		a.PipelineMustNotUseUnsafeVariableExpansion == b.PipelineMustNotUseUnsafeVariableExpansion &&
 		a.SecurityJobsMustNotBeWeakened == b.SecurityJobsMustNotBeWeakened &&
