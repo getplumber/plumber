@@ -9,11 +9,13 @@
 #
 # A reference is trusted when it matches an explicit trustedFunctions
 # allowlist pattern, or (trustSameGroupFunctions, default true) the ref is
-# hosted on the scanned GitLab instance (instanceHost) and its path starts
-# with the project's own root namespace (top-level group) — a same-namespace
-# check that only looks at the path after an unvalidated host segment would
-# trust any registry that happens to name a top-level path after the
-# victim's namespace (ISSUE-415 hardening).
+# hosted on the scanned GitLab instance — its container registry host
+# (registryHost, the supported OCI form) or its web host (instanceHost, the
+# deprecated git form) — and its path starts with the project's own root
+# namespace (top-level group). A same-namespace check that only looks at
+# the path after an unvalidated host segment would trust any registry that
+# happens to name a top-level path after the victim's namespace (ISSUE-415
+# hardening).
 #
 # Allowlist patterns may themselves reference GitLab predefined CI/CD
 # variables (e.g. the shipped defaults `$CI_TEMPLATE_REGISTRY_HOST/
@@ -25,7 +27,9 @@
 # an attacker registry at runtime — _in_allowlist guards against this by
 # rejecting a pattern match if any `$CI_*` variable referenced by that
 # pattern is redefined in the pipeline's globalVariables/localGlobalVariables
-# (ISSUE-415 hardening).
+# or in the analyzed job's own `variables:` block (localVariables), since a
+# job-level definition overrides the predefined value for that job just the
+# same (ISSUE-415 hardening).
 #
 # "local" (relative/absolute filesystem path) references are same-repo
 # and out of scope entirely, mirroring how `include: local` is out of
@@ -40,7 +44,7 @@ deny contains finding if {
 	job := input.pipeline.jobs[i]
 	fn := job.functions[j]
 	fn.kind != "local"
-	not _is_authorized(fn)
+	not _is_authorized(fn, job)
 	finding := {
 		"code":     "ISSUE-415",
 		"severity": "high",
@@ -58,28 +62,29 @@ deny contains finding if {
 	}
 }
 
-_is_authorized(fn) if _in_allowlist(fn.ref)
+_is_authorized(fn, job) if _in_allowlist(fn.ref, job)
 
-_is_authorized(fn) if _is_same_group(fn.ref)
+_is_authorized(fn, _) if _is_same_group(fn.ref)
 
-_in_allowlist(ref) if {
+_in_allowlist(ref, job) if {
 	pattern := input.config.functionAuthorizedSources.trustedFunctions[_]
 	glob.match(_normalize_var(pattern), null, _normalize_var(ref))
-	not _pattern_redefined(pattern)
+	not _pattern_redefined(pattern, job)
 }
 
 # _pattern_redefined guards trustedFunctions patterns that reference
 # GitLab predefined CI/CD variables (e.g. $CI_PROJECT_PATH) — those
 # variables have the lowest precedence, so a pipeline that redefines one
-# in its own `variables:` block could make an otherwise-safe pattern
-# match text that resolves to an attacker-controlled source at runtime.
-# Every `/`-delimited segment of the pattern that starts with $CI is
-# checked independently; if ANY of those variables is redefined, the
-# pattern cannot authorize the ref (ISSUE-415 hardening).
-_pattern_redefined(pattern) if {
+# in its own `variables:` block (global or the analyzed job's) could make
+# an otherwise-safe pattern match text that resolves to an
+# attacker-controlled source at runtime. Every `/`-delimited segment of the
+# pattern that starts with $CI is checked independently; if ANY of those
+# variables is redefined, the pattern cannot authorize the ref (ISSUE-415
+# hardening).
+_pattern_redefined(pattern, job) if {
 	segment := split(_normalize_var(pattern), "/")[_]
 	startswith(segment, "$CI")
-	_pipeline_defines_var(_segment_var_name(segment))
+	_var_redefined(_segment_var_name(segment), job)
 }
 
 # _segment_var_name extracts the bare variable name (no $) from a
@@ -106,23 +111,42 @@ _is_same_group(ref) if {
 # dropped, let an attacker-controlled registry claim any path it wanted
 # (ISSUE-415 hardening).
 _matches_own_namespace(ref) if {
-	instanceHost := object.get(input.config.functionAuthorizedSources, "instanceHost", "")
-	instanceHost != ""
-	startswith(ref, sprintf("%s/", [instanceHost]))
+	_on_own_host(ref)
 	root := _root_namespace(object.get(input.pipeline, "projectPath", ""))
 	root != ""
 	path := _path_after_host(ref)
 	startswith(path, sprintf("%s/", [root]))
 }
 
-# _pipeline_defines_var reports whether the pipeline redefines a GitLab
-# predefined CI/CD variable itself — checked both against the merged
-# view (globalVariables) and the project-authored-only view
-# (localGlobalVariables), since either could shadow the predefined value
-# at runtime. Used by _pattern_redefined above.
-_pipeline_defines_var(name) if object.get(input.pipeline, "globalVariables", {})[name]
+# _on_own_host reports whether ref starts with one of the scanned
+# instance's hosts: its container registry host (registryHost), where GitLab
+# Function OCI references live, or its web host (instanceHost), used by the
+# deprecated git reference form.
+_on_own_host(ref) if {
+	host := object.get(input.config.functionAuthorizedSources, "registryHost", "")
+	host != ""
+	startswith(ref, sprintf("%s/", [host]))
+}
 
-_pipeline_defines_var(name) if object.get(input.pipeline, "localGlobalVariables", {})[name]
+_on_own_host(ref) if {
+	host := object.get(input.config.functionAuthorizedSources, "instanceHost", "")
+	host != ""
+	startswith(ref, sprintf("%s/", [host]))
+}
+
+# _var_redefined reports whether a GitLab predefined CI/CD variable is
+# redefined in a scope the function ref is resolved in: the pipeline's
+# global `variables:` — both the merged view (globalVariables) and the
+# project-authored-only view (localGlobalVariables) — or the analyzed
+# job's own `variables:` block, which takes precedence over both. The job
+# check reads the project-authored view (localVariables) rather than the
+# merged one, so a value a trusted upstream template legitimately sets does
+# not reject the pattern. Used by _pattern_redefined above.
+_var_redefined(name, _) if object.get(input.pipeline, "globalVariables", {})[name]
+
+_var_redefined(name, _) if object.get(input.pipeline, "localGlobalVariables", {})[name]
+
+_var_redefined(name, job) if object.get(job, "localVariables", {})[name]
 
 _root_namespace(projectPath) := parts[0] if {
 	projectPath != ""

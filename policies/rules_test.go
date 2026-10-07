@@ -2744,6 +2744,7 @@ func TestIssue415_FunctionAuthorizedSources(t *testing.T) {
 		fn            ir.Function
 		projectPath   string
 		globalVars    map[string]string
+		jobLocalVars  map[string]string
 		cfg           map[string]any
 		expectFinding bool
 	}{
@@ -2790,18 +2791,30 @@ func TestIssue415_FunctionAuthorizedSources(t *testing.T) {
 		},
 		{
 			// Same-group trust requires both the host AND the path to
-			// match — not the path alone.
+			// match — not the path alone. The OCI form lives on the
+			// registry host, not the web host, so it is registryHost that
+			// anchors it (the values buildEngineConfig projects on
+			// gitlab.com).
 			name:          "same_group_host_and_path_match_trusted",
 			fn:            ir.Function{Name: "say_hi", Ref: "registry.gitlab.com/my-group/my-project/echo:1", Kind: "oci"},
 			projectPath:   "my-group/my-project",
-			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true, "instanceHost": "registry.gitlab.com"}},
+			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true, "instanceHost": "gitlab.com", "registryHost": "registry.gitlab.com"}},
 			expectFinding: false,
+		},
+		{
+			// Without registryHost the web host alone cannot anchor an
+			// OCI ref: registryHost is what grants the trust above.
+			name:          "same_group_oci_ref_without_registry_host_untrusted",
+			fn:            ir.Function{Name: "say_hi", Ref: "registry.gitlab.com/my-group/my-project/echo:1", Kind: "oci"},
+			projectPath:   "my-group/my-project",
+			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true, "instanceHost": "gitlab.com"}},
+			expectFinding: true,
 		},
 		{
 			name:          "different_root_namespace_untrusted",
 			fn:            ir.Function{Name: "say_hi", Ref: "registry.gitlab.com/other-group/x/echo:1", Kind: "oci"},
 			projectPath:   "my-group/my-project",
-			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true, "instanceHost": "registry.gitlab.com"}},
+			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true, "instanceHost": "gitlab.com", "registryHost": "registry.gitlab.com"}},
 			expectFinding: true,
 		},
 		{
@@ -2812,7 +2825,7 @@ func TestIssue415_FunctionAuthorizedSources(t *testing.T) {
 			name:          "same_group_different_host_untrusted",
 			fn:            ir.Function{Name: "say_hi", Ref: "registry.evil.example/my-group/whatever:1", Kind: "oci"},
 			projectPath:   "my-group/my-project",
-			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true, "instanceHost": "gitlab.example.com"}},
+			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true, "instanceHost": "gitlab.example.com", "registryHost": "registry.gitlab.example.com"}},
 			expectFinding: true,
 		},
 		{
@@ -2856,6 +2869,19 @@ func TestIssue415_FunctionAuthorizedSources(t *testing.T) {
 			expectFinding: true,
 		},
 		{
+			// Same shadow as above, one scope down: a job-level
+			// `variables:` entry overrides the predefined value for that
+			// job, so the pattern must not authorize the ref either.
+			name:         "trusted_functions_pattern_untrusted_when_ci_var_redefined_on_job",
+			fn:           ir.Function{Name: "pwn", Ref: "$CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/backdoor:1", Kind: "oci"},
+			jobLocalVars: map[string]string{"CI_TEMPLATE_REGISTRY_HOST": "registry.evil.example"},
+			cfg: map[string]any{"functionAuthorizedSources": map[string]any{
+				"trustSameGroupFunctions": true,
+				"trustedFunctions":        []string{"$CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/*"},
+			}},
+			expectFinding: true,
+		},
+		{
 			// The redefinition guard is generic — it isn't hardcoded to
 			// CI_TEMPLATE_REGISTRY_HOST/CI_PROJECT_PATH. A custom pattern
 			// referencing any other $CI_* variable must also be rejected
@@ -2890,7 +2916,7 @@ func TestIssue415_FunctionAuthorizedSources(t *testing.T) {
 				Provider:        ir.ProviderGitLab,
 				ProjectPath:     tc.projectPath,
 				GlobalVariables: tc.globalVars,
-				Jobs:            []ir.Job{{Name: "build", Functions: []ir.Function{tc.fn}}},
+				Jobs:            []ir.Job{{Name: "build", LocalVariables: tc.jobLocalVars, Functions: []ir.Function{tc.fn}}},
 			}
 			findings, err := evaluateStrict(engine, context.Background(), pipeline, tc.cfg)
 			if err != nil {

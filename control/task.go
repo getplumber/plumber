@@ -702,8 +702,10 @@ func buildEngineConfig(controls *configuration.ControlsConfig, gitlabURL string)
 	}
 
 	// functionAuthorizedSources: same dynamic same-namespace model as
-	// componentAuthorizedSources — same-group trust is host-bound via
-	// instanceHost for a literal same-instance ref.
+	// componentAuthorizedSources — same-group trust is host-bound. A ref
+	// may name the instance's web host (deprecated git form) or its
+	// container registry host (OCI form, the supported one), so both are
+	// projected.
 	if c := controls.FunctionMustComeFromAuthorizedSources; c != nil && c.IsEnabled() {
 		trustSameGroup := true
 		if c.TrustSameGroupFunctions != nil {
@@ -712,6 +714,7 @@ func buildEngineConfig(controls *configuration.ControlsConfig, gitlabURL string)
 		entry := map[string]any{
 			"trustSameGroupFunctions": trustSameGroup,
 			"instanceHost":            gitlabInstanceHost(gitlabURL),
+			"registryHost":            gitlabRegistryHost(gitlabURL),
 		}
 		if len(c.TrustedFunctions) > 0 {
 			entry["trustedFunctions"] = c.TrustedFunctions
@@ -789,6 +792,33 @@ func gitlabInstanceHost(gitlabURL string) string {
 		host = host[i+3:]
 	}
 	return strings.TrimSuffix(host, "/")
+}
+
+// gitlabRegistryHost returns the container registry host of the GitLab
+// instance at gitlabURL, the host GitLab Function OCI references live on
+// (e.g. registry.gitlab.com). Inside a pipeline of that same instance the
+// real value is read from CI_TEMPLATE_REGISTRY_HOST, falling back to
+// CI_REGISTRY. The environment is only trusted when CI_SERVER_HOST names
+// the scanned instance: a Plumber job running on one instance while
+// scanning another would otherwise anchor trust on the wrong registry.
+// Anywhere else it is derived as registry.<instance host>, GitLab's
+// default layout and the gitlab.com one.
+func gitlabRegistryHost(gitlabURL string) string {
+	instanceHost := gitlabInstanceHost(gitlabURL)
+	if instanceHost == "" {
+		return ""
+	}
+	if gitlab.IsRunningInCI() {
+		serverHost := os.Getenv("CI_SERVER_HOST")
+		if serverHost == "" || serverHost == instanceHost {
+			for _, name := range []string{"CI_TEMPLATE_REGISTRY_HOST", "CI_REGISTRY"} {
+				if v := strings.TrimSuffix(strings.TrimSpace(os.Getenv(name)), "/"); v != "" {
+					return v
+				}
+			}
+		}
+	}
+	return "registry." + instanceHost
 }
 
 // isGitlabSaaS reports whether gitlabURL points at gitlab.com, the
