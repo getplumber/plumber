@@ -1,0 +1,7 @@
+name: clean_ipv6_loopback
+on: push
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -d 'k=${{ secrets.KEY }}' http://[::1]:8080/

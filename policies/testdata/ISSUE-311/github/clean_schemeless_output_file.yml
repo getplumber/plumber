@@ -1,0 +1,9 @@
+name: clean_schemeless_output_file
+on: push
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/x -o out.txt
+          curl -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" -d @payload.json https://api.github.com/y

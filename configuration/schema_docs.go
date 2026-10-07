@@ -220,6 +220,16 @@ var controlFieldDocs = map[string]FieldDoc{
 	"pipelineMustNotExecuteUnverifiedScripts.trustedUrls": {
 		Description: "List of URL patterns that should not trigger findings; supports wildcards.",
 	},
+	"pipelineMustNotSendSecretsToUntrustedHosts.enabled": {
+		Description: "Turns the control on; when false or absent the control is skipped.",
+	},
+	"pipelineMustNotSendSecretsToUntrustedHosts.trustVcsHosts": {
+		Description: "Trusts the VCS itself as a destination (github.com, api.github.com, uploads.github.com, ghcr.io, *.githubusercontent.com on GitHub, plus the instance host and its subdomains on GitHub Enterprise Server; the instance host and its registry on GitLab). Unset means true.",
+		Toggle:      true,
+	},
+	"pipelineMustNotSendSecretsToUntrustedHosts.trustedHosts": {
+		Description: "host[:port] glob patterns that may receive secrets, for example *.internal.example.com or 10.*. A glob without a port does not cover the same host with a port: add host:* for that. A pattern whose first label is numeric (10.*) matches IP literals only. A bare IP is trusted only through this list.",
+	},
 	"pipelineMustNotOverrideJobVariables.enabled": {
 		Description: "Turns the control on; when false or absent the control is skipped.",
 	},

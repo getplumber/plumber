@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/open-policy-agent/opa/v1/rego"
 	"gopkg.in/yaml.v2"
 
 	"github.com/getplumber/plumber/finding/identity"
@@ -6975,5 +6976,640 @@ func TestUnresolvedImageGuardAbstains(t *testing.T) {
 		if got := countCode(resolvedFindings, code); got == 0 {
 			t.Errorf("%s did not fire on the identical RESOLVED violation: the guard must never shield a literal reference", code)
 		}
+	}
+}
+
+// ISSUE-311 on GitLab: a secret is a masked settings variable or a predefined
+// token; the fixtures carry the scripts, the masked set is injected here the
+// way the variables lane would deliver it (settingsVariablesKnown true).
+func TestIssue311_SecretEgress_GitLab(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	cfg := map[string]any{
+		"secretEgress": map[string]any{
+			"trustVcsHosts": true,
+			"trustedHosts":  []string{},
+			"vcsHosts":      []string{"gitlab.example.com", "registry.gitlab.example.com"},
+		},
+	}
+	masked := []ir.SettingsVariable{
+		{Name: "DEPLOY_TOKEN", Type: "env_var", Environment: "*", Protected: true, Masked: true},
+		{Name: "CHANNEL_NAME", Type: "env_var", Environment: "*", Protected: false, Masked: false},
+	}
+	cases := []struct {
+		file     string
+		wantJobs []string
+		wantDest string
+		wantSecs []string
+	}{
+		{"violation_masked_to_ip.gitlab-ci.yml", []string{"exfil"}, "193.32.204.199", []string{"DEPLOY_TOKEN"}},
+		{"violation_job_token_to_host.gitlab-ci.yml", []string{"leak"}, "collector.evil.example", []string{"CI_JOB_TOKEN"}},
+		{"violation_two_lines_same_host.gitlab-ci.yml", []string{"exfil"}, "collector.evil.example", []string{"CI_JOB_TOKEN", "DEPLOY_TOKEN"}},
+		// Every predefined token is a secret on its own, without a masked
+		// settings variable of that name.
+		{"violation_predefined_tokens.gitlab-ci.yml", []string{"deploy", "proxy", "registry"}, "", nil},
+		// A $(...) or backtick substitution is its own command: a secret
+		// outside it never reaches a client inside it; a secret inside it
+		// reaches the client around it.
+		{"clean_secret_outside_substitution.gitlab-ci.yml", nil, "", nil},
+		// A client by path, escaped or quoted at command position is a
+		// client; a word that merely ends in a client name is not.
+		{"violation_client_by_path.gitlab-ci.yml", []string{"abs", "escaped", "rel", "winpath"}, "193.32.204.199", []string{"DEPLOY_TOKEN"}},
+		{"violation_quoted_client.gitlab-ci.yml", []string{"exfil"}, "evil.example", []string{"DEPLOY_TOKEN"}},
+		{"clean_path_not_client.gitlab-ci.yml", nil, "", nil},
+		// A URL ending in a client word is not a client called by path.
+		{"clean_url_ending_in_client_word.gitlab-ci.yml", nil, "", nil},
+		{"violation_secret_inside_substitution.gitlab-ci.yml", []string{"exfil"}, "evil.example", []string{"DEPLOY_TOKEN"}},
+		{"violation_substitution_in_outer_call.gitlab-ci.yml", []string{"exfil"}, "evil.example", []string{"DEPLOY_TOKEN"}},
+		{"violation_quoted_substitution.gitlab-ci.yml", []string{"exfil", "exfil"}, "", nil},
+		// git: a secret counts only in the URL userinfo or an extraheader.
+		{"violation_git_userinfo.gitlab-ci.yml", []string{"bypath", "mirror", "mirror"}, "", nil},
+		{"clean_git_to_vcs.gitlab-ci.yml", nil, "", nil},
+		{"clean_git_secret_elsewhere.gitlab-ci.yml", nil, "", nil},
+		{"clean_masked_to_api.gitlab-ci.yml", nil, "", nil},
+		{"clean_unmasked_variable.gitlab-ci.yml", nil, "", nil},
+		{"clean_secret_without_client.gitlab-ci.yml", nil, "", nil},
+		{"clean_client_without_secret.gitlab-ci.yml", nil, "", nil},
+		{"clean_variable_destination.gitlab-ci.yml", nil, "", nil},
+		// A version number in the path of a trusted host is not an IP destination.
+		{"clean_version_in_path_on_vcs_registry.gitlab-ci.yml", nil, "", nil},
+		// Userinfo is not the host: the token rides to the host after the @.
+		{"violation_secret_in_userinfo.gitlab-ci.yml", []string{"leak"}, "collector.evil.example", []string{"CI_JOB_TOKEN"}},
+		{"clean_secret_in_userinfo_to_vcs.gitlab-ci.yml", nil, "", nil},
+		// A URL in a trailing shell comment sends nothing.
+		{"clean_trailing_comment_url.gitlab-ci.yml", nil, "", nil},
+		// A services: alias (single label, no dot) is the job's own container.
+		{"clean_service_alias.gitlab-ci.yml", nil, "", nil},
+		{"violation_service_alias_and_remote.gitlab-ci.yml", []string{"dind"}, "evil.example", []string{"CI_JOB_TOKEN"}},
+		// A schemeless host: the first positional argument of a client, or a
+		// dotted host carrying a path or a port. A dotted file name is not.
+		{"violation_schemeless_curl.gitlab-ci.yml", []string{"exfil"}, "exfil.evil.example", []string{"DEPLOY_TOKEN"}},
+		{"violation_netcat_hostname.gitlab-ci.yml", []string{"exfil"}, "exfil.evil.example", []string{"DEPLOY_TOKEN"}},
+		{"clean_schemeless_output_file.gitlab-ci.yml", nil, "", nil},
+		// One finding per destination, each naming only its own secret.
+		{"violation_two_distinct_hosts.gitlab-ci.yml", []string{"exfil", "exfil"}, "", nil},
+		// A line that is a shell comment sends nothing, whole item or block line.
+		{"clean_commented_out_line.gitlab-ci.yml", nil, "", nil},
+		// A comment ends at the newline: a trailing backslash on a # line
+		// does not swallow the live command under it.
+		{"violation_comment_then_continuation.gitlab-ci.yml", []string{"exfil"}, "evil.example", []string{"DEPLOY_TOKEN"}},
+		// The first positional argument skips flags, a flag's numeric value
+		// and httpie's method word.
+		{"violation_positional_after_flags.gitlab-ci.yml", []string{"exfil", "exfil", "exfil", "exfil"}, "", nil},
+		// A value-taking flag's value is never the positional host, and the
+		// positional host is read only when the line has no URL or IP.
+		{"clean_output_flag_first.gitlab-ci.yml", nil, "", nil},
+		{"clean_output_flag_no_url.gitlab-ci.yml", nil, "", nil},
+		{"violation_positional_after_value_flag.gitlab-ci.yml", []string{"exfil"}, "evil.example", []string{"DEPLOY_TOKEN"}},
+		// A flag is assumed to take a value unless the client's value-less
+		// list names it (bundles such as -sSfL included).
+		{"clean_unknown_value_flag.gitlab-ci.yml", nil, "", nil},
+		{"violation_positional_after_valueless_flags.gitlab-ci.yml", []string{"exfil", "exfil"}, "", nil},
+		// The value of curl --url and PowerShell -Uri is the destination;
+		// httpie has its own value-less flags.
+		{"violation_url_flag_host.gitlab-ci.yml", []string{"exfil", "exfil"}, "", nil},
+		{"violation_httpie_flag_then_host.gitlab-ci.yml", []string{"exfil"}, "evil.example", []string{"DEPLOY_TOKEN"}},
+		// The secret binds to the command that names the destination: a
+		// fetch joined by && to a secret-bearing command sends nothing, a
+		// secret piped into the client is sent.
+		{"clean_fetch_then_publish.gitlab-ci.yml", nil, "", nil},
+		{"violation_fetch_then_exfil.gitlab-ci.yml", []string{"exfil"}, "evil.example", []string{"DEPLOY_TOKEN"}},
+		{"violation_pipe_exfil.gitlab-ci.yml", []string{"exfil"}, "evil.example", []string{"DEPLOY_TOKEN"}},
+		// A host inside a flag's value (a proxy, a --resolve map, a header)
+		// is not a destination; a URL after an unknown flag still is.
+		{"clean_side_argument_hosts.gitlab-ci.yml", nil, "", nil},
+		{"violation_proxy_then_untrusted.gitlab-ci.yml", []string{"exfil"}, "evil.example", []string{"DEPLOY_TOKEN"}},
+		{"violation_resolve_then_untrusted.gitlab-ci.yml", []string{"exfil"}, "evil.example", []string{"DEPLOY_TOKEN"}},
+		{"violation_unknown_flag_before_url.gitlab-ci.yml", []string{"exfil"}, "evil.example", []string{"DEPLOY_TOKEN"}},
+		// A bare IP after an unknown boolean flag is still a destination.
+		{"violation_ip_after_unknown_flag.gitlab-ci.yml", []string{"http11", "trenc"}, "", nil},
+		// curl.exe is curl (Windows runners).
+		{"violation_curl_exe.gitlab-ci.yml", []string{"exfil"}, "193.32.204.199", []string{"DEPLOY_TOKEN"}},
+		// A bracketed IPv6 literal is a destination; [::1] stays on the runner.
+		{"violation_ipv6_literal.gitlab-ci.yml", []string{"exfil"}, "[2606:4700:4700::1111]", []string{"DEPLOY_TOKEN"}},
+		{"clean_ipv6_loopback.gitlab-ci.yml", nil, "", nil},
+	}
+	// Fan-out cases: the expected secretNames per destination, when a job
+	// yields more than one finding.
+	perDest := map[string]map[string][]string{
+		"violation_quoted_substitution.gitlab-ci.yml": {
+			"quoted.evil.example": {"DEPLOY_TOKEN"},
+			"fed.evil.example":    {"DEPLOY_TOKEN"},
+		},
+		"violation_git_userinfo.gitlab-ci.yml": {
+			"evil.example":        {"CI_JOB_TOKEN"},
+			"mirror.evil.example": {"DEPLOY_TOKEN"},
+			"path.evil.example":   {"DEPLOY_TOKEN"},
+		},
+		"violation_predefined_tokens.gitlab-ci.yml": {
+			"registry.evil.example": {"CI_REGISTRY_PASSWORD"},
+			"deploy.evil.example":   {"CI_DEPLOY_PASSWORD"},
+			"proxy.evil.example":    {"CI_DEPENDENCY_PROXY_PASSWORD"},
+		},
+		"violation_ip_after_unknown_flag.gitlab-ci.yml": {
+			"193.32.204.199": {"DEPLOY_TOKEN"},
+			"1.2.3.4":        {"DEPLOY_TOKEN"},
+		},
+		"violation_two_distinct_hosts.gitlab-ci.yml": {
+			"evil-a.example": {"DEPLOY_TOKEN"},
+			"evil-b.example": {"CI_JOB_TOKEN"},
+		},
+		"violation_url_flag_host.gitlab-ci.yml": {
+			"url.evil.example": {"DEPLOY_TOKEN"},
+			"uri.evil.example": {"DEPLOY_TOKEN"},
+		},
+		"violation_positional_after_valueless_flags.gitlab-ci.yml": {
+			"curl.evil.example": {"DEPLOY_TOKEN"},
+			"wget.evil.example": {"DEPLOY_TOKEN"},
+		},
+		"violation_positional_after_flags.gitlab-ci.yml": {
+			"flag.evil.example":   {"DEPLOY_TOKEN"},
+			"nc.evil.example":     {"DEPLOY_TOKEN"},
+			"wait.evil.example":   {"DEPLOY_TOKEN"},
+			"httpie.evil.example": {"DEPLOY_TOKEN"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.file, func(t *testing.T) {
+			data, err := os.ReadFile(filepath.Join("testdata", "ISSUE-311", "gitlab", c.file))
+			if err != nil {
+				t.Fatalf("read fixture: %v", err)
+			}
+			pipeline := parseGitLabCI(t, data)
+			pipeline.SettingsVariables = masked
+			pipeline.SettingsVariablesKnown = true
+			findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
+			if err != nil {
+				t.Fatalf("evaluate: %v", err)
+			}
+			var hits []opaengine.Finding
+			for _, f := range findings {
+				if f.Code == "ISSUE-311" {
+					hits = append(hits, f)
+				}
+			}
+			if len(hits) != len(c.wantJobs) {
+				t.Fatalf("ISSUE-311 findings = %d, want %d: %+v", len(hits), len(c.wantJobs), hits)
+			}
+			if len(hits) > 0 {
+				want, ok := perDest[c.file]
+				if !ok {
+					want = map[string][]string{c.wantDest: c.wantSecs}
+				}
+				got := map[string]string{}
+				for i, f := range hits {
+					if f.Job != c.wantJobs[i] {
+						t.Fatalf("finding %d job = %q, want %q", i, f.Job, c.wantJobs[i])
+					}
+					got[fmt.Sprint(f.Data["destination"])] = fmt.Sprint(f.Data["secretNames"])
+				}
+				if len(got) != len(want) {
+					t.Fatalf("destinations = %v, want %v", got, want)
+				}
+				for dest, secs := range want {
+					if got[dest] != fmt.Sprint(secs) {
+						t.Fatalf("destination %q secretNames = %q, want %v (all: %v)", dest, got[dest], secs, got)
+					}
+				}
+			}
+			// The destination host is the identity coordinate: declared, and
+			// carried by the finding with the host it was sent to.
+			if c.file == "violation_masked_to_ip.gitlab-ci.yml" {
+				assertSubjectKey(t, findings, "ISSUE-311", "destination", []string{"193.32.204.199"})
+			}
+		})
+	}
+}
+
+// The lane guard: without settingsVariablesKnown the rule says nothing on
+// GitLab, whatever the scripts contain (StatusFor turns that into
+// not_evaluable, Task 3).
+func TestIssue311_SecretEgress_GitLab_UnknownVariablesAbstain(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join("testdata", "ISSUE-311", "gitlab", "violation_job_token_to_host.gitlab-ci.yml"))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	pipeline := parseGitLabCI(t, data)
+	pipeline.SettingsVariablesKnown = false
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, map[string]any{
+		"secretEgress": map[string]any{"trustVcsHosts": true, "trustedHosts": []string{}, "vcsHosts": []string{"gitlab.example.com"}},
+	})
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	if got := countCode(findings, "ISSUE-311"); got != 0 {
+		t.Fatalf("unknown variables must abstain even for CI_JOB_TOKEN, got %d findings", got)
+	}
+}
+
+// ISSUE-311 on GitHub. Job names are namespaced by the workflow file stem.
+func TestIssue311_SecretEgress_GitHub(t *testing.T) {
+	cfg := map[string]any{
+		"secretEgress": map[string]any{
+			"trustVcsHosts": true,
+			"trustedHosts":  []string{},
+			"vcsHosts":      []string{"github.com", "api.github.com", "uploads.github.com", "ghcr.io", "*.githubusercontent.com"},
+		},
+	}
+	runGitHubFixtureCasesWithConfig(t, "ISSUE-311", []struct {
+		fixture      string
+		expectedHits []string
+	}{
+		{"violation_ghostaction.yml", []string{"violation_ghostaction/send-secrets"}},
+		{"violation_step_env_binding.yml", []string{"violation_step_env_binding/deploy"}},
+		{"violation_job_env_binding_powershell.yml", []string{"violation_job_env_binding_powershell/win"}},
+		{"violation_ip_with_port_and_trusted_decoy.yml", []string{"violation_ip_with_port_and_trusted_decoy/decoy"}},
+		{"clean_github_token_to_api.yml", nil},
+		{"clean_variable_destination.yml", nil},
+		{"clean_client_without_secret.yml", nil},
+		{"clean_version_in_path_on_trusted_host.yml", nil},
+		{"violation_secret_in_userinfo.yml", []string{"violation_secret_in_userinfo/push"}},
+		{"clean_secret_in_userinfo_to_vcs.yml", nil},
+		{"violation_line_continuation.yml", []string{"violation_line_continuation/send"}},
+		{"clean_vcs_host_with_port.yml", nil},
+		// A URL in a trailing shell comment sends nothing; the URL before it still counts.
+		{"clean_trailing_comment_url.yml", nil},
+		{"violation_untrusted_before_comment.yml", []string{"violation_untrusted_before_comment/call"}},
+		// Loopback stays on the runner (QUESTIONS row 425); a remote host on the same job still fires.
+		{"clean_loopback_service.yml", nil},
+		{"violation_loopback_and_remote.yml", []string{"violation_loopback_and_remote/test"}},
+		// Userinfo runs to the last @ before the path.
+		{"violation_userinfo_with_at_vcs_decoy.yml", []string{"violation_userinfo_with_at_vcs_decoy/push"}},
+		{"violation_userinfo_password_with_at.yml", []string{"violation_userinfo_password_with_at/push"}},
+		{"violation_backtick_substitution.yml", []string{"violation_backtick_substitution/send"}},
+		{"violation_env_context_reference.yml", []string{"violation_env_context_reference/send"}},
+		{"violation_powershell_env_case.yml", []string{"violation_powershell_env_case/win"}},
+		// A schemeless host: the first positional argument of a client, or a
+		// dotted host carrying a path or a port. A dotted file name is not.
+		{"violation_schemeless_curl.yml", []string{"violation_schemeless_curl/send"}},
+		{"violation_netcat_hostname.yml", []string{"violation_netcat_hostname/send"}},
+		{"clean_schemeless_output_file.yml", nil},
+		// One finding per destination.
+		{"violation_two_distinct_hosts.yml", []string{"violation_two_distinct_hosts/send", "violation_two_distinct_hosts/send"}},
+		// A line that is a shell comment sends nothing.
+		{"clean_commented_out_line.yml", nil},
+		// A comment ends at the newline: its trailing backslash does not
+		// swallow the live command under it.
+		{"violation_comment_then_continuation.yml", []string{"violation_comment_then_continuation/send"}},
+		// The first positional argument skips flags, a flag's numeric value
+		// and httpie's method word.
+		{"violation_positional_after_flags.yml", []string{"violation_positional_after_flags/send", "violation_positional_after_flags/send", "violation_positional_after_flags/send", "violation_positional_after_flags/send"}},
+		// A value-taking flag's value is never the positional host, and the
+		// positional host is read only when the line has no URL or IP.
+		{"clean_output_flag_first.yml", nil},
+		{"clean_output_flag_no_url.yml", nil},
+		{"violation_positional_after_value_flag.yml", []string{"violation_positional_after_value_flag/send"}},
+		// A flag is assumed to take a value unless the client's value-less
+		// list names it (bundles such as -sSfL included).
+		{"clean_unknown_value_flag.yml", nil},
+		{"violation_positional_after_valueless_flags.yml", []string{"violation_positional_after_valueless_flags/send", "violation_positional_after_valueless_flags/send"}},
+		// The value of curl --url and PowerShell -Uri is the destination;
+		// httpie has its own value-less flags.
+		{"violation_url_flag_host.yml", []string{"violation_url_flag_host/send", "violation_url_flag_host/send"}},
+		{"violation_httpie_flag_then_host.yml", []string{"violation_httpie_flag_then_host/send"}},
+		// The secret binds to the command that names the destination: a
+		// fetch joined by && to a secret-bearing command sends nothing, a
+		// secret piped into the client is sent.
+		{"clean_fetch_then_publish.yml", nil},
+		{"violation_fetch_then_exfil.yml", []string{"violation_fetch_then_exfil/send"}},
+		{"violation_pipe_exfil.yml", []string{"violation_pipe_exfil/send"}},
+		// A host inside a flag's value (a proxy, a --resolve map, a header)
+		// is not a destination; a URL after an unknown flag still is.
+		{"clean_side_argument_hosts.yml", nil},
+		{"violation_proxy_then_untrusted.yml", []string{"violation_proxy_then_untrusted/send"}},
+		{"violation_resolve_then_untrusted.yml", []string{"violation_resolve_then_untrusted/send"}},
+		{"violation_unknown_flag_before_url.yml", []string{"violation_unknown_flag_before_url/send"}},
+		// A bare IP after an unknown boolean flag is still a destination.
+		{"violation_ip_after_unknown_flag.yml", []string{"violation_ip_after_unknown_flag/http11", "violation_ip_after_unknown_flag/trenc"}},
+		// A $(...) or backtick substitution is its own command: a secret
+		// outside it never reaches a client inside it; a secret inside it
+		// reaches the client around it.
+		{"clean_secret_outside_substitution.yml", nil},
+		// A client by path, escaped or quoted at command position is a
+		// client; a word that merely ends in a client name is not.
+		{"violation_client_by_path.yml", []string{"violation_client_by_path/abs", "violation_client_by_path/escaped", "violation_client_by_path/rel", "violation_client_by_path/winpath"}},
+		{"violation_quoted_client.yml", []string{"violation_quoted_client/send"}},
+		{"clean_path_not_client.yml", nil},
+		// A URL ending in a client word is not a client called by path.
+		{"clean_url_ending_in_client_word.yml", nil},
+		{"violation_secret_inside_substitution.yml", []string{"violation_secret_inside_substitution/send"}},
+		{"violation_substitution_in_outer_call.yml", []string{"violation_substitution_in_outer_call/send"}},
+		{"violation_quoted_substitution.yml", []string{"violation_quoted_substitution/send", "violation_quoted_substitution/send"}},
+		// git: a secret counts only in the URL userinfo or an extraheader.
+		{"violation_git_userinfo.yml", []string{"violation_git_userinfo/bypath", "violation_git_userinfo/mirror", "violation_git_userinfo/mirror"}},
+		{"clean_git_to_vcs.yml", nil},
+		{"clean_git_secret_elsewhere.yml", nil},
+		// curl.exe is curl (Windows runners).
+		{"violation_curl_exe.yml", []string{"violation_curl_exe/exfil"}},
+		{"clean_exe_without_secret.yml", nil},
+		// A bracketed IPv6 literal is a destination; [::1] stays on the runner.
+		{"violation_ipv6_literal.yml", []string{"violation_ipv6_literal/send"}},
+		{"clean_ipv6_loopback.yml", nil},
+		// A GHES host is not on the public list: it fires unless the run's
+		// instance host is projected (TrustKnobs).
+		{"clean_ghes_own_instance.yml", []string{"clean_ghes_own_instance/comment"}},
+	}, cfg)
+}
+
+// The finding data on GitHub: destination host (the identity coordinate)
+// and the secret names, for the campaign shape, a host:port IP, a secret
+// carried in the URL userinfo and a backslash-continued command.
+func TestIssue311_SecretEgress_GitHub_FindingData(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	cfg := map[string]any{"secretEgress": map[string]any{
+		"trustVcsHosts": true, "trustedHosts": []string{},
+		"vcsHosts": []string{"github.com", "api.github.com", "uploads.github.com", "ghcr.io", "*.githubusercontent.com"},
+	}}
+	cases := []struct {
+		fixture  string
+		wantDest string
+		wantSecs []string
+	}{
+		{"violation_schemeless_curl.yml", "exfil.evil.example", []string{"DEPLOY_TOKEN"}},
+		{"violation_netcat_hostname.yml", "exfil.evil.example", []string{"K"}},
+		{"violation_ipv6_literal.yml", "[2606:4700:4700::1111]", []string{"DEPLOY_TOKEN"}},
+		// Fan-out: perDest below holds the destination and secret pairs.
+		{"violation_two_distinct_hosts.yml", "", nil},
+		{"violation_positional_after_flags.yml", "", nil},
+		{"violation_comment_then_continuation.yml", "evil.example", []string{"K"}},
+		{"violation_positional_after_value_flag.yml", "evil.example", []string{"K"}},
+		{"violation_positional_after_valueless_flags.yml", "", nil},
+		{"violation_url_flag_host.yml", "", nil},
+		{"violation_httpie_flag_then_host.yml", "evil.example", []string{"K"}},
+		{"violation_fetch_then_exfil.yml", "evil.example", []string{"K"}},
+		{"violation_pipe_exfil.yml", "evil.example", []string{"K"}},
+		{"violation_proxy_then_untrusted.yml", "evil.example", []string{"K"}},
+		{"violation_resolve_then_untrusted.yml", "evil.example", []string{"K"}},
+		{"violation_unknown_flag_before_url.yml", "evil.example", []string{"K"}},
+		{"violation_ip_after_unknown_flag.yml", "", nil},
+		{"violation_secret_inside_substitution.yml", "evil.example", []string{"K"}},
+		{"violation_quoted_client.yml", "evil.example", []string{"K"}},
+		{"violation_substitution_in_outer_call.yml", "evil.example", []string{"K"}},
+		{"violation_quoted_substitution.yml", "", nil},
+		{"violation_git_userinfo.yml", "", nil},
+		{"violation_curl_exe.yml", "193.32.204.199", []string{"DEPLOY_TOKEN"}},
+		{"violation_ghostaction.yml", "193.32.204.199", []string{"VPS_HOST", "VPS_SSH_KEY", "VPS_USER"}},
+		{"violation_ip_with_port_and_trusted_decoy.yml", "10.9.8.7:8080", []string{"KEY"}},
+		{"violation_secret_in_userinfo.yml", "collector.evil.example", []string{"K"}},
+		{"violation_line_continuation.yml", "evil.example", []string{"TOKEN"}},
+		{"violation_untrusted_before_comment.yml", "collector.evil.example", []string{"K"}},
+		{"violation_loopback_and_remote.yml", "evil.example", []string{"K"}},
+		{"violation_userinfo_with_at_vcs_decoy.yml", "evil.example", []string{"K"}},
+		{"violation_userinfo_password_with_at.yml", "evil.example", []string{"P"}},
+		{"violation_backtick_substitution.yml", "evil.example", []string{"S"}},
+		{"violation_env_context_reference.yml", "evil.example", []string{"TOKEN"}},
+		{"violation_powershell_env_case.yml", "collector.evil.example", []string{"API_KEY"}},
+	}
+	perDest := map[string]map[string][]string{
+		"violation_quoted_substitution.yml": {
+			"quoted.evil.example": {"K"},
+			"fed.evil.example":    {"K"},
+		},
+		"violation_git_userinfo.yml": {
+			"evil.example":        {"GITHUB_TOKEN"},
+			"mirror.evil.example": {"K"},
+			"path.evil.example":   {"K"},
+		},
+		"violation_ip_after_unknown_flag.yml": {
+			"193.32.204.199": {"K"},
+			"1.2.3.4":        {"K"},
+		},
+		"violation_two_distinct_hosts.yml": {
+			"evil-a.example": {"TOKEN_A"},
+			"evil-b.example": {"TOKEN_B"},
+		},
+		"violation_url_flag_host.yml": {
+			"url.evil.example": {"K"},
+			"uri.evil.example": {"K"},
+		},
+		"violation_positional_after_valueless_flags.yml": {
+			"curl.evil.example": {"K"},
+			"wget.evil.example": {"K"},
+		},
+		"violation_positional_after_flags.yml": {
+			"flag.evil.example":   {"K"},
+			"nc.evil.example":     {"K"},
+			"wait.evil.example":   {"K"},
+			"httpie.evil.example": {"K"},
+		},
+	}
+	for _, c := range cases {
+		t.Run(c.fixture, func(t *testing.T) {
+			tmp := t.TempDir()
+			wfDir := filepath.Join(tmp, ".github", "workflows")
+			if err := os.MkdirAll(wfDir, 0o755); err != nil {
+				t.Fatal(err)
+			}
+			data, err := os.ReadFile(filepath.Join("testdata", "ISSUE-311", "github", c.fixture))
+			if err != nil {
+				t.Fatalf("read fixture: %v", err)
+			}
+			if err := os.WriteFile(filepath.Join(wfDir, c.fixture), data, 0o644); err != nil {
+				t.Fatal(err)
+			}
+			pipeline, _, err := githubpkg.ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
+			if err != nil {
+				t.Fatalf("scan: %v", err)
+			}
+			findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
+			if err != nil {
+				t.Fatalf("evaluate: %v", err)
+			}
+			var hits []opaengine.Finding
+			for _, f := range findings {
+				if f.Code == "ISSUE-311" {
+					hits = append(hits, f)
+				}
+			}
+			want, ok := perDest[c.fixture]
+			if !ok {
+				want = map[string][]string{c.wantDest: c.wantSecs}
+			}
+			if len(hits) != len(want) {
+				t.Fatalf("ISSUE-311 findings = %d, want %d: %+v", len(hits), len(want), hits)
+			}
+			got := map[string]string{}
+			for _, f := range hits {
+				got[fmt.Sprint(f.Data["destination"])] = fmt.Sprint(f.Data["secretNames"])
+			}
+			dests := make([]string, 0, len(want))
+			for dest, secs := range want {
+				dests = append(dests, dest)
+				if got[dest] != fmt.Sprint(secs) {
+					t.Fatalf("destination %q secretNames = %q, want %v (all: %v)", dest, got[dest], secs, got)
+				}
+			}
+			sort.Strings(dests)
+			assertSubjectKey(t, findings, "ISSUE-311", "destination", dests)
+		})
+	}
+}
+
+// Trust knobs: an allowlisted host is silent, a sibling host is not; with
+// trustVcsHosts off even api.github.com fires.
+func TestIssue311_SecretEgress_GitHub_TrustKnobs(t *testing.T) {
+	allow := map[string]any{"secretEgress": map[string]any{
+		"trustVcsHosts": true, "trustedHosts": []string{"collector.evil.example"},
+		"vcsHosts": []string{"github.com", "api.github.com", "uploads.github.com", "ghcr.io", "*.githubusercontent.com"},
+	}}
+	runGitHubFixtureCasesWithConfig(t, "ISSUE-311", []struct {
+		fixture      string
+		expectedHits []string
+	}{
+		{"violation_step_env_binding.yml", nil},
+		{"violation_ghostaction.yml", []string{"violation_ghostaction/send-secrets"}},
+	}, allow)
+
+	noVcs := map[string]any{"secretEgress": map[string]any{
+		"trustVcsHosts": false, "trustedHosts": []string{},
+		"vcsHosts": []string{"github.com", "api.github.com", "uploads.github.com", "ghcr.io", "*.githubusercontent.com"},
+	}}
+	runGitHubFixtureCasesWithConfig(t, "ISSUE-311", []struct {
+		fixture      string
+		expectedHits []string
+	}{
+		{"clean_github_token_to_api.yml", []string{"clean_github_token_to_api/comment"}},
+	}, noVcs)
+
+	// A trustedHosts glob covers its own subdomains and nothing that merely
+	// shares a prefix with them.
+	glob := map[string]any{"secretEgress": map[string]any{
+		"trustVcsHosts": true, "trustedHosts": []string{"*.internal.example.com"},
+		"vcsHosts": []string{"github.com", "api.github.com", "uploads.github.com", "ghcr.io", "*.githubusercontent.com"},
+	}}
+	runGitHubFixtureCasesWithConfig(t, "ISSUE-311", []struct {
+		fixture      string
+		expectedHits []string
+	}{
+		{"clean_glob_trusted_host.yml", nil},
+		{"clean_glob_trusted_deep_subdomain.yml", nil},
+		{"violation_glob_sibling_host.yml", []string{"violation_glob_sibling_host/deploy"}},
+	}, glob)
+
+	// A pattern whose first label is numeric names IP literals only: 10.*
+	// trusts 10.0.0.7 and never a hostname such as 10.attacker.example,
+	// which anyone can register under a domain they own.
+	ipGlob := map[string]any{"secretEgress": map[string]any{
+		"trustVcsHosts": true, "trustedHosts": []string{"10.*", "1password.com"},
+		"vcsHosts": []string{"github.com", "api.github.com", "uploads.github.com", "ghcr.io", "*.githubusercontent.com"},
+	}}
+	runGitHubFixtureCasesWithConfig(t, "ISSUE-311", []struct {
+		fixture      string
+		expectedHits []string
+	}{
+		{"clean_ip_glob_trusted_ip.yml", nil},
+		{"violation_ip_glob_attacker_host.yml", []string{"violation_ip_glob_attacker_host/deploy"}},
+		// A hostname that merely starts with a digit is a hostname pattern.
+		{"clean_ip_glob_digit_hostname.yml", nil},
+	}, ipGlob)
+
+	// GitHub Enterprise Server: with the run's instance host and its
+	// subdomains in vcsHosts (buildEngineConfigForRun), a call to the
+	// instance itself is the VCS; the public list alone fires (above).
+	ghes := map[string]any{"secretEgress": map[string]any{
+		"trustVcsHosts": true, "trustedHosts": []string{},
+		"vcsHosts": []string{"github.com", "api.github.com", "uploads.github.com", "ghcr.io", "*.githubusercontent.com", "github.acme-corp.example", "*.github.acme-corp.example"},
+	}}
+	runGitHubFixtureCasesWithConfig(t, "ISSUE-311", []struct {
+		fixture      string
+		expectedHits []string
+	}{
+		{"clean_ghes_own_instance.yml", nil},
+	}, ghes)
+
+	// An IPv6 literal is trusted through trustedHosts, written with or
+	// without brackets, or as a glob on the unbracketed text. An
+	// IPv6-shaped pattern names IPv6 literals only, never a hostname.
+	for _, pattern := range []string{"2606:4700:4700::1111", "[2606:4700:4700::1111]", "2606:4700:*"} {
+		v6 := map[string]any{"secretEgress": map[string]any{
+			"trustVcsHosts": true, "trustedHosts": []string{pattern},
+			"vcsHosts": []string{"github.com", "api.github.com", "uploads.github.com", "ghcr.io", "*.githubusercontent.com"},
+		}}
+		t.Run("ipv6 "+pattern, func(t *testing.T) {
+			runGitHubFixtureCasesWithConfig(t, "ISSUE-311", []struct {
+				fixture      string
+				expectedHits []string
+			}{
+				{"violation_ipv6_literal.yml", nil},
+				{"violation_ipv6_pattern_hostname.yml", []string{"violation_ipv6_pattern_hostname/send"}},
+			}, v6)
+		})
+	}
+}
+
+// A masked variable whose name is not a shell identifier (possible only
+// through a malformed snapshot) is ignored, never interpolated into a regex.
+func TestIssue311_SecretEgress_GitLab_MalformedVariableNameIgnored(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	data, err := os.ReadFile(filepath.Join("testdata", "ISSUE-311", "gitlab", "violation_masked_to_ip.gitlab-ci.yml"))
+	if err != nil {
+		t.Fatalf("read fixture: %v", err)
+	}
+	pipeline := parseGitLabCI(t, data)
+	pipeline.SettingsVariables = []ir.SettingsVariable{
+		{Name: "A(", Type: "env_var", Environment: "*", Masked: true},
+		{Name: "DEPLOY_TOKEN", Type: "env_var", Environment: "*", Masked: true},
+	}
+	pipeline.SettingsVariablesKnown = true
+	cfg := map[string]any{
+		"secretEgress": map[string]any{"trustVcsHosts": true, "trustedHosts": []string{}, "vcsHosts": []string{"gitlab.example.com"}},
+	}
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
+	if err != nil {
+		t.Fatalf("evaluate: %v", err)
+	}
+	var hits []opaengine.Finding
+	for _, f := range findings {
+		if f.Code == "ISSUE-311" {
+			hits = append(hits, f)
+		}
+	}
+	if len(hits) != 1 || fmt.Sprint(hits[0].Data["secretNames"]) != "[DEPLOY_TOKEN]" {
+		t.Fatalf("want one finding naming DEPLOY_TOKEN only, got %+v", hits)
+	}
+
+	// The production engine swallows a builtin error inside a comprehension,
+	// which would hide the bad name; strict builtin errors surface it, so
+	// the module must never build a regex from the name at all.
+	source, ok := engine.ModuleSource("secret_egress")
+	if !ok {
+		t.Fatal("secret_egress module not loaded")
+	}
+	raw, err := json.Marshal(pipeline)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pipelineMap map[string]any
+	if err := json.Unmarshal(raw, &pipelineMap); err != nil {
+		t.Fatal(err)
+	}
+	cfgRaw, err := json.Marshal(cfg)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var cfgMap map[string]any
+	if err := json.Unmarshal(cfgRaw, &cfgMap); err != nil {
+		t.Fatal(err)
+	}
+	_, err = rego.New(
+		rego.Query("data.secret_egress.deny"),
+		rego.Module("secret_egress.rego", source),
+		rego.Input(map[string]any{"pipeline": pipelineMap, "config": cfgMap}),
+		rego.StrictBuiltinErrors(true),
+	).Eval(context.Background())
+	if err != nil {
+		t.Fatalf("strict builtin errors: %v", err)
 	}
 }

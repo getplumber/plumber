@@ -87,6 +87,7 @@ func controlsConfigIsZero(c ControlsConfig) bool {
 		c.PipelineMustNotUseUnsafeVariableExpansion == nil &&
 		c.SecurityJobsMustNotBeWeakened == nil &&
 		c.PipelineMustNotExecuteUnverifiedScripts == nil &&
+		c.PipelineMustNotSendSecretsToUntrustedHosts == nil &&
 		c.PipelineMustNotOverrideJobVariables == nil &&
 		c.PipelineMustNotUseDockerInDocker == nil &&
 		c.ActionsMustBePinnedByCommitSha == nil &&
@@ -119,6 +120,7 @@ func controlsConfigEqual(a, b ControlsConfig) bool {
 		a.PipelineMustNotUseUnsafeVariableExpansion == b.PipelineMustNotUseUnsafeVariableExpansion &&
 		a.SecurityJobsMustNotBeWeakened == b.SecurityJobsMustNotBeWeakened &&
 		a.PipelineMustNotExecuteUnverifiedScripts == b.PipelineMustNotExecuteUnverifiedScripts &&
+		a.PipelineMustNotSendSecretsToUntrustedHosts == b.PipelineMustNotSendSecretsToUntrustedHosts &&
 		a.PipelineMustNotOverrideJobVariables == b.PipelineMustNotOverrideJobVariables &&
 		a.PipelineMustNotUseDockerInDocker == b.PipelineMustNotUseDockerInDocker &&
 		a.ActionsMustBePinnedByCommitSha == b.ActionsMustBePinnedByCommitSha &&

@@ -1,0 +1,8 @@
+name: comment
+on: push
+jobs:
+  comment:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/repos/o/r/issues/1/comments -d '{"body":"hi"}'

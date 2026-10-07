@@ -1,0 +1,5 @@
+release:
+  image: alpine:3.19
+  script:
+    - curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && npm publish --token $DEPLOY_TOKEN
+    - 'curl -sSL https://sh.rustup.rs | sh -s -- -y && curl -H "JOB-TOKEN: $CI_JOB_TOKEN" https://gitlab.example.com/api/v4/user'

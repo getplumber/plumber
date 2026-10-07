@@ -1,0 +1,7 @@
+name: hook
+on: push
+jobs:
+  hook:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -d "token=${{ secrets.HOOK_TOKEN }}" "$WEBHOOK_URL"

@@ -21,6 +21,7 @@ CTRL-306 githubAppTokensMustBeRevokedOnExit
 CTRL-307 checkoutMustNotPersistCredentials
 CTRL-308 workflowMustNotIndexSecretsDynamically
 CTRL-309 workflowMustNotExportEntireSecretsContext
+CTRL-311 pipelineMustNotSendSecretsToUntrustedHosts
 CTRL-401 pipelineMustNotIncludeHardcodedJobs
 CTRL-402 externalRefsMustNotCollide
 CTRL-403 includesMustBeUpToDate

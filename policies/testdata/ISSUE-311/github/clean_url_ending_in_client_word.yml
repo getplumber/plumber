@@ -1,0 +1,11 @@
+name: clean_url_ending_in_client_word
+on: push
+jobs:
+  charts:
+    runs-on: ubuntu-latest
+    env:
+      K: ${{ secrets.HELM_PASSWORD }}
+    steps:
+      - run: |
+          helm repo add --password "$K" myrepo https://charts.example/wget --force-update
+          curl -H "X: $K" https://api.github.com/x/curl

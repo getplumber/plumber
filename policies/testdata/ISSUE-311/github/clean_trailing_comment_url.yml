@@ -1,0 +1,8 @@
+name: clean_trailing_comment_url
+on: push
+jobs:
+  call:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl -d "k=${{ secrets.K }}" https://api.github.com/x # see http://docs.example.com

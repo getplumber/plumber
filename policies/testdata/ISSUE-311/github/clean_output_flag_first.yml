@@ -1,0 +1,16 @@
+name: clean_output_flag_first
+on: push
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          K: ${{ secrets.API_KEY }}
+        run: |
+          curl --output artifacts.zip --header "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" "$GITHUB_API_URL/repos/o/r/actions/artifacts/1/zip"
+          curl -o out.txt -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/x
+          wget -O app.tar.gz --header "Authorization: Bearer $K" https://api.github.com/y
+      - shell: pwsh
+        env:
+          K: ${{ secrets.API_KEY }}
+        run: iwr -OutFile out.zip -Headers @{X="$env:K"} https://api.github.com/z

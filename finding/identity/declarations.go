@@ -128,6 +128,8 @@ var declarations = map[string][]string{
 	// and pack both, so the action ref has to separate them; keying on the
 	// job alone would report one of the two and silently drop the other.
 	"ISSUE-310": {"file", "job", "uses", "step"},
+	// Secret sent to an untrusted host: one finding per job and destination host; the secret names and the script line are data, so a second secret on the same line or a reworded command does not re-key the finding.
+	"ISSUE-311": {"file", "job", "destination"},
 	// Hardcoded job: keyed on the hardcoded job name.
 	"ISSUE-401": {"file", "job", "hardcodedJob"},
 	// Ref collides with a tag and a branch: union of the GitHub `uses` and GitLab `includePath` surfaces (see note above).

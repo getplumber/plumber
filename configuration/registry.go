@@ -245,6 +245,13 @@ var controlsMeta = map[string]ControlMeta{
 		ID:          "CTRL-411",
 		Description: "Detects pipeline jobs that execute a script without integrity verification, such as piping a remote download directly into a shell.",
 	},
+	"pipelineMustNotSendSecretsToUntrustedHosts": {
+		Providers:   []string{ProviderGitLab, ProviderGitHub},
+		DisplayName: "Pipeline must not send secrets to untrusted hosts",
+		Category:    CategoryCICDSecrets,
+		ID:          "CTRL-311",
+		Description: "Detects a script line that sends a secret (a secrets interpolation or a masked variable) over the network to a host the policy does not trust.",
+	},
 	"pipelineMustNotIncludeHardcodedJobs": {
 		Providers:   []string{ProviderGitLab, ProviderGitHub},
 		DisplayName: "Pipeline must not include hardcoded jobs",
@@ -634,7 +641,7 @@ var removedControls = map[string]string{
 // To promote a benched (provider, control) pair: remove the entry
 // from this map. If the control needs configurable behaviour beyond
 // on/off, also add a typed struct in configuration/plumberconfig.go
-// and wire it through buildEngineConfig.
+// and wire it through buildEngineConfigForRun (control/task.go).
 //
 // As of 2026-08-05 (v0.4.28), counted from this file and control/catalog.go:
 //   - controlsMeta declares 59 controls: 15 cross-provider, 44

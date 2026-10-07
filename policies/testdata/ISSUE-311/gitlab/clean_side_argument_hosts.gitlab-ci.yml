@@ -1,0 +1,7 @@
+call:
+  image: alpine:3.19
+  script:
+    - 'curl -x proxy.corp.example:3128 -H "PRIVATE-TOKEN: $DEPLOY_TOKEN" https://gitlab.example.com/api/v4/user'
+    - 'curl --resolve gitlab.example.com:443:10.0.0.5 -H "PRIVATE-TOKEN: $DEPLOY_TOKEN" https://gitlab.example.com/api/v4/deploy'
+    - 'curl -H "X-Forwarded-For: 203.0.113.9" -d "t=$DEPLOY_TOKEN" https://gitlab.example.com/api/v4/x'
+    - 'curl -H "Host: internal.lb.example.com:8443" -d "t=$DEPLOY_TOKEN" https://gitlab.example.com/api/v4/x'

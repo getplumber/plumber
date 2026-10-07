@@ -1,0 +1,4 @@
+notify:
+  image: alpine:3.19
+  script:
+    - curl -d "channel=$CHANNEL_NAME" https://hooks.example.com/notify

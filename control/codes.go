@@ -131,6 +131,8 @@ const (
 	// ISSUE-310: Persisted checkout credentials are packed into an uploaded
 	// artifact (`.git` in the artifact): the demonstrable ArtiPACKED leak.
 	CodeArtipackedExfiltrated ErrorCode = "ISSUE-310"
+	// ISSUE-311: A script line sends a secret to a host the policy does not trust
+	CodeSecretEgress ErrorCode = "ISSUE-311"
 )
 
 // Issue codes for pipeline composition controls (4xx)
@@ -854,6 +856,16 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Add `with: { persist-credentials: false }` on the `actions/checkout@*` step, or upload a scoped path that excludes `.git` (e.g. `path: dist/` instead of `path: .`). When push is required, scope the token with an explicit `permissions:` block.",
 		DocURL:      docsBaseURL + string(CodeArtipackedExfiltrated),
 		ControlName: "checkoutMustNotPersistCredentials",
+		Role:        RolePrivilege,
+	},
+	CodeSecretEgress: {
+		Code:        CodeSecretEgress,
+		Severity:    SeverityCritical,
+		Title:       "Secret sent to an untrusted host",
+		Description: "A script line passes a secret (a secrets interpolation, an environment variable bound to one, or a masked CI/CD variable) to a network client aimed at a host the policy does not trust. This is the shape of the GhostAction campaigns: one curl posting repository secrets to an attacker address.",
+		Remediation: "Send secrets only to the hosts the job legitimately needs: add the destination to trustedHosts if it is yours, keep the VCS hosts trusted, and remove any step that posts credentials elsewhere. Rotate every secret such a step could have reached.",
+		DocURL:      docsBaseURL + string(CodeSecretEgress),
+		ControlName: "pipelineMustNotSendSecretsToUntrustedHosts",
 		Role:        RolePrivilege,
 	},
 	CodeUnredactedSecrets: {

