@@ -1,3 +1,10 @@
+## [0.5.23](https://github.com/getplumber/plumber/compare/v0.5.22...v0.5.23) (2026-10-07)
+
+
+### ✨ Features
+
+* **config:** trust jfrog-fastci actions in the default allowlist ([4b55d04](https://github.com/getplumber/plumber/commit/4b55d04c37a9b3fa975ce01b319ee26d80e4e407))
+
 ## [0.5.22](https://github.com/getplumber/plumber/compare/v0.5.21...v0.5.22) (2026-10-07)
 
 
