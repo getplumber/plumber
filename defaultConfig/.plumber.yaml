@@ -818,6 +818,8 @@ github:
         - getsentry/* # Sentry
         - DataDog/* # Datadog
         - cypress-io/* # Cypress.io
+        - CodSpeedHQ/* # CodSpeed (performance benchmarking, codspeed-action)
+        - codspeedhq/*
         - JetBrains/* # JetBrains (qodana)
         - microsoft/* # Microsoft
         - atlassian/* # Atlassian
