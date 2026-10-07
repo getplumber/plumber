@@ -673,8 +673,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Code:        CodeComponentUnauthorizedSource,
 		Severity:    SeverityHigh,
 		Title:       "Untrusted GitLab CI/CD component source",
-		Description: "A GitLab CI/CD component is included from a source that is not trusted: not on an explicit allowlist, not under the scanned project's own namespace, and not on the same GitLab instance (when that trust is enabled). Components run arbitrary code with the job's full context (variables, secrets, CI_JOB_TOKEN), so an untrusted source increases supply chain attack risk.",
-		Remediation: "Include components only from a trusted source: add it to .plumber.yaml under componentMustComeFromAuthorizedSources.trustedComponents, or rely on trustSameGroupComponents / trustSameInstanceComponents if it already lives in your own namespace or instance.",
+		Description: "A GitLab CI/CD component is included from a source that is not trusted: not on an explicit allowlist, not under the scanned project's own namespace, not on the same GitLab instance (when that trust is enabled), and not one of GitLab's official namespaces on gitlab.com (when that trust is enabled). Components run arbitrary code with the job's full context (variables, secrets, CI_JOB_TOKEN), so an untrusted source increases supply chain attack risk.",
+		Remediation: "Include components only from a trusted source: add it to .plumber.yaml under componentMustComeFromAuthorizedSources.trustedComponents, or rely on trustSameGroupComponents / trustSameInstanceComponents if it already lives in your own namespace or instance, or on trustGitlabOfficialComponents for GitLab's official gitlab.com/components/* and gitlab.com/gitlab-org/* components.",
 		DocURL:      docsBaseURL + string(CodeComponentUnauthorizedSource),
 		ControlName: "componentMustComeFromAuthorizedSources",
 		// Role: entry, as ISSUE-402/701: an untrusted source runs unvetted upstream code in the job.

@@ -690,10 +690,20 @@ func buildEngineConfig(controls *configuration.ControlsConfig, gitlabURL string)
 			trustSameInstance = false
 		}
 
+		// trustGitlabOfficialComponents defaults to true: GitLab's own
+		// curated catalog (gitlab.com/components/*, gitlab.com/gitlab-org/*)
+		// is the most common legitimate component source on gitlab.com,
+		// like trustGithubOfficialActions for actions/* and github/*.
+		trustOfficial := true
+		if c.TrustGitlabOfficialComponents != nil {
+			trustOfficial = *c.TrustGitlabOfficialComponents
+		}
+
 		entry := map[string]any{
-			"trustSameGroupComponents":    trustSameGroup,
-			"trustSameInstanceComponents": trustSameInstance,
-			"instanceHost":                gitlabInstanceHost(gitlabURL),
+			"trustSameGroupComponents":      trustSameGroup,
+			"trustSameInstanceComponents":   trustSameInstance,
+			"trustGitlabOfficialComponents": trustOfficial,
+			"instanceHost":                  gitlabInstanceHost(gitlabURL),
 		}
 		if len(c.TrustedComponents) > 0 {
 			entry["trustedComponents"] = c.TrustedComponents

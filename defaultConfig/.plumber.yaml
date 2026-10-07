@@ -524,8 +524,10 @@ gitlab:
     # under this project's own root namespace on the same GitLab
     # instance (trustSameGroupComponents), OR is hosted on the same
     # GitLab instance at all (trustSameInstanceComponents — on by
-    # default). Both are derived dynamically from the pipeline at scan
-    # time, in CI or locally — no environment variables involved.
+    # default), OR lives in GitLab's own curated namespaces on gitlab.com
+    # (trustGitlabOfficialComponents). The namespace and instance checks
+    # are derived dynamically from the pipeline at scan time, in CI or
+    # locally — no environment variables involved.
     #
     # Best practice: keep components scoped to your own project/group
     componentMustComeFromAuthorizedSources:
@@ -536,6 +538,9 @@ gitlab:
       # Trust any component on the same GitLab instance, regardless of
       # namespace. (defaults to true when self-hosted, false on gitlab.com)
       trustSameInstanceComponents: true
+      # Trust GitLab's official components on gitlab.com:
+      # gitlab.com/components/* and gitlab.com/gitlab-org/*
+      trustGitlabOfficialComponents: true
       # Additional trusted component source URLs and patterns (supports wildcards)
       trustedComponents: []
     # ===========================================

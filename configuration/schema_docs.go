@@ -256,6 +256,11 @@ var controlFieldDocs = map[string]FieldDoc{
 		Default:     "true",
 		Toggle:      true,
 	},
+	"componentMustComeFromAuthorizedSources.trustGitlabOfficialComponents": {
+		Description: "Trusts GitLab's own curated component namespaces on gitlab.com (gitlab.com/components/*, gitlab.com/gitlab-org/*); defaults to true when unset.",
+		Default:     "true",
+		Toggle:      true,
+	},
 	"functionMustComeFromAuthorizedSources.enabled": {
 		Description: "Turns the control on; when false or absent the control is skipped.",
 	},

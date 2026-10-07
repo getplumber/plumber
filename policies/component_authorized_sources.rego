@@ -18,6 +18,13 @@
 # instance is already inside the org's trust boundary the way gitlab.com,
 # a multi-tenant SaaS host, is not. Modeled on
 # action_authorized_sources.rego's trustSameOrgActions.
+#
+# trustGitlabOfficialComponents (default true) also trusts GitLab's own
+# curated namespaces on gitlab.com (gitlab.com/components/*,
+# gitlab.com/gitlab-org/*), the analogue of trustGithubOfficialActions.
+# The prefixes name the literal gitlab.com host: a same-named namespace
+# on a self-hosted instance is administered by that instance, not by
+# GitLab, so it is not covered.
 package component_authorized_sources
 
 import rego.v1
@@ -53,6 +60,8 @@ _is_authorized(source) if _is_same_group(source)
 
 _is_authorized(source) if _is_same_instance(source)
 
+_is_authorized(source) if _is_official(source)
+
 _in_allowlist(source) if {
 	pattern := input.config.componentAuthorizedSources.trustedComponents[_]
 	glob.match(_normalize_var(pattern), null, _normalize_var(source))
@@ -74,6 +83,15 @@ _is_same_instance(source) if {
 	instanceHost := object.get(input.config.componentAuthorizedSources, "instanceHost", "")
 	instanceHost != ""
 	startswith(source, sprintf("%s/", [instanceHost]))
+}
+
+# GitLab-maintained namespaces on gitlab.com, when the user trusts them.
+_official_prefixes := {"gitlab.com/components/", "gitlab.com/gitlab-org/"}
+
+_is_official(source) if {
+	object.get(input.config.componentAuthorizedSources, "trustGitlabOfficialComponents", false) == true
+	some prefix in _official_prefixes
+	startswith(source, prefix)
 }
 
 _root_namespace(projectPath) := parts[0] if {

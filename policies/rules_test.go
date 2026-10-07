@@ -2661,6 +2661,82 @@ func TestIssue414_ComponentAuthorizedSources(t *testing.T) {
 			expected: true,
 		},
 		{
+			name:        "official_components_trusted",
+			inc:         ir.Include{Kind: "component", Source: "gitlab.com/components/sast/sast"},
+			projectPath: "my-group/my-project",
+			cfg: map[string]any{
+				"componentAuthorizedSources": map[string]any{
+					"trustGitlabOfficialComponents": true,
+					"instanceHost":                  "gitlab.com",
+				},
+			},
+			expected: false,
+		},
+		{
+			name:        "official_components_untrusted_when_disabled",
+			inc:         ir.Include{Kind: "component", Source: "gitlab.com/components/sast/sast"},
+			projectPath: "my-group/my-project",
+			cfg: map[string]any{
+				"componentAuthorizedSources": map[string]any{
+					"trustGitlabOfficialComponents": false,
+					"instanceHost":                  "gitlab.com",
+				},
+			},
+			expected: true,
+		},
+		{
+			name:        "official_gitlab_org_trusted",
+			inc:         ir.Include{Kind: "component", Source: "gitlab.com/gitlab-org/components/release/release"},
+			projectPath: "my-group/my-project",
+			cfg: map[string]any{
+				"componentAuthorizedSources": map[string]any{
+					"trustGitlabOfficialComponents": true,
+					"instanceHost":                  "gitlab.com",
+				},
+			},
+			expected: false,
+		},
+		{
+			// The namespace must match whole: a lookalike that merely
+			// starts with the official name is not trusted.
+			name:        "official_prefix_boundary_componentsx",
+			inc:         ir.Include{Kind: "component", Source: "gitlab.com/componentsx/backdoor/backdoor"},
+			projectPath: "my-group/my-project",
+			cfg: map[string]any{
+				"componentAuthorizedSources": map[string]any{
+					"trustGitlabOfficialComponents": true,
+					"instanceHost":                  "gitlab.com",
+				},
+			},
+			expected: true,
+		},
+		{
+			name:        "official_prefix_boundary_components_evil",
+			inc:         ir.Include{Kind: "component", Source: "gitlab.com/components-evil/backdoor/backdoor"},
+			projectPath: "my-group/my-project",
+			cfg: map[string]any{
+				"componentAuthorizedSources": map[string]any{
+					"trustGitlabOfficialComponents": true,
+					"instanceHost":                  "gitlab.com",
+				},
+			},
+			expected: true,
+		},
+		{
+			// A same-named namespace on a self-hosted instance is run by
+			// that instance, not by GitLab.
+			name:        "official_namespace_on_self_hosted_not_trusted",
+			inc:         ir.Include{Kind: "component", Source: "gitlab.example.com/components/sast/sast"},
+			projectPath: "my-group/my-project",
+			cfg: map[string]any{
+				"componentAuthorizedSources": map[string]any{
+					"trustGitlabOfficialComponents": true,
+					"instanceHost":                  "gitlab.example.com",
+				},
+			},
+			expected: true,
+		},
+		{
 			name: "notation_normalization",
 			inc:  ir.Include{Kind: "component", Source: "$CI_SERVER_FQDN/my-group/my-project/ci-component"},
 			cfg: map[string]any{

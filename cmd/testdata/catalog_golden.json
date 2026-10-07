@@ -459,6 +459,15 @@
             "toggle": true,
             "description": "Trusts any component hosted on the same GitLab instance as the scanned project; defaults to true when unset and is always off on gitlab.com.",
             "default": "true"
+          },
+          {
+            "name": "trustGitlabOfficialComponents",
+            "type": "bool",
+            "optional": true,
+            "nullable": true,
+            "toggle": true,
+            "description": "Trusts GitLab's own curated component namespaces on gitlab.com (gitlab.com/components/*, gitlab.com/gitlab-org/*); defaults to true when unset.",
+            "default": "true"
           }
         ]
       },
@@ -2785,8 +2794,8 @@
       "code": "ISSUE-414",
       "severity": "high",
       "title": "Untrusted GitLab CI/CD component source",
-      "description": "A GitLab CI/CD component is included from a source that is not trusted: not on an explicit allowlist, not under the scanned project's own namespace, and not on the same GitLab instance (when that trust is enabled). Components run arbitrary code with the job's full context (variables, secrets, CI_JOB_TOKEN), so an untrusted source increases supply chain attack risk.",
-      "remediation": "Include components only from a trusted source: add it to .plumber.yaml under componentMustComeFromAuthorizedSources.trustedComponents, or rely on trustSameGroupComponents / trustSameInstanceComponents if it already lives in your own namespace or instance.",
+      "description": "A GitLab CI/CD component is included from a source that is not trusted: not on an explicit allowlist, not under the scanned project's own namespace, not on the same GitLab instance (when that trust is enabled), and not one of GitLab's official namespaces on gitlab.com (when that trust is enabled). Components run arbitrary code with the job's full context (variables, secrets, CI_JOB_TOKEN), so an untrusted source increases supply chain attack risk.",
+      "remediation": "Include components only from a trusted source: add it to .plumber.yaml under componentMustComeFromAuthorizedSources.trustedComponents, or rely on trustSameGroupComponents / trustSameInstanceComponents if it already lives in your own namespace or instance, or on trustGitlabOfficialComponents for GitLab's official gitlab.com/components/* and gitlab.com/gitlab-org/* components.",
       "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-414",
       "controlName": "componentMustComeFromAuthorizedSources"
     },

@@ -93,6 +93,19 @@ func TestWizardDefaultsSourcedFromEmbeddedDefault(t *testing.T) {
 	if len(defaultCachePoisoningCacheActions()) == 0 {
 		t.Error("defaultCachePoisoningCacheActions() is empty — its block is missing from the embedded default")
 	}
+	// The authorized-sources toggles all ship true; a helper that drifts
+	// from the embedded default (or reads the wrong field) fails here.
+	toggles := map[string]bool{
+		"defaultTrustSameGroupComponents":      defaultTrustSameGroupComponents(),
+		"defaultTrustSameInstanceComponents":   defaultTrustSameInstanceComponents(),
+		"defaultTrustGitlabOfficialComponents": defaultTrustGitlabOfficialComponents(),
+		"defaultTrustSameGroupFunctions":       defaultTrustSameGroupFunctions(),
+	}
+	for name, got := range toggles {
+		if !got {
+			t.Errorf("%s() = false, want the shipped default true", name)
+		}
+	}
 	if defaultTrustedActionsMinimumStars() <= 0 {
 		t.Errorf("defaultTrustedActionsMinimumStars() = %d, want > 0", defaultTrustedActionsMinimumStars())
 	}
@@ -214,6 +227,7 @@ func starterWizardConfig() *configuration.PlumberConfig {
 		},
 		TrustSameGroupComponentsEnabled:        true,
 		TrustSameInstanceComponentsEnabled:     true,
+		TrustGitlabOfficialComponentsEnabled:   true,
 		TrustedComponentsMultiline:             strings.Join(defaultTrustedComponents(), "\n"),
 		TrustSameGroupFunctionsEnabled:         true,
 		TrustedFunctionsMultiline:              strings.Join(defaultTrustedFunctions(), "\n"),

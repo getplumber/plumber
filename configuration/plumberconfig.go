@@ -83,7 +83,7 @@ var validControlSchema = map[string][]string{
 		"enabled", "required", "requiredGroups",
 	},
 	"componentMustComeFromAuthorizedSources": {
-		"enabled", "trustedComponents", "trustSameGroupComponents", "trustSameInstanceComponents",
+		"enabled", "trustedComponents", "trustSameGroupComponents", "trustSameInstanceComponents", "trustGitlabOfficialComponents",
 	},
 	"functionMustComeFromAuthorizedSources": {
 		"enabled", "trustedFunctions", "trustSameGroupFunctions",
@@ -925,6 +925,11 @@ type ComponentAuthorizedSourcesControlConfig struct {
 	// host — same-instance is not a trust boundary there) and true on a
 	// self-hosted instance (already inside the org's trust boundary).
 	TrustSameInstanceComponents *bool `yaml:"trustSameInstanceComponents,omitempty"`
+
+	// TrustGitlabOfficialComponents trusts GitLab's own curated component
+	// namespaces on gitlab.com (gitlab.com/components/*,
+	// gitlab.com/gitlab-org/*). Defaults to true when unset.
+	TrustGitlabOfficialComponents *bool `yaml:"trustGitlabOfficialComponents,omitempty"`
 }
 
 // FunctionAuthorizedSourcesControlConfig configuration for the

@@ -177,9 +177,10 @@ type initWizardState struct {
 	DefaultBranchIsForbiddenVersion bool
 
 	// componentMustComeFromAuthorizedSources (when compAuthorizedComponents selected)
-	TrustedComponentsMultiline         string
-	TrustSameGroupComponentsEnabled    bool
-	TrustSameInstanceComponentsEnabled bool
+	TrustedComponentsMultiline           string
+	TrustSameGroupComponentsEnabled      bool
+	TrustSameInstanceComponentsEnabled   bool
+	TrustGitlabOfficialComponentsEnabled bool
 
 	// functionMustComeFromAuthorizedSources (when compAuthorizedFunctions selected)
 	TrustedFunctionsMultiline      string
@@ -425,14 +426,21 @@ func (st *initWizardState) askCompositionFirstHalf() error {
 		fmt.Fprintf(os.Stderr, "\n  › Authorized component sources (GitLab)\n")
 		if err := survey.AskOne(&survey.Confirm{
 			Message: "Trust CI/CD components under this project's own root namespace?",
-			Default: true,
+			Default: defaultTrustSameGroupComponents(),
 		}, &st.TrustSameGroupComponentsEnabled); err != nil {
 			return err
 		}
 		if err := survey.AskOne(&survey.Confirm{
 			Message: "Trust CI/CD components hosted on the same GitLab instance, any namespace?",
-			Default: true,
+			Help:    "Ignored on gitlab.com, where every user shares the instance.",
+			Default: defaultTrustSameInstanceComponents(),
 		}, &st.TrustSameInstanceComponentsEnabled); err != nil {
+			return err
+		}
+		if err := survey.AskOne(&survey.Confirm{
+			Message: "Trust GitLab's official components on gitlab.com (gitlab.com/components/*, gitlab.com/gitlab-org/*)?",
+			Default: defaultTrustGitlabOfficialComponents(),
+		}, &st.TrustGitlabOfficialComponentsEnabled); err != nil {
 			return err
 		}
 		if err := survey.AskOne(&survey.Multiline{
@@ -447,7 +455,7 @@ func (st *initWizardState) askCompositionFirstHalf() error {
 		fmt.Fprintf(os.Stderr, "\n  › Authorized function sources (GitLab)\n")
 		if err := survey.AskOne(&survey.Confirm{
 			Message: "Trust GitLab Functions under this project's own root namespace?",
-			Default: true,
+			Default: defaultTrustSameGroupFunctions(),
 		}, &st.TrustSameGroupFunctionsEnabled); err != nil {
 			return err
 		}
@@ -1173,6 +1181,45 @@ func defaultTrustedComponents() []string {
 	return nil
 }
 
+// defaultTrustSameGroupComponents, defaultTrustSameInstanceComponents and
+// defaultTrustGitlabOfficialComponents source the wizard's Confirm defaults
+// for componentMustComeFromAuthorizedSources from the shipped default. An
+// unset toggle means true, the same default buildEngineConfig applies.
+func defaultTrustSameGroupComponents() bool {
+	if c := defaultGitLabControls().ComponentMustComeFromAuthorizedSources; c != nil {
+		return boolOrTrue(c.TrustSameGroupComponents)
+	}
+	return true
+}
+
+func defaultTrustSameInstanceComponents() bool {
+	if c := defaultGitLabControls().ComponentMustComeFromAuthorizedSources; c != nil {
+		return boolOrTrue(c.TrustSameInstanceComponents)
+	}
+	return true
+}
+
+func defaultTrustGitlabOfficialComponents() bool {
+	if c := defaultGitLabControls().ComponentMustComeFromAuthorizedSources; c != nil {
+		return boolOrTrue(c.TrustGitlabOfficialComponents)
+	}
+	return true
+}
+
+// defaultTrustSameGroupFunctions mirrors the .plumber.yaml default for
+// gitlab.controls.functionMustComeFromAuthorizedSources.trustSameGroupFunctions.
+func defaultTrustSameGroupFunctions() bool {
+	if c := defaultGitLabControls().FunctionMustComeFromAuthorizedSources; c != nil {
+		return boolOrTrue(c.TrustSameGroupFunctions)
+	}
+	return true
+}
+
+// boolOrTrue reads an optional toggle whose unset value means true.
+func boolOrTrue(b *bool) bool {
+	return b == nil || *b
+}
+
 // defaultTrustedFunctions mirrors the .plumber.yaml default for
 // gitlab.controls.functionMustComeFromAuthorizedSources.trustedFunctions.
 func defaultTrustedFunctions() []string {
@@ -1427,10 +1474,11 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 					comps = defaultTrustedComponents()
 				}
 				gl.Controls.ComponentMustComeFromAuthorizedSources = &configuration.ComponentAuthorizedSourcesControlConfig{
-					Enabled:                     boolPtrInit(true),
-					TrustSameGroupComponents:    boolPtrInit(st.TrustSameGroupComponentsEnabled),
-					TrustSameInstanceComponents: boolPtrInit(st.TrustSameInstanceComponentsEnabled),
-					TrustedComponents:           comps,
+					Enabled:                       boolPtrInit(true),
+					TrustSameGroupComponents:      boolPtrInit(st.TrustSameGroupComponentsEnabled),
+					TrustSameInstanceComponents:   boolPtrInit(st.TrustSameInstanceComponentsEnabled),
+					TrustGitlabOfficialComponents: boolPtrInit(st.TrustGitlabOfficialComponentsEnabled),
+					TrustedComponents:             comps,
 				}
 			}
 			if compSelected(st, compAuthorizedFunctions) {

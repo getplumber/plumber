@@ -49,6 +49,11 @@ A source is **trusted** when any of these hold:
   scanned instance at all, regardless of namespace — a self-hosted
   instance is already inside the org's trust boundary the way
   gitlab.com, a multi-tenant SaaS host, is not.
+- `trustGitlabOfficialComponents` (default `true`) and the component
+  lives in one of GitLab's own curated namespaces on gitlab.com:
+  `gitlab.com/components/*` or `gitlab.com/gitlab-org/*`. Only the
+  literal `gitlab.com` host matches; a same-named namespace on a
+  self-hosted instance is not covered.
 
 ```yaml
 # ❌ before — component from an untrusted external namespace
@@ -80,6 +85,9 @@ componentMustComeFromAuthorizedSources:
   # Trust any component on the same GitLab instance, regardless of
   # namespace (defaults to true when self-hosted, false on gitlab.com)
   trustSameInstanceComponents: true
+  # Trust GitLab's official components on gitlab.com:
+  # gitlab.com/components/* and gitlab.com/gitlab-org/*
+  trustGitlabOfficialComponents: true
   # Additional trusted component source URLs and patterns (wildcards supported)
   trustedComponents: []
 ```
