@@ -765,6 +765,7 @@ github:
         - goreleaser/* # GoReleaser
         - bazel-contrib/* # Bazel community / Linux Foundation
         - jfrog/* # JFrog
+        - jfrog-fastci/* # JFrog FastCI (CI observability, otel-cicd-action)
         - dagger/* # Dagger
         - buildkite/* # Buildkite
         - CircleCI-Public/* # CircleCI
