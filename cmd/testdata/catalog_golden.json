@@ -412,6 +412,67 @@
       "issueCodeEntryKinds": {}
     },
     {
+      "id": "CTRL-414",
+      "name": "componentMustComeFromAuthorizedSources",
+      "displayName": "Components must come from authorized sources",
+      "category": "Pipeline Composition",
+      "providers": [
+        "gitlab"
+      ],
+      "description": "Verifies that every CI/CD component the pipeline includes comes from a trusted source: an allowlisted pattern, the project's own root namespace, or the same GitLab instance.",
+      "requiresConfig": false,
+      "configSchema": {
+        "control": "componentMustComeFromAuthorizedSources",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "nullable": true,
+            "toggle": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          },
+          {
+            "name": "trustedComponents",
+            "type": "array",
+            "optional": true,
+            "description": "Lists component sources that are always allowed; each entry is matched against the resolved component source and supports wildcards.",
+            "elem": {
+              "type": "string",
+              "optional": false
+            }
+          },
+          {
+            "name": "trustSameGroupComponents",
+            "type": "bool",
+            "optional": true,
+            "nullable": true,
+            "toggle": true,
+            "description": "Trusts components hosted under the scanned project's root namespace on the same GitLab instance; defaults to true when unset.",
+            "default": "true"
+          },
+          {
+            "name": "trustSameInstanceComponents",
+            "type": "bool",
+            "optional": true,
+            "nullable": true,
+            "toggle": true,
+            "description": "Trusts any component hosted on the same GitLab instance as the scanned project; defaults to true when unset and is always off on gitlab.com.",
+            "default": "true"
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-414"
+      ],
+      "issueCodeRoles": {
+        "ISSUE-414": "entry"
+      },
+      "issueCodeEntryKinds": {
+        "ISSUE-414": "mutable_dependency"
+      }
+    },
+    {
       "id": "CTRL-704",
       "name": "containerCredentialsMustComeFromSecrets",
       "displayName": "Container credentials must come from secrets",
@@ -649,6 +710,58 @@
       },
       "issueCodeEntryKinds": {
         "ISSUE-402": "mutable_dependency"
+      }
+    },
+    {
+      "id": "CTRL-415",
+      "name": "functionMustComeFromAuthorizedSources",
+      "displayName": "Functions must come from authorized sources",
+      "category": "Pipeline Composition",
+      "providers": [
+        "gitlab"
+      ],
+      "description": "Verifies that every CI/CD function referenced by a job's run: steps comes from a trusted source: an allowlisted pattern or the project's own root namespace on the same GitLab instance.",
+      "requiresConfig": false,
+      "configSchema": {
+        "control": "functionMustComeFromAuthorizedSources",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "nullable": true,
+            "toggle": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          },
+          {
+            "name": "trustedFunctions",
+            "type": "array",
+            "optional": true,
+            "description": "Lists function sources that are always allowed; each entry is matched as literal text against the func: reference and supports wildcards.",
+            "elem": {
+              "type": "string",
+              "optional": false
+            }
+          },
+          {
+            "name": "trustSameGroupFunctions",
+            "type": "bool",
+            "optional": true,
+            "nullable": true,
+            "toggle": true,
+            "description": "Trusts function references hosted on the scanned GitLab instance under the project's root namespace; defaults to true when unset.",
+            "default": "true"
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-415"
+      ],
+      "issueCodeRoles": {
+        "ISSUE-415": "entry"
+      },
+      "issueCodeEntryKinds": {
+        "ISSUE-415": "mutable_dependency"
       }
     },
     {
@@ -2667,6 +2780,24 @@
       "remediation": "If Docker-in-Docker is required, ensure TLS is enabled: do not set DOCKER_TLS_CERTDIR to an empty string, and use tcp://docker:2376 (TLS) instead of tcp://docker:2375 (plaintext). Prefer Kaniko or Buildah to avoid this pattern entirely.",
       "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-413",
       "controlName": "pipelineMustNotUseDockerInDocker"
+    },
+    {
+      "code": "ISSUE-414",
+      "severity": "high",
+      "title": "Untrusted GitLab CI/CD component source",
+      "description": "A GitLab CI/CD component is included from a source that is not trusted: not on an explicit allowlist, not under the scanned project's own namespace, and not on the same GitLab instance (when that trust is enabled). Components run arbitrary code with the job's full context (variables, secrets, CI_JOB_TOKEN), so an untrusted source increases supply chain attack risk.",
+      "remediation": "Include components only from a trusted source: add it to .plumber.yaml under componentMustComeFromAuthorizedSources.trustedComponents, or rely on trustSameGroupComponents / trustSameInstanceComponents if it already lives in your own namespace or instance.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-414",
+      "controlName": "componentMustComeFromAuthorizedSources"
+    },
+    {
+      "code": "ISSUE-415",
+      "severity": "high",
+      "title": "Untrusted GitLab CI/CD function reference",
+      "description": "A GitLab CI/CD function (run:/func: step) is referenced from a source that is not trusted: not on an explicit allowlist and not under the scanned project's own namespace (when that trust is enabled). Functions run arbitrary code with the job's full context, the same supply chain exposure as CI/CD components.",
+      "remediation": "Reference functions only from a trusted source: add it to .plumber.yaml under functionMustComeFromAuthorizedSources.trustedFunctions, or rely on trustSameGroupFunctions if it already lives in your own namespace.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-415",
+      "controlName": "functionMustComeFromAuthorizedSources"
     },
     {
       "code": "ISSUE-417",

@@ -33,14 +33,16 @@ const (
 	catVariables   = "Variable security (settings variables, debug trace, unsafe expansion)"
 
 	// GitLab-applicable composition checks (existing).
-	compHardcoded    = "Disallow hardcoded jobs (use includes/components)"
-	compUpToDate     = "Require catalog includes to be up to date"
-	compForbidden    = "Forbid mutable include refs (latest, main, HEAD, …)"
-	compRefCollision = "Flag include refs that resolve to both a tag and a branch"
-	compSecurity     = "Detect weakened security scanning jobs"
-	compScripts      = "Detect unverified script execution (curl|bash, base64|bash, |sh, …)"
-	compJobVars      = "Detect sensitive variables overridden in pipeline YAML"
-	compDinD         = "Detect Docker-in-Docker (dind) usage"
+	compHardcoded            = "Disallow hardcoded jobs (use includes/components)"
+	compUpToDate             = "Require catalog includes to be up to date"
+	compForbidden            = "Forbid mutable include refs (latest, main, HEAD, …)"
+	compRefCollision         = "Flag include refs that resolve to both a tag and a branch"
+	compAuthorizedComponents = "Restrict CI/CD components to authorized sources"
+	compAuthorizedFunctions  = "Restrict GitLab Functions to authorized sources"
+	compSecurity             = "Detect weakened security scanning jobs"
+	compScripts              = "Detect unverified script execution (curl|bash, base64|bash, |sh, …)"
+	compJobVars              = "Detect sensitive variables overridden in pipeline YAML"
+	compDinD                 = "Detect Docker-in-Docker (dind) usage"
 
 	// GitHub-applicable composition checks (new). The cross-provider ones
 	// (security jobs, DinD) reuse compSecurity / compDinD above.
@@ -173,6 +175,15 @@ type initWizardState struct {
 	// reads the same way as one the operator pressed Enter through.
 	ForbiddenVersionsMultiline      string
 	DefaultBranchIsForbiddenVersion bool
+
+	// componentMustComeFromAuthorizedSources (when compAuthorizedComponents selected)
+	TrustedComponentsMultiline         string
+	TrustSameGroupComponentsEnabled    bool
+	TrustSameInstanceComponentsEnabled bool
+
+	// functionMustComeFromAuthorizedSources (when compAuthorizedFunctions selected)
+	TrustedFunctionsMultiline      string
+	TrustSameGroupFunctionsEnabled bool
 
 	// securityJobsMustNotBeWeakened (when compSecurity selected). All
 	// three sub-toggles are tracked per provider: GitLab ships them off
@@ -407,6 +418,44 @@ func (st *initWizardState) askCompositionFirstHalf() error {
 			Message: "Also treat the project's default branch name as a forbidden ref?",
 			Default: initDefaultBranchIsForbiddenVersion,
 		}, &st.DefaultBranchIsForbiddenVersion); err != nil {
+			return err
+		}
+	}
+	if compSelected(st, compAuthorizedComponents) && hasProvider(st, "gitlab") {
+		fmt.Fprintf(os.Stderr, "\n  › Authorized component sources (GitLab)\n")
+		if err := survey.AskOne(&survey.Confirm{
+			Message: "Trust CI/CD components under this project's own root namespace?",
+			Default: true,
+		}, &st.TrustSameGroupComponentsEnabled); err != nil {
+			return err
+		}
+		if err := survey.AskOne(&survey.Confirm{
+			Message: "Trust CI/CD components hosted on the same GitLab instance, any namespace?",
+			Default: true,
+		}, &st.TrustSameInstanceComponentsEnabled); err != nil {
+			return err
+		}
+		if err := survey.AskOne(&survey.Multiline{
+			Message: "Additional trusted component source URL patterns (one per line)",
+			Help:    "Supports wildcards. Leave empty to rely only on the namespace/instance trust above.",
+			Default: strings.Join(defaultTrustedComponents(), "\n"),
+		}, &st.TrustedComponentsMultiline); err != nil {
+			return err
+		}
+	}
+	if compSelected(st, compAuthorizedFunctions) && hasProvider(st, "gitlab") {
+		fmt.Fprintf(os.Stderr, "\n  › Authorized function sources (GitLab)\n")
+		if err := survey.AskOne(&survey.Confirm{
+			Message: "Trust GitLab Functions under this project's own root namespace?",
+			Default: true,
+		}, &st.TrustSameGroupFunctionsEnabled); err != nil {
+			return err
+		}
+		if err := survey.AskOne(&survey.Multiline{
+			Message: "Additional trusted function source URL patterns (one per line)",
+			Help:    "Supports wildcards. Leave empty to rely only on the namespace trust above.",
+			Default: strings.Join(defaultTrustedFunctions(), "\n"),
+		}, &st.TrustedFunctionsMultiline); err != nil {
 			return err
 		}
 	}
@@ -843,7 +892,7 @@ func compositionOptionsForProviders(providers []string) []string {
 	}
 	var out []string
 	if hasGitLab {
-		out = append(out, compHardcoded, compUpToDate, compForbidden, compRefCollision)
+		out = append(out, compHardcoded, compUpToDate, compForbidden, compRefCollision, compAuthorizedComponents, compAuthorizedFunctions)
 	}
 	out = append(out, compSecurity, compDinD)
 	if hasGitLab {
@@ -1115,6 +1164,24 @@ func defaultJobOverrideVariables() []string {
 	return nil
 }
 
+// defaultTrustedComponents mirrors the .plumber.yaml default for
+// gitlab.controls.componentMustComeFromAuthorizedSources.trustedComponents.
+func defaultTrustedComponents() []string {
+	if c := defaultGitLabControls().ComponentMustComeFromAuthorizedSources; c != nil {
+		return c.TrustedComponents
+	}
+	return nil
+}
+
+// defaultTrustedFunctions mirrors the .plumber.yaml default for
+// gitlab.controls.functionMustComeFromAuthorizedSources.trustedFunctions.
+func defaultTrustedFunctions() []string {
+	if c := defaultGitLabControls().FunctionMustComeFromAuthorizedSources; c != nil {
+		return c.TrustedFunctions
+	}
+	return nil
+}
+
 func defaultSecurityJobPatterns() []string {
 	if c := defaultGitLabControls().SecurityJobsMustNotBeWeakened; c != nil {
 		return c.SecurityJobPatterns
@@ -1352,6 +1419,29 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 				gl.Controls.PipelineMustNotOverrideJobVariables = &configuration.JobVariablesOverrideControlConfig{
 					Enabled:   boolPtrInit(true),
 					Variables: vars,
+				}
+			}
+			if compSelected(st, compAuthorizedComponents) {
+				comps := parseLinesInit(st.TrustedComponentsMultiline)
+				if len(comps) == 0 {
+					comps = defaultTrustedComponents()
+				}
+				gl.Controls.ComponentMustComeFromAuthorizedSources = &configuration.ComponentAuthorizedSourcesControlConfig{
+					Enabled:                     boolPtrInit(true),
+					TrustSameGroupComponents:    boolPtrInit(st.TrustSameGroupComponentsEnabled),
+					TrustSameInstanceComponents: boolPtrInit(st.TrustSameInstanceComponentsEnabled),
+					TrustedComponents:           comps,
+				}
+			}
+			if compSelected(st, compAuthorizedFunctions) {
+				funcs := parseLinesInit(st.TrustedFunctionsMultiline)
+				if len(funcs) == 0 {
+					funcs = defaultTrustedFunctions()
+				}
+				gl.Controls.FunctionMustComeFromAuthorizedSources = &configuration.FunctionAuthorizedSourcesControlConfig{
+					Enabled:                 boolPtrInit(true),
+					TrustSameGroupFunctions: boolPtrInit(st.TrustSameGroupFunctionsEnabled),
+					TrustedFunctions:        funcs,
 				}
 			}
 

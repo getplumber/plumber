@@ -23,7 +23,7 @@ func TestCachePoisoningConfigContract(t *testing.T) {
 	if err := yaml.Unmarshal(defaultconfig.Get(), &conf); err != nil {
 		t.Fatalf("unmarshal embedded default: %v", err)
 	}
-	engineCfg := buildEngineConfig(conf.ControlsFor("github"))
+	engineCfg := buildEngineConfig(conf.ControlsFor("github"), "")
 	if _, ok := engineCfg["cachePoisoning"]; !ok {
 		t.Fatal("buildEngineConfig did not project a cachePoisoning block from the embedded default")
 	}

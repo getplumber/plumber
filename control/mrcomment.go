@@ -381,6 +381,8 @@ var mrCommentControlOrder = []struct {
 	{"includesMustNotUseForbiddenVersions", "Includes must not use forbidden versions"},
 	{"pipelineMustIncludeComponent", "Pipeline must include required components"},
 	{"pipelineMustIncludeTemplate", "Pipeline must include required templates"},
+	{"componentMustComeFromAuthorizedSources", "Components must come from authorized sources"},
+	{"functionMustComeFromAuthorizedSources", "Functions must come from authorized sources"},
 	{"pipelineMustNotEnableDebugTrace", "Pipeline must not enable debug trace"},
 	{"pipelineMustNotUseUnsafeVariableExpansion", "Pipeline must not use unsafe variable expansion"},
 	{"pipelineMustNotOverrideJobVariables", "Pipeline must not override job variables"},

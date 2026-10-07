@@ -1,0 +1,4 @@
+build:
+  run:
+    - name: say_hi
+      step: $CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/echo:1

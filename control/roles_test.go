@@ -70,6 +70,8 @@ func TestEntryKindsPinned(t *testing.T) {
 		"ISSUE-402": EntryMutableDependency,
 		"ISSUE-404": EntryMutableDependency,
 		"ISSUE-411": EntryMutableDependency,
+		"ISSUE-414": EntryMutableDependency,
+		"ISSUE-415": EntryMutableDependency,
 		"ISSUE-701": EntryMutableDependency,
 		"ISSUE-703": EntryMutableDependency,
 		"ISSUE-707": EntryMutableDependency,

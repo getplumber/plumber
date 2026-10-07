@@ -36,7 +36,7 @@ func TestDefaultConfig_TrustsMicrosoftArtifactRegistry(t *testing.T) {
 			{Name: "evil", Image: &ir.Image{Registry: "evil.example.com", Name: "x", Tag: "1"}},
 		},
 	}
-	findings, err := evaluateStrict(engine, context.Background(), pipeline, buildEngineConfig(pc.ControlsFor("gitlab")))
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, buildEngineConfig(pc.ControlsFor("gitlab"), ""))
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}

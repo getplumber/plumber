@@ -30,6 +30,8 @@ CTRL-408 pipelineMustIncludeComponent
 CTRL-410 securityJobsMustNotBeWeakened
 CTRL-411 pipelineMustNotExecuteUnverifiedScripts
 CTRL-412 pipelineMustNotUseDockerInDocker
+CTRL-414 componentMustComeFromAuthorizedSources
+CTRL-415 functionMustComeFromAuthorizedSources
 CTRL-417 workflowMustIncludeRequiredActions
 CTRL-418 workflowsMustDeclareConcurrency
 CTRL-419 workflowMustNotUseKnownMisfeatures

@@ -102,6 +102,9 @@ var gitLabMessageStyleKeys = map[string][]string{
 	"ISSUE-411": {"job"},
 	"ISSUE-412": {"job", "serviceImage"},
 	"ISSUE-413": {"job"},
+	// Untrusted component / function source: the source reference (and the job for a function).
+	"ISSUE-414": {"componentPath"},
+	"ISSUE-415": {"job", "link"},
 	"ISSUE-501": {"branchName"},
 	// Approval rule below the minimum: ruleName is optional in GitLab, so it
 	// is only required in the message when the finding carries one.
@@ -198,6 +201,8 @@ var messageBranches = []messageBranch{
 	{"ISSUE-412", "dind service", "uses the Docker-in-Docker service `", ""},
 	{"ISSUE-413", "tls disabled only", "variable is empty, so TLS is off", ""},
 	{"ISSUE-413", "tls disabled and host", "is empty and `DOCKER_HOST` uses", ""},
+	{"ISSUE-414", "untrusted component", "` comes from an untrusted source.", ""},
+	{"ISSUE-415", "untrusted function", "` from an untrusted source.", ""},
 	{"ISSUE-413", "host only", "`DOCKER_HOST` variable uses the non-TLS port", ""},
 	{
 		"ISSUE-413", "no specific signal", "the daemon configuration is insecure",
