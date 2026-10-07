@@ -44,11 +44,13 @@ A source is **trusted** when any of these hold:
 - `trustSameGroupComponents` (default `true`) and the component lives
   under the scanned project's own root namespace, on the same GitLab
   instance;
-- `trustSameInstanceComponents` (default `true` on a self-hosted
-  instance, `false` on gitlab.com) and the component is hosted on the
-  scanned instance at all, regardless of namespace — a self-hosted
-  instance is already inside the org's trust boundary the way
-  gitlab.com, a multi-tenant SaaS host, is not.
+- `trustSameInstanceComponents` (default `true`) and the component is
+  hosted on the scanned instance at all, regardless of namespace — a
+  self-hosted instance is already inside the org's trust boundary the
+  way gitlab.com, a multi-tenant SaaS host, is not. **This option is
+  ignored on gitlab.com**: Plumber always turns it off there, even when
+  `.plumber.yaml` sets it to `true`. Use `trustedComponents` or
+  `trustGitlabOfficialComponents` to trust sources on gitlab.com.
 - `trustGitlabOfficialComponents` (default `true`) and the component
   lives in one of GitLab's own curated namespaces on gitlab.com:
   `gitlab.com/components/*` or `gitlab.com/gitlab-org/*`. Only the
@@ -83,7 +85,7 @@ componentMustComeFromAuthorizedSources:
   # Trust components under this project's own root namespace
   trustSameGroupComponents: true
   # Trust any component on the same GitLab instance, regardless of
-  # namespace (defaults to true when self-hosted, false on gitlab.com)
+  # namespace. Ignored on gitlab.com, where it is always off.
   trustSameInstanceComponents: true
   # Trust GitLab's official components on gitlab.com:
   # gitlab.com/components/* and gitlab.com/gitlab-org/*

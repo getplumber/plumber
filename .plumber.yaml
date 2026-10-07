@@ -406,7 +406,7 @@ gitlab:
     # under this project's own root namespace on the same GitLab
     # instance (trustSameGroupComponents), OR is hosted on the same
     # GitLab instance at all (trustSameInstanceComponents — on by
-    # default), OR lives in GitLab's own curated namespaces on gitlab.com
+    # default, ignored on gitlab.com), OR lives in GitLab's own curated namespaces on gitlab.com
     # (trustGitlabOfficialComponents). The namespace and instance checks
     # are derived dynamically from the pipeline at scan time, in CI or
     # locally — no environment variables involved.
@@ -418,7 +418,9 @@ gitlab:
       # Trust components under this project's own root namespace
       trustSameGroupComponents: true
       # Trust any component on the same GitLab instance, regardless of
-      # namespace. (defaults to true when self-hosted, false on gitlab.com)
+      # namespace. Ignored on gitlab.com: there it is always off, even when
+      # set to true, because every gitlab.com user shares that instance.
+      # Use trustedComponents or trustGitlabOfficialComponents instead.
       trustSameInstanceComponents: true
       # Trust GitLab's official components on gitlab.com:
       # gitlab.com/components/* and gitlab.com/gitlab-org/*
