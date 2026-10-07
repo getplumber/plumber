@@ -1,3 +1,16 @@
+## [0.5.21](https://github.com/getplumber/plumber/compare/v0.5.20...v0.5.21) (2026-10-07)
+
+
+### ✨ Features
+
+* **#362:** run the job in a dedicated environment ([69fc105](https://github.com/getplumber/plumber/commit/69fc1059229e5d167b838aeb834443abdf987360)), closes [#362](https://github.com/getplumber/plumber/issues/362)
+
+
+### 📚 Documentation
+
+* **#362:** scope GITLAB_TOKEN to the plumber environment ([85caadb](https://github.com/getplumber/plumber/commit/85caadb3153bce40c56a1a27fa179b60cab70ae0)), closes [#362](https://github.com/getplumber/plumber/issues/362)
+* **readme:** add Stellarium to the adopters row ([338ab07](https://github.com/getplumber/plumber/commit/338ab0709d3404c119074c9d40fb5fd3c7a28217))
+
 ## [0.5.20](https://github.com/getplumber/plumber/compare/v0.5.19...v0.5.20) (2026-10-03)
 
 
