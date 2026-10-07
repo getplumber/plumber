@@ -913,6 +913,7 @@ github:
         - embarkstudios/* # = EmbarkStudios/*
         - pyo3/* # = PyO3/*
         - homebrew/* # = Homebrew/*
+        - codspeedhq/* # = CodSpeedHQ/*
 
     # ===========================================
     # Container images must not use forbidden reference
