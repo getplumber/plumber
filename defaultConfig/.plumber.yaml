@@ -678,6 +678,27 @@ gitlab:
       # Supports wildcards (e.g., https://internal-artifacts.example.com/*).
       trustedUrls: []
       # - https://internal-artifacts.example.com/*
+    # ===========================================
+    # Pipeline must not send secrets to untrusted hosts
+    # ===========================================
+    # Flags a script line that hands a secret to a network client (curl,
+    # wget, nc, Invoke-WebRequest, httpie) aimed at a host the policy does
+    # not trust: the shape of the GhostAction campaigns, one curl posting
+    # repository secrets to an attacker address. A secret is a masked CI/CD
+    # variable or a predefined token (CI_JOB_TOKEN, CI_REGISTRY_PASSWORD,
+    # CI_DEPLOY_PASSWORD, CI_DEPENDENCY_PROXY_PASSWORD); reading the masked
+    # flags needs the variables lane, so without a token the control reports
+    # not-evaluable. A destination that is a variable ($WEBHOOK_URL) is not
+    # judged. Trusted by default: this GitLab instance and its registry.
+    pipelineMustNotSendSecretsToUntrustedHosts:
+      # Set to false to disable this control
+      enabled: true
+      # Trust the instance host and its container registry as destinations
+      trustVcsHosts: true
+      # host[:port] glob patterns that may receive secrets, e.g. "*.internal.example.com", "10.*"
+      # A glob without a port does not cover the host with a port: add "host:*" for that.
+      # A pattern starting with a digit ("10.*") matches IP literals only.
+      trustedHosts: []
     # ── Pipeline must not use Docker-in-Docker ──────────────────────
     #
     # Detects CI/CD jobs that use Docker-in-Docker (dind) services.
@@ -960,6 +981,23 @@ github:
       enabled: true
       trustedUrls: []
       # - https://internal-artifacts.example.com/*
+
+    # ===========================================
+    # Pipeline must not send secrets to untrusted hosts
+    # ===========================================
+    # Flags a `run:` line that hands a secret to a network client aimed at a
+    # host the policy does not trust (the GhostAction shape: curl posting
+    # ${{ secrets.* }} to an attacker IP). A secret is a `${{ secrets.NAME }}`
+    # interpolation or an env key bound to one at workflow, job or step
+    # level. A destination that is a variable is not judged. Trusted by
+    # default: github.com, api.github.com, uploads.github.com, ghcr.io and
+    # *.githubusercontent.com, plus the instance host and its subdomains on
+    # GitHub Enterprise Server.
+    pipelineMustNotSendSecretsToUntrustedHosts:
+      enabled: true
+      trustVcsHosts: true
+      trustedHosts: []
+      # - "*.internal.example.com"
 
     # ===========================================
     # Reusable workflows must not inherit secrets

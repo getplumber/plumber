@@ -41,6 +41,7 @@ const (
 	compScripts      = "Detect unverified script execution (curl|bash, base64|bash, |sh, …)"
 	compJobVars      = "Detect sensitive variables overridden in pipeline YAML"
 	compDinD         = "Detect Docker-in-Docker (dind) usage"
+	compSecretEgress = "Detect secrets sent to untrusted hosts (curl/wget/nc with a secret to an unknown host)"
 
 	// GitHub-applicable composition checks (new). The cross-provider ones
 	// (security jobs, DinD) reuse compSecurity / compDinD above.
@@ -846,6 +847,7 @@ func compositionOptionsForProviders(providers []string) []string {
 		out = append(out, compHardcoded, compUpToDate, compForbidden, compRefCollision)
 	}
 	out = append(out, compSecurity, compDinD)
+	out = append(out, compSecretEgress)
 	if hasGitLab {
 		out = append(out, compScripts, compJobVars)
 	}
@@ -1405,6 +1407,18 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 			}
 			if gh != nil {
 				gh.Controls.PipelineMustNotExecuteUnverifiedScripts = block
+			}
+		}
+
+		// Cross-provider: secret egress. No prompt: the shipped defaults are
+		// the policy; hosts are allowlisted in .plumber.yaml afterwards.
+		if compSelected(st, compSecretEgress) {
+			block := &configuration.SecretEgressControlConfig{Enabled: boolPtrInit(true)}
+			if gl != nil {
+				gl.Controls.PipelineMustNotSendSecretsToUntrustedHosts = block
+			}
+			if gh != nil {
+				gh.Controls.PipelineMustNotSendSecretsToUntrustedHosts = block
 			}
 		}
 

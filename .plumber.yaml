@@ -591,6 +591,11 @@ gitlab:
       # Supports wildcards (e.g., https://internal-artifacts.example.com/*).
       trustedUrls: []
       # - https://internal-artifacts.example.com/*
+    # ── Pipeline must not send secrets to untrusted hosts ───────────
+    # Flags a script line that hands a secret to a network client aimed at
+    # a host outside the trusted set (this instance, its registry).
+    pipelineMustNotSendSecretsToUntrustedHosts:
+      enabled: true
     # ── Pipeline must not use Docker-in-Docker ──────────────────────
     #
     # Detects CI/CD jobs that use Docker-in-Docker (dind) services.
@@ -712,6 +717,14 @@ github:
       enabled: true
       trustedUrls: []
       # - https://internal-artifacts.example.com/*
+
+    # ===========================================
+    # Pipeline must not send secrets to untrusted hosts
+    # ===========================================
+    # Same control as GitLab (ISSUE-311). Flags a `run:` line that hands a
+    # secret to a network client aimed at a host outside the trusted set.
+    pipelineMustNotSendSecretsToUntrustedHosts:
+      enabled: true
 
     # ===========================================
     # Reusable workflows must not inherit secrets
