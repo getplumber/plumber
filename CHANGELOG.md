@@ -1,3 +1,10 @@
+## [0.5.22](https://github.com/getplumber/plumber/compare/v0.5.21...v0.5.22) (2026-10-07)
+
+
+### ✨ Features
+
+* **config:** trust CodSpeedHQ actions in the default allowlist ([27f0d74](https://github.com/getplumber/plumber/commit/27f0d748b4cbedc83a7396bec9ad3c9abe8ca2a1))
+
 ## [0.5.21](https://github.com/getplumber/plumber/compare/v0.5.20...v0.5.21) (2026-10-07)
 
 
