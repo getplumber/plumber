@@ -65,14 +65,63 @@ deny contains finding if {
 	lines := split(script, "\n")
 	some li
 	line := lines[li]
-	_matches_unsafe(line)
+	_line_controlled(job, line)
 	not _safe_sink(lines, li, line)
 	finding := {
 		"code":     "ISSUE-207",
 		"severity": "critical",
 		"message":  sprintf("job %q interpolates a user-controlled template expression into an inline script (template-injection risk)", [job.name]),
 		"job":      job.name,
+		"subject":  _job_subject(job),
 	}
+}
+
+# _job_subject: the untrusted expression this job's finding names, "${{"
+# and surrounding spaces removed, the smallest one when several lines
+# fire. One value per job, so the job keeps the one finding it always had.
+_job_subject(job) := s if {
+	s := min({trim_space(trim_prefix(e, "${{")) |
+		some script in job.scripts
+		lines := split(script, "\n")
+		some li, line in lines
+		not _safe_sink(lines, li, line)
+		some e in regex.find_n(`\$\{\{[^}]*`, line, -1)
+		_expression_controlled(job, e)
+	})
+} else := ""
+
+# _line_controlled: the line holds an expression whose value someone
+# controls when the job runs (_expression_controlled).
+_line_controlled(job, line) if {
+	some e in regex.find_n(`\$\{\{[^}]*`, line, -1)
+	_expression_controlled(job, e)
+}
+
+# _expression_controlled: the expression reads a free-text field, and not
+# only fields of a pull request payload in a job no pull request runs.
+# On any other event github.event.pull_request is empty and
+# github.head_ref is "", so `${{ github.event.pull_request.head.ref ||
+# github.ref_name }}` on a push-only workflow expands to the pushed
+# branch: a constant nobody outside the repository writes.
+_expression_controlled(job, e) if {
+	_matches_unsafe(e)
+	not _pull_request_fields_only_without_pull_request(job, e)
+}
+
+_pull_request_fields_only_without_pull_request(job, e) if {
+	triggers := {t | some t in object.get(job, "triggers", [])}
+	count(triggers) > 0
+	count(triggers & _pull_request_payload_events) == 0
+	stripped := regex.replace(e, `github\.event\.pull_request\.[A-Za-z0-9_.]*|github\.head_ref\b`, "")
+	not _matches_unsafe(stripped)
+}
+
+# _pull_request_payload_events: the events whose payload carries a pull
+# request (github.event.pull_request, github.head_ref), plus a reusable
+# workflow's call, which runs under whatever event its caller had.
+_pull_request_payload_events := {
+	"pull_request", "pull_request_target", "pull_request_review", "pull_request_review_comment",
+	"workflow_call",
 }
 
 _matches_unsafe(line) if {

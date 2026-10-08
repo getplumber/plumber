@@ -1,0 +1,4 @@
+install:
+  image: alpine:3.19
+  script:
+    - bash <(curl -fsSL "https://trusted.example/install.sh?v=$(cat VERSION)")

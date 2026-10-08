@@ -357,6 +357,9 @@ type remoteRepoMetadata struct {
 	DefaultBranch string `json:"default_branch"`
 	Private       bool   `json:"private"`
 	Visibility    string `json:"visibility"`
+	// FullName is the repository's current owner/repo: the API follows
+	// renames and answers with the canonical name and case.
+	FullName string `json:"full_name"`
 }
 
 // FetchGitHubDefaultBranch resolves the repo's default branch name
@@ -383,35 +386,43 @@ func FetchGitHubDefaultBranch(host, owner, repo string) (string, error) {
 	return meta.DefaultBranch, nil
 }
 
-// FetchGitHubRepoVisibility reports whether the repository is public,
-// private or internal as GitHub sees it, normalized to the three
-// situation-fact values, or unknown when the API cannot answer (no
-// token, no access, not found, any other error). It never fails the
-// run: the situation facts treat unknown the same as any other missing
-// fact rather than blocking on it. GitHub Enterprise's "internal" repos
-// report private: false alongside visibility: "internal", so the
-// visibility field, when present, takes precedence over the private
-// boolean; hosts that omit visibility fall back to private as before.
-func FetchGitHubRepoVisibility(host, owner, repo string) string {
+// FetchGitHubRepoIdentity answers, from the one repos/{owner}/{repo}
+// lookup, the repository's visibility and its canonical owner/repo. The
+// visibility is public, private or internal as GitHub sees it, normalized
+// to the three situation-fact values, or unknown when the API cannot
+// answer (no token, no access, not found, any other error); it never
+// fails the run, the situation facts treat unknown like any other missing
+// fact. GitHub Enterprise's "internal" repos report private: false
+// alongside visibility: "internal", so the visibility field, when
+// present, takes precedence over the private boolean; hosts that omit
+// visibility fall back to private. The canonical name: the API follows renames, so a repository
+// asked for under a former name or another case answers with its
+// current full_name. The full name is empty whenever the lookup fails or
+// answers no owner/repo shaped name, and the caller then keeps the path
+// it was given.
+func FetchGitHubRepoIdentity(host, owner, repo string) (visibility, fullName string) {
 	rest, err := newGitHubRESTClient(host)
 	if err != nil {
 		logrus.WithField("context", "collector").
 			Debugf("visibility lookup failed, recorded as unknown: %v", err)
-		return ir.VisibilityUnknown
+		return ir.VisibilityUnknown, ""
 	}
 	var meta remoteRepoMetadata
 	if err := rest.Get(fmt.Sprintf("repos/%s/%s", owner, repo), &meta); err != nil {
 		logrus.WithField("context", "collector").
 			Debugf("visibility lookup failed, recorded as unknown: %v", err)
-		return ir.VisibilityUnknown
+		return ir.VisibilityUnknown, ""
 	}
-	if meta.Visibility != "" {
-		return ir.NormalizeVisibility(meta.Visibility)
+	if o, r, ok := strings.Cut(meta.FullName, "/"); ok && o != "" && r != "" && !strings.Contains(r, "/") {
+		fullName = meta.FullName
 	}
-	if meta.Private {
-		return ir.VisibilityPrivate
+	switch {
+	case meta.Visibility != "":
+		return ir.NormalizeVisibility(meta.Visibility), fullName
+	case meta.Private:
+		return ir.VisibilityPrivate, fullName
 	}
-	return ir.VisibilityPublic
+	return ir.VisibilityPublic, fullName
 }
 
 // GitHubRepoVisible reports whether repos/{owner}/{repo} is readable with

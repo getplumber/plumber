@@ -1,0 +1,7 @@
+# clean: a trusted visible-line pipe-to-shell, with no other sink on the
+# line, still exempts the line: the per-sink trust decision does not
+# require a second, unrelated sink to also be present.
+install:
+  image: alpine:3.19
+  script:
+    - curl -fsSL https://get.trusted.io/install.sh | bash

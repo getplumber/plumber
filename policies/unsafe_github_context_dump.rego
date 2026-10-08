@@ -28,8 +28,23 @@ deny contains finding if {
 		"severity": "high",
 		"message":  sprintf("job %q serialises the entire `github` context via toJson(github) — pass specific fields by name instead", [job.name]),
 		"job":      job.name,
+		"subject":  _dump_subject(job),
 	}
 }
+
+# _dump_subject: the toJson call this job's finding names, the smallest
+# one when several texts dump the context.
+_dump_subject(job) := s if {
+	s := min({m |
+		some text in _dump_texts(job)
+		some m in regex.find_n(context_dump_pattern, text, -1)
+	})
+} else := "toJson(github)"
+
+_dump_texts(job) := array.concat(
+	array.concat(object.get(job, "scripts", []), [v | some _, v in object.get(job, "variables", {}); is_string(v)]),
+	[v | some action in object.get(job, "uses", []); some _, v in object.get(action, "with", {}); is_string(v)],
+)
 
 _job_dumps_github(job) if {
 	some k

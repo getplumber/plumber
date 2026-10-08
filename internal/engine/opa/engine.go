@@ -65,8 +65,14 @@ type Finding struct {
 	// evaluated finding, and never serialised - MarshalJSON below enumerates
 	// the fields it emits, so the finding object the platform hashes into an
 	// identity (#467) is untouched by this.
-	Policies []string       `json:"-"`
-	Data     map[string]any `json:"-"`
+	Policies []string `json:"-"`
+	// Subject is what an entry-role finding reports as its entry (an
+	// untrusted expression, a checkout ref, an include at its ref) when the
+	// rule's other fields do not already name it. Lifted out of the Rego
+	// object like the canonical fields above and never emitted by
+	// MarshalJSON, so no output changes shape because a rule names it.
+	Subject string         `json:"-"`
+	Data    map[string]any `json:"-"`
 }
 
 // MarshalJSON flattens the canonical fields and the Data payload into
@@ -236,6 +242,10 @@ func (f *Finding) UnmarshalJSON(b []byte) error {
 	if v, ok := raw["url"].(string); ok {
 		f.URL = v
 		delete(raw, "url")
+	}
+	if v, ok := raw["subject"].(string); ok {
+		f.Subject = v
+		delete(raw, "subject")
 	}
 	if len(raw) > 0 {
 		f.Data = raw

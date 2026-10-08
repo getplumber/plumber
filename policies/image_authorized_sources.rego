@@ -22,27 +22,36 @@ deny contains finding if {
 	input.config.imageAuthorizedSources
 	some i
 	job := input.pipeline.jobs[i]
-	job.image
+	some img in _job_images(job)
 	# An image reference that still held a `$VARIABLE` when it was parsed
 	# describes a placeholder, not an image: registry, name and tag were
 	# split out of the literal text. Judging it answers a real question
 	# over a guess, so skip that job and keep judging the rest.
-	not job.image.unresolved
-	not _is_authorized(job.image)
+	not img.unresolved
+	not _is_authorized(img)
 	finding := {
 		"code":     "ISSUE-101",
 		"severity": "high",
-		"message":  sprintf("Job `%s` uses image `%s` from an unauthorized source.", [job.name, _full_ref(job.image)]),
+		"message":  sprintf("Job `%s` uses image `%s` from an unauthorized source.", [job.name, _full_ref(img)]),
 		"job":      job.name,
-		"link":     _full_ref(job.image),
+		"link":     _full_ref(img),
 		# Identity keys on imageRepo (registry/name, no tag): the subject
 		# of an untrusted-source finding is the repository, so a routine
 		# tag bump (ruby:3.2 -> ruby:3.3, still untrusted) must not re-key
 		# it. link stays as informational data / trusted-URL matching.
-		"imageRepo": _image_repo(job.image),
+		"imageRepo": _image_repo(img),
 		"status":    "unauthorized",
 	}
 }
+
+# _job_images: the images the job's container reference resolves to
+# through its matrix literals (matrixImages) when it has them, the image
+# as written otherwise.
+_job_images(job) := job.matrixImages if {
+	count(object.get(job, "matrixImages", [])) > 0
+} else := [job.image] if {
+	job.image
+} else := []
 
 _is_authorized(img) if {
 	pattern := input.config.imageAuthorizedSources.trustedUrls[_]
@@ -53,6 +62,20 @@ _is_authorized(img) if {
 	input.config.imageAuthorizedSources.trustDockerHubOfficial == true
 	_is_docker_hub_official(img)
 }
+
+# The repository's own image: under its owner's namespace of the GitHub
+# container registry (ghcr.io/<owner>/..., the owner of
+# input.pipeline.projectPath, case-insensitive), the same rule as the
+# repository's own actions. Abstains when the project path is unknown.
+_is_authorized(img) if {
+	owner := lower(split(object.get(input.pipeline, "projectPath", ""), "/")[0])
+	owner != ""
+	startswith(lower(_registry_and_name(img)), concat("", ["ghcr.io/", owner, "/"]))
+}
+
+_registry_and_name(img) := concat("/", [img.registry, img.name]) if {
+	not object.get(img, "registry", "") in {"", "unknown"}
+} else := img.name
 
 # Legacy treats only single-segment names (no slash) as Docker Hub
 # official. The collector strips the canonical `library/` prefix

@@ -1,0 +1,8 @@
+# clean: the single-quoted form of the same assignment-inside-the-string
+# case, the common cloud-metadata idiom. TOKEN is assigned, never
+# executed by -c; the trailing `echo done` only prints after it, it does
+# not fetch anything either.
+install:
+  image: alpine:3.19
+  script:
+    - bash -c 'TOKEN=$(curl -s -H "Metadata:true" http://169.254.169.254/token); echo done'

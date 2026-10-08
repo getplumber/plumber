@@ -1,0 +1,50 @@
+# A pipe into an interpreter is a fetch-and-execute only when what flows
+# through it comes from the network and the interpreter runs it as code.
+# Every job here pipes local content (a repository file, in-workflow data,
+# a local service's JSON), runs a repository file inside a container, or
+# hands a fetched body to a fixed program as data: none runs a script
+# fetched from the network. Lines are the shapes real workflows use
+# (hermes-agent, langflow, llama.cpp, openclaw).
+# Expected hits: 0.
+hermes_cat_install:
+  script:
+    - cat scripts/install.sh | bash -s -- --manifest | python3 -c 'import json,sys; print(json.load(sys.stdin))'
+hermes_lockfile:
+  script:
+    - |
+      set -euo pipefail
+      CONTENT=$(cat /tmp/lockfile-diff.md | python3 -c "import sys,json; print(json.dumps(sys.stdin.read()))")
+hermes_required_results:
+  script:
+    - |
+      args=()
+      printf '%s' "$NEEDS" | python3 scripts/ci/required_results.py "${args[@]}"
+langflow_localhost_json:
+  script:
+    - TOKEN=$(curl -fsS http://127.0.0.1:7860/api/v1/auto_login | python3 -c "import json,sys; print(json.load(sys.stdin)['access_token'])")
+langflow_localhost_name:
+  script:
+    - curl -s http://localhost:7860/api/v1/auto_login | python3 -
+langflow_health_probe:
+  script:
+    - until curl -f http://127.0.0.1:7860/health_check 2>/dev/null; do sleep 5; done
+langflow_git_diff:
+  script:
+    - git diff --name-only "${BASE_SHA:-origin/$BASE_REF}"...HEAD | python scripts/check_changes_filter.py
+llama_echo_yes:
+  script:
+    - |
+      for f in models/*.gguf; do
+        echo YES | python3 gguf-py/gguf/scripts/gguf_convert_endian.py $f big
+      done
+openclaw_local_installer_in_docker:
+  script:
+    - |
+      timeout --kill-after=30s 20m docker run --rm \
+        -e OPENCLAW_NO_ONBOARD=1 \
+        -v "$PWD/dist/installers/install-cli.sh:/tmp/install-cli.sh:ro" \
+        node:24-bookworm-slim \
+        bash -lc 'apt-get update -y && apt-get install -y curl && bash /tmp/install-cli.sh --prefix /tmp/openclaw --no-onboard --version latest && /tmp/openclaw/bin/openclaw --version'
+remote_json_parsed:
+  script:
+    - curl -s https://api.github.com/repos/o/r/releases/latest | python3 -c "import json,sys; print(json.load(sys.stdin)['tag_name'])"

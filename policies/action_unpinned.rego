@@ -32,6 +32,7 @@ deny contains finding if {
 	ref := _ref_of(use.uses)
 	not _is_sha(ref)
 	not _is_local(use.uses)
+	not _is_own_repo(use.uses)
 	not _is_trusted_owner(use.uses)
 	finding := {
 		"code":     "ISSUE-701",
@@ -58,6 +59,7 @@ deny contains finding if {
 	ref := _ref_of(use)
 	not _is_sha(ref)
 	not _is_local(use)
+	not _is_own_repo(use)
 	not _is_trusted_owner(use)
 	finding := {
 		"code":     "ISSUE-701",
@@ -95,6 +97,24 @@ _is_local(uses) if {
 
 _is_local(uses) if {
 	startswith(uses, "/")
+}
+
+# The "$/" form some workflows write a path inside the repository in.
+_is_local(uses) if {
+	startswith(uses, "$/")
+}
+
+# _is_own_repo: the reference names the scanned repository itself by
+# its canonical owner/repo (input.pipeline.projectPath, compared
+# case-insensitively): it changes only with a commit in the repository,
+# so it is no third-party reference to pin. Abstains when projectPath
+# is unknown.
+_is_own_repo(uses) if {
+	own := lower(object.get(input.pipeline, "projectPath", ""))
+	own != ""
+	head := split(split(uses, "@")[0], "/")
+	count(head) >= 2
+	lower(concat("/", [head[0], head[1]])) == own
 }
 
 # Docker-image action refs ("docker://gcr.io/…") are covered by the

@@ -29,6 +29,9 @@ deny contains finding if {
 		# The ref stays out: the same include drifting from one forbidden
 		# version to another is the same unresolved problem.
 		"includePath": inc.source,
+		# subject names the include at the forbidden ref, the entry an
+		# attack path starts from; the engine keeps it out of the outputs.
+		"subject":     sprintf("%s@%s", [inc.source, inc.ref]),
 	}
 }
 

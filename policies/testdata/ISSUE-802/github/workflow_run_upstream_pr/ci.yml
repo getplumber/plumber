@@ -1,0 +1,13 @@
+# The upstream workflow runs on pull requests, forks included.
+name: CI
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: make test

@@ -1,0 +1,10 @@
+# clean: a command substitution that is the right-hand side of an
+# assignment, INSIDE the quoted string handed to `-c`, is not a match.
+# The inner shell assigns the fetched output to VERSION; `-c` never runs
+# it as a command, the same "output assigned, not executed" case the
+# outside-the-string guard already covers, just with the assignment
+# living inside the string instead of after it.
+install:
+  image: alpine:3.19
+  script:
+    - bash -c "VERSION=$(curl -sf https://api.example.com/version)"

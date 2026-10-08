@@ -48,6 +48,7 @@ deny contains finding if {
 		"file":                  object.get(inc, "originFile", ""),
 		"line":                  object.get(inc, "originLine", 0),
 		"version":               inc.ref,
+		"subject":               _include_subject(inc),
 		"gitlabIncludeLocation": inc.source,
 		"gitlabIncludeType":     inc.kind,
 		"nested":                object.get(inc, "nested", false),
@@ -55,3 +56,9 @@ deny contains finding if {
 		"originHash":            object.get(inc, "originHash", 0),
 	}
 }
+
+# _include_subject: the include at its ref, the entry an attack path
+# starts from; the bare source when the include names no ref.
+_include_subject(inc) := sprintf("%s@%s", [inc.source, inc.ref]) if {
+	object.get(inc, "ref", "") != ""
+} else := inc.source

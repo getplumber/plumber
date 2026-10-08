@@ -24,8 +24,11 @@
 #     unknown the reference falls back to the allowlist rather than
 #     being flagged on missing data.
 #
-# Local actions (`./…`, `/…`) and docker-image refs (`docker://…`) live
-# outside this trust model and are always exempt.
+# Local actions (`./…`, `/…`, or the `$/…` form some workflows write the
+# same path in), references to the scanned repository itself by its
+# canonical owner/repo (input.pipeline.projectPath, compared
+# case-insensitively), and docker-image refs (`docker://…`) live outside
+# this trust model and are always exempt.
 package action_authorized_sources
 
 import rego.v1
@@ -45,6 +48,12 @@ deny contains finding if {
 		"job":      job.name,
 		"uses":     action.uses,
 		"line":     object.get(action, "line", 0),
+		# occurrenceSeverity: what this reference deserves, the registered
+		# severity above staying the code's own: medium when pinned by a
+		# full commit SHA (the owner can no longer change what runs), high
+		# on a ref the owner can move.
+		"pinnedBySha":        _pinned_by_sha(action.uses),
+		"occurrenceSeverity": _occurrence_severity(action.uses),
 	}
 }
 
@@ -65,8 +74,20 @@ deny contains finding if {
 		"message":  sprintf("job %q calls reusable workflow %q from an unauthorized source — restrict to authorized owners (actions/*, github/*) or an explicit allowlist", [job.name, use]),
 		"job":      job.name,
 		"uses":     use,
+		"pinnedBySha":        _pinned_by_sha(use),
+		"occurrenceSeverity": _occurrence_severity(use),
 	}
 }
+
+# _pinned_by_sha: the reference's ref (after the last "@") is a full
+# 40-hex commit SHA. A short SHA, a tag or a branch can be moved.
+_pinned_by_sha(uses) if {
+	parts := split(uses, "@")
+	count(parts) > 1
+	regex.match(`^[0-9a-fA-F]{40}$`, parts[count(parts) - 1])
+} else := false
+
+_occurrence_severity(uses) := "medium" if _pinned_by_sha(uses) else := "high"
 
 # An action is authorized when ANY trust condition holds.
 _authorized(action) if _is_official(action.uses)
@@ -119,6 +140,7 @@ _has_enough_stars(action) if {
 # carrying a parseable owner/repo.
 _is_external(uses) if {
 	not _is_local(uses)
+	not _is_own_repo(uses)
 	not startswith(uses, "docker://")
 	_owner_repo_of(uses) != ""
 }
@@ -126,6 +148,18 @@ _is_external(uses) if {
 _is_local(uses) if startswith(uses, "./")
 
 _is_local(uses) if startswith(uses, "/")
+
+_is_local(uses) if startswith(uses, "$/")
+
+# _is_own_repo: the reference names the scanned repository itself
+# (`owner/repo[/path]@ref`), which changes only with a commit there.
+# Abstains when projectPath is unknown, so it never grants trust on
+# missing data.
+_is_own_repo(uses) if {
+	own := lower(object.get(input.pipeline, "projectPath", ""))
+	own != ""
+	lower(_owner_repo_of(uses)) == own
+}
 
 # _strip_ref drops the `@ref` suffix, leaving `owner/repo[/path]`.
 _strip_ref(uses) := head if {

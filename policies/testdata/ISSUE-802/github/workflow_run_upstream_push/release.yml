@@ -1,0 +1,15 @@
+# The upstream workflow: it runs on a push to main and on a manual
+# dispatch only, never on a pull request, so the head of its run is a
+# commit of the repository's own branch.
+name: Release
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - run: make

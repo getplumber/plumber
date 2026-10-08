@@ -205,9 +205,25 @@ type DependabotConfig struct {
 
 // Job is a single pipeline unit of work.
 type Job struct {
-	Name     string  `json:"name"`
-	Image    *Image  `json:"image,omitempty"`
+	Name  string `json:"name"`
+	Image *Image `json:"image,omitempty"`
+	// MatrixValues is, per `strategy.matrix` key, the literal values the
+	// job's matrix lists, kept by the collector to resolve a reusable
+	// workflow call's inputs built from them; never part of the
+	// evaluation input.
+	MatrixValues map[string][]string `json:"-"`
+	// ImageRef is the container reference as written, kept by the
+	// collector to resolve a reference built from a reusable workflow's
+	// inputs against each caller; never part of the evaluation input.
+	ImageRef string  `json:"-"`
 	Services []Image `json:"services,omitempty"`
+	// MatrixImages are the images Image resolves to when its reference is
+	// built from `${{ matrix.X }}` values the job's matrix lists as
+	// literals (GitHub `strategy.matrix`): one per value, sorted. The
+	// image policies judge these instead of the reference as written.
+	// Empty when the reference holds no matrix value, holds another
+	// expression, or the matrix is computed at run time.
+	MatrixImages []Image `json:"matrixImages,omitempty"`
 	// Tags are the job's runner tags (GitLab's `tags:` keyword), read off
 	// the merged configuration so a tag inherited from `default:` counts
 	// exactly as a job-level one does. Sorted and de-duplicated, so the
@@ -292,6 +308,30 @@ type Job struct {
 	// care about triggers are GitHub-specific.
 	Triggers []string `json:"triggers,omitempty"`
 
+	// PushBranches, PushBranchesIgnore, PushTags and PushTagsIgnore carry
+	// GitHub's `on.push.branches` / `branches-ignore` / `tags` /
+	// `tags-ignore` filters (PR #513 review): each entry is a glob pattern
+	// exactly as the workflow author wrote it. All four are empty when
+	// `push:` carries no filter at all (the bare "push" string or
+	// list-element form, or a `push:` entry with none of these four keys),
+	// which situation.rego's unprotected_push reads as "every branch",
+	// never as "no push trigger at all". PushTagsIgnore on its own (no
+	// branches, no branches-ignore) reads the same as PushTags alone: a
+	// tag filter with no branch filter at all means the workflow never
+	// runs on a branch push. GitLab carries no equivalent: its push
+	// surface is read off its rules:/only:/except: keywords instead.
+	PushBranches       []string `json:"pushBranches,omitempty"`
+	PushBranchesIgnore []string `json:"pushBranchesIgnore,omitempty"`
+	PushTags           []string `json:"pushTags,omitempty"`
+	PushTagsIgnore     []string `json:"pushTagsIgnore,omitempty"`
+
+	// WorkflowRunWorkflows is the `on.workflow_run.workflows` list of the
+	// enclosing GitHub workflow, verbatim: the upstream workflows (by
+	// name, or by file path for a workflow with no name) whose runs
+	// trigger this one. Empty when the workflow has no workflow_run
+	// trigger or names no upstream. GitLab carries no equivalent.
+	WorkflowRunWorkflows []string `json:"workflowRunWorkflows,omitempty"`
+
 	// Uses lists every third-party action referenced by the job's steps
 	// (for GitHub Actions, `jobs.<name>.steps[].uses` with its
 	// accompanying `with:` block). Empty for GitLab jobs, which model
@@ -311,6 +351,27 @@ type Job struct {
 	// Only meaningful when ReusableWorkflowUses is set.
 	SecretsInherit bool `json:"secretsInherit,omitempty"`
 
+	// ReusableSecrets is a reusable-workflow call's explicit `secrets:`
+	// map: the called workflow's secret name to the expression the caller
+	// passes (`R2_KEY: ${{ secrets.R2_KEY }}`). ReusableWith is the call's
+	// `with:` inputs, as written. Both empty on any other job.
+	ReusableSecrets map[string]string `json:"reusableSecrets,omitempty"`
+	ReusableWith    map[string]any    `json:"reusableWith,omitempty"`
+
+	// ReusableCallees are, on a job calling a reusable workflow of the
+	// repository itself, the jobs of that workflow and of every workflow it
+	// calls in turn, sorted: the jobs the call runs.
+	ReusableCallees []string `json:"reusableCallees,omitempty"`
+
+	// Callers are, on a job of a reusable workflow of the repository
+	// (on: workflow_call), every call that runs it: the calling job, with
+	// the token, the events, the secrets and the inputs that call gives
+	// it. A called workflow runs under its caller's event with its caller's
+	// token, so these, not the job's own workflow, say what it holds. A call
+	// from a workflow itself called carries what the top of the chain
+	// gives, one entry per chain. Sorted by calling job.
+	Callers []ReusableCaller `json:"callers,omitempty"`
+
 	// If is the JOB-level `if:` expression (GitHub Actions), verbatim,
 	// "" when the job is unconditional. Distinct from Conditions, which
 	// flattens the job's and its steps' conditions together for
@@ -318,6 +379,10 @@ type Job struct {
 	// needs the job gate alone, because it excludes every step from the
 	// events it rules out.
 	If string `json:"if,omitempty"`
+	// Dead is true when the job-level `if:` is the constant false (`if:
+	// false`, `if: ${{ false }}`, `if: 'false'`): the job never runs, so
+	// it holds nothing, changes nothing and hands nothing over.
+	Dead bool `json:"dead,omitempty"`
 	// Conditions collects every `if:` expression attached to the job
 	// (job-level + each step's). Kept as raw YAML strings so Rego
 	// policies can match them with regular expressions — no attempt
@@ -345,9 +410,6 @@ type Job struct {
 	// collector keeps only the name. Empty when no environment is set.
 	Environment string `json:"environment,omitempty"`
 
-	// RunsOn is the GitHub runner selector (runs-on), one entry per label;
-	// empty on GitLab, whose runner selection is Tags.
-	RunsOn []string `json:"runsOn,omitempty"`
 	// Needs lists the Job.Name values this job depends on (GitHub: qualified
 	// with the workflow namespace exactly like Name; GitLab: bare job names,
 	// as GitLab names them). The path assembler walks it one hop. A GitLab
@@ -358,6 +420,28 @@ type Job struct {
 	// on GitLab from the job's cache:, artifacts: and dependencies: keys.
 	Caches    []CacheRef    `json:"caches,omitempty"`
 	Artifacts []ArtifactRef `json:"artifacts,omitempty"`
+}
+
+// ReusableCaller is one call of a reusable workflow, as seen from a job of
+// the called workflow (Job.Callers).
+type ReusableCaller struct {
+	// Job is the calling job's name.
+	Job string `json:"job"`
+	// Permissions is the calling job's effective permissions (its own, its
+	// workflow's, or, up a chain of calls, the first declared), nil when
+	// nothing up the chain declares any: the assumed repository default.
+	Permissions any `json:"permissions,omitempty"`
+	// Triggers is the events the call runs on: those of the workflow at the
+	// top of the chain, workflow_call left out.
+	Triggers []string `json:"triggers,omitempty"`
+	// SecretsInherit is true when the call passes every secret; Secrets is
+	// otherwise the explicit map, the called workflow's secret name to the
+	// expression passed (resolved up the chain where it forwards one).
+	SecretsInherit bool              `json:"secretsInherit,omitempty"`
+	Secrets        map[string]string `json:"secrets,omitempty"`
+	// With is the call's inputs, an input passed through from a caller up
+	// the chain (`${{ inputs.x }}`) replaced by what that caller passes.
+	With map[string]any `json:"with,omitempty"`
 }
 
 // Action is a single invocation of a reusable third-party action.
@@ -715,17 +799,40 @@ func NormalizeVisibility(raw string) string {
 	return VisibilityUnknown
 }
 
-// CacheRef is one cache a job restores, saves or both.
+// CacheRef is one cache a job restores, saves or both. A Prefix entry is a
+// key family: restored, it takes the most recent cache whose key starts
+// with Key, not only the one equal to it (GitHub actions/cache
+// restore-keys, or a caching action that keys on a fixed prefix followed
+// by a hash only known at run time); saved, its key is Key followed by
+// such a part. Uses and Line are the step that declares it (GitHub), so a
+// finding on that step can find its caches.
 type CacheRef struct {
-	Key   string   `json:"key,omitempty"`
-	Paths []string `json:"paths,omitempty"`
-	Mode  string   `json:"mode"` // "restore", "save" or "both"
+	// Key is what a restore and a save must share for one to read the
+	// other: the actions/cache key as written, or the key a caching action
+	// builds (its discriminators included: a dependency path, a buildx
+	// scope, a job id). Family is the name a reader recognizes, the key
+	// without the part that tells two caches of one kind apart; empty when
+	// it is the key itself.
+	Key    string   `json:"key,omitempty"`
+	Family string   `json:"family,omitempty"`
+	Paths  []string `json:"paths,omitempty"`
+	Mode   string   `json:"mode"` // "restore", "save" or "both"
+	Prefix bool     `json:"prefix,omitempty"`
+	Uses   string   `json:"uses,omitempty"`
+	Line   int      `json:"line,omitempty"`
 }
 
-// ArtifactRef is one artifact a job produces or consumes. An empty Name on a
-// consume entry means "every artifact of the workflow".
+// ArtifactRef is one artifact a job produces or consumes. An empty Name and
+// an empty Pattern on a consume entry mean "every artifact of the workflow".
+// Pattern is a consume entry's glob over artifact names (GitHub
+// download-artifact's `pattern:` input).
 type ArtifactRef struct {
-	Name  string   `json:"name,omitempty"`
-	Paths []string `json:"paths,omitempty"`
-	Mode  string   `json:"mode"` // "produce" or "consume"
+	Name    string   `json:"name,omitempty"`
+	Pattern string   `json:"pattern,omitempty"`
+	Paths   []string `json:"paths,omitempty"`
+	Mode    string   `json:"mode"` // "produce" or "consume"
+	// CrossRun is true on a consume entry that reads another workflow
+	// run's artifacts (GitHub download-artifact with a run-id input), the
+	// one way an artifact crosses workflow files.
+	CrossRun bool `json:"crossRun,omitempty"`
 }

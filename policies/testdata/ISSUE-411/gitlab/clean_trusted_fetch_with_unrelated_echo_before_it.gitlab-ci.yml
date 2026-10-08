@@ -1,0 +1,8 @@
+# clean: the reverse of the decoy case. An unrelated echo sitting before
+# the real fetch, inside the same substitution, is not part of the fetch
+# command's own text and must not defeat trust for an actually-
+# allowlisted fetch that follows it.
+install:
+  image: alpine:3.19
+  script:
+    - bash -c "$(echo see http://unrelated.example; curl -fsSL https://get.docker.com/x.sh)"

@@ -86,15 +86,74 @@ deny contains finding if {
 	# The risk is a per-job property. Collect every dangerous trigger that
 	# reaches this job and emit ONE finding listing them, rather than one
 	# duplicate finding per trigger on the same line (#235).
-	triggers := sort([t | some t in job.triggers; dangerous_events[t]])
+	triggers := sort([t | some t in job.triggers; dangerous_events[t]; not _trusted_trigger(job, t)])
 	count(triggers) > 0
 	finding := {
 		"code":     "ISSUE-802",
 		"severity": "critical",
 		"message":  sprintf("job %q runs under dangerous trigger(s) %s and checks out fork-controlled code — untrusted code executes with the base repo's secrets (CVE-2025-30066 pattern)", [job.name, concat(", ", triggers)]),
 		"job":      job.name,
+		"subject":  _untrusted_ref_subject(job),
 	}
 }
+
+# _trusted_trigger: a workflow_run trigger whose upstream workflows
+# (on.workflow_run.workflows) are all in the scan and none can run on a
+# pull request: the triggering run's head is then a commit of the
+# repository's own branches, not fork code. An upstream that is itself
+# triggered by workflow_run is not trusted (its own head can come from a
+# pull request run further up), and neither is an upstream the scan does
+# not hold, nor a trigger that names no upstream at all.
+_trusted_trigger(job, "workflow_run") if {
+	upstreams := object.get(job, "workflowRunWorkflows", [])
+	count(upstreams) > 0
+	every u in upstreams {
+		_upstream_in_scan(u)
+		not _upstream_untrusted(u)
+	}
+}
+
+_untrusted_upstream_events := {"pull_request", "pull_request_target", "workflow_run"}
+
+_upstream_in_scan(u) if {
+	some other in input.pipeline.jobs
+	_names_workflow(other, u)
+}
+
+_upstream_untrusted(u) if {
+	some other in input.pipeline.jobs
+	_names_workflow(other, u)
+	some t in object.get(other, "triggers", [])
+	t in _untrusted_upstream_events
+}
+
+# _names_workflow: GitHub matches workflow_run's workflows by workflow
+# name, and a workflow with no name by its file path.
+_names_workflow(job, u) if object.get(job, "workflowName", "") == u
+
+_names_workflow(job, u) if {
+	object.get(job, "workflowName", "") == ""
+	origin := object.get(job, "originFile", "")
+	origin != ""
+	_path_names(origin, u)
+}
+
+_path_names(origin, u) if origin == u
+
+_path_names(origin, u) if endswith(origin, concat("", ["/", u]))
+
+# _untrusted_ref_subject: the fork-controlled ref the job checks out,
+# "${{ }}" removed, the smallest one when several checkouts match.
+_untrusted_ref_subject(job) := s if {
+	s := min({trim_space(trim_suffix(trim_prefix(ref, "${{"), "}}")) |
+		some action in job.uses
+		startswith(action.uses, "actions/checkout@")
+		ref := action.with.ref
+		is_string(ref)
+		some p in untrusted_ref_patterns
+		regex.match(p, ref)
+	})
+} else := ""
 
 # A job checks out untrusted code when an actions/checkout step pins
 # its `ref:` to a fork / PR-controlled value.

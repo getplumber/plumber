@@ -1,0 +1,10 @@
+# An upstream workflow with no name: GitHub names it by its file path.
+# It runs on pull_request_target.
+on:
+  pull_request_target:
+
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo label
