@@ -1,3 +1,20 @@
+## [0.5.24](https://github.com/getplumber/plumber/compare/v0.5.23...v0.5.24) (2026-10-08)
+
+
+### ✨ Features
+
+* **config:** exempt dependabot actions from the pin-by-SHA default ([834d9c4](https://github.com/getplumber/plumber/commit/834d9c4d1fd793b49e58528ed88de6399b0996c4))
+
+
+### 📚 Documentation
+
+* **readme:** add Outscale and Telstra to the adopters row ([428a960](https://github.com/getplumber/plumber/commit/428a96058ece0b0474d8025882e5d0e90064be2d))
+
+
+### ✅ Tests
+
+* **control:** pin the shipped pin-by-SHA trust boundary to GitHub-owned orgs ([ec5c1ef](https://github.com/getplumber/plumber/commit/ec5c1ef0afcaeb785beb7f8b75aff7317f9a69e8)), closes [#531](https://github.com/getplumber/plumber/issues/531)
+
 ## [0.5.23](https://github.com/getplumber/plumber/compare/v0.5.22...v0.5.23) (2026-10-07)
 
 
