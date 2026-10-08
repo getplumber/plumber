@@ -1,0 +1,15 @@
+# workflow_run after the unnamed workflow, named by its path; that
+# upstream runs on pull_request_target. Expected: 1 finding on after.
+name: After build
+on:
+  workflow_run:
+    workflows: [.github/workflows/build.yml]
+    types: [completed]
+
+jobs:
+  after:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_branch }}

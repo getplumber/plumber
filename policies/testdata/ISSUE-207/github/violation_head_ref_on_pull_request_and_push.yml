@@ -1,0 +1,13 @@
+# The same expression in a workflow a pull request also runs: there the
+# head branch name is the pull request author's free text.
+# Expected hits: 1.
+name: generate
+on:
+  push:
+    branches: [dev]
+  pull_request:
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - run: git push origin HEAD:${{ github.event.pull_request.head.ref || github.ref_name }}

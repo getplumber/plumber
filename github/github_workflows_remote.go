@@ -109,6 +109,7 @@ func ScanGitHubWorkflowsRemote(host, owner, repo, ref string, enrichActionMetada
 	sort.Slice(pipeline.Jobs, func(i, j int) bool {
 		return pipeline.Jobs[i].Name < pipeline.Jobs[j].Name
 	})
+	linkReusableCallers(pipeline.Jobs, pipeline.ProjectPath)
 
 	if enrichActionMetadata {
 		// Now that parsing is done, we know the unique action count

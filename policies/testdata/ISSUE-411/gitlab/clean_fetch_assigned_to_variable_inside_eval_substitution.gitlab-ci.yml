@@ -1,0 +1,7 @@
+# clean: the eval form of the same assignment-inside-the-string case.
+# eval re-runs its argument as a command line; X=$(curl ...) assigns the
+# fetched output, it does not execute what curl returns.
+install:
+  image: alpine:3.19
+  script:
+    - eval "X=$(curl -s https://api.example.com/v)"

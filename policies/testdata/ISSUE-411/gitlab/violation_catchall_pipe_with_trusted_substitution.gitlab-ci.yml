@@ -1,0 +1,8 @@
+# violation: the generic `| <shell>` catch-all extracts no curl/wget
+# fetch target of its own (the payload already sits on disk), so it can
+# never be trusted either. A trusted command-substitution fetch on the
+# same line must not cover for it.
+install:
+  image: alpine:3.19
+  script:
+    - cat payload.sh | bash; bash -c "$(curl -fsSL https://get.trusted.io/ok)"

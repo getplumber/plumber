@@ -1,0 +1,9 @@
+# violation: trust is decided per dangerous sink, never over the union
+# of both kinds on the line. The base64 decode chain is a visible-line
+# sink that extracts no fetch target of its own, so it can never be
+# trusted; a trusted command-substitution fetch sitting on the same
+# physical line must not launder it.
+install:
+  image: alpine:3.19
+  script:
+    - echo ZXZpbA== | base64 -d | bash; bash -c "$(curl -fsSL https://get.trusted.io/install.sh)"

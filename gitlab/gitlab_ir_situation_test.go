@@ -247,3 +247,91 @@ func TestEnrichFromMergedConfSituationFields(t *testing.T) {
 		t.Errorf("except_branches.Except = %v, want [branches]", got)
 	}
 }
+
+const defaultCacheCI = `
+default:
+  cache:
+    key: deps-$CI_COMMIT_REF_SLUG
+    paths: [node_modules/]
+cache:
+  key: legacy-global
+  paths: [vendor/]
+inherits:
+  script: [make]
+own:
+  script: [make]
+  cache:
+    key: own
+    paths: [own/]
+    policy: pull
+disabled:
+  script: [make]
+  cache: []
+explicit_inherit:
+  script: [make]
+  inherit:
+    default: true
+opted_out:
+  script: [make]
+  inherit:
+    default: false
+other_keys_only:
+  script: [make]
+  inherit:
+    default: [image, before_script]
+cache_listed:
+  script: [make]
+  inherit:
+    default: [cache]
+variables_only:
+  script: [make]
+  inherit:
+    variables: false
+`
+
+const globalCacheCI = `
+cache:
+  key: legacy-global
+  paths: [vendor/]
+build:
+  script: [make]
+`
+
+// TestJobsInheritTheDefaultCache: a job that declares no cache: of its own
+// uses the one under default: (or, without it, the deprecated top-level
+// cache:), the way GitLab runs it, unless it opts out with inherit: default:
+// false or a default: list that does not name cache. A job's own cache:,
+// including the empty list that disables caching, always wins. An
+// explicit inherit: default: true inherits exactly like the no-inherit:-
+// block default (inheritsDefault's bool-true arm), proving the arm is not
+// silently equivalent to false.
+func TestJobsInheritTheDefaultCache(t *testing.T) {
+	p := pipelineFromYAML(t, defaultCacheCI)
+	byName := map[string]ir.Job{}
+	for _, j := range p.Jobs {
+		byName[j.Name] = j
+	}
+	inherited := []ir.CacheRef{{Key: "deps-$CI_COMMIT_REF_SLUG", Paths: []string{"node_modules/"}, Mode: "both"}}
+	for name, want := range map[string][]ir.CacheRef{
+		"inherits":         inherited,
+		"cache_listed":     inherited,
+		"explicit_inherit": inherited,
+		// An inherit: block that says nothing of default: leaves the
+		// default cache inherited.
+		"variables_only":  inherited,
+		"own":             {{Key: "own", Paths: []string{"own/"}, Mode: "restore"}},
+		"disabled":        nil,
+		"opted_out":       nil,
+		"other_keys_only": nil,
+	} {
+		if got := byName[name].Caches; !reflect.DeepEqual(got, want) {
+			t.Errorf("%s.Caches = %+v, want %+v", name, got, want)
+		}
+	}
+
+	p = pipelineFromYAML(t, globalCacheCI)
+	want := []ir.CacheRef{{Key: "legacy-global", Paths: []string{"vendor/"}, Mode: "both"}}
+	if got := p.Jobs[0].Caches; !reflect.DeepEqual(got, want) {
+		t.Errorf("build.Caches = %+v, want %+v (top-level cache: without default:)", got, want)
+	}
+}

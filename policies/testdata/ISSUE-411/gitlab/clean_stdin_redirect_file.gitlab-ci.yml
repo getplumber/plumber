@@ -1,0 +1,6 @@
+# clean: a plain stdin redirect from a file already on disk, not a
+# process substitution, is not a remote-code fetch.
+run_script:
+  image: alpine:3.19
+  script:
+    - bash < script.sh

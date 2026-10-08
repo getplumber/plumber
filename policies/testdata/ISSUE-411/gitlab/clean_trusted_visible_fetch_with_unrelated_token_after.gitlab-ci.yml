@@ -1,0 +1,8 @@
+# clean: a trusted curl|bash with an unrelated hostname token later on
+# the same line, outside the fetch command's own text, must not defeat
+# trust. The fetch command's text ends at the pipe; what the piped
+# shell goes on to do with its own arguments is not part of the fetch.
+install:
+  image: alpine:3.19
+  script:
+    - curl https://get.trusted.io/install.sh | bash && echo done at other.example

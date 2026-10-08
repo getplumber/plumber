@@ -18,19 +18,29 @@ deny contains finding if {
 	# describes a placeholder, not an image: registry, name and tag were
 	# split out of the literal text. Judging it answers a real question
 	# over a guess, so skip that job and keep judging the rest.
-	not job.image.unresolved
-	tag := job.image.tag
+	some img in _job_images(job)
+	not img.unresolved
+	tag := img.tag
 	tag != ""
 	_tag_is_forbidden(tag)
 	finding := {
 		"code":     "ISSUE-102",
 		"severity": "medium",
-		"message":  sprintf("Job `%s` uses the forbidden tag `%s` of image `%s`.", [job.name, tag, _full_ref(job.image)]),
+		"message":  sprintf("Job `%s` uses the forbidden tag `%s` of image `%s`.", [job.name, tag, _full_ref(img)]),
 		"job":      job.name,
 		"tag":      tag,
-		"link":     _full_ref(job.image),
+		"link":     _full_ref(img),
 	}
 }
+
+# _job_images: the images the job's container reference resolves to
+# through its matrix literals (matrixImages) when it has them, the image
+# as written otherwise.
+_job_images(job) := job.matrixImages if {
+	count(object.get(job, "matrixImages", [])) > 0
+} else := [job.image] if {
+	job.image
+} else := []
 
 _full_ref(img) := ref if {
 	img.registry != ""

@@ -1,0 +1,17 @@
+# workflow_run after "CI", which runs on pull requests: the triggering
+# head can be a fork's commit, checked out here with the base
+# repository's secrets. Expected: 1 finding on post.
+name: After CI
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+jobs:
+  post:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - run: echo "post-run"

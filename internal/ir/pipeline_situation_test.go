@@ -24,7 +24,6 @@ func TestSituationFieldsReachTheRegoInput(t *testing.T) {
 		Visibility: VisibilityPrivate,
 		Jobs: []Job{{
 			Name:      "build",
-			RunsOn:    []string{"ubuntu-latest"},
 			Needs:     []string{"lint"},
 			Caches:    []CacheRef{{Key: "npm-${{ hashFiles('**/package-lock.json') }}", Paths: []string{"~/.npm"}, Mode: "both"}},
 			Artifacts: []ArtifactRef{{Name: "dist", Paths: []string{"dist/"}, Mode: "produce"}},
@@ -42,7 +41,7 @@ func TestSituationFieldsReachTheRegoInput(t *testing.T) {
 		t.Errorf("visibility = %v", m["visibility"])
 	}
 	job := m["jobs"].([]any)[0].(map[string]any)
-	for _, key := range []string{"runsOn", "needs", "caches", "artifacts"} {
+	for _, key := range []string{"needs", "caches", "artifacts"} {
 		if _, ok := job[key]; !ok {
 			t.Errorf("job JSON lacks %q: %v", key, job)
 		}

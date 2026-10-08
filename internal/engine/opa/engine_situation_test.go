@@ -13,12 +13,12 @@ package situation
 
 import rego.v1
 
-result := {"exposure": input.pipeline.visibility, "jobs": {j.name: {"runsOn": j.runsOn} | some j in input.pipeline.jobs}}
+result := {"exposure": input.pipeline.visibility, "jobs": {j.name: {"needs": j.needs} | some j in input.pipeline.jobs}}
 `
 
 func TestEvaluateSituationReturnsTheResultRule(t *testing.T) {
 	e := New()
-	p := &ir.NormalizedPipeline{Visibility: "private", Jobs: []ir.Job{{Name: "build", RunsOn: []string{"ubuntu-latest"}}}}
+	p := &ir.NormalizedPipeline{Visibility: "private", Jobs: []ir.Job{{Name: "build", Needs: []string{"lint"}}}}
 	raw, err := e.EvaluateSituation(context.Background(), situationStub, p, map[string]any{})
 	if err != nil {
 		t.Fatal(err)
@@ -30,7 +30,7 @@ func TestEvaluateSituationReturnsTheResultRule(t *testing.T) {
 	if err := json.Unmarshal(raw, &got); err != nil {
 		t.Fatalf("decode: %v (%s)", err, raw)
 	}
-	if got.Exposure != "private" || got.Jobs["build"]["runsOn"][0] != "ubuntu-latest" {
+	if got.Exposure != "private" || got.Jobs["build"]["needs"][0] != "lint" {
 		t.Fatalf("unexpected result %s", raw)
 	}
 }

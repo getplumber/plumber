@@ -1,0 +1,9 @@
+# clean: GitHub-side mirror of the assignment-inside-the-string case (see
+# testdata/ISSUE-411/gitlab). VERSION is assigned, never executed by -c.
+name: ci
+on: push
+jobs:
+  install:
+    runs-on: ubuntu-24.04
+    steps:
+      - run: bash -c "VERSION=$(curl -sf https://api.example.com/version)"

