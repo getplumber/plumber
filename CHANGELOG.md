@@ -1,3 +1,18 @@
+## [0.6.0](https://github.com/getplumber/plumber/compare/v0.5.24...v0.6.0) (2026-10-08)
+
+
+### ⚠ BREAKING CHANGES
+
+* **analyze:** score letters, --min-score and --min-points gates and badges now read the contextual score. Run with --score-profile v3 or set PLUMBER_ANALYZE_SCORE_PROFILE=v3 to keep the previous formula.
+
+Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>
+Claude-Session: https://claude.ai/code/session_01Ft8dmcMLK7V9XZh7JX4vzs
+
+### ✨ Features
+
+* **analyze:** the contextual score is the default, on every output, with the labelled corpus and the migration report ([41eff60](https://github.com/getplumber/plumber/commit/41eff6097504ed9a9b342c7bbf341398057c90e3))
+* **situation:** job facts for attack paths, entry subjects, push trigger filters and cache inheritance ([89f30e4](https://github.com/getplumber/plumber/commit/89f30e45482f21ffd8b16addfc50c7db40db7a14))
+
 ## [0.5.24](https://github.com/getplumber/plumber/compare/v0.5.23...v0.5.24) (2026-10-08)
 
 
