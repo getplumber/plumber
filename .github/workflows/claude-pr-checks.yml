@@ -84,7 +84,7 @@ jobs:
         # finishes without calling the structured-output tool, and a review
         # with zero findings reliably ends exactly that way.
         continue-on-error: true
-        uses: anthropics/claude-code-action@be7b93b1907a4abad570368f3c74b6fe3807510b # v1.0.183
+        uses: anthropics/claude-code-action@6c690188da61cf16ee7debb28383ba67f02abb4c # v1.0.242
         with:
           anthropic_api_key: ${{ secrets.ANTHROPIC_API_KEY }}
           # Without this the action exchanges an OIDC token for a GitHub App
