@@ -1,0 +1,17 @@
+# A workflow that runs only on a push to one branch: the pull request
+# payload is empty there, so github.event.pull_request.head.ref expands
+# to nothing and the expression falls back to github.ref_name, the pushed
+# branch (a constant `dev` under this filter). A comparison of github.ref
+# with a literal is a boolean. Neither carries text anybody controls.
+# Expected hits: 0.
+name: generate
+on:
+  push:
+    branches: [dev]
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          # if ! git push origin HEAD:${{ github.event.pull_request.head.ref || github.ref_name }} --no-verify; then
+          echo "dev=${{ github.ref == 'refs/heads/dev' }}"

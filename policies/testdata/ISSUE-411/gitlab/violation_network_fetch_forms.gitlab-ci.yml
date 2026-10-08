@@ -1,0 +1,21 @@
+# Network fetches whose body an interpreter runs: an environment
+# assignment before the interpreter (AutoGPT installs Poetry this way),
+# sudo with its flags, the interpreter reading the script from stdin
+# with `-` or `-s --` and positional arguments, a fetch through a
+# variable URL, a fetch passed through a filter. One hit per job.
+# Expected hits: 5.
+poetry_env_prefix:
+  script:
+    - curl -sSL https://install.python-poetry.org | POETRY_VERSION=$HEAD_POETRY_VERSION python3 -
+sudo_flags:
+  script:
+    - curl -fsSL https://get.example.com/install.sh | sudo -E bash -
+stdin_args:
+  script:
+    - wget -qO- https://get.example.com/install.sh | sh -s -- --yes
+variable_url:
+  script:
+    - curl -fsSL $INSTALL_URL | bash
+through_a_filter:
+  script:
+    - curl -fsSL https://get.example.com/install.sh.gz | gunzip | bash

@@ -29,13 +29,14 @@ var scanGitHubWorkflowsRemote = githubpkg.ScanGitHubWorkflowsRemote
 // fetchGitHubVisibility is a test seam over the repo-visibility lookup.
 // The default honors PLUMBER_DISABLE_GITHUB_API (same contract as
 // fetchGitHubDefaultBranch above) so offline test suites never hit the
-// network. FetchGitHubRepoVisibility never errors, so disabled and
-// unreachable both degrade straight to unknown.
-var fetchGitHubVisibility = func(host, owner, repo string) string {
+// network. FetchGitHubRepoIdentity never errors, so disabled and
+// unreachable both degrade straight to unknown and no canonical name.
+// The same lookup answers the repository's canonical owner/repo.
+var fetchGitHubVisibility = func(host, owner, repo string) (visibility, fullName string) {
 	if v := os.Getenv(githubpkg.EnvDisableGitHubAPI); v == "1" || v == "true" {
-		return ir.VisibilityUnknown
+		return ir.VisibilityUnknown, ""
 	}
-	return githubpkg.FetchGitHubRepoVisibility(host, owner, repo)
+	return githubpkg.FetchGitHubRepoIdentity(host, owner, repo)
 }
 
 // resolveGitHubDefaultBranch overwrites pipeline.DefaultBranch with the
@@ -68,13 +69,24 @@ func resolveGitHubDefaultBranch(l *logrus.Entry, pipeline *ir.NormalizedPipeline
 // applyGitHubVisibility records the repository's exposure on the
 // pipeline. Without an owner/repo there is nothing to ask, and the
 // answer is unknown rather than a lookup on a malformed path.
+//
+// The same lookup gives the repository's canonical owner/repo (the API
+// follows renames and answers the current case), recorded as the
+// pipeline's projectPath, which the policies read to tell the
+// repository's own references from third-party ones. Only the policy
+// input changes: the report keeps the path it was given, and a lookup
+// with no answer keeps it on the pipeline too.
 func applyGitHubVisibility(pipeline *ir.NormalizedPipeline, host, projectPath string) {
 	owner, repo, ok := strings.Cut(projectPath, "/")
 	if !ok || owner == "" || repo == "" {
 		pipeline.Visibility = ir.VisibilityUnknown
 		return
 	}
-	pipeline.Visibility = fetchGitHubVisibility(host, owner, repo)
+	visibility, fullName := fetchGitHubVisibility(host, owner, repo)
+	pipeline.Visibility = visibility
+	if fullName != "" {
+		pipeline.ProjectPath = fullName
+	}
 }
 
 // enrichGitHubBranches populates pipeline.Branches via the GitHub

@@ -1,0 +1,12 @@
+eval_form:
+  image: alpine:3.19
+  script:
+    # The trustedUrls exemption must reach the eval "$(...)" form the same
+    # way it reaches the shell -c "$(...)" form.
+    - eval "$(curl -fsSL https://get.docker.com/eval.sh)"
+
+backtick_form:
+  image: alpine:3.19
+  script:
+    # And the backtick command-substitution form.
+    - bash -c "`curl -fsSL https://get.docker.com/backtick.sh`"

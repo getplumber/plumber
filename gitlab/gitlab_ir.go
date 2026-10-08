@@ -793,7 +793,7 @@ func enrichFromMergedConf(job *ir.Job, name string, conf *GitlabCIConf) {
 		job.Except = except
 	}
 	job.Needs = gitlabNeeds(parsed.Needs)
-	job.Caches = gitlabCaches(parsed.Cache)
+	job.Caches = gitlabCaches(jobCache(parsed, conf))
 	job.Artifacts = gitlabArtifacts(name, parsed.Artifacts, parsed.Needs, parsed.Dependencies)
 	if job.Environment == "" {
 		job.Environment = gitlabEnvironmentName(parsed.Environment)
@@ -1017,6 +1017,48 @@ func gitlabNeeds(v any) []string {
 		}
 	}
 	return out
+}
+
+// jobCache is the cache: a job runs with. Its own cache: wins, including the
+// empty list GitLab documents for "no cache in this job". A job that declares
+// none inherits the one under default:, or the deprecated top-level cache:
+// when default: has none, unless its inherit: default: is false or a list
+// that does not name cache. GitLab's merged configuration leaves default:
+// where it was written instead of copying it into every job, so without
+// this a cache configured once for the whole pipeline would be invisible.
+func jobCache(job GitlabJob, conf *GitlabCIConf) any {
+	if job.Cache != nil {
+		return job.Cache
+	}
+	if !inheritsDefault(job.Inherit, "cache") {
+		return nil
+	}
+	if conf.Default.Cache != nil {
+		return conf.Default.Cache
+	}
+	return conf.Cache
+}
+
+// inheritsDefault reads a job's inherit: block for one default: keyword:
+// inherited unless inherit: default: is false, or is a list that does not
+// name the keyword.
+func inheritsDefault(inherit any, keyword string) bool {
+	m := yamlMap(inherit)
+	if m == nil {
+		return true
+	}
+	switch d := m["default"].(type) {
+	case bool:
+		return d
+	case []any:
+		for _, k := range anyStrings(d) {
+			if k == keyword {
+				return true
+			}
+		}
+		return false
+	}
+	return true
 }
 
 // gitlabCaches reads cache: as one map or a list of maps. policy pull is a

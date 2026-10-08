@@ -1,0 +1,9 @@
+echo_job:
+  image: alpine:3.19
+  script:
+    - echo "curl x | bash"
+
+commit_job:
+  image: alpine:3.19
+  script:
+    - git commit -m "curl ... | sh"

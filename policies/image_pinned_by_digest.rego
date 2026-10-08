@@ -14,26 +14,35 @@ deny contains finding if {
 	_pin_by_digest_required
 	some i
 	job := input.pipeline.jobs[i]
-	job.image
+	some img in _job_images(job)
 	# An image reference that still held a `$VARIABLE` when it was parsed
 	# describes a placeholder, not an image: registry, name and tag were
 	# split out of the literal text. Judging it answers a real question
 	# over a guess, so skip that job and keep judging the rest.
-	not job.image.unresolved
-	not _image_has_digest(job.image)
+	not img.unresolved
+	not _image_has_digest(img)
 	finding := {
 		"code":     "ISSUE-103",
 		"severity": "high",
-		"message":  sprintf("Job `%s` uses image `%s` without a digest.", [job.name, _image_ref(job.image)]),
+		"message":  sprintf("Job `%s` uses image `%s` without a digest.", [job.name, _image_ref(img)]),
 		"job":      job.name,
-		"link":     _image_ref(job.image),
+		"link":     _image_ref(img),
 		# Identity keys on imageRepo (registry/name, no tag): the subject
 		# is "this image is not pinned by digest", so a routine tag bump
 		# (still digestless) must not re-key it. link/tag stay as data.
-		"imageRepo": _image_repo(job.image),
-		"tag":       _image_tag(job.image),
+		"imageRepo": _image_repo(img),
+		"tag":       _image_tag(img),
 	}
 }
+
+# _job_images: the images the job's container reference resolves to
+# through its matrix literals (matrixImages) when it has them, the image
+# as written otherwise.
+_job_images(job) := job.matrixImages if {
+	count(object.get(job, "matrixImages", [])) > 0
+} else := [job.image] if {
+	job.image
+} else := []
 
 _image_tag(img) := img.tag if {
 	img.tag != ""

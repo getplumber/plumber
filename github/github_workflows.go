@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"sort"
+	"strconv"
 	"strings"
 
 	"gopkg.in/yaml.v2"
@@ -137,6 +138,7 @@ func ScanGitHubWorkflowsWithProgress(projectPath, defaultBranch, rootDir, apiHos
 	if err != nil {
 		return nil, nil, err
 	}
+	linkReusableCallers(jobs, projectPath)
 	pipeline.Jobs = jobs
 	pipeline.AnalyzedWorkflows = workflowFiles
 	if dcfg, derr := scanDependabotConfig(rootDir); derr != nil {
@@ -448,14 +450,19 @@ type ghWorkflowHeader struct {
 // job in the workflow. Grouping them avoids passing many parameters to the
 // per-job builder.
 type workflowContext struct {
-	perms          any
-	env            map[string]string
-	triggers       []string
-	name           string
-	hasConcurrency bool
-	jobLines       map[string]int
-	usesLines      map[string][]int
-	usesComments   map[string]string
+	perms                any
+	env                  map[string]string
+	triggers             []string
+	pushBranches         []string
+	pushBranchesIgnore   []string
+	pushTags             []string
+	pushTagsIgnore       []string
+	workflowRunUpstreams []string
+	name                 string
+	hasConcurrency       bool
+	jobLines             map[string]int
+	usesLines            map[string][]int
+	usesComments         map[string]string
 }
 
 // mergedEnv combines workflow-level, job-level, and step-level env maps into
@@ -490,11 +497,9 @@ func annotateUses(uses []ir.Action, usesLines []int, usesComments map[string]str
 	}
 }
 
-// stringOrList accepts the YAML forms GitHub allows for runs-on and needs: a
-// scalar or a sequence. Non-string items are dropped: a scalar expression
-// such as `${{ matrix.os }}` is kept as the literal label, and the map form
-// `runs-on: {group: ..., labels: [...]}` is not read yet, so it comes back
-// nil.
+// stringOrList accepts the YAML forms GitHub allows for needs and the push
+// filters: a scalar or a sequence. Non-string items are dropped, and a map
+// comes back nil.
 func stringOrList(v any) []string {
 	switch x := v.(type) {
 	case string:
@@ -512,9 +517,10 @@ func stringOrList(v any) []string {
 }
 
 // cacheAndArtifactRefs derives the structured cache and artifact uses of a job
-// from its actions steps. Only the official actions are recognized; a cache
-// implemented by a third-party action stays an ordinary Uses entry.
-func cacheAndArtifactRefs(uses []ir.Action) (caches []ir.CacheRef, artifacts []ir.ArtifactRef) {
+// from its actions steps: the official cache actions, the caching actions
+// the cache poisoning control knows (builtinCacheRefs), and the official
+// artifact actions.
+func cacheAndArtifactRefs(uses []ir.Action, jobID string) (caches []ir.CacheRef, artifacts []ir.ArtifactRef) {
 	for _, a := range uses {
 		name := a.Uses
 		if i := strings.Index(name, "@"); i >= 0 {
@@ -539,24 +545,216 @@ func cacheAndArtifactRefs(uses []ir.Action) (caches []ir.CacheRef, artifacts []i
 			}
 			return out
 		}
+		step := func(ref ir.CacheRef) ir.CacheRef {
+			ref.Uses, ref.Line = a.Uses, a.Line
+			return ref
+		}
+		// The step's path list, read once: every entry of the step shares
+		// it, so a long path block and many restore-keys lines cost their
+		// sum, never their product.
+		paths := withPaths("path")
+		// restoreFallbacks is one restore entry per restore-keys line: when
+		// the exact key misses, the action restores the most recent cache
+		// whose key starts with one of them, so each prefix is its own way in
+		// for whoever saved a matching key.
+		restoreFallbacks := func() []ir.CacheRef {
+			var out []ir.CacheRef
+			for _, prefix := range withPaths("restore-keys") {
+				out = append(out, step(ir.CacheRef{Key: prefix, Paths: paths, Mode: "restore", Prefix: true}))
+			}
+			return out
+		}
 		switch name {
 		case "actions/cache":
-			caches = append(caches, ir.CacheRef{Key: withStr("key"), Paths: withPaths("path"), Mode: "both"})
+			caches = append(caches, step(ir.CacheRef{Key: withStr("key"), Paths: paths, Mode: "both"}))
+			caches = append(caches, restoreFallbacks()...)
 		case "actions/cache/restore":
-			caches = append(caches, ir.CacheRef{Key: withStr("key"), Paths: withPaths("path"), Mode: "restore"})
+			caches = append(caches, step(ir.CacheRef{Key: withStr("key"), Paths: paths, Mode: "restore"}))
+			caches = append(caches, restoreFallbacks()...)
 		case "actions/cache/save":
-			caches = append(caches, ir.CacheRef{Key: withStr("key"), Paths: withPaths("path"), Mode: "save"})
+			caches = append(caches, step(ir.CacheRef{Key: withStr("key"), Paths: paths, Mode: "save"}))
 		case "actions/upload-artifact":
 			artName := withStr("name")
 			if artName == "" {
 				artName = "artifact" // the action's documented default
 			}
-			artifacts = append(artifacts, ir.ArtifactRef{Name: artName, Paths: withPaths("path"), Mode: "produce"})
+			artifacts = append(artifacts, ir.ArtifactRef{Name: artName, Paths: paths, Mode: "produce"})
+		case "actions/upload-pages-artifact":
+			artName := withStr("name")
+			if artName == "" {
+				artName = "github-pages" // the action's documented default
+			}
+			artifacts = append(artifacts, ir.ArtifactRef{Name: artName, Paths: paths, Mode: "produce"})
+		case "actions/deploy-pages":
+			artName := withStr("artifact_name")
+			if artName == "" {
+				artName = "github-pages"
+			}
+			artifacts = append(artifacts, ir.ArtifactRef{Name: artName, Mode: "consume"})
 		case "actions/download-artifact":
-			artifacts = append(artifacts, ir.ArtifactRef{Name: withStr("name"), Mode: "consume"})
+			artifacts = append(artifacts, ir.ArtifactRef{Name: withStr("name"), Pattern: withStr("pattern"), Mode: "consume", CrossRun: withStr("run-id") != ""})
+		default:
+			for _, ref := range builtinCacheRefs(strings.ToLower(name), a.With, jobID) {
+				caches = append(caches, step(ref))
+			}
 		}
 	}
 	return caches, artifacts
+}
+
+// builtinCacheRefs is the cache of a caching action that keys its cache
+// itself, saved and restored unless an input literally turns saving off,
+// with Family the name a reader recognizes and Key what two jobs must share
+// to reach each other's cache. Expressions in an input are kept as
+// written. Nil when the action is none of them or its cache is off.
+//
+//   - Swatinem/rust-cache: prefix-key (default v0-rust), then shared-key
+//     when given, else the key input when given followed by the job id
+//     (unless add-job-id-key: false), the family leaving the job id out;
+//     the toolchain and lock file hashes stay in the run-time part of the
+//     key, so the entry is a prefix; save-if: false restores only.
+//   - actions/setup-node, setup-python, setup-java (opt-in with cache: a
+//     manager), setup-dotnet (opt-in with cache: true), setup-go (on
+//     unless cache: false): "<action>-<manager>", or "<action>" for a
+//     boolean, then cache-dependency-path in parentheses when given. The
+//     action restores the exact key of the manager and of the dependency
+//     files' hash: no prefix.
+//   - gradle/actions/setup-gradle, gradle/gradle-build-action: "gradle",
+//     off with cache-disabled: true, restore only with cache-read-only: true.
+//   - pnpm/action-setup (opt-in with cache): the action name.
+//   - docker/build-push-action with a type=gha cache: one entry per scope
+//     (default buildkit) in cache-from (restored) and cache-to (saved).
+func builtinCacheRefs(name string, with map[string]any, jobID string) []ir.CacheRef {
+	in := func(key string) string {
+		switch v := with[key].(type) {
+		case string:
+			return strings.TrimSpace(v)
+		case bool:
+			return strconv.FormatBool(v)
+		}
+		return ""
+	}
+	isFalse := func(key string) bool { return strings.EqualFold(in(key), "false") }
+	isTrue := func(key string) bool { return strings.EqualFold(in(key), "true") }
+	family := func(key string) ir.CacheRef { return ir.CacheRef{Key: key, Family: key, Mode: "both", Prefix: true} }
+	exact := func(fam string) []ir.CacheRef {
+		key := fam
+		var paths []string
+		for _, line := range strings.Split(in("cache-dependency-path"), "\n") {
+			if line = strings.TrimSpace(line); line != "" {
+				paths = append(paths, line)
+			}
+		}
+		if len(paths) > 0 {
+			key += " (" + strings.Join(paths, ", ") + ")"
+		}
+		return []ir.CacheRef{{Key: key, Family: fam, Mode: "both"}}
+	}
+	short := name[strings.LastIndex(name, "/")+1:]
+	switch name {
+	case "swatinem/rust-cache":
+		key := in("prefix-key")
+		if key == "" {
+			key = "v0-rust"
+		}
+		ref := family(key)
+		if shared := in("shared-key"); shared != "" {
+			ref = family(key + "-" + shared)
+		} else {
+			if k := in("key"); k != "" {
+				ref = family(key + "-" + k)
+			}
+			if !isFalse("add-job-id-key") && jobID != "" {
+				ref.Key += "-" + jobID
+			}
+		}
+		if isFalse("save-if") {
+			ref.Mode = "restore"
+		}
+		return []ir.CacheRef{ref}
+	case "actions/setup-node", "actions/setup-python", "actions/setup-java", "actions/setup-dotnet":
+		if in("cache") == "" || isFalse("cache") {
+			return nil
+		}
+		if isTrue("cache") {
+			return exact(short)
+		}
+		return exact(short + "-" + in("cache"))
+	case "actions/setup-go":
+		if isFalse("cache") {
+			return nil
+		}
+		return exact(short)
+	case "gradle/actions/setup-gradle", "gradle/gradle-build-action":
+		if isTrue("cache-disabled") {
+			return nil
+		}
+		ref := family("gradle")
+		if isTrue("cache-read-only") {
+			ref.Mode = "restore"
+		}
+		return []ir.CacheRef{ref}
+	case "pnpm/action-setup":
+		if in("cache") == "" || isFalse("cache") {
+			return nil
+		}
+		return []ir.CacheRef{family(name)}
+	case "docker/build-push-action":
+		return buildxGhaCaches(name, in("cache-from"), in("cache-to"))
+	}
+	return nil
+}
+
+// buildxGhaCaches is one entry per gha cache scope a buildx step reads
+// (cache-from) or writes (cache-to): the scope keys the cache, two scopes
+// are two caches.
+func buildxGhaCaches(name, from, to string) []ir.CacheRef {
+	restored, saved := ghaScopes(from), ghaScopes(to)
+	modes := map[string]string{}
+	var order []string
+	for _, sc := range restored {
+		if _, ok := modes[sc]; !ok {
+			order = append(order, sc)
+		}
+		modes[sc] = "restore"
+	}
+	for _, sc := range saved {
+		switch modes[sc] {
+		case "restore":
+			modes[sc] = "both"
+		case "":
+			order = append(order, sc)
+			modes[sc] = "save"
+		}
+	}
+	sort.Strings(order)
+	var out []ir.CacheRef
+	for _, sc := range order {
+		out = append(out, ir.CacheRef{Key: name + " (scope=" + sc + ")", Family: name, Mode: modes[sc]})
+	}
+	return out
+}
+
+// ghaScopes is the scope of every type=gha entry of a cache-from or
+// cache-to input (one entry per line), buildkit when an entry names none.
+func ghaScopes(input string) []string {
+	var out []string
+	for _, line := range strings.Split(input, "\n") {
+		attrs := map[string]string{}
+		for _, part := range strings.Split(strings.TrimSpace(line), ",") {
+			k, v, _ := strings.Cut(strings.TrimSpace(part), "=")
+			attrs[strings.ToLower(k)] = strings.TrimSpace(v)
+		}
+		if !strings.EqualFold(attrs["type"], "gha") {
+			continue
+		}
+		scope := attrs["scope"]
+		if scope == "" {
+			scope = "buildkit"
+		}
+		out = append(out, scope)
+	}
+	return out
 }
 
 // buildJob converts one raw YAML job section into an ir.Job.
@@ -566,6 +764,11 @@ func buildJob(jobName string, section map[string]any, wfCtx workflowContext, nam
 		OriginFile:             originFile,
 		OriginLine:             wfCtx.jobLines[jobName],
 		Triggers:               wfCtx.triggers,
+		PushBranches:           wfCtx.pushBranches,
+		PushBranchesIgnore:     wfCtx.pushBranchesIgnore,
+		PushTags:               wfCtx.pushTags,
+		PushTagsIgnore:         wfCtx.pushTagsIgnore,
+		WorkflowRunWorkflows:   wfCtx.workflowRunUpstreams,
 		WorkflowName:           wfCtx.name,
 		WorkflowHasConcurrency: wfCtx.hasConcurrency,
 	}
@@ -579,6 +782,8 @@ func buildJob(jobName string, section map[string]any, wfCtx workflowContext, nam
 	}
 	if img, ok := parseGitHubContainer(section["container"]); ok {
 		job.Image = &img
+		job.ImageRef = containerImageRef(section["container"])
+		job.MatrixImages = matrixImages(containerImageRef(section["container"]), section)
 	}
 	if jobPerms, present := section["permissions"]; present {
 		job.Permissions = normalizeGitHubPermissions(jobPerms)
@@ -606,6 +811,15 @@ func buildJob(jobName string, section map[string]any, wfCtx workflowContext, nam
 		if secretsVal, ok := section["secrets"].(string); ok && secretsVal == "inherit" {
 			job.SecretsInherit = true
 		}
+		if m, ok := ghCastStringMap(section["secrets"]); ok && len(m) > 0 {
+			job.ReusableSecrets = map[string]string{}
+			for k, v := range m {
+				job.ReusableSecrets[k] = ghStringify(v)
+			}
+		}
+		if m, ok := ghCastStringMap(section["with"]); ok && len(m) > 0 {
+			job.ReusableWith = m
+		}
 	}
 	if conds := collectGitHubJobConditions(section); len(conds) > 0 {
 		job.Conditions = conds
@@ -613,18 +827,48 @@ func buildJob(jobName string, section map[string]any, wfCtx workflowContext, nam
 	if cond, ok := section["if"].(string); ok {
 		job.If = cond
 	}
+	job.Dead = constantFalse(section["if"])
 	if env := extractGitHubJobEnvironment(section["environment"]); env != "" {
 		job.Environment = env
 	}
-	job.RunsOn = stringOrList(section["runs-on"])
 	// Needs is qualified with the same namespace prefix as Name above, so a
 	// bare `needs: [lint]` in workflow "ci" becomes ["ci/lint"] and matches
 	// the Job.Name a path assembler would look it up by.
 	for _, need := range stringOrList(section["needs"]) {
 		job.Needs = append(job.Needs, namespace+"/"+need)
 	}
-	job.Caches, job.Artifacts = cacheAndArtifactRefs(job.Uses)
+	job.Caches, job.Artifacts = cacheAndArtifactRefs(job.Uses, jobName)
+	job.Artifacts = matrixArtifacts(job.Artifacts, section)
+	if job.ReusableWorkflowUses != "" {
+		job.MatrixCombinations = matrixCombinations(section)
+	}
 	return job
+}
+
+// matrixArtifacts replaces an artifact whose name is built from
+// `${{ matrix.KEY }}` values the job's matrix lists as literals with one
+// artifact per combination the matrix runs, so an upload or a download is
+// matched on the names it really takes. A name holding any other
+// expression stays as written.
+func matrixArtifacts(refs []ir.ArtifactRef, section map[string]any) []ir.ArtifactRef {
+	combos := matrixCombinations(section)
+	if len(combos) == 0 {
+		return refs
+	}
+	var out []ir.ArtifactRef
+	for _, ref := range refs {
+		names := expandMatrixRef(ref.Name, combos)
+		if len(names) == 0 {
+			out = append(out, ref)
+			continue
+		}
+		for _, name := range names {
+			r := ref
+			r.Name = name
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 func parseGitHubWorkflowJobs(data []byte, namespace, originFile string) ([]ir.Job, error) {
@@ -636,15 +880,21 @@ func parseGitHubWorkflowJobs(data []byte, namespace, originFile string) ([]ir.Jo
 		return nil, nil
 	}
 
+	pushBranches, pushBranchesIgnore, pushTags, pushTagsIgnore := extractGitHubPushFilters(wf.On)
 	wfCtx := workflowContext{
-		perms:          wf.Permissions,
-		env:            normalizeGitHubEnv(wf.Env),
-		triggers:       extractGitHubTriggers(wf.On),
-		name:           wf.Name,
-		hasConcurrency: wf.Concurrency != nil,
-		jobLines:       scanGitHubJobLines(data),
-		usesLines:      scanGitHubUsesLines(data),
-		usesComments:   scanGitHubUsesComments(data),
+		perms:                wf.Permissions,
+		env:                  normalizeGitHubEnv(wf.Env),
+		triggers:             extractGitHubTriggers(wf.On),
+		pushBranches:         pushBranches,
+		pushBranchesIgnore:   pushBranchesIgnore,
+		pushTags:             pushTags,
+		pushTagsIgnore:       pushTagsIgnore,
+		workflowRunUpstreams: extractGitHubWorkflowRunUpstreams(wf.On),
+		name:                 wf.Name,
+		hasConcurrency:       wf.Concurrency != nil,
+		jobLines:             scanGitHubJobLines(data),
+		usesLines:            scanGitHubUsesLines(data),
+		usesComments:         scanGitHubUsesComments(data),
 	}
 
 	jobs := make([]ir.Job, 0, len(wf.Jobs))
@@ -656,6 +906,23 @@ func parseGitHubWorkflowJobs(data []byte, namespace, originFile string) ([]ir.Jo
 		jobs = append(jobs, buildJob(jobName, section, wfCtx, namespace, originFile))
 	}
 	return jobs, nil
+}
+
+// constantFalseCondition is a job-level if: that is the constant false,
+// bare or wrapped in an expression, any spacing and case.
+var constantFalseCondition = regexp.MustCompile(`(?i)^\s*(\$\{\{\s*false\s*\}\}|false)\s*$`)
+
+// constantFalse reports whether a job-level if: value never lets the job
+// run: the YAML boolean false, or a string reading false (`'false'`,
+// `${{ false }}`).
+func constantFalse(v any) bool {
+	switch x := v.(type) {
+	case bool:
+		return !x
+	case string:
+		return constantFalseCondition.MatchString(x)
+	}
+	return false
 }
 
 // extractGitHubJobEnvironment normalises the two accepted forms of
@@ -958,6 +1225,45 @@ func extractGitHubTriggers(v any) []string {
 		return out
 	}
 	return nil
+}
+
+// extractGitHubPushFilters reads on.push.branches, branches-ignore, tags and
+// tags-ignore. Each return slice is nil when `on:` carries no push entry at
+// all, when push is written as a bare string/list element (no filter map),
+// or when the filter map does not declare that particular key: all four
+// mean "no filter", not "matches nothing". The map form keyed by event name
+// is the only shape that can carry filters; the bare string/list forms
+// never do.
+func extractGitHubPushFilters(v any) (branches, branchesIgnore, tags, tagsIgnore []string) {
+	m, ok := v.(map[any]any)
+	if !ok {
+		return nil, nil, nil, nil
+	}
+	pushMap, ok := m["push"].(map[any]any)
+	if !ok {
+		return nil, nil, nil, nil
+	}
+	ps, ok := ghCastStringMap(pushMap)
+	if !ok {
+		return nil, nil, nil, nil
+	}
+	return stringOrList(ps["branches"]), stringOrList(ps["branches-ignore"]), stringOrList(ps["tags"]), stringOrList(ps["tags-ignore"])
+}
+
+// extractGitHubWorkflowRunUpstreams reads on.workflow_run.workflows: the
+// upstream workflows whose runs trigger this one. Nil when `on:` has no
+// workflow_run entry in the map form (the only form that can name an
+// upstream) or the entry names none.
+func extractGitHubWorkflowRunUpstreams(v any) []string {
+	m, ok := v.(map[any]any)
+	if !ok {
+		return nil
+	}
+	run, ok := ghCastStringMap(m["workflow_run"])
+	if !ok {
+		return nil
+	}
+	return stringOrList(run["workflows"])
 }
 
 // normalizeGitHubPermissions converts YAML's untyped map[any]any into a

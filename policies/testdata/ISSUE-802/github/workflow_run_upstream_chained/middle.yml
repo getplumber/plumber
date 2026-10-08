@@ -1,0 +1,14 @@
+# workflow_run after "CI": no pull request trigger of its own, but its
+# triggering head is CI's, which can be a fork's commit. It checks out
+# nothing of that head itself. Expected: no finding here.
+name: Middle
+on:
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
+
+jobs:
+  middle:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "middle"

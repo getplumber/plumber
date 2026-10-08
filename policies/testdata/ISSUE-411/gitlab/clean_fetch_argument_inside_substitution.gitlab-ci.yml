@@ -1,0 +1,8 @@
+# clean: a command substitution that is an ARGUMENT to another command
+# (echo), inside the `-c` string, is not a match either: the inner shell
+# runs `echo` with the fetched output as its argument, not the fetch
+# itself as the command the string hands to -c.
+install:
+  image: alpine:3.19
+  script:
+    - bash -c "echo $(curl -s https://api.example.com/v)"

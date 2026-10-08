@@ -1,0 +1,17 @@
+# workflow_run after "Middle", itself triggered by workflow_run: the head
+# carried up the chain can be a fork's commit from CI, checked out here
+# with the base repository's secrets. Expected: 1 finding on leaf.
+name: Leaf
+on:
+  workflow_run:
+    workflows: [Middle]
+    types: [completed]
+
+jobs:
+  leaf:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+      - run: echo "leaf"

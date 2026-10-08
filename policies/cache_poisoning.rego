@@ -81,6 +81,7 @@ deny contains finding if {
 		"job":      job.name,
 		"uses":     action.uses,
 		"line":     object.get(action, "line", 0),
+		"subject":  _cache_subject(action),
 	}
 }
 
@@ -108,6 +109,7 @@ deny contains finding if {
 		"job":      job.name,
 		"uses":     action.uses,
 		"line":     object.get(action, "line", 0),
+		"subject":  _cache_subject(action),
 	}
 }
 
@@ -487,6 +489,48 @@ _restore_keys(action) := ks if {
 _restore_keys(action) := ks if {
 	is_array(action.with["restore-keys"])
 	ks := action.with["restore-keys"]
+}
+
+# ── subject ──────────────────────────────────────────────────────────
+# The cache a run that is not trusted can write, the entry of an attack
+# path into the job that restores it: the key when it is not scoped to the
+# release ref, else the first restore-keys prefix that is not, else the
+# cache action itself (a setup action's built-in cache, a buildx backend).
+# A restore-only key that no job of the pipeline saves (a sentinel such as
+# `never_saved`, written so the restore-keys always decide) names no
+# cache: the restore-keys prefix is the cache, so two restores sharing the
+# sentinel stay two caches.
+_cache_subject(action) := key if {
+	key := object.get(action, ["with", "key"], "")
+	is_string(key)
+	key != ""
+	not regex.match(release_scope_pattern, key)
+	not _sentinel_key(action, key)
+} else := prefixes[0] if {
+	prefixes := [trim_space(k) |
+		some k in _restore_keys(action)
+		trim_space(k) != ""
+		not regex.match(release_scope_pattern, k)
+	]
+	count(prefixes) > 0
+} else := action.uses
+
+# _sentinel_key: a literal key of a restore-only step (actions/cache/restore)
+# with restore-keys, that no actions/cache or actions/cache/save step of the
+# pipeline saves.
+_sentinel_key(action, key) if {
+	_uses_prefix(action.uses, "actions/cache/restore")
+	not contains(key, "${{")
+	count(_restore_keys(action)) > 0
+	not _key_saved_somewhere(key)
+}
+
+_key_saved_somewhere(key) if {
+	some job in input.pipeline.jobs
+	some a in object.get(job, "uses", [])
+	some saver in ["actions/cache", "actions/cache/save"]
+	_uses_prefix(a.uses, saver)
+	object.get(a, ["with", "key"], "") == key
 }
 
 # ── allowlist: jobs the org has reviewed and accepted ────────────────

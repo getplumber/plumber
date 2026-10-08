@@ -2,6 +2,8 @@ package opa
 
 import (
 	"context"
+	"encoding/json"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -175,5 +177,28 @@ func TestLoadFromFSFiltered_NilSkipLoadsAll(t *testing.T) {
 	}
 	if len(engine.modules) != 2 {
 		t.Errorf("expected exactly 2 modules, got %d", len(engine.modules))
+	}
+}
+
+// TestFindingSubjectIsLiftedOutOfDataAndNeverMarshalled pins that a rule's
+// "subject" key becomes Finding.Subject, leaves Data, and is never written
+// back: the outputs and the platform push keep their exact shape.
+func TestFindingSubjectIsLiftedOutOfDataAndNeverMarshalled(t *testing.T) {
+	var f Finding
+	if err := json.Unmarshal([]byte(`{"code":"ISSUE-207","job":"ci/build","subject":"github.event.pull_request.title","docUrl":"u"}`), &f); err != nil {
+		t.Fatal(err)
+	}
+	if f.Subject != "github.event.pull_request.title" {
+		t.Errorf("Subject = %q", f.Subject)
+	}
+	if _, ok := f.Data["subject"]; ok {
+		t.Errorf("subject left in Data: %+v", f.Data)
+	}
+	out, err := json.Marshal(f)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(out), "subject") || strings.Contains(string(out), "pull_request.title") {
+		t.Errorf("Subject must never be serialized: %s", out)
 	}
 }

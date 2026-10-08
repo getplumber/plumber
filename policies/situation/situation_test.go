@@ -11,6 +11,7 @@ import (
 
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	"github.com/getplumber/plumber/internal/ir"
+	"github.com/getplumber/plumber/internal/testsupport/pipelines"
 	"github.com/getplumber/plumber/policies/situation"
 )
 
@@ -22,6 +23,7 @@ type privilege struct {
 	Secrets              []string `json:"secrets"`
 	SecretsState         string   `json:"secretsState"`
 	SecretsInherit       bool     `json:"secretsInherit"`
+	AllSecrets           bool     `json:"allSecrets"`
 	ProtectedSecrets     []string `json:"protectedSecrets"`
 	TokenWrite           []string `json:"tokenWrite"`
 	TokenWriteSource     string   `json:"tokenWriteSource"`
@@ -29,23 +31,56 @@ type privilege struct {
 	Environment          struct {
 		Name      string `json:"name"`
 		Protected string `json:"protected"`
+		Reviewers string `json:"reviewers"`
 	} `json:"environment"`
 }
 type impact struct {
-	Kind, State, Evidence string
+	Kind, State, Evidence, Source, Via string
 }
 type jobFacts struct {
-	Entries   []entry   `json:"entries"`
-	Privilege privilege `json:"privilege"`
-	Impact    []impact  `json:"impact"`
-	Feeds     []string  `json:"feeds"`
+	ForkPR             []entry             `json:"forkPR"`
+	PrivilegedTriggers []string            `json:"privilegedTriggers"`
+	RefTriggers        []string            `json:"refTriggers"`
+	Push               []entry             `json:"push"`
+	Privilege          privilege           `json:"privilege"`
+	Impact             []impact            `json:"impact"`
+	Feeds              []string            `json:"feeds"`
+	FeedsVia           map[string][]string `json:"feedsVia"`
+	Caches             []cacheFact         `json:"caches"`
+}
+type cacheFact struct {
+	Key    string `json:"key"`
+	Family string `json:"family"`
+	Mode   string `json:"mode"`
+	Prefix bool   `json:"prefix"`
+	Uses   string `json:"uses"`
+	Line   int    `json:"line"`
+}
+type includeFact struct {
+	Subject string   `json:"subject"`
+	Source  string   `json:"source"`
+	File    string   `json:"file"`
+	Line    int      `json:"line"`
+	Jobs    []string `json:"jobs"`
 }
 type result struct {
-	Exposure string              `json:"exposure"`
-	Jobs     map[string]jobFacts `json:"jobs"`
+	Exposure      string              `json:"exposure"`
+	Jobs          map[string]jobFacts `json:"jobs"`
+	DefaultBranch string              `json:"defaultBranch"`
+	Provider      string              `json:"provider"`
+	Includes      []includeFact       `json:"includes"`
 }
 
 func evaluate(t *testing.T, p *ir.NormalizedPipeline, cfg map[string]any) result {
+	t.Helper()
+	var r result
+	evaluateInto(t, p, cfg, &r)
+	return r
+}
+
+// evaluateInto runs the facts policy on p and decodes its result into out,
+// for a test reading facts the shared result type does not carry.
+func evaluateInto(t *testing.T, p *ir.NormalizedPipeline, cfg map[string]any, out any) {
 	t.Helper()
 	src, err := situation.SituationFS.ReadFile(situation.SituationModule)
 	if err != nil {
@@ -55,11 +90,9 @@ func evaluate(t *testing.T, p *ir.NormalizedPipeline, cfg map[string]any) result
 	if err != nil {
 		t.Fatal(err)
 	}
-	var r result
-	if err := json.Unmarshal(raw, &r); err != nil {
+	if err := json.Unmarshal(raw, out); err != nil {
 		t.Fatalf("%v: %s", err, raw)
 	}
-	return r
 }
 
 func githubFixture(t *testing.T, name, visibility string) *ir.NormalizedPipeline {
@@ -68,7 +101,7 @@ func githubFixture(t *testing.T, name, visibility string) *ir.NormalizedPipeline
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := parseGitHubActions(t, data, ".github/workflows/"+name)
+	p := pipelines.ParseGitHubWorkflow(t, data, ".github/workflows/"+name)
 	p.Visibility = visibility
 	return p
 }
@@ -90,17 +123,17 @@ func gitlabFixture(t *testing.T, name, visibility string) *ir.NormalizedPipeline
 	if err != nil {
 		t.Fatal(err)
 	}
-	p := parseGitLabCI(t, data)
+	p := pipelines.ParseGitLabCI(t, data)
 	p.Visibility = visibility
 	return p
 }
 
-func kinds(entries []entry) map[string]entry {
-	out := map[string]entry{}
-	for _, e := range entries {
-		out[e.Kind] = e
+// firstEntry is the first of a job's trigger facts, if it has one.
+func firstEntry(entries []entry) (entry, bool) {
+	if len(entries) == 0 {
+		return entry{}, false
 	}
-	return out
+	return entries[0], true
 }
 
 func TestExposureIsCopiedFromThePipeline(t *testing.T) {
@@ -114,29 +147,63 @@ func TestExposureIsCopiedFromThePipeline(t *testing.T) {
 
 func TestForkPRInjectionEntries(t *testing.T) {
 	r := evaluate(t, githubFixture(t, "fork_pr_injection.workflow.yml", "public"), nil)
-	k := kinds(r.Jobs["build"].Entries)
-	if e, ok := k["fork_pr"]; !ok || e.State != "proven" {
-		t.Errorf("fork_pr missing or not proven: %+v", k)
+	if e, ok := firstEntry(r.Jobs["build"].ForkPR); !ok || e.State != "proven" {
+		t.Errorf("fork_pr missing or not proven: %+v", r.Jobs["build"].ForkPR)
 	}
-	if e, ok := k["untrusted_expression"]; !ok || e.Subject != "github.event.pull_request.title" || e.State != "proven" {
-		t.Errorf("untrusted_expression: %+v", k["untrusted_expression"])
+}
+
+// TestPrivilegedTriggersAreTheJobsOwn pins the privileged trigger fact: a
+// job running on pull_request_target (or another event that runs with the
+// base repository's secrets) carries it whatever its checkout or guard; a
+// plain pull_request job carries none.
+func TestPrivilegedTriggersAreTheJobsOwn(t *testing.T) {
+	r := evaluate(t, githubFixture(t, "privileged_trigger_injection.workflow.yml", "public"), nil)
+	if got := r.Jobs["build"].PrivilegedTriggers; !reflect.DeepEqual(got, []string{"pull_request_target"}) {
+		t.Errorf("privileged triggers = %v, want [pull_request_target]", got)
 	}
-	if _, ok := k["mutable_dependency"]; ok {
-		t.Errorf("a SHA-pinned checkout is not a mutable dependency: %+v", k["mutable_dependency"])
+	if _, ok := firstEntry(r.Jobs["build"].ForkPR); !ok {
+		t.Errorf("the pull_request trigger is still a fork entry: %+v", r.Jobs["build"])
 	}
-	if _, ok := k["pr_target"]; ok {
-		t.Errorf("pull_request is not pr_target")
+	plain := evaluate(t, githubFixture(t, "fork_pr_injection.workflow.yml", "public"), nil)
+	if got := plain.Jobs["build"].PrivilegedTriggers; len(got) != 0 {
+		t.Errorf("a plain pull_request job has no privileged trigger: %v", got)
+	}
+}
+
+// TestRefTriggersAreTheEventsThatRunOnTheRepositorysOwnRefs pins the ref
+// trigger fact: a push, a schedule, a release or a manual run runs the
+// workflow on a branch or a tag of the repository itself, so what it saves
+// to the cache is in that ref's scope. A pull request run is not one, and a
+// GitLab job carries none.
+func TestRefTriggersAreTheEventsThatRunOnTheRepositorysOwnRefs(t *testing.T) {
+	p := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitHub,
+		Jobs: []ir.Job{
+			{Name: "ci", Triggers: []string{"pull_request", "push"}},
+			{Name: "nightly", Triggers: []string{"workflow_dispatch", "schedule", "release"}},
+			{Name: "pr", Triggers: []string{"pull_request", "pull_request_target"}},
+		},
+	}
+	r := evaluate(t, p, nil)
+	for name, want := range map[string][]string{
+		"ci":      {"push"},
+		"nightly": {"release", "schedule", "workflow_dispatch"},
+		"pr":      {},
+	} {
+		if got := r.Jobs[name].RefTriggers; !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: ref triggers = %v, want %v", name, got, want)
+		}
+	}
+	gl := evaluate(t, &ir.NormalizedPipeline{Provider: ir.ProviderGitLab, Jobs: []ir.Job{{Name: "build"}}}, nil)
+	if got := gl.Jobs["build"].RefTriggers; len(got) != 0 {
+		t.Errorf("gitlab: ref triggers = %v, want none", got)
 	}
 }
 
 func TestSameRepoGuardRemovesForkEntry(t *testing.T) {
 	r := evaluate(t, githubFixture(t, "same_repo_guard.workflow.yml", "public"), nil)
-	k := kinds(r.Jobs["build"].Entries)
-	if _, ok := k["fork_pr"]; ok {
-		t.Errorf("same-repo guard must remove fork_pr: %+v", k)
-	}
-	if _, ok := k["untrusted_expression"]; !ok {
-		t.Errorf("the expression is still untrusted input (an insider can still craft a title)")
+	if got := r.Jobs["build"].ForkPR; len(got) != 0 {
+		t.Errorf("same-repo guard must remove fork_pr: %+v", got)
 	}
 }
 
@@ -154,7 +221,7 @@ func TestSameRepoGuardWithReversedOperands(t *testing.T) {
 			If:       "${{ github.repository == github.event.pull_request.head.repo.full_name }}",
 		}},
 	}
-	if _, ok := kinds(evaluate(t, p, nil).Jobs["build"].Entries)["fork_pr"]; ok {
+	if _, ok := firstEntry(evaluate(t, p, nil).Jobs["build"].ForkPR); ok {
 		t.Errorf("a reversed-operand same-repo guard must remove fork_pr")
 	}
 }
@@ -184,7 +251,7 @@ func TestSameRepoGuardEveryForkFlagSpelling(t *testing.T) {
 					If:       tc.if_,
 				}},
 			}
-			if _, ok := kinds(evaluate(t, p, nil).Jobs["build"].Entries)["fork_pr"]; ok {
+			if _, ok := firstEntry(evaluate(t, p, nil).Jobs["build"].ForkPR); ok {
 				t.Errorf("%s must remove fork_pr", tc.name)
 			}
 		})
@@ -198,267 +265,70 @@ func TestSameRepoGuardEveryForkFlagSpelling(t *testing.T) {
 				Triggers: []string{"pull_request"},
 			}},
 		}
-		e, ok := kinds(evaluate(t, p, nil).Jobs["build"].Entries)["fork_pr"]
+		e, ok := firstEntry(evaluate(t, p, nil).Jobs["build"].ForkPR)
 		if !ok || e.State != "proven" {
 			t.Errorf("an unguarded pull_request job must still get fork_pr: %+v", e)
 		}
 	})
 }
 
-func TestPRTargetCheckoutEntry(t *testing.T) {
-	r := evaluate(t, githubFixture(t, "pr_target_checkout.workflow.yml", "public"), nil)
-	k := kinds(r.Jobs["build"].Entries)
-	if e, ok := k["pr_target"]; !ok || e.State != "proven" || e.Subject != "github.event.pull_request.head.sha" {
-		t.Errorf("pr_target: %+v", k["pr_target"])
-	}
-	if e, ok := k["mutable_dependency"]; !ok || e.Subject != "actions/checkout@v4" {
-		t.Errorf("checkout@v4 is a mutable tag: %+v", k["mutable_dependency"])
-	}
-}
-
-func TestReleaseMutableActionEntry(t *testing.T) {
+func TestTagPushIsNotAForkEntry(t *testing.T) {
 	r := evaluate(t, githubFixture(t, "release_mutable_action.workflow.yml", "public"), nil)
-	k := kinds(r.Jobs["release"].Entries)
-	e, ok := k["mutable_dependency"]
-	if !ok || e.Subject != "some/action@v1" || e.State != "proven" {
-		t.Errorf("mutable_dependency: %+v", e)
-	}
-	if _, ok := k["fork_pr"]; ok {
-		t.Errorf("a tag push is not a fork entry")
-	}
-	var mutable []entry
-	for _, e := range r.Jobs["release"].Entries {
-		if e.Kind == "mutable_dependency" {
-			mutable = append(mutable, e)
-		}
-	}
-	if len(mutable) != 1 {
-		t.Errorf("a local action (./.github/actions/setup) must be skipped: %+v", mutable)
+	if got := r.Jobs["release"].ForkPR; len(got) != 0 {
+		t.Errorf("a tag push is not a fork entry: %+v", got)
 	}
 }
 
 // TestPushToUnprotectedDefaultBranch pins unprotected_push on GitHub. The
-// IR drops the on: push branches:/tags: filters (see parseOnTriggers and
-// the production collector it mirrors), so a job gated to, say, push:
-// tags: ['v*'] looks here exactly like one that runs on every push to
-// the default branch. Until the IR carries those filters, a GitHub entry
-// is never proven, only unresolvable, on an unprotected default branch;
-// a protected default branch still removes the entry outright, since no
-// missing filter can turn a protected branch into an unprotected one.
+// fixture's on: push: branches: [main] reaches the IR as Job.PushBranches
+// through the real YAML reading (pipelines.ParseGitHubWorkflow mirrors the production
+// collector's extractGitHubPushFilters, PR #513 review), so a push to the
+// default branch is proven on an unprotected default branch, not merely
+// unresolvable; a protected default branch still removes the entry
+// outright, and unknown protection (no branches collected) stays
+// unresolvable. A second fixture whose branches: filter excludes the
+// default branch entirely proves the YAML path can also rule the entry out,
+// not merely let the "no filter" default carry it through by accident.
 func TestPushToUnprotectedDefaultBranch(t *testing.T) {
 	p := githubFixture(t, "push_unprotected.workflow.yml", "public")
 	p.DefaultBranch = "main"
 	p.Branches = []ir.Branch{{Name: "main", Protected: false}}
 	r := evaluate(t, p, nil)
-	k := kinds(r.Jobs["deploy"].Entries)
-	if e, ok := k["unprotected_push"]; !ok || e.State != "unresolvable" || e.Subject != "main" {
+	if e, ok := firstEntry(r.Jobs["deploy"].Push); !ok || e.State != "proven" || e.Subject != "main" {
 		t.Errorf("unprotected_push: %+v", e)
 	}
 	p.Branches = []ir.Branch{{Name: "main", Protected: true}}
-	if _, ok := kinds(evaluate(t, p, nil).Jobs["deploy"].Entries)["unprotected_push"]; ok {
+	if _, ok := firstEntry(evaluate(t, p, nil).Jobs["deploy"].Push); ok {
 		t.Errorf("a protected default branch is not an entry")
 	}
 	p.Branches = nil
-	if e, ok := kinds(evaluate(t, p, nil).Jobs["deploy"].Entries)["unprotected_push"]; !ok || e.State != "unresolvable" {
+	if e, ok := firstEntry(evaluate(t, p, nil).Jobs["deploy"].Push); !ok || e.State != "unresolvable" {
 		t.Errorf("unknown protection must be unresolvable: %+v", e)
 	}
 }
 
+// TestPushBranchesFilterExcludingDefaultBranchThroughYAML pins the other
+// outcome of the same YAML path: a branches: filter that does not match the
+// default branch at all removes the entry, whatever the branch's
+// protection, because the push trigger itself never reaches that branch.
+func TestPushBranchesFilterExcludingDefaultBranchThroughYAML(t *testing.T) {
+	p := githubFixture(t, "push_branches_excluded.workflow.yml", "public")
+	p.DefaultBranch = "main"
+	p.Branches = []ir.Branch{{Name: "main", Protected: false}}
+	if e, ok := firstEntry(evaluate(t, p, nil).Jobs["deploy"].Push); ok {
+		t.Errorf("unprotected_push: %+v, want none (branches: ['release/*'] does not reach main)", e)
+	}
+}
+
 func TestGitLabMREntries(t *testing.T) {
-	cfg := map[string]any{"imageMutableTag": map[string]any{"forbiddenTags": []string{"latest"}}}
-	r := evaluate(t, gitlabFixture(t, "mr_injection.gitlab-ci.yml", "public"), cfg)
-	k := kinds(r.Jobs["test"].Entries)
-	if e, ok := k["untrusted_expression"]; !ok || e.Subject != "CI_MERGE_REQUEST_TITLE" {
-		t.Errorf("untrusted_expression: %+v", e)
-	}
-	if _, ok := k["fork_pr"]; !ok {
-		t.Errorf("an MR job without a fork restriction is a fork entry: %+v", k)
-	}
-	var mutable []entry
-	for _, e := range r.Jobs["test"].Entries {
-		if e.Kind == "mutable_dependency" {
-			mutable = append(mutable, e)
-		}
-	}
-	if len(mutable) != 2 {
-		t.Fatalf("want two mutable dependencies (node:latest, curl | bash), got %+v", mutable)
+	r := evaluate(t, gitlabFixture(t, "mr_injection.gitlab-ci.yml", "public"), nil)
+	if _, ok := firstEntry(r.Jobs["test"].ForkPR); !ok {
+		t.Errorf("an MR job without a fork restriction is a fork entry: %+v", r.Jobs["test"])
 	}
 }
 
-func TestGitLabPinnedReleaseHasNoEntry(t *testing.T) {
-	r := evaluate(t, gitlabFixture(t, "release_protected.gitlab-ci.yml", "private"), nil)
-	if n := len(r.Jobs["release"].Entries); n != 0 {
-		t.Errorf("want no entry on a digest-pinned tag job, got %+v", r.Jobs["release"].Entries)
-	}
-}
-
-// TestPRTargetWithMultipleTriggersAndCheckouts pins that pr_target never
-// raises eval_conflict_error: a complete rule whose body can be satisfied by
-// more than one (trigger, checkout) combination in the same job is rejected
-// by OPA and fails the whole EvaluateSituation call. Two privileged triggers
-// and two PR-head checkouts in one job must both still succeed and yield one
-// pr_target entry per checkout.
-func TestPRTargetWithMultipleTriggersAndCheckouts(t *testing.T) {
-	r := evaluate(t, githubFixture(t, "pr_target_two_triggers.workflow.yml", "public"), nil)
-	var prTargets []entry
-	for _, e := range r.Jobs["build"].Entries {
-		if e.Kind == "pr_target" {
-			prTargets = append(prTargets, e)
-		}
-	}
-	if len(prTargets) != 2 {
-		t.Fatalf("want two pr_target entries (one per checkout of the PR head), got %+v", prTargets)
-	}
-}
-
-// TestPRTargetRefMustBeThePRHeadNotAnyHead pins that the pr_target checkout
-// match requires the literal "github.event.pull_request.head" expression,
-// not a bare "head" substring: a checkout of a plain branch ref
-// ("refs/heads/main") must not be mistaken for a checkout of the PR head.
-func TestPRTargetRefMustBeThePRHeadNotAnyHead(t *testing.T) {
-	p := &ir.NormalizedPipeline{
-		Provider: ir.ProviderGitHub,
-		Jobs: []ir.Job{{
-			Name:     "build",
-			Triggers: []string{"pull_request_target"},
-			Uses: []ir.Action{{
-				Uses: "actions/checkout@v4",
-				With: map[string]any{"ref": "refs/heads/main"},
-			}},
-		}},
-	}
-	r := evaluate(t, p, nil)
-	if _, ok := kinds(r.Jobs["build"].Entries)["pr_target"]; ok {
-		t.Errorf("a checkout of refs/heads/main is not a checkout of the PR head")
-	}
-}
-
-// TestMutableActionStatesFromMetadataTier pins the positive-signal states
-// for a uses whose ref IS a 40-hex SHA: the entry fires only on a positive
-// ActionMetadata.MutableRemoteExec signal, "unresolvable" when the
-// action's own source could not be fetched to check (ISSUE-716,
-// tier "unverified"), "proven" when the source was fetched and found to
-// fetch-and-run mutable remote code despite the pin (ISSUE-714/715, tier
-// "exec" or "obfuscated"). Any other tier (including "data", a non-exec
-// mutable manifest, or no MutableRemoteExec at all) must not produce an
-// entry: a pinned ref with no positive signal is not a mutable dependency.
-func TestMutableActionStatesFromMetadataTier(t *testing.T) {
-	const sha = "08c6903cd8c0fde910a37f88322edcfb5dd907a8"
-	cases := []struct {
-		name      string
-		tier      string
-		wantEntry bool
-		wantState string
-	}{
-		{"unverified source is unresolvable", "unverified", true, "unresolvable"},
-		{"exec tier is proven", "exec", true, "proven"},
-		{"obfuscated tier is proven", "obfuscated", true, "proven"},
-		{"data tier produces no entry", "data", false, ""},
-		{"no signal produces no entry", "", false, ""},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			var metadata *ir.ActionMetadata
-			if tc.tier != "" {
-				metadata = &ir.ActionMetadata{MutableRemoteExec: &ir.MutableRemoteExec{Tier: tc.tier}}
-			}
-			p := &ir.NormalizedPipeline{
-				Provider: ir.ProviderGitHub,
-				Jobs: []ir.Job{{
-					Name: "build",
-					Uses: []ir.Action{{
-						Uses:     "some/action@" + sha,
-						Metadata: metadata,
-					}},
-				}},
-			}
-			r := evaluate(t, p, nil)
-			e, ok := kinds(r.Jobs["build"].Entries)["mutable_dependency"]
-			if ok != tc.wantEntry {
-				t.Fatalf("mutable_dependency present = %v, want %v: %+v", ok, tc.wantEntry, e)
-			}
-			if ok && e.State != tc.wantState {
-				t.Errorf("state = %q, want %q", e.State, tc.wantState)
-			}
-		})
-	}
-}
-
-// TestUnresolvedImageIsUnresolvable pins the image counterpart: a job image
-// that still held an unresolved `$VARIABLE` reference when it was parsed
-// (ir.Image.Unresolved) cannot be judged as mutable or not, so it is an
-// unresolvable entry, never a proven one, with the raw (placeholder) image
-// string as its subject.
-func TestUnresolvedImageIsUnresolvable(t *testing.T) {
-	p := &ir.NormalizedPipeline{
-		Provider: ir.ProviderGitLab,
-		Jobs: []ir.Job{{
-			Name:  "deploy",
-			Image: &ir.Image{Name: "$IMAGE_NAME", Unresolved: true},
-		}},
-	}
-	r := evaluate(t, p, nil)
-	e, ok := kinds(r.Jobs["deploy"].Entries)["mutable_dependency"]
-	if !ok || e.State != "unresolvable" || e.Subject != "$IMAGE_NAME" {
-		t.Errorf("mutable_dependency: %+v", e)
-	}
-}
-
-// TestMutableImageForbiddenTagFiresEvenWithADigest pins the OR in
-// mutable_image (situation.rego): an image with BOTH a digest and a tag
-// matching a forbidden glob is still a mutable_dependency entry. The
-// no-digest branch and the forbidden-tag branch are independent checks,
-// not a package deal, so a digest must never gate the forbidden-tag
-// branch off.
-func TestMutableImageForbiddenTagFiresEvenWithADigest(t *testing.T) {
-	digest := "sha256:" + strings.Repeat("a", 64)
-	p := &ir.NormalizedPipeline{
-		Provider: ir.ProviderGitLab,
-		Jobs: []ir.Job{{
-			Name:  "deploy",
-			Image: &ir.Image{Name: "foo", Tag: "latest", Digest: digest},
-		}},
-	}
-	r := evaluate(t, p, nil)
-	e, ok := kinds(r.Jobs["deploy"].Entries)["mutable_dependency"]
-	wantSubject := "foo:latest@" + digest
-	if !ok || e.State != "proven" || e.Subject != wantSubject {
-		t.Errorf("mutable_dependency: %+v, want proven %q", e, wantSubject)
-	}
-}
-
-// TestFetchedScriptsRegexExclusionsAndInclusions pins the fetched-script
-// regex boundaries: a checksum-verification pipe must not be mistaken for
-// a fetch-and-execute pipe, and an npx package reference is only mutable
-// when it carries no pinned version.
-func TestFetchedScriptsRegexExclusionsAndInclusions(t *testing.T) {
-	cases := []struct {
-		name      string
-		script    string
-		wantEntry bool
-	}{
-		{"curl piped into a checksum check is not an entry", `curl -sL https://example.com/x.sh | sha256sum -c`, false},
-		{"unversioned npx is not an entry (mirrors control 411)", `npx cowsay`, false},
-		{"versioned npx with a flag is not an entry", `npx -y pkg@1.2.3`, false},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			p := &ir.NormalizedPipeline{
-				Provider: ir.ProviderGitLab,
-				Jobs:     []ir.Job{{Name: "test", Scripts: []string{tc.script}}},
-			}
-			r := evaluate(t, p, nil)
-			_, ok := kinds(r.Jobs["test"].Entries)["mutable_dependency"]
-			if ok != tc.wantEntry {
-				t.Errorf("%s: mutable_dependency present = %v, want %v", tc.script, ok, tc.wantEntry)
-			}
-		})
-	}
-}
-
-// TestEntriesCarryFileAndLine pins that an entry's file/line come from the
-// job's origin by default, and from the action's own line when the uses
-// step is the more precise origin (mutable_actions overrides it).
+// TestEntriesCarryFileAndLine pins that a trigger fact's file/line come
+// from the job's origin.
 func TestEntriesCarryFileAndLine(t *testing.T) {
 	p := &ir.NormalizedPipeline{
 		Provider: ir.ProviderGitHub,
@@ -467,25 +337,21 @@ func TestEntriesCarryFileAndLine(t *testing.T) {
 			OriginFile: ".github/workflows/ci.yml",
 			OriginLine: 7,
 			Triggers:   []string{"pull_request"},
-			Scripts:    []string{"echo ${{ github.event.pull_request.title }}"},
-			Uses:       []ir.Action{{Uses: "some/action@v1", Line: 12}},
 		}},
 	}
 	r := evaluate(t, p, nil)
-	k := kinds(r.Jobs["build"].Entries)
-	if e, ok := k["untrusted_expression"]; !ok || e.File != ".github/workflows/ci.yml" || e.Line != 7 {
-		t.Errorf("untrusted_expression origin: %+v", e)
-	}
-	if e, ok := k["mutable_dependency"]; !ok || e.Line != 12 {
-		t.Errorf("mutable_dependency origin: %+v", e)
+	if e, ok := firstEntry(r.Jobs["build"].ForkPR); !ok || e.File != ".github/workflows/ci.yml" || e.Line != 7 {
+		t.Errorf("fork_pr origin: %+v", e)
 	}
 }
 
 // TestReleasePrivilegeAndImpact pins the core per-job facts: what the
 // release job holds (a secret, write permissions, an environment, surviving
-// checkout credentials) and what it can change (it publishes, it deploys
-// because it has an environment, and it signs/releases because it holds
-// id-token: write).
+// checkout credentials) and what it can change (it publishes). An
+// environment is a fact, never an impact by itself: it protects the job,
+// it is not what an attacker gains, and whether it requires an approval is
+// unknown from the workflow. id-token: write is a privilege only: with no
+// signing or release step the job has no signs_or_releases impact.
 func TestReleasePrivilegeAndImpact(t *testing.T) {
 	r := evaluate(t, githubFixture(t, "release_mutable_action.workflow.yml", "public"), nil)
 	j := r.Jobs["release"]
@@ -498,7 +364,7 @@ func TestReleasePrivilegeAndImpact(t *testing.T) {
 	if j.Privilege.PersistedCredentials != "proven" {
 		t.Errorf("checkout without persist-credentials: false must be proven, got %q", j.Privilege.PersistedCredentials)
 	}
-	if j.Privilege.Environment.Name != "production" || j.Privilege.Environment.Protected != "unknown" {
+	if j.Privilege.Environment.Name != "production" || j.Privilege.Environment.Protected != "unknown" || j.Privilege.Environment.Reviewers != "unknown" {
 		t.Errorf("environment: %+v", j.Privilege.Environment)
 	}
 	kinds := map[string]impact{}
@@ -508,11 +374,11 @@ func TestReleasePrivilegeAndImpact(t *testing.T) {
 	if i, ok := kinds["publishes"]; !ok || i.Evidence != "npm publish" || i.State != "proven" {
 		t.Errorf("publishes: %+v", kinds)
 	}
-	if _, ok := kinds["deploys"]; !ok {
-		t.Errorf("an environment is a deploy impact: %+v", kinds)
+	if i, ok := kinds["deploys"]; ok {
+		t.Errorf("an environment alone is no deploy impact: %+v", i)
 	}
-	if _, ok := kinds["signs_or_releases"]; !ok {
-		t.Errorf("id-token: write is a signing impact: %+v", kinds)
+	if _, ok := kinds["signs_or_releases"]; ok {
+		t.Errorf("id-token: write without a signing or release step is a privilege, not an impact: %+v", kinds)
 	}
 }
 
@@ -584,6 +450,32 @@ func TestCacheKeyFeeds(t *testing.T) {
 	}
 	if got := r.Jobs["empty-saver"].Feeds; len(got) != 0 {
 		t.Errorf("an empty key must feed nothing even when another job restores an empty key, got %v", got)
+	}
+}
+
+// TestCacheRestorePrefixFeeds pins the restore-keys half of the cache
+// edges: a restore entry marked as a prefix (actions/cache restore-keys)
+// restores any saved key that starts with it, so the job saving such a key
+// feeds the job restoring the prefix. A prefix that no saved key starts
+// with, an exact (non-prefix) restore of a longer key, and an empty prefix
+// feed nothing.
+func TestCacheRestorePrefixFeeds(t *testing.T) {
+	p := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitHub,
+		Jobs: []ir.Job{
+			{Name: "pr", Caches: []ir.CacheRef{{Key: "Linux-pip-${{ hashFiles('requirements.txt') }}", Mode: "both"}}},
+			{Name: "release", Caches: []ir.CacheRef{
+				{Key: "Linux-pip-release", Mode: "restore"},
+				{Key: "Linux-pip-", Mode: "restore", Prefix: true},
+			}},
+			{Name: "unrelated", Caches: []ir.CacheRef{{Key: "Linux-npm-", Mode: "restore", Prefix: true}}},
+			{Name: "exact", Caches: []ir.CacheRef{{Key: "Linux-pip-", Mode: "restore"}}},
+			{Name: "empty", Caches: []ir.CacheRef{{Key: "", Mode: "restore", Prefix: true}}},
+		},
+	}
+	r := evaluate(t, p, nil)
+	if got := r.Jobs["pr"].Feeds; !reflect.DeepEqual(got, []string{"release"}) {
+		t.Errorf("pr.feeds = %v, want [release] (restore-keys prefix match only)", got)
 	}
 }
 
@@ -694,6 +586,71 @@ func TestGitLabSettingsVariablesArePrivilege(t *testing.T) {
 	}
 }
 
+// TestGitLabMergeRequestOnlyJobHoldsNoProtectedVariable pins the "whether
+// the protection that gates them applies to this run" half of the GitLab
+// secrets fact: GitLab exports a protected variable only to pipelines on a
+// protected branch or tag, so a job whose every way to run is a merge
+// request pipeline (rules on $CI_PIPELINE_SOURCE == "merge_request_event"
+// or the presence of $CI_MERGE_REQUEST_IID, or only: [merge_requests])
+// never holds one, whoever opened the merge request. A job that also runs
+// on a branch push, or that has no rules at all, still does.
+func TestGitLabMergeRequestOnlyJobHoldsNoProtectedVariable(t *testing.T) {
+	vars := []ir.SettingsVariable{
+		{Name: "PYPI_TOKEN", Type: "env_var", Environment: "*", Protected: true, Masked: true},
+		{Name: "SENTRY_DSN", Type: "env_var", Environment: "*", Masked: true},
+	}
+	mrRule := map[string]any{"if": `$CI_PIPELINE_SOURCE == "merge_request_event"`}
+	iidRule := map[string]any{"if": `$CI_MERGE_REQUEST_IID`}
+	never := map[string]any{"if": `$CI_COMMIT_TAG`, "when": "never"}
+	mainRule := map[string]any{"if": `$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH`}
+	either := map[string]any{"if": `$CI_PIPELINE_SOURCE == "merge_request_event" || $CI_COMMIT_BRANCH == "main"`}
+	// A rule gated on $CI_MERGE_REQUEST_IID == null runs on branch pushes,
+	// NOT inside a merge request (that variable is only ever set inside
+	// one): the opposite condition of the bare-presence form above, so
+	// this job must keep its protected variable like any other
+	// branch-push job, not have it stripped as merge-request-only.
+	iidNullRule := map[string]any{"if": `$CI_MERGE_REQUEST_IID == null`}
+	// The empty string tests the same absence, in either quoting.
+	iidEmptyRule := map[string]any{"if": `$CI_MERGE_REQUEST_IID == ""`}
+	iidEmptySingleRule := map[string]any{"if": `$CI_MERGE_REQUEST_IID == ''`}
+	p := &ir.NormalizedPipeline{
+		Provider:               ir.ProviderGitLab,
+		DefaultBranch:          "main",
+		SettingsVariablesKnown: true,
+		SettingsVariables:      vars,
+		Jobs: []ir.Job{
+			{Name: "mr_rules", Rules: []map[string]any{never, mrRule}},
+			{Name: "mr_iid", Rules: []map[string]any{iidRule}},
+			{Name: "mr_only_keyword", Only: []string{"merge_requests"}},
+			{Name: "mr_and_main", Rules: []map[string]any{mrRule, mainRule}},
+			{Name: "or_in_one_rule", Rules: []map[string]any{either}},
+			{Name: "no_rules"},
+			{Name: "mr_iid_null", Rules: []map[string]any{iidNullRule}},
+			{Name: "mr_iid_empty", Rules: []map[string]any{iidEmptyRule}},
+			{Name: "mr_iid_empty_single", Rules: []map[string]any{iidEmptySingleRule}},
+		},
+	}
+	r := evaluate(t, p, nil)
+	for name, want := range map[string][]string{
+		"mr_rules":            {"SENTRY_DSN"},
+		"mr_iid":              {"SENTRY_DSN"},
+		"mr_only_keyword":     {"SENTRY_DSN"},
+		"mr_and_main":         {"PYPI_TOKEN", "SENTRY_DSN"},
+		"or_in_one_rule":      {"PYPI_TOKEN", "SENTRY_DSN"},
+		"no_rules":            {"PYPI_TOKEN", "SENTRY_DSN"},
+		"mr_iid_null":         {"PYPI_TOKEN", "SENTRY_DSN"},
+		"mr_iid_empty":        {"PYPI_TOKEN", "SENTRY_DSN"},
+		"mr_iid_empty_single": {"PYPI_TOKEN", "SENTRY_DSN"},
+	} {
+		if got := r.Jobs[name].Privilege.Secrets; !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: secrets = %v, want %v", name, got, want)
+		}
+	}
+	if got := r.Jobs["mr_rules"].Privilege.ProtectedSecrets; len(got) != 0 {
+		t.Errorf("mr_rules: protectedSecrets = %v, want none (it holds no protected variable)", got)
+	}
+}
+
 // TestGitLabWildcardEnvironmentScopeCrossesSlash pins GitLab's own glob
 // semantics for a settings variable's environment scope: "*" matches any
 // characters, including "/", so a "review/*" scope covers "review/a/b",
@@ -781,7 +738,8 @@ func TestDeclaredPermissionsWritesRepoIsProven(t *testing.T) {
 func TestPublishDryRunIsExcluded(t *testing.T) {
 	p := &ir.NormalizedPipeline{
 		Provider: ir.ProviderGitHub,
-		Jobs:     []ir.Job{{Name: "release", Scripts: []string{"npm publish --dry-run"}}},
+		// A read-only token, so the publish can only come from the script.
+		Jobs: []ir.Job{{Name: "release", Permissions: "read-all", Scripts: []string{"npm publish --dry-run"}}},
 	}
 	r := evaluate(t, p, nil)
 	if _, ok := impactKinds(r.Jobs["release"].Impact)["publishes"]; ok {
@@ -936,8 +894,9 @@ func TestDockerBuildPushActionDefaultIsNotPublish(t *testing.T) {
 	p := &ir.NormalizedPipeline{
 		Provider: ir.ProviderGitHub,
 		Jobs: []ir.Job{{
-			Name: "build",
-			Uses: []ir.Action{{Uses: "docker/build-push-action@v5"}},
+			Name:        "build",
+			Permissions: "read-all", // the publish can only come from the action
+			Uses:        []ir.Action{{Uses: "docker/build-push-action@v5"}},
 		}},
 	}
 	r := evaluate(t, p, nil)
@@ -952,21 +911,301 @@ func TestDockerBuildPushActionDefaultIsNotPublish(t *testing.T) {
 	}
 }
 
-// TestWriteAllGrantsSigningImpact pins that permissions: write-all implies id-token: write exactly like an explicit
-// map would, so it must also produce the signs_or_releases impact.
-func TestWriteAllGrantsSigningImpact(t *testing.T) {
+// TestWriteTokenScopesAreImpacts pins that the job token's own write
+// scopes are what code running in the job can change: contents write
+// writes to the repository, packages write publishes, deployments write
+// deploys, write-all gives all three. Only a token whose permissions are
+// declared gives them: the assumed repository default (no permissions
+// block) is a guess about scopes Plumber cannot read, so it stays a
+// privilege only. Every other scope is a privilege only.
+func TestWriteTokenScopesAreImpacts(t *testing.T) {
+	p := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitHub,
+		Jobs: []ir.Job{
+			{Name: "all", Permissions: "write-all"},
+			{Name: "contents", Permissions: map[string]any{"contents": "write", "pull-requests": "write"}},
+			{Name: "deployments", Permissions: map[string]any{"deployments": "write"}},
+			{Name: "packages", Permissions: map[string]any{"packages": "write"}},
+			{Name: "other", Permissions: map[string]any{
+				"actions": "write", "checks": "write", "id-token": "write", "issues": "write",
+				"pull-requests": "write", "security-events": "write", "statuses": "write",
+			}},
+			{Name: "default"},
+			{Name: "read", Permissions: "read-all"},
+		},
+	}
+	r := evaluate(t, p, nil)
+	for name, want := range map[string]map[string]string{
+		"all":         {"writes_repo": "proven", "publishes": "proven", "deploys": "proven"},
+		"contents":    {"writes_repo": "proven"},
+		"deployments": {"deploys": "proven"},
+		"packages":    {"publishes": "proven"},
+		"other":       {},
+		"default":     {},
+		"read":        {},
+	} {
+		got := map[string]string{}
+		for _, i := range r.Jobs[name].Impact {
+			if i.Source != "token" {
+				t.Errorf("%s: an impact with no script behind it comes from the token: %+v", name, i)
+			}
+			got[i.Kind] = i.State
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Errorf("%s: impacts = %v, want %v (%+v)", name, got, want, r.Jobs[name].Impact)
+		}
+	}
+	if i := impactKinds(r.Jobs["all"].Impact)["deploys"]; i.Evidence != "permissions: write-all" {
+		t.Errorf("write-all evidence = %q", i.Evidence)
+	}
+	if i := impactKinds(r.Jobs["contents"].Impact)["writes_repo"]; i.Evidence != "permissions: contents: write" {
+		t.Errorf("contents evidence = %q", i.Evidence)
+	}
+	if got := r.Jobs["default"].Privilege; got.TokenWriteSource != "default" || len(got.TokenWrite) == 0 {
+		t.Errorf("the default token stays a privilege: %+v", got)
+	}
+}
+
+// TestOneImpactSourcePerKind pins that a kind the job's own script or
+// action already proves is not counted a second time from the token, and
+// that a token proving a kind replaces a script fact of that kind that
+// could not be resolved.
+func TestOneImpactSourcePerKind(t *testing.T) {
+	p := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitHub,
+		Jobs: []ir.Job{
+			{Name: "publish", Permissions: "write-all", Scripts: []string{"npm publish"}},
+			{
+				Name:        "image",
+				Permissions: map[string]any{"packages": "write"},
+				Uses:        []ir.Action{{Uses: "docker/build-push-action@v5", With: map[string]any{"push": "${{ inputs.push }}"}}},
+			},
+			{Name: "push", Scripts: []string{"git push origin main"}},
+		},
+	}
+	r := evaluate(t, p, nil)
+	count := func(job, kind string) (n int, last impact) {
+		for _, i := range r.Jobs[job].Impact {
+			if i.Kind == kind {
+				n, last = n+1, i
+			}
+		}
+		return n, last
+	}
+	if n, i := count("publish", "publishes"); n != 1 || i.Source == "token" || i.Evidence != "npm publish" {
+		t.Errorf("publish: want the script's publish alone, got %d, %+v", n, r.Jobs["publish"].Impact)
+	}
+	if n, i := count("publish", "writes_repo"); n != 1 || i.Source != "token" || i.State != "proven" {
+		t.Errorf("publish: want the token's repository write, got %+v", r.Jobs["publish"].Impact)
+	}
+	if n, i := count("image", "publishes"); n != 1 || i.Source != "token" || i.State != "proven" {
+		t.Errorf("image: want the declared token's proven publish in place of the unresolved push, got %+v", r.Jobs["image"].Impact)
+	}
+	if n, i := count("push", "writes_repo"); n != 1 || i.Source == "token" || i.State != "unresolvable" {
+		t.Errorf("push: want the git push alone, unresolvable on a default token, got %+v", r.Jobs["push"].Impact)
+	}
+}
+
+// TestWriteAllGrantsNoSigningImpact pins that permissions: write-all
+// expands to every write scope, id-token included, as a declared token, but
+// grants no signs_or_releases impact by itself: the impact needs a signing
+// or release step.
+func TestWriteAllGrantsNoSigningImpact(t *testing.T) {
 	p := &ir.NormalizedPipeline{
 		Provider: ir.ProviderGitHub,
 		Jobs:     []ir.Job{{Name: "release", Permissions: "write-all"}},
 	}
 	r := evaluate(t, p, nil)
 	j := r.Jobs["release"]
-	if j.Privilege.TokenWriteSource != "declared" {
-		t.Errorf("tokenWriteSource = %q, want declared", j.Privilege.TokenWriteSource)
+	if j.Privilege.TokenWriteSource != "declared" || !containsAll(j.Privilege.TokenWrite, "id-token") {
+		t.Errorf("privilege = %+v, want a declared token carrying id-token", j.Privilege)
 	}
-	i, ok := impactKinds(j.Impact)["signs_or_releases"]
-	if !ok || i.Evidence != "permissions: write-all" || i.State != "proven" {
-		t.Errorf("signs_or_releases: %+v", i)
+	if i, ok := impactKinds(j.Impact)["signs_or_releases"]; ok {
+		t.Errorf("write-all alone must not be a signing impact: %+v", i)
+	}
+}
+
+// TestIDTokenWriteAloneIsAPrivilegeOnly pins that id-token: write stays in
+// tokenWrite (the job can mint an OIDC token) but is no signs_or_releases
+// impact without a signing or release step: logging in to a cloud or
+// pushing a score holds a token, it does not sign or release anything.
+func TestIDTokenWriteAloneIsAPrivilegeOnly(t *testing.T) {
+	p := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitHub,
+		Jobs: []ir.Job{{
+			Name:        "plumber",
+			Permissions: map[string]any{"contents": "read", "id-token": "write"},
+			Scripts:     []string{"plumber analyze"},
+		}},
+	}
+	j := evaluate(t, p, nil).Jobs["plumber"]
+	if !reflect.DeepEqual(j.Privilege.TokenWrite, []string{"id-token"}) {
+		t.Errorf("tokenWrite = %v, want [id-token]", j.Privilege.TokenWrite)
+	}
+	if i, ok := impactKinds(j.Impact)["signs_or_releases"]; ok {
+		t.Errorf("id-token: write alone must not be a signing impact: %+v", i)
+	}
+}
+
+// TestSigningOrReleaseScriptGrantsSignsOrReleasesImpact pins the script
+// branch of signs_or_releases: each signing or release command is the
+// impact, with the matching line as evidence. The state is proven when the
+// job declares id-token: write, and follows the token-dependent rule
+// otherwise (an assumed default token is unresolvable). slsa-verifier is
+// deliberately not in this list: it only checks a provenance file, see
+// TestSlsaVerifierOnlyVerifiesAndGrantsNoImpact.
+func TestSigningOrReleaseScriptGrantsSignsOrReleasesImpact(t *testing.T) {
+	for _, line := range []string{
+		"cosign sign --yes ghcr.io/o/app@sha256:abc",
+		"cosign attest --predicate sbom.json ghcr.io/o/app",
+		"gh release create v1.2.3 dist/*",
+		"gh release upload v1.2.3 dist/app.tar.gz",
+		"npm publish --access public --provenance",
+	} {
+		declared := &ir.NormalizedPipeline{
+			Provider: ir.ProviderGitHub,
+			Jobs:     []ir.Job{{Name: "sign", Permissions: map[string]any{"id-token": "write"}, Scripts: []string{line}}},
+		}
+		i, ok := impactKinds(evaluate(t, declared, nil).Jobs["sign"].Impact)["signs_or_releases"]
+		if !ok || i.State != "proven" || i.Evidence != line {
+			t.Errorf("%q with id-token: write: signs_or_releases = %+v, want proven with the line as evidence", line, i)
+		}
+		assumed := &ir.NormalizedPipeline{
+			Provider: ir.ProviderGitHub,
+			Jobs:     []ir.Job{{Name: "sign", Scripts: []string{line}}},
+		}
+		i, ok = impactKinds(evaluate(t, assumed, nil).Jobs["sign"].Impact)["signs_or_releases"]
+		if !ok || i.State != "unresolvable" {
+			t.Errorf("%q with the default token: signs_or_releases = %+v, want unresolvable", line, i)
+		}
+	}
+	none := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitHub,
+		Jobs:     []ir.Job{{Name: "sign", Permissions: map[string]any{"id-token": "write"}, Scripts: []string{"gh release view v1.2.3", "cosign verify ghcr.io/o/app"}}},
+	}
+	if i, ok := impactKinds(evaluate(t, none, nil).Jobs["sign"].Impact)["signs_or_releases"]; ok {
+		t.Errorf("reading a release or verifying a signature is not a signing impact: %+v", i)
+	}
+}
+
+// TestDryRunSigningOrReleaseCommandGrantsNoImpact pins that the
+// verification-only forms vetoing a publish (publishScriptExcludePatterns,
+// --dry-run by default) veto a signing or release command on the same
+// line too: a dry run signs, publishes and releases nothing, so it gives
+// the job neither impact. A configured pattern vetoes the same way.
+func TestDryRunSigningOrReleaseCommandGrantsNoImpact(t *testing.T) {
+	for _, c := range []struct {
+		line string
+		cfg  map[string]any
+	}{
+		{"npm publish --dry-run --provenance", nil},
+		{"goreleaser release --dry-run", nil},
+		{"goreleaser release --snapshot --clean", map[string]any{"cachePoisoning": map[string]any{"publishScriptExcludePatterns": []any{`(?i)--snapshot`}}}},
+	} {
+		p := &ir.NormalizedPipeline{
+			Provider: ir.ProviderGitHub,
+			Jobs:     []ir.Job{{Name: "check", Permissions: map[string]any{"id-token": "write"}, Scripts: []string{c.line}}},
+		}
+		kinds := impactKinds(evaluate(t, p, c.cfg).Jobs["check"].Impact)
+		for _, kind := range []string{"signs_or_releases", "publishes"} {
+			if i, ok := kinds[kind]; ok {
+				t.Errorf("%q: %s = %+v, want none", c.line, kind, i)
+			}
+		}
+	}
+}
+
+// TestCommentedOrQuotedSigningCommandGrantsNoImpact pins that the script
+// branch of signs_or_releases reads the command a line runs, not its
+// comments or its quoted text: a commented-out command, a trailing comment
+// and a command only printed inside a quoted string sign and release
+// nothing. A real command with a quoted argument or a trailing comment
+// still counts, with the whole line as evidence.
+func TestCommentedOrQuotedSigningCommandGrantsNoImpact(t *testing.T) {
+	inert := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitHub,
+		Jobs: []ir.Job{{Name: "build", Permissions: map[string]any{"id-token": "write"}, Scripts: []string{
+			"# cosign sign --yes ghcr.io/o/app\n  # gh release create v1.2.3\nmake build # then: gh release upload v1 dist/app",
+			"echo \"run: gh release create v1.2.3 dist/*\"",
+			"echo 'cosign sign --yes IMAGE'",
+		}}},
+	}
+	if i, ok := impactKinds(evaluate(t, inert, nil).Jobs["build"].Impact)["signs_or_releases"]; ok {
+		t.Errorf("a commented-out or quoted command signs and releases nothing: %+v", i)
+	}
+	for _, line := range []string{
+		"cosign sign --yes \"$IMAGE\" # keyless",
+		"gh release create \"$TAG\" dist/*",
+	} {
+		real := &ir.NormalizedPipeline{
+			Provider: ir.ProviderGitHub,
+			Jobs:     []ir.Job{{Name: "sign", Permissions: map[string]any{"id-token": "write"}, Scripts: []string{line}}},
+		}
+		i, ok := impactKinds(evaluate(t, real, nil).Jobs["sign"].Impact)["signs_or_releases"]
+		if !ok || i.State != "proven" || i.Evidence != line {
+			t.Errorf("%q: signs_or_releases = %+v, want proven with the line as evidence", line, i)
+		}
+	}
+}
+
+// TestSlsaVerifierOnlyVerifiesAndGrantsNoImpact pins that a bare `slsa-`
+// script match is gone: slsa-verifier verify(-artifact) only checks a
+// provenance file against an artifact, it signs or releases nothing, so it
+// must not grant signs_or_releases. The SLSA generator still does, through
+// slsa-framework/slsa-github-generator in signing_actions (the
+// reusable-workflow shape every project calls it as, never a script line).
+func TestSlsaVerifierOnlyVerifiesAndGrantsNoImpact(t *testing.T) {
+	p := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitHub,
+		Jobs: []ir.Job{{
+			Name:        "verify",
+			Permissions: map[string]any{"id-token": "write"},
+			Scripts:     []string{"slsa-verifier verify-artifact app --provenance-path app.intoto.jsonl --source-uri github.com/o/r"},
+		}},
+	}
+	if i, ok := impactKinds(evaluate(t, p, nil).Jobs["verify"].Impact)["signs_or_releases"]; ok {
+		t.Errorf("slsa-verifier only verifies, it must not grant signs_or_releases: %+v", i)
+	}
+}
+
+// TestReleaseStepIsCountedOnce pins that one step is one impact: a
+// release action is a signs_or_releases impact and never also publishes,
+// whether or not the configured publish list names it; a release command
+// matching a publish pattern (goreleaser) stays publishes only, like the
+// goreleaser action.
+func TestReleaseStepIsCountedOnce(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		job  ir.Job
+	}{
+		{"goreleaser action", ir.Job{Name: "release", Uses: []ir.Action{{Uses: "goreleaser/goreleaser-action@v6"}}}},
+		{"goreleaser command", ir.Job{Name: "release", Scripts: []string{"goreleaser release --clean"}}},
+	} {
+		p := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{tc.job}}
+		kinds := impactKinds(evaluate(t, p, nil).Jobs["release"].Impact)
+		if _, ok := kinds["publishes"]; !ok {
+			t.Errorf("%s: want a publishes impact, got %+v", tc.name, kinds)
+		}
+		if _, ok := kinds["signs_or_releases"]; ok {
+			t.Errorf("%s: a publish step must not also count as signs_or_releases: %+v", tc.name, kinds)
+		}
+	}
+	p := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitHub,
+		Jobs:     []ir.Job{{Name: "release", Permissions: map[string]any{"contents": "write", "id-token": "write"}, Uses: []ir.Action{{Uses: "ncipollo/release-action@v1"}}}},
+	}
+	for _, cfg := range []map[string]any{
+		nil,
+		{"cachePoisoning": map[string]any{"publishActions": []any{"pypa/gh-action-pypi-publish"}}},
+		{"cachePoisoning": map[string]any{"publishActions": []any{"ncipollo/release-action"}}},
+	} {
+		kinds := impactKinds(evaluate(t, p, cfg).Jobs["release"].Impact)
+		if i, ok := kinds["signs_or_releases"]; !ok || i.State != "proven" || i.Evidence != "ncipollo/release-action@v1" {
+			t.Errorf("config %v: a release action is a signs_or_releases impact, got %+v", cfg, kinds)
+		}
+		if i, ok := kinds["publishes"]; ok && i.Source != "token" {
+			t.Errorf("config %v: a release action is not a publishes impact: %+v", cfg, kinds)
+		}
 	}
 }
 
@@ -1017,38 +1256,46 @@ func TestRepoWriterActionsEveryDefault(t *testing.T) {
 }
 
 // TestSigningActionGrantsSignsOrReleasesImpact pins the action-list branch
-// of signs_or_releases: a known signing action proves the impact on its
-// own, with no token dependency at all (unlike the permissions-derived
-// branches of the same rule).
+// of signs_or_releases: a known signing action is the impact, proven when
+// the job declares id-token: write and unresolvable on an assumed default
+// token (the token-dependent rule every signing step follows).
 func TestSigningActionGrantsSignsOrReleasesImpact(t *testing.T) {
 	p := &ir.NormalizedPipeline{
 		Provider: ir.ProviderGitHub,
 		Jobs: []ir.Job{{
-			Name: "sign",
-			Uses: []ir.Action{{Uses: "sigstore/cosign-installer@v3"}},
+			Name:        "sign",
+			Permissions: map[string]any{"id-token": "write"},
+			Uses:        []ir.Action{{Uses: "actions/attest-build-provenance@v1"}},
 		}},
 	}
 	r := evaluate(t, p, nil)
 	i, ok := impactKinds(r.Jobs["sign"].Impact)["signs_or_releases"]
-	if !ok || i.State != "proven" || i.Evidence != "sigstore/cosign-installer@v3" {
+	if !ok || i.State != "proven" || i.Evidence != "actions/attest-build-provenance@v1" {
 		t.Errorf("signs_or_releases: %+v", impactKinds(r.Jobs["sign"].Impact))
+	}
+	p.Jobs[0].Permissions = nil
+	i, ok = impactKinds(evaluate(t, p, nil).Jobs["sign"].Impact)["signs_or_releases"]
+	if !ok || i.State != "unresolvable" {
+		t.Errorf("a signing action on the default token: signs_or_releases = %+v, want unresolvable", i)
 	}
 }
 
-// TestSigningActionsEveryDefault pins every one of signing_actions' three
-// members, not just sigstore/cosign-installer (the only one previously
-// exercised): a change dropping any one of them from the set would fail
-// exactly the row it breaks here instead of passing unnoticed.
+// TestSigningActionsEveryDefault pins every one of signing_actions'
+// members, not just actions/attest-build-provenance (the only one
+// previously exercised): a change dropping any one of them from the set
+// would fail exactly the row it breaks here instead of passing unnoticed.
+// sigstore/cosign-installer is deliberately not in this set, see
+// TestCosignInstallerAloneGrantsNoSigningImpact: installing the cosign
+// binary signs nothing by itself.
 func TestSigningActionsEveryDefault(t *testing.T) {
 	for _, action := range []string{
-		"sigstore/cosign-installer",
 		"slsa-framework/slsa-github-generator",
 		"actions/attest-build-provenance",
 	} {
 		uses := action + "@v1"
 		p := &ir.NormalizedPipeline{
 			Provider: ir.ProviderGitHub,
-			Jobs:     []ir.Job{{Name: "sign", Uses: []ir.Action{{Uses: uses}}}},
+			Jobs:     []ir.Job{{Name: "sign", Permissions: map[string]any{"id-token": "write"}, Uses: []ir.Action{{Uses: uses}}}},
 		}
 		i, ok := impactKinds(evaluate(t, p, nil).Jobs["sign"].Impact)["signs_or_releases"]
 		if !ok || i.State != "proven" || i.Evidence != uses {
@@ -1057,27 +1304,53 @@ func TestSigningActionsEveryDefault(t *testing.T) {
 	}
 }
 
-// TestReleaseActionGrantsPublishesImpact pins the action-list branch of
-// publishes: a known publish action proves the impact, and a job without
-// it (even one that otherwise looks like a release job) gets none.
-func TestReleaseActionGrantsPublishesImpact(t *testing.T) {
+// TestCosignInstallerAloneGrantsNoSigningImpact pins that installing the
+// cosign binary is not itself a signing step: sigstore/cosign-installer is
+// the usual setup step ahead of both `cosign sign` and `cosign verify`, so
+// keeping it in signing_actions would give a verify-only job the same
+// false signs_or_releases impact the slsa- script pattern gave
+// slsa-verifier (TestSlsaVerifierOnlyVerifiesAndGrantsNoImpact). A job that
+// installs cosign and only verifies gets no impact at all; the script
+// branch (TestSigningOrReleaseScriptGrantsSignsOrReleasesImpact) is still
+// what proves the impact once the job actually signs or attests.
+func TestCosignInstallerAloneGrantsNoSigningImpact(t *testing.T) {
 	p := &ir.NormalizedPipeline{
 		Provider: ir.ProviderGitHub,
 		Jobs: []ir.Job{{
-			Name: "release",
-			Uses: []ir.Action{{Uses: "softprops/action-gh-release@v2"}},
+			Name:        "verify",
+			Permissions: map[string]any{"id-token": "write"},
+			Uses:        []ir.Action{{Uses: "sigstore/cosign-installer@v3"}},
+			Scripts:     []string{"cosign verify ghcr.io/o/app"},
+		}},
+	}
+	if i, ok := impactKinds(evaluate(t, p, nil).Jobs["verify"].Impact)["signs_or_releases"]; ok {
+		t.Errorf("installing cosign to verify must not grant signs_or_releases: %+v", i)
+	}
+}
+
+// TestReleaseActionGrantsReleaseImpact pins the action-list branch of
+// signs_or_releases: a known release action proves the impact (a
+// read-all token is declared, so its state is proven), and a job without
+// it (even one that otherwise looks like a release job) gets none.
+func TestReleaseActionGrantsReleaseImpact(t *testing.T) {
+	p := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitHub,
+		Jobs: []ir.Job{{
+			Name:        "release",
+			Permissions: "read-all", // the release can only come from the action
+			Uses:        []ir.Action{{Uses: "softprops/action-gh-release@v2"}},
 		}},
 	}
 	r := evaluate(t, p, nil)
-	i, ok := impactKinds(r.Jobs["release"].Impact)["publishes"]
+	i, ok := impactKinds(r.Jobs["release"].Impact)["signs_or_releases"]
 	if !ok || i.State != "proven" || i.Evidence != "softprops/action-gh-release@v2" {
-		t.Errorf("publishes: %+v", impactKinds(r.Jobs["release"].Impact))
+		t.Errorf("signs_or_releases: %+v", impactKinds(r.Jobs["release"].Impact))
 	}
 
 	p.Jobs[0].Uses = nil
 	r = evaluate(t, p, nil)
-	if _, ok := impactKinds(r.Jobs["release"].Impact)["publishes"]; ok {
-		t.Errorf("a job without the release action must not have a publishes impact")
+	if len(r.Jobs["release"].Impact) != 0 {
+		t.Errorf("a job without the release action must have no impact, got %+v", r.Jobs["release"].Impact)
 	}
 }
 
@@ -1094,6 +1367,44 @@ func TestGitLabProtectedPushTokenGrantsContentsWrite(t *testing.T) {
 	r := evaluate(t, p, nil)
 	if got := r.Jobs["release"].Privilege.TokenWrite; !reflect.DeepEqual(got, []string{"contents"}) {
 		t.Errorf("tokenWrite = %v, want [contents] from the protected CI_PUSH_TOKEN variable", got)
+	}
+	// GitLab declares no token scope, so the push token is a privilege only.
+	for _, i := range r.Jobs["release"].Impact {
+		if i.Source == "token" {
+			t.Errorf("a push token nobody declared gives no impact: %+v", i)
+		}
+	}
+}
+
+// TestGitLabMergeRequestOnlyJobHoldsNoProtectedPushToken mirrors
+// TestGitLabMergeRequestOnlyJobHoldsNoProtectedVariable on the tokenWrite
+// side: gitlab_contents_write's CI_PUSH_TOKEN branch must apply
+// variable_reaches_job the same way the secrets side does, so a job whose
+// every way to run is a merge request pipeline never receives the
+// protected token and holds no contents tokenWrite. A job that runs on a
+// protected branch instead (no merge-request-only rule) still does.
+func TestGitLabMergeRequestOnlyJobHoldsNoProtectedPushToken(t *testing.T) {
+	vars := []ir.SettingsVariable{
+		{Name: "CI_PUSH_TOKEN", Type: "env_var", Environment: "*", Protected: true},
+	}
+	mrRule := map[string]any{"if": `$CI_PIPELINE_SOURCE == "merge_request_event"`}
+	mainRule := map[string]any{"if": `$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH`}
+	p := &ir.NormalizedPipeline{
+		Provider:               ir.ProviderGitLab,
+		DefaultBranch:          "main",
+		SettingsVariablesKnown: true,
+		SettingsVariables:      vars,
+		Jobs: []ir.Job{
+			{Name: "mr_only", Rules: []map[string]any{mrRule}},
+			{Name: "protected_branch", Rules: []map[string]any{mainRule}},
+		},
+	}
+	r := evaluate(t, p, nil)
+	if got := r.Jobs["mr_only"].Privilege.TokenWrite; len(got) != 0 {
+		t.Errorf("mr_only: tokenWrite = %v, want none (the job never receives the protected CI_PUSH_TOKEN)", got)
+	}
+	if got := r.Jobs["protected_branch"].Privilege.TokenWrite; !reflect.DeepEqual(got, []string{"contents"}) {
+		t.Errorf("protected_branch: tokenWrite = %v, want [contents]", got)
 	}
 }
 
@@ -1226,7 +1537,7 @@ func TestYAMLStringBooleansAndExpressions(t *testing.T) {
 	for _, tc := range cases {
 		p := &ir.NormalizedPipeline{
 			Provider: ir.ProviderGitHub,
-			Jobs:     []ir.Job{{Name: "build", Uses: []ir.Action{{Uses: "docker/build-push-action@v5", With: tc.with}}}},
+			Jobs:     []ir.Job{{Name: "build", Permissions: "read-all", Uses: []ir.Action{{Uses: "docker/build-push-action@v5", With: tc.with}}}},
 		}
 		i, ok := impactKinds(evaluate(t, p, nil).Jobs["build"].Impact)["publishes"]
 		if tc.wantState == "" && ok {
@@ -1238,11 +1549,12 @@ func TestYAMLStringBooleansAndExpressions(t *testing.T) {
 	}
 }
 
-// TestSecretsBracketFormAndWholeContext pins the other two ways a workflow
+// TestSecretsBracketFormAndWholeContext pins the other ways a workflow
 // reads secrets: the bracket form secrets['X'] names X like secrets.X, and
-// the whole context (toJSON(secrets), or secrets used bare) exposes every
-// secret, which no list can enumerate, so secretsState is unresolvable for
-// that job only.
+// the whole context (toJSON(secrets), or secrets used bare), like a
+// reusable workflow call with secrets: inherit, holds every secret of the
+// repository: no list can enumerate them, and none needs to, so the fact
+// is allSecrets, proven.
 func TestSecretsBracketFormAndWholeContext(t *testing.T) {
 	p := &ir.NormalizedPipeline{
 		Provider: ir.ProviderGitHub,
@@ -1250,19 +1562,21 @@ func TestSecretsBracketFormAndWholeContext(t *testing.T) {
 			{Name: "bracket", Scripts: []string{`echo ${{ secrets['NPM_TOKEN'] }} ${{ secrets["PYPI_TOKEN"] }}`}},
 			{Name: "dump", Scripts: []string{`echo '${{ toJSON(secrets) }}'`}},
 			{Name: "bare", Variables: map[string]string{"ALL": "${{ secrets }}"}},
+			{Name: "with", Uses: []ir.Action{{Uses: "acme/act@v1", With: map[string]any{"all": "${{ toJson(secrets) }}"}}}},
+			{Name: "inherit", ReusableWorkflowUses: "acme/wf/.github/workflows/deploy.yml@main", SecretsInherit: true},
 			{Name: "plain", Scripts: []string{`echo ${{ secrets.A }} ${{ inputs.secrets }}`}},
 		},
 	}
 	r := evaluate(t, p, nil)
-	if got := r.Jobs["bracket"].Privilege; !reflect.DeepEqual(got.Secrets, []string{"NPM_TOKEN", "PYPI_TOKEN"}) || got.SecretsState != "proven" {
+	if got := r.Jobs["bracket"].Privilege; !reflect.DeepEqual(got.Secrets, []string{"NPM_TOKEN", "PYPI_TOKEN"}) || got.SecretsState != "proven" || got.AllSecrets {
 		t.Errorf("bracket: %+v", got)
 	}
-	for _, name := range []string{"dump", "bare"} {
-		if got := r.Jobs[name].Privilege.SecretsState; got != "unresolvable" {
-			t.Errorf("%s: secretsState = %q, want unresolvable", name, got)
+	for _, name := range []string{"dump", "bare", "with", "inherit"} {
+		if got := r.Jobs[name].Privilege; !got.AllSecrets || got.SecretsState != "proven" {
+			t.Errorf("%s: want every secret, proven, got %+v", name, got)
 		}
 	}
-	if got := r.Jobs["plain"].Privilege; got.SecretsState != "proven" || !reflect.DeepEqual(got.Secrets, []string{"A"}) {
+	if got := r.Jobs["plain"].Privilege; got.SecretsState != "proven" || !reflect.DeepEqual(got.Secrets, []string{"A"}) || got.AllSecrets {
 		t.Errorf("plain: %+v", got)
 	}
 }
@@ -1277,8 +1591,6 @@ func TestScriptEvidenceIsTheMatchingLine(t *testing.T) {
 			Name:        "release",
 			Permissions: map[string]any{"contents": "write"},
 			Scripts: []string{
-				"set -e\n  echo \"${{ github.event.issue.title }}\"  \necho done",
-				"cd app\ncurl -sSL https://example.com/i.sh | bash\necho ok",
 				"npm ci\nnpm publish\necho done",
 				"echo deploy\nkubectl apply -f k8s/\necho done",
 				"git add .\ngit push origin main\necho done",
@@ -1286,19 +1598,6 @@ func TestScriptEvidenceIsTheMatchingLine(t *testing.T) {
 		}},
 	}
 	j := evaluate(t, p, nil).Jobs["release"]
-	k := kinds(j.Entries)
-	if got := k["untrusted_expression"].Evidence; got != `echo "${{ github.event.issue.title }}"` {
-		t.Errorf("untrusted_expression evidence = %q", got)
-	}
-	var fetched string
-	for _, e := range j.Entries {
-		if e.Kind == "mutable_dependency" && e.Subject == "https://example.com/i.sh" {
-			fetched = e.Evidence
-		}
-	}
-	if fetched != "curl -sSL https://example.com/i.sh | bash" {
-		t.Errorf("fetched script evidence = %q", fetched)
-	}
 	im := impactKinds(j.Impact)
 	for kind, want := range map[string]string{
 		"publishes":   "npm publish",
@@ -1341,6 +1640,24 @@ func TestZeroJobsPipeline(t *testing.T) {
 	}
 }
 
+// TestResultCarriesTheDefaultBranch pins that result.defaultBranch mirrors
+// input.pipeline.defaultBranch, empty when the pipeline never gave one, so
+// the Go side can amplify a branch gate against any path, not only paths
+// through push-triggered jobs.
+func TestResultCarriesTheDefaultBranch(t *testing.T) {
+	r := evaluate(t, &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, DefaultBranch: "main"}, nil)
+	if r.DefaultBranch != "main" {
+		t.Errorf("defaultBranch = %q, want %q", r.DefaultBranch, "main")
+	}
+}
+
+func TestResultDefaultBranchEmptyWhenAbsent(t *testing.T) {
+	r := evaluate(t, &ir.NormalizedPipeline{Provider: ir.ProviderGitHub}, nil)
+	if r.DefaultBranch != "" {
+		t.Errorf("defaultBranch = %q, want empty when the pipeline never gave one", r.DefaultBranch)
+	}
+}
+
 func containsAll(have []string, want ...string) bool {
 	set := map[string]bool{}
 	for _, h := range have {
@@ -1352,4 +1669,52 @@ func containsAll(have []string, want ...string) bool {
 		}
 	}
 	return true
+}
+
+// TestStructuralTriggerFacts pins the two trigger facts no control
+// reports: a fork pull request reaching the job, and the job running on a
+// push to the default branch while that branch is not known protected.
+func TestStructuralTriggerFacts(t *testing.T) {
+	p := &ir.NormalizedPipeline{
+		Provider:      ir.ProviderGitHub,
+		DefaultBranch: "main",
+		Branches:      []ir.Branch{{Name: "main", Protected: false}},
+		Jobs: []ir.Job{
+			{Name: "ci/build", Triggers: []string{"pull_request"}},
+			{Name: "ci/deploy", Triggers: []string{"push"}},
+		},
+	}
+	r := evaluate(t, p, nil)
+	if r.Provider != "github" {
+		t.Errorf("provider = %q", r.Provider)
+	}
+	if got := r.Jobs["ci/build"].ForkPR; len(got) != 1 || got[0].Kind != "fork_pr" || got[0].Evidence != "on: pull_request" {
+		t.Errorf("ci/build forkPR = %+v", got)
+	}
+	if got := r.Jobs["ci/build"].Push; len(got) != 0 {
+		t.Errorf("ci/build push = %+v, want none", got)
+	}
+	if got := r.Jobs["ci/deploy"].Push; len(got) != 1 || got[0].State != "proven" || got[0].Subject != "main" {
+		t.Errorf("ci/deploy push = %+v", got)
+	}
+}
+
+// TestIncludesNameTheJobsTheyShape pins the include attachment: the jobs
+// whose origin file is the include's source, or every job when none is.
+func TestIncludesNameTheJobsTheyShape(t *testing.T) {
+	p := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitLab,
+		Includes: []ir.Include{
+			{Kind: "local", Source: "ci/build.yml"},
+			{Kind: "project", Source: "group/templates", Ref: "main", OriginFile: ".gitlab-ci.yml", OriginLine: 3},
+		},
+		Jobs: []ir.Job{{Name: "build", OriginFile: "ci/build.yml"}, {Name: "test", OriginFile: ".gitlab-ci.yml"}},
+	}
+	want := []includeFact{
+		{Subject: "ci/build.yml", Source: "ci/build.yml", Jobs: []string{"build"}},
+		{Subject: "group/templates@main", Source: "group/templates", File: ".gitlab-ci.yml", Line: 3, Jobs: []string{"build", "test"}},
+	}
+	if got := evaluate(t, p, nil).Includes; !reflect.DeepEqual(got, want) {
+		t.Errorf("includes = %+v, want %+v", got, want)
+	}
 }

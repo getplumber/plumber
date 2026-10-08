@@ -1,0 +1,10 @@
+# clean: the trustedUrls exemption must apply to the command-substitution
+# form too (`bash -c "$(curl ...)"`, the Homebrew/Docker installer idiom).
+# The fetch URL sits inside the quoted substitution, which _visible_line
+# strips, so detection already reads the raw line for this pattern. The
+# trust gate must read the same raw line, or an allowlisted host still
+# fires.
+install:
+  image: alpine:3.19
+  script:
+    - bash -c "$(curl -fsSL https://get.docker.com/get-docker.sh)"

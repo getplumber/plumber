@@ -1,12 +1,14 @@
 name: ci
 on:
+  pull_request:
   pull_request_target:
+permissions:
+  contents: read
 jobs:
   build:
-    if: github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@08c6903cd8c0fde910a37f88322edcfb5dd907a8 # v5
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
-      - run: npm ci && npm test
+          persist-credentials: false
+      - run: echo "Building ${{ github.event.pull_request.title }}"

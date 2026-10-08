@@ -783,6 +783,26 @@ func (dc *GitlabPipelineImageDataCollection) Run(project *ProjectInfo, token str
 		l.WithField("projectVarKeys", GetMapKeys(data.ProjectVars)).Debug("Project vars found")
 	}
 
+	data.Images, err = JobImages(l, data.MergedConf, data.DefaultImage, data.ProjectVars, data.GroupVars, data.InstanceVars, data.GlobalVars)
+	if err != nil {
+		return data, metrics, err
+	}
+
+	// Compute metrics
+	metrics.Total = uint(len(data.Images))
+
+	// Return the populated analysis data
+	return data, metrics, nil
+}
+
+// JobImages resolves the image of every job of a merged configuration: the
+// job's own image, else defaultImage, with variables expanded from the
+// project, group, instance, job and global sets (in that precedence, as
+// ReplaceVariable applies them) and GitLab's predefined registry
+// variables. A job with no image at all is skipped. It reads nothing from
+// GitLab, so the offline readers share it with the collector.
+func JobImages(l *logrus.Entry, mergedConf *GitlabCIConf, defaultImage string, projectVars, groupVars, instanceVars, globalVars map[string]string) ([]GitlabPipelineImageInfo, error) {
+	images := []GitlabPipelineImageInfo{}
 	// Set predefined variables
 	predefinedVars := map[string]string{
 		"CI_TEMPLATE_REGISTRY_HOST": "registry.gitlab.com",
@@ -790,7 +810,7 @@ func (dc *GitlabPipelineImageDataCollection) Run(project *ProjectInfo, token str
 	}
 
 	// Loop over all jobs to analyze image and get its status
-	for name, content := range data.MergedConf.GitlabJobs {
+	for name, content := range mergedConf.GitlabJobs {
 
 		// Add logging
 		jobLogger := l.WithField("jobName", name)
@@ -799,14 +819,14 @@ func (dc *GitlabPipelineImageDataCollection) Run(project *ProjectInfo, token str
 		job, err := ParseGitlabCIJob(content)
 		if err != nil {
 			jobLogger.WithError(err).Error("Unable to parse Gitlab CI job")
-			return data, metrics, err
+			return nil, err
 		}
 
 		//  Get job variables
 		jobVars, err := ParseJobVariables(job)
 		if err != nil {
 			jobLogger.WithError(err).Error("Unable to parse Gitlab CI job's variables")
-			return data, metrics, err
+			return nil, err
 		}
 
 		// Retrieve job image
@@ -818,11 +838,11 @@ func (dc *GitlabPipelineImageDataCollection) Run(project *ProjectInfo, token str
 
 		// If job image is empty, use the default or global job image
 		if imageUnresolved == "" {
-			imageUnresolved = data.DefaultImage
+			imageUnresolved = defaultImage
 		}
 
 		// Resolve variables in image
-		imageLink := ReplaceVariable(imageUnresolved, data.ProjectVars, data.GroupVars, data.InstanceVars, jobVars, data.GlobalVars, predefinedVars)
+		imageLink := ReplaceVariable(imageUnresolved, projectVars, groupVars, instanceVars, jobVars, globalVars, predefinedVars)
 
 		// Add logging
 		jobLogger = jobLogger.WithField("imageLink", imageLink)
@@ -845,12 +865,8 @@ func (dc *GitlabPipelineImageDataCollection) Run(project *ProjectInfo, token str
 		// Parse image link
 		image.parseImageLink(jobLogger)
 
-		data.Images = append(data.Images, image)
+		images = append(images, image)
 	}
 
-	// Compute metrics
-	metrics.Total = uint(len(data.Images))
-
-	// Return the populated analysis data
-	return data, metrics, nil
+	return images, nil
 }
