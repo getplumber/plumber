@@ -112,7 +112,8 @@ stat, not as a violation of this rule.
 A reference is **trusted** when any of these hold:
 
 - it matches an explicit `trustedFunctions` allowlist pattern
-  (wildcards supported, `$VAR`/`${VAR}` notation both accepted);
+  (wildcards supported). The runner does not expand `$VAR` in a
+  `func:` reference, so list literal hosts and paths;
 - `trustSameGroupFunctions` (default `true`) and the function is
   hosted on the scanned GitLab instance, under the project's own
   root namespace. "Hosted on the instance" means its web host (git
@@ -121,12 +122,15 @@ A reference is **trusted** when any of these hold:
   variable such as `CI_TEMPLATE_REGISTRY_HOST`, which the pipeline
   can redefine.
 
-The structured form (`func: {git: {url, rev, dir, file}}`) is checked
-like the equivalent `url/-/dir/file@rev` string. A `func:` value
+The structured forms are checked like their string equivalents:
+`func: {git: {url, rev, dir, file}}` as `url/-/dir/file@rev`, and
+`func: {oci: {registry, repository, tag}}` as `registry/repository:tag`. A `func:` value
 Plumber cannot read is reported as untrusted, never skipped.
 
 Local (relative/absolute filesystem path) function references are
-same-repo and always out of scope.
+same-repo and always out of scope, as are GitLab built-in functions
+(`builtin://...`), which ship inside the runner. Hosts and namespaces
+compare case-insensitively.
 
 ```yaml
 # ❌ before — function from an untrusted external namespace
@@ -141,7 +145,7 @@ build:
 build:
   run:
     - name: say_hi
-      func: $CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/echo:1
+      func: registry.gitlab.com/my-group/my-project/echo:1
       inputs:
         message: "Hi Sally!"
 ```
@@ -154,9 +158,6 @@ functionMustComeFromAuthorizedSources:
   # Trust functions under this project's own root namespace
   trustSameGroupFunctions: true
   # Additional trusted function source URLs and patterns (wildcards
-  # supported). Both $VAR and ${VAR} notation are listed below since
-  # pipeline authors write either form.
-  trustedFunctions:
-    - $CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/*
-    - ${CI_TEMPLATE_REGISTRY_HOST}/${CI_PROJECT_PATH}/*
+  # supported), e.g. registry.example.com/platform-team/*
+  trustedFunctions: []
 ```

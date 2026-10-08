@@ -137,20 +137,25 @@ func TestFunctionAuthorizedSourcesConfigContract(t *testing.T) {
 			want: 1,
 		},
 		{
-			name: "default_pattern_trusted",
+			// No pattern is shipped: the runner does not expand $VAR in a
+			// `func:` reference, so this literal ref never runs and nothing
+			// in the defaults trusts it.
+			name: "variable_ref_not_trusted_by_default",
 			job:  ir.Job{Name: "build", Functions: []ir.Function{{Name: "echo", Ref: "$CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/echo:1", Kind: "oci"}}},
+			want: 1,
+		},
+		{
+			// GitLab built-in functions ship inside the runner.
+			name: "builtin_function_out_of_scope",
+			job:  ir.Job{Name: "build", Functions: []ir.Function{{Name: "build", Ref: "builtin://function/oci/build", Kind: "builtin"}}},
 			want: 0,
 		},
 		{
-			// The default pattern's variable shadowed in the job's own
-			// `variables:` block resolves to an attacker registry.
-			name: "default_pattern_shadowed_on_job",
-			job: ir.Job{
-				Name:           "build",
-				LocalVariables: map[string]string{"CI_TEMPLATE_REGISTRY_HOST": "registry.evil.example"},
-				Functions:      []ir.Function{{Name: "pwn", Ref: "$CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/backdoor:1", Kind: "oci"}},
-			},
-			want: 1,
+			// GitLab paths are case-insensitive: a mixed-case spelling of
+			// the own namespace is still the own namespace.
+			name: "own_namespace_mixed_case_git_ref",
+			job:  ir.Job{Name: "build", Functions: []ir.Function{{Name: "deploy", Ref: "GitLab.com/My-Group/my-project@v1", Kind: "git", Deprecated: true}}},
+			want: 0,
 		},
 	}
 	for _, tc := range cases {

@@ -438,13 +438,12 @@ gitlab:
     # pass; deprecation is tracked separately (see the Deprecated stat
     # in `plumber analyze` output) and doesn't affect this control.
     #
-    # A reference is trusted when it matches trustedFunctions (patterns
-    # may reference $CI_* variables — a pattern is rejected if the
-    # pipeline redefines one of those variables itself; both $VAR and
-    # ${VAR} notation are accepted and normalized identically), OR its
-    # host matches the scanned GitLab instance and its path after that
-    # host starts with this project's own root namespace
-    # (trustSameGroupFunctions).
+    # A reference is trusted when it matches trustedFunctions, OR its
+    # host matches the scanned GitLab instance (its web host, or the
+    # container registry host the GitLab API reports for the project)
+    # and its path after that host starts with this project's own root
+    # namespace (trustSameGroupFunctions). GitLab built-in functions
+    # (builtin://...) and local paths are always out of scope.
     #
     # Best practice: keep functions scoped to your own project/group
     functionMustComeFromAuthorizedSources:
@@ -453,11 +452,10 @@ gitlab:
       # Trust functions under this project's own root namespace
       trustSameGroupFunctions: true
       # Additional trusted function source URLs and patterns (supports
-      # wildcards). Both $VAR and ${VAR} notation are listed below since
-      # pipeline authors write either form.
-      trustedFunctions:
-        - $CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/*
-        - ${CI_TEMPLATE_REGISTRY_HOST}/${CI_PROJECT_PATH}/*
+      # wildcards), e.g. registry.example.com/platform-team/*. The runner
+      # does not expand $VAR in a `func:` reference, so list literal hosts
+      # and paths.
+      trustedFunctions: []
     # ===========================================
     # Pipeline must not enable debug trace
     # ===========================================
