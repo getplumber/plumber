@@ -5,6 +5,7 @@ import (
 
 	"github.com/getplumber/plumber/control"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
+	"github.com/getplumber/plumber/internal/ir"
 )
 
 // TestMRApprovalRulesJSONBlocks locks the results.json detail blocks for the
@@ -290,5 +291,80 @@ func TestMRSettingsJSONBlock(t *testing.T) {
 	cleanName, cleanBlock := buildLegacyResult(entry, result, nil, nil)
 	if cleanName != "mrSettingsResult" || cleanBlock == nil {
 		t.Fatalf("clean run: name=%q block=%v, want mrSettingsResult with a non-nil block", cleanName, cleanBlock)
+	}
+}
+
+// TestAuthorizedSourcesJSONBlocks locks the results.json detail blocks of
+// componentMustComeFromAuthorizedSources (ISSUE-414) and
+// functionMustComeFromAuthorizedSources (ISSUE-415). Without their dispatch
+// case buildLegacyResult returned ("", nil): --output and the CI
+// component's plumber-report.json carried the score loss but no finding.
+func TestAuthorizedSourcesJSONBlocks(t *testing.T) {
+	result := &control.AnalysisResult{
+		CiValid: true,
+		Pipeline: &ir.NormalizedPipeline{
+			Includes: []ir.Include{
+				{Kind: "component", Source: "gitlab.com/my-group/c/c"},
+				{Kind: "component", Source: "gitlab.com/evil/c/c"},
+				{Kind: "project", Source: "my-group/templates"},
+			},
+			Jobs: []ir.Job{
+				{Name: "a", Functions: []ir.Function{
+					{Ref: "registry.gitlab.com/my-group/x/echo:1", Kind: "oci"},
+					{Ref: "gitlab.com/evil/fn@v1", Kind: "git", Deprecated: true},
+				}},
+				{Name: "b", Functions: []ir.Function{{Ref: "./local", Kind: "local"}}},
+			},
+		},
+	}
+
+	cases := []struct {
+		control  string
+		key      string
+		findings []opaengine.Finding
+		metrics  map[string]int
+		wantJob  bool
+	}{
+		{
+			control:  "componentMustComeFromAuthorizedSources",
+			key:      "componentAuthorizedSourcesResult",
+			findings: []opaengine.Finding{{Code: "ISSUE-414", Data: map[string]any{"componentPath": "gitlab.com/evil/c/c"}}},
+			metrics:  map[string]int{"total": 2, "authorized": 1, "unauthorized": 1},
+		},
+		{
+			control:  "functionMustComeFromAuthorizedSources",
+			key:      "functionAuthorizedSourcesResult",
+			findings: []opaengine.Finding{{Code: "ISSUE-415", Job: "a", Data: map[string]any{"link": "gitlab.com/evil/fn@v1"}}},
+			metrics:  map[string]int{"total": 3, "authorized": 2, "unauthorized": 1, "deprecated": 1},
+			wantJob:  true,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.control, func(t *testing.T) {
+			name, block := buildLegacyResult(control.ControlEntry{ControlName: tc.control}, result, nil, tc.findings)
+			if name != tc.key {
+				t.Fatalf("block name = %q, want %q (dispatch dropped the block)", name, tc.key)
+			}
+			m, ok := block.(map[string]any)
+			if !ok {
+				t.Fatalf("block is %T, want map[string]any", block)
+			}
+			issues, ok := m["issues"].([]map[string]any)
+			if !ok || len(issues) != 1 || issues[0]["code"] != tc.findings[0].Code {
+				t.Fatalf("issues = %v, want exactly 1 %s entry", m["issues"], tc.findings[0].Code)
+			}
+			if _, hasJob := issues[0]["job"]; hasJob != tc.wantJob {
+				t.Errorf("issue job field present = %v, want %v (%v)", hasJob, tc.wantJob, issues[0])
+			}
+			metrics, ok := m["metrics"].(map[string]any)
+			if !ok {
+				t.Fatalf("metrics = %v, want a map", m["metrics"])
+			}
+			for k, want := range tc.metrics {
+				if metrics[k] != want {
+					t.Errorf("metrics.%s = %v, want %d", k, metrics[k], want)
+				}
+			}
+		})
 	}
 }

@@ -148,6 +148,7 @@ const (
 // TestControlsRequiringIncludeAttributionMatchesPolicies derives this same
 // set from the policy sources and fails if the two drift.
 var controlsRequiringIncludeAttribution = []string{
+	"componentMustComeFromAuthorizedSources",
 	"externalRefsMustNotCollide",
 	"includesMustBeUpToDate",
 	"includesMustNotUseForbiddenVersions",

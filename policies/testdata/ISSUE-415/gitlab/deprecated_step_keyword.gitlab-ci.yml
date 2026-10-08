@@ -1,0 +1,4 @@
+build:
+  run:
+    - name: say_hi
+      step: registry.gitlab.com/my-group/my-project/echo:1

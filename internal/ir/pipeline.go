@@ -25,6 +25,14 @@ type NormalizedPipeline struct {
 	Branches      []Branch          `json:"branches,omitempty"`
 	Dependabot    *DependabotConfig `json:"dependabot,omitempty"`
 
+	// RegistryHost is the container registry host of the scanned GitLab
+	// project's instance (e.g. registry.gitlab.com), where GitLab Function
+	// OCI references live. It comes from the GitLab API
+	// (container_registry_image_prefix) or, when the API reports none, is
+	// derived from the configured instance URL — never from a CI/CD
+	// variable, which the scanned pipeline itself can redefine. GitLab only.
+	RegistryHost string `json:"registryHost,omitempty"`
+
 	// SelfActionMutableExec is set when the scanned repository is itself
 	// a GitHub Action (has an action.yml) whose own source fetches and
 	// executes mutable remote code at runtime. This is the producer-side
@@ -263,6 +271,12 @@ type Job struct {
 	OriginFile string   `json:"originFile,omitempty"`
 	OriginLine int      `json:"originLine,omitempty"`
 	OriginKind string   `json:"originKind,omitempty"`
+	// Functions lists this job's `run:`-step function references
+	// (docs.gitlab.com/ci/functions, GitLab CI only). Kind classifies
+	// the reference form so policies can skip same-repo file
+	// references (no supply-chain concern) and flag deprecated forms
+	// independently of trust.
+	Functions []Function `json:"functions,omitempty"`
 	// Overridden is true when the job inherits from an upstream
 	// component or template but the project locally redefined some of
 	// its keys. Lets policies distinguish "user-authored override" from
@@ -530,6 +544,24 @@ type Include struct {
 	// without carrying the content itself. Empty when nothing is
 	// overridden.
 	OverrideFingerprint string `json:"overrideFingerprint,omitempty"`
+}
+
+// Function references a GitLab CI/CD Function (docs.gitlab.com/ci/functions)
+// — a job's `run:` step's `func:` (or deprecated `step:`) reference. Kind
+// classifies the reference form: "oci" (registry/path:tag or @sha256:
+// digest — the supported form), "local" (relative/absolute filesystem
+// path — same-repo, no supply-chain concern), "builtin" (builtin://...,
+// shipped inside the runner — no supply-chain concern either), "unknown"
+// (a structured value the collector could not read), or "git" (the deprecated
+// git-repository loading form, host/path@ref with no OCI tag).
+type Function struct {
+	Name string `json:"name,omitempty"`
+	Ref  string `json:"ref"`
+	Kind string `json:"kind"`
+	// Deprecated is true when the step used the legacy `step:` key
+	// (renamed to `func:`) or Kind is "git" (deprecated git-repository
+	// loading, superseded by OCI registry refs).
+	Deprecated bool `json:"deprecated,omitempty"`
 }
 
 // OverriddenJob captures a single job whose inherited definition was

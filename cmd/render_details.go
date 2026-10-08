@@ -874,6 +874,23 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 			lines = append(lines, statLine{Label: statUnresolvedImageRefs, Value: fmt.Sprintf("%d", unresolved)})
 		}
 		return lines
+	case "componentMustComeFromAuthorizedSources":
+		unauthorized := findingsCount
+		total, authorized := componentSourceCounts(result, unauthorized)
+		return []statLine{
+			{Label: "Total Components", Value: fmt.Sprintf("%d", total)},
+			{Label: "Authorized", Value: fmt.Sprintf("%d", authorized)},
+			{Label: "Unauthorized", Value: fmt.Sprintf("%d", unauthorized)},
+		}
+	case "functionMustComeFromAuthorizedSources":
+		unauthorized := findingsCount
+		total, authorized, deprecated := functionSourceCounts(result, unauthorized)
+		return []statLine{
+			{Label: "Total Functions", Value: fmt.Sprintf("%d", total)},
+			{Label: "Authorized", Value: fmt.Sprintf("%d", authorized)},
+			{Label: "Unauthorized", Value: fmt.Sprintf("%d", unauthorized)},
+			{Label: "Deprecated", Value: fmt.Sprintf("%d", deprecated)},
+		}
 	case "pipelineMustNotIncludeHardcodedJobs":
 		total := uint(0)
 		hardcoded := uint(0)

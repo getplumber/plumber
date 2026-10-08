@@ -9,10 +9,10 @@ import (
 )
 
 // minFilesWithLiteral is how many policies/*.rego files carry at least one
-// literal code/severity pair today (all 72 but placeholder.rego). A rule
+// literal code/severity pair today (all 74 but placeholder.rego). A rule
 // rewritten to build its finding through a helper would drop out of this
 // test silently; the floor makes that loss of coverage fail instead.
-const minFilesWithLiteral = 71
+const minFilesWithLiteral = 73
 
 var findingLiteral = regexp.MustCompile(`"code":\s*"(ISSUE-\d+)"[^}]*?"severity":\s*"(\w+)"|"severity":\s*"(\w+)"[^}]*?"code":\s*"(ISSUE-\d+)"`)
 

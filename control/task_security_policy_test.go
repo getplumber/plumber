@@ -114,7 +114,7 @@ func TestSecurityPolicyConfigContract(t *testing.T) {
 		ProjectMustHaveSecurityPolicySource: &configuration.SecurityPolicyControlConfig{
 			Enabled: spBoolPtr(true), ExpectedProjectID: spIntPtr(9),
 		},
-	})
+	}, "")
 	if _, ok := cfgExpect["projectMustHaveSecurityPolicySource"]; !ok {
 		t.Fatal("buildEngineConfig did not project a projectMustHaveSecurityPolicySource block")
 	}
@@ -128,7 +128,7 @@ func TestSecurityPolicyConfigContract(t *testing.T) {
 	// expectedProjectId unset -> require any linkage: nothing linked fires, a linked project passes.
 	cfgAny := buildEngineConfig(&configuration.ControlsConfig{
 		ProjectMustHaveSecurityPolicySource: &configuration.SecurityPolicyControlConfig{Enabled: spBoolPtr(true)},
-	})
+	}, "")
 	if !fires(0, cfgAny) {
 		t.Fatal("require-any, nothing linked: expected ISSUE-601 to fire")
 	}
@@ -154,7 +154,7 @@ func TestSecurityPolicyConfigContract(t *testing.T) {
 		ProjectMustHaveSecurityPolicySource: &configuration.SecurityPolicyControlConfig{
 			Enabled: spBoolPtr(true), ExpectedProjectPath: spStrPtr("Grp/Policies"),
 		},
-	})
+	}, "")
 	if firesPath("grp/policies", cfgPath) {
 		t.Fatal("path match (case-insensitive): expected no ISSUE-601")
 	}

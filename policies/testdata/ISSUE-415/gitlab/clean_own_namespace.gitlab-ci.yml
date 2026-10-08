@@ -1,0 +1,6 @@
+build:
+  run:
+    - name: say_hi
+      func: registry.gitlab.com/my-group/my-project/echo:1
+      inputs:
+        message: "Hi Sally!"

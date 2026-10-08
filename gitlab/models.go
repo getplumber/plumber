@@ -96,6 +96,14 @@ type Project struct {
 	Languages                 []ProjectLanguage `json:"languages"`
 	CreatedAt                 time.Time         `json:"createdAt" validate:"required"`
 
+	// ContainerRegistryImagePrefix is the image prefix GitLab reports for
+	// the project's container registry (e.g.
+	// "registry.gitlab.com/group/project"). Its host is the registry the
+	// project's GitLab Function OCI references are trusted on
+	// (functionMustComeFromAuthorizedSources). Empty when the registry is
+	// disabled or the project did not come from the API.
+	ContainerRegistryImagePrefix string `json:"containerRegistryImagePrefix"`
+
 	// The merge-request settings mergeRequestSettingsMustBeCompliant
 	// (ISSUE-506) compares against. They come from the same
 	// Projects.GetProject response as everything above, so carrying them
@@ -253,6 +261,10 @@ type GitlabJob struct {
 	When         interface{}            `yaml:"when,omitempty"`
 	AllowFailure interface{}            `yaml:"allow_failure,omitempty"`
 	Extends      interface{}            `yaml:"extends,omitempty"`
+	// Run holds the `run:` keyword (docs.gitlab.com/ci/functions), an
+	// alternative to `script:` where each step invokes a GitLab
+	// Function via `func:` (or the deprecated `step:` alias).
+	Run interface{} `yaml:"run,omitempty"`
 }
 
 type Image struct {
