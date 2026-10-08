@@ -709,7 +709,7 @@ github:
     # silently runs new code with its secrets. This is the vector behind
     # the tj-actions/changed-files compromise (CVE-2025-30066).
     #
-    # trustedOwners exempts first-party (`actions/*`, `github/*`) actions so
+    # trustedOwners exempts first-party (`actions/*`, `github/*`, `dependabot/*`) actions so
     # the initial signal on a fresh repo stays focused on the third-party
     # surface. Pair with Dependabot (`version-update-strategy: sha-and-version`)
     # to keep pins fresh.
@@ -720,6 +720,7 @@ github:
       trustedOwners:
         - actions
         - github
+        - dependabot
 
     # ===========================================
     # Actions must come from authorized sources
