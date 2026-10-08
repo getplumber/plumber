@@ -1015,6 +1015,13 @@ func parseGitHubContainer(v any) (ir.Image, bool) {
 // splitImageRef parses a GitHub Actions image reference into an ir.Image,
 // folding Docker Hub registry-host aliases to docker.io.
 func splitImageRef(ref string) ir.Image {
+	// A GitHub expression template (${{ }}) in the ref means the actual image
+	// cannot be determined at static analysis time. Return early with
+	// Unresolved set so policies abstain rather than fire a false positive
+	// against the placeholder text. See: https://github.com/getplumber/plumber/issues/396
+	if strings.Contains(ref, "${{") {
+		return ir.Image{Name: ref, Unresolved: true}
+	}
 	// Fold Docker Hub registry-host aliases (registry.hub.docker.com,
 	// index.docker.io, registry-1.docker.io) to docker.io so trustedUrls
 	// patterns match regardless of which Hub hostname was used. GitHub refs
