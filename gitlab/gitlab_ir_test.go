@@ -197,7 +197,7 @@ func TestBuildSecurityPolicyProject(t *testing.T) {
 }
 
 func TestToNormalizedPipeline_Empty(t *testing.T) {
-	pipeline := ToNormalizedPipeline("group/project", "main", "", nil, nil, nil, nil, nil)
+	pipeline := ToNormalizedPipeline("group/project", "main", "", nil, nil, nil, nil, nil, nil)
 	if pipeline.Provider != ir.ProviderGitLab {
 		t.Fatalf("expected provider gitlab, got %q", pipeline.Provider)
 	}
@@ -227,7 +227,7 @@ func TestToNormalizedPipeline_JobsAndImages(t *testing.T) {
 		},
 	}
 
-	pipeline := ToNormalizedPipeline("grp/proj", "main", "", origin, images, nil, nil, nil)
+	pipeline := ToNormalizedPipeline("grp/proj", "main", "", origin, images, nil, nil, nil, nil)
 
 	if got := len(pipeline.Jobs); got != 3 {
 		t.Fatalf("expected 3 jobs, got %d", got)
@@ -261,7 +261,7 @@ func TestToNormalizedPipeline_NilJobInMap(t *testing.T) {
 		},
 	}
 
-	pipeline := ToNormalizedPipeline("grp/proj", "main", "", origin, nil, nil, nil, nil)
+	pipeline := ToNormalizedPipeline("grp/proj", "main", "", origin, nil, nil, nil, nil, nil)
 	if got := len(pipeline.Jobs); got != 1 {
 		t.Fatalf("expected 1 job (nil entry skipped), got %d", got)
 	}
@@ -491,5 +491,27 @@ func TestExtractGitLabTags(t *testing.T) {
 				t.Errorf("extractGitLabTags(%#v) = %#v, want %#v", tc.in, got, tc.want)
 			}
 		})
+	}
+}
+
+func TestToNormalizedPipelineProjectsMemberCounts(t *testing.T) {
+	known := &GitlabMembersAnalysisData{Known: true, Counts: MemberCounts{Owners: 2, Maintainers: 3, Developers: 4, Total: 11}}
+	pipeline := ToNormalizedPipeline("grp/proj", "main", "", nil, nil, nil, nil, nil, known)
+	if !pipeline.ProjectMembersKnown || pipeline.ProjectMembers == nil {
+		t.Fatalf("a known collection must project: %+v", pipeline.ProjectMembers)
+	}
+	if pipeline.ProjectMembers.Owners != 2 || pipeline.ProjectMembers.Total != 11 {
+		t.Fatalf("counts = %+v", pipeline.ProjectMembers)
+	}
+
+	unknown := &GitlabMembersAnalysisData{Known: false}
+	pipeline = ToNormalizedPipeline("grp/proj", "main", "", nil, nil, nil, nil, nil, unknown)
+	if pipeline.ProjectMembersKnown || pipeline.ProjectMembers != nil {
+		t.Fatalf("an unknown collection must project nothing: known=%v counts=%+v", pipeline.ProjectMembersKnown, pipeline.ProjectMembers)
+	}
+
+	pipeline = ToNormalizedPipeline("grp/proj", "main", "", nil, nil, nil, nil, nil, nil)
+	if pipeline.ProjectMembersKnown || pipeline.ProjectMembers != nil {
+		t.Fatal("no collection must project nothing")
 	}
 }

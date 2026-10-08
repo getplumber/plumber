@@ -274,6 +274,8 @@ func buildLegacyResult(e control.ControlEntry, result *control.AnalysisResult, p
 		return "mrApprovalSettingsResult", buildMRApprovalSettingsBlock(common, findings)
 	case "mergeRequestSettingsMustBeCompliant":
 		return "mrSettingsResult", buildMRSettingsBlock(common, findings)
+	case "numberOfProjectMembersMustRespectQuota":
+		return "projectMemberQuotaResult", buildProjectMemberQuotaBlock(common, result, findings)
 	}
 	return "", nil
 }
@@ -383,6 +385,31 @@ func buildMRSettingsBlock(c legacyCommon, findings []opaengine.Finding) map[stri
 		"metrics": map[string]any{
 			"hasNonCompliantSettings": len(findings),
 		},
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
+	}
+}
+
+// buildProjectMemberQuotaBlock emits the legacy JSON block for the project
+// member quota control (ISSUE-507). Findings are project-level (no file/job);
+// each issue carries role / currentCount / authorizedMin / authorizedMax from
+// f.Data, preserved by projectFindings. The metrics repeat the four counts the
+// verdict was computed over, or nothing when the listing was not read.
+func buildProjectMemberQuotaBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	metrics := map[string]any{
+		"rolesOutOfQuota": len(findings),
+	}
+	if result != nil && result.MembersData != nil && result.MembersData.Known {
+		metrics["owners"] = result.MembersData.Counts.Owners
+		metrics["maintainers"] = result.MembersData.Counts.Maintainers
+		metrics["developers"] = result.MembersData.Counts.Developers
+		metrics["total"] = result.MembersData.Counts.Total
+	}
+	return map[string]any{
+		"issues":    projectFindings(findings, "job"),
+		"metrics":   metrics,
 		"version":   "0.1.0",
 		"ciValid":   c.CiValid,
 		"ciMissing": c.CiMissing,

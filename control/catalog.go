@@ -75,6 +75,11 @@ func GitLabControls(pc *configuration.PlumberConfig) []ControlEntry {
 		Skipped:     c.MergeRequestSettingsMustBeCompliant == nil || !c.MergeRequestSettingsMustBeCompliant.IsEnabled(),
 	})
 	entries = append(entries, ControlEntry{
+		DisplayName: "Number of project members must respect a quota",
+		ControlName: "numberOfProjectMembersMustRespectQuota",
+		Skipped:     c.NumberOfProjectMembersMustRespectQuota == nil || !c.NumberOfProjectMembersMustRespectQuota.IsEnabled(),
+	})
+	entries = append(entries, ControlEntry{
 		DisplayName: "CI/CD variables must be protected",
 		ControlName: "cicdVariablesMustBeProtected",
 		Skipped:     c.CicdVariablesMustBeProtected == nil || !c.CicdVariablesMustBeProtected.IsEnabled(),

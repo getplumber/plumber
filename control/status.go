@@ -43,6 +43,13 @@ func degradedReasonIsSecurityPolicy(reason string) bool {
 	return strings.HasPrefix(reason, degradedReasonSecurityPolicyPrefix)
 }
 
+// degradedReasonIsMembers classifies a DegradedReasons entry as the project
+// members fetch failure, so it taints only ISSUE-507 (through its
+// MembersData.Known check) rather than every CI-file control.
+func degradedReasonIsMembers(reason string) bool {
+	return strings.HasPrefix(reason, degradedReasonMembersPrefix)
+}
+
 // StatusFor derives a control's evaluation status for a run.
 //
 // Order matters: findings trump degradation — when a control found real
@@ -175,6 +182,18 @@ func StatusFor(e ControlEntry, result *AnalysisResult, findingCount int) string 
 		}
 		return StatusPassed
 	}
+	if e.ControlName == "numberOfProjectMembersMustRespectQuota" {
+		// A settings control on the member listing, not the CI file, so the
+		// CiMissing / CiValid check below does not apply. The counts are
+		// authoritative only when the collection ran and the listing was read
+		// (MembersData set, Known=true). nil (never ran) or Known=false (a
+		// 403/404, the page cap, a degraded snapshot lane) means the control
+		// never truly evaluated: an empty findings list must not read as a pass.
+		if result.MembersData == nil || !result.MembersData.Known {
+			return StatusError
+		}
+		return StatusPassed
+	}
 	if e.ControlName == "projectMustHaveSecurityPolicySource" {
 		// Reached only with zero findings (a finding returned Failed above). The
 		// linkage is read over its own API surface; when it could not be read
@@ -189,7 +208,7 @@ func StatusFor(e ControlEntry, result *AnalysisResult, findingCount int) string 
 		return StatusError
 	}
 	for _, r := range result.DegradedReasons {
-		if !degradedReasonIsBranchProtection(r) && !degradedReasonIsVariables(r) && !degradedReasonIsSecurityPolicy(r) && !degradedReasonIsPolicyFailure(r) {
+		if !degradedReasonIsBranchProtection(r) && !degradedReasonIsVariables(r) && !degradedReasonIsSecurityPolicy(r) && !degradedReasonIsMembers(r) && !degradedReasonIsPolicyFailure(r) {
 			return StatusError
 		}
 	}

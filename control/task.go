@@ -38,6 +38,7 @@ const controlMRApprovalRulesMinApprovals = "mergeRequestApprovalRulesMustRequire
 const controlMRApprovalRulesCoverAllBranches = "mergeRequestApprovalRulesMustCoverAllProtectedBranches"
 const controlMRApprovalSettings = "mergeRequestApprovalSettingsMustBeCompliant"
 const controlMRSettings = "mergeRequestSettingsMustBeCompliant"
+const controlProjectMemberQuota = "numberOfProjectMembersMustRespectQuota"
 
 // mrApprovalRuleControlEnabled reports whether either merge-request
 // approval-rule control (ISSUE-502/504) is active for this run. Both read the
@@ -164,6 +165,17 @@ func securityPolicyControlEnabled(conf *configuration.Configuration) bool {
 	}
 	c := conf.PlumberConfig.GetProjectMustHaveSecurityPolicySourceConfig()
 	return c != nil && c.IsEnabled() && shouldRunControl(controlSecurityPolicy, conf)
+}
+
+// projectMemberQuotaControlEnabled reports whether the member quota control
+// (ISSUE-507) is active for this run, which is what gates the members
+// collection: a run with the control off makes no members request at all.
+func projectMemberQuotaControlEnabled(conf *configuration.Configuration) bool {
+	if conf == nil || conf.PlumberConfig == nil {
+		return false
+	}
+	c := conf.PlumberConfig.GetNumberOfProjectMembersMustRespectQuotaConfig()
+	return c != nil && c.IsEnabled() && shouldRunControl(controlProjectMemberQuota, conf)
 }
 
 // protectionDataNeeded reports whether any control needs the GitLab protection
@@ -316,6 +328,7 @@ func runRegoEngine(
 	protectionData *gitlab.GitlabProtectionAnalysisData,
 	variablesData *gitlab.GitlabVariablesAnalysisData,
 	securityPolicyData *gitlab.SecurityPolicyData,
+	membersData *gitlab.GitlabMembersAnalysisData,
 	result *AnalysisResult,
 ) []opaengine.Finding {
 	pipeline := gitlab.ToNormalizedPipeline(
@@ -327,6 +340,7 @@ func runRegoEngine(
 		protectionData,
 		variablesData,
 		securityPolicyData,
+		membersData,
 	)
 	applyGitLabVisibility(pipeline, project)
 	// Retained so a later per-policy evaluation can re-run the rules over the
@@ -565,6 +579,24 @@ func buildEngineConfig(controls *configuration.ControlsConfig) map[string]any {
 			entry["minimumRequiredApprovals"] = *c.MinimumRequiredApprovals
 		}
 		cfg["mergeRequestApprovalRulesMustRequireMinimumApprovals"] = entry
+	}
+
+	if c := controls.NumberOfProjectMembersMustRespectQuota; c != nil {
+		entry := map[string]any{}
+		setInt := func(key string, v *int) {
+			if v != nil {
+				entry[key] = *v
+			}
+		}
+		setInt("ownerMin", c.OwnerMin)
+		setInt("ownerMax", c.OwnerMax)
+		setInt("maintainerMin", c.MaintainerMin)
+		setInt("maintainerMax", c.MaintainerMax)
+		setInt("developerMin", c.DeveloperMin)
+		setInt("developerMax", c.DeveloperMax)
+		setInt("totalMin", c.TotalMin)
+		setInt("totalMax", c.TotalMax)
+		cfg["numberOfProjectMembersMustRespectQuota"] = entry
 	}
 
 	if c := controls.MergeRequestApprovalSettingsMustBeCompliant; c != nil {
@@ -1132,10 +1164,35 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 		}
 	}
 
+	// Project members: read from the platform snapshot's members lane when it
+	// is served, from GitLab with the run's own token otherwise. Never with a
+	// job token in platform mode: members/all refuses it, and the lane exists
+	// so the run does not have to ask.
+	var membersData *gitlab.GitlabMembersAnalysisData
+	if anyCollectionConfig(conf, projectMemberQuotaControlEnabled) {
+		result.markLaneCollected(laneGitLabMembers)
+		if fromSnapshot, served := gitlab.MembersFromSnapshot(conf.PlatformRun); served {
+			membersData = fromSnapshot
+		} else if !conf.PlatformRun.Engaged() {
+			var mErr error
+			membersData, mErr = gitlab.CollectProjectMembers(projectInfo, conf.GitlabToken, conf)
+			// Every unknown outcome (a hard error, a 403/404 folded into
+			// Known=false with no error, or the page cap) leaves the counts
+			// unreadable: say why rather than a bare error status. Only a
+			// network failure additionally degrades a complete run.
+			if mErr != nil || (membersData != nil && !membersData.Known) {
+				result.MarkNotEvaluable(controlProjectMemberQuota, ReasonCollectionFailed)
+			}
+			if mErr != nil && isNetworkError(mErr) {
+				markDegraded(result, degradedReasonMembersPrefix+" (network or timeout)")
+			}
+		}
+	}
+
 	// Rego/OPA rule engine evaluation — the single authoritative
 	// compliance path (the legacy Go controls were retired in
 	// docs/REFACTOR_MULTI_PROVIDER.md §8 Phase A).
-	result.Findings = runRegoEngine(l, conf, project, pipelineOriginData, pipelineImageData, protectionData, variablesData, securityPolicyData, result)
+	result.Findings = runRegoEngine(l, conf, project, pipelineOriginData, pipelineImageData, protectionData, variablesData, securityPolicyData, membersData, result)
 	result.ProtectionData = protectionData
 	// An approval-rule control that ran but saw zero rules is the ambiguous
 	// GitLab-Free-vs-premium-with-no-rules case (the approvals API 200-empties
@@ -1158,6 +1215,9 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	result.SecurityPolicyData = securityPolicyData
 	result.SecurityPolicyEvaluable = securityPolicyData != nil && securityPolicyData.Known
 	result.SecurityPolicyTierCaveat = securityPolicyTierCaveatApplies(conf, securityPolicyData)
+	// ISSUE-507 is not-evaluable when the member counts are unknown (never
+	// collected, 403/404, page cap, degraded lane): StatusFor reads MembersData.
+	result.MembersData = membersData
 
 	// Platform mode reads the merged configuration from the platform rather
 	// than resolving it through an API the runner has no rights to. Record

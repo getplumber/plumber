@@ -155,6 +155,14 @@ var controlsMeta = map[string]ControlMeta{
 		Description:    "Verifies that the project's merge request and merge settings (merge method, squash policy, merge trains, source-branch removal) match the configured policy.",
 		RequiresConfig: true,
 	},
+	"numberOfProjectMembersMustRespectQuota": {
+		Providers:      []string{ProviderGitLab},
+		DisplayName:    "Number of project members must respect a quota",
+		Category:       CategoryAccessAndAuthorization,
+		ID:             "CTRL-507",
+		Description:    "Verifies that the number of project members with the Owner, Maintainer and Developer roles, and the total number of members, stay within the configured bounds.",
+		RequiresConfig: true,
+	},
 	"cicdVariablesMustBeProtected": {
 		Providers:   []string{ProviderGitLab},
 		DisplayName: "CI/CD variables must be protected",

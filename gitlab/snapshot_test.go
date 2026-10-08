@@ -882,3 +882,48 @@ func fullProjectDetails() *platform.ProjectDetails {
 		RemoveSourceBranchAfterMerge:    b(false),
 	}
 }
+
+// The members lane carries role counts only (spec 5.2). Served and not
+// degraded, it is authoritative: zero owners is a real state the quota rule
+// fires on.
+func TestMembersFromSnapshotDecodesTheLane(t *testing.T) {
+	run := engagedRun(&platform.SnapshotData{
+		SchemaVersion: platform.SnapshotSchemaV2,
+		Members:       &platform.MemberCounts{Owners: 0, Maintainers: 2, Developers: 7, Total: 12},
+	})
+	data, served := MembersFromSnapshot(run)
+	if !served {
+		t.Fatal("expected the members lane to be served")
+	}
+	if !data.Known {
+		t.Fatal("a served, non-degraded lane is authoritative")
+	}
+	if data.Counts != (MemberCounts{Owners: 0, Maintainers: 2, Developers: 7, Total: 12}) {
+		t.Fatalf("counts = %+v", data.Counts)
+	}
+}
+
+// A degraded lane says the platform could not collect it: nothing is served,
+// so the run marks snapshot_lane_degraded and the control abstains.
+func TestMembersFromSnapshotDegradedIsNotServed(t *testing.T) {
+	run := engagedRun(&platform.SnapshotData{
+		SchemaVersion:  platform.SnapshotSchemaV2,
+		Members:        &platform.MemberCounts{},
+		DegradedFields: []string{platform.DegradedFieldMembers},
+	})
+	if data, served := MembersFromSnapshot(run); served || data != nil {
+		t.Fatalf("a degraded lane must not be served: served=%v data=%+v", served, data)
+	}
+}
+
+// An older platform never sends the lane: not served, and the lane
+// bookkeeping (lanesWhoseAbsenceIsNotServed) explains it as lane_not_served.
+func TestMembersFromSnapshotAbsentLaneIsNotServed(t *testing.T) {
+	run := engagedRun(&platform.SnapshotData{SchemaVersion: platform.SnapshotSchemaV2})
+	if _, served := MembersFromSnapshot(run); served {
+		t.Fatal("an absent lane must not be served")
+	}
+	if _, served := MembersFromSnapshot(nil); served {
+		t.Fatal("standalone mode (nil run) must not be served")
+	}
+}

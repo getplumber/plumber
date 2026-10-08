@@ -256,6 +256,33 @@ func SecurityPolicyFromSnapshot(run *platform.RunContext) (*SecurityPolicyData, 
 	return data, true
 }
 
+// MembersFromSnapshot serves the members lane the platform collected, or
+// reports that it cannot. Mirrors SecurityPolicyFromSnapshot: not engaged,
+// no snapshot, an absent lane or a degraded one all answer "not served", and
+// the lane bookkeeping in control/lanes.go names which of those it was.
+func MembersFromSnapshot(run *platform.RunContext) (*GitlabMembersAnalysisData, bool) {
+	if !run.Engaged() {
+		return nil, false
+	}
+	snap := run.Snapshot()
+	if snap.Data == nil || snap.Data.Members == nil {
+		return nil, false
+	}
+	if run.LaneDegraded(platform.DegradedFieldMembers) {
+		return nil, false
+	}
+	m := snap.Data.Members
+	return &GitlabMembersAnalysisData{
+		Known: true,
+		Counts: MemberCounts{
+			Owners:      m.Owners,
+			Maintainers: m.Maintainers,
+			Developers:  m.Developers,
+			Total:       m.Total,
+		},
+	}, true
+}
+
 // snapshotVariableTypeFile is the GraphQL variableType GitLab reports for a
 // file-type CI/CD variable.
 const snapshotVariableTypeFile = "FILE"
