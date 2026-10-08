@@ -3,6 +3,8 @@ package cmd
 import (
 	"cmp"
 	"fmt"
+	"io"
+	"os"
 	"slices"
 	"strings"
 	"unicode"
@@ -43,6 +45,10 @@ type detailedFinding struct {
 	Message  string
 	DocURL   string
 	Location string
+	// Job and File are the finding's job and the file it is in, when it
+	// names them: the Individual findings section says where it runs.
+	Job  string
+	File string
 	// DetailLines is optional (e.g. ISSUE-505: one headline, several sub-reasons).
 	DetailLines []string
 	// Dismissed mirrors opaengine.Finding.Dismissed (#447): the platform
@@ -50,6 +56,22 @@ type detailedFinding struct {
 	// dropped (see renderFailedControl for the tag and the count it
 	// changes).
 	Dismissed bool
+	// ContextualSeverity, Role and PathIDs are scoring-v4 only
+	// (findingsToItems sets them when the run's score actually carries
+	// the contextual formula's shape, control/score_profile.go's
+	// scoreProfileV4): the finding's severity in the context of the
+	// attack paths it anchors, gates or walks (control.ContextualSeverity),
+	// the one-line role control.FindingLine reads out loud, and the path
+	// ids control.PathIDsFor associates it with. Empty under v3, so every
+	// existing branch that only checks Code stays byte-identical.
+	ContextualSeverity string
+	Role               string
+	PathIDs            []string
+	// RoleOnPath is the finding's role relative to each path it is listed
+	// under (control.RoleOnPath), keyed by path id: the Attack paths
+	// section reads it so a finding nested under a path it does not
+	// anchor never says "Entry of" that path. Nil under v3.
+	RoleOnPath map[string]string
 }
 
 // findingGroup collects everything needed to render one per-rule
@@ -197,7 +219,20 @@ func filterGroupsForDegraded(groups []findingGroup, degraded bool) []findingGrou
 // Groups with no findings, no stats and not marked skipped are dropped
 // (they would just be empty noise).
 func renderFindingGroups(groups []findingGroup) {
-	var passed, skipped, notEvaluated, failed []findingGroup
+	passed, skipped, notEvaluated, failed := bucketFindingGroups(groups)
+	sortFindingGroupsWorstLast(failed)
+
+	renderPassedControlsSummary(passed)
+	renderSkippedControlsSummary(skipped)
+	renderNotEvaluatedControlsSummary(notEvaluated)
+	renderFailedControlsSection(failed)
+}
+
+// bucketFindingGroups is renderFindingGroups' own classification switch,
+// pulled out so the scoring-v4 report flow (renderFindingGroupsV4) can
+// reuse the exact same bucketing for Passed/Skipped/Not Evaluated and only
+// diverge on how the Failed bucket renders.
+func bucketFindingGroups(groups []findingGroup) (passed, skipped, notEvaluated, failed []findingGroup) {
 	for _, g := range groups {
 		switch {
 		case g.Skipped:
@@ -214,13 +249,56 @@ func renderFindingGroups(groups []findingGroup) {
 			// else: no findings, no stats, not skipped — nothing to show.
 		}
 	}
+	return passed, skipped, notEvaluated, failed
+}
 
-	sortFindingGroupsWorstLast(failed)
+// renderFindingGroupsV4 is the contextual score's report body: the
+// passed, skipped and not-evaluated summaries render exactly as under v3,
+// then the other findings, then the attack path blocks, right above the
+// final screen that follows them.
+func renderFindingGroupsV4(groups []findingGroup, score *control.PlumberScoreResult, findings []opaengine.Finding, opts pathBlockOptions) {
+	passed, skipped, notEvaluated, failed := bucketFindingGroups(groups)
 
 	renderPassedControlsSummary(passed)
 	renderSkippedControlsSummary(skipped)
 	renderNotEvaluatedControlsSummary(notEvaluated)
-	renderFailedControlsSection(failed)
+
+	distinct := -1
+	if score.OtherFindings != nil {
+		distinct = score.OtherFindings.Count
+	}
+	caps := detectTermCaps()
+	renderIndividualFindings(os.Stdout, removeFindingsShownUnderAPath(failed), distinct, caps)
+	renderPathBlocks(os.Stdout, score.Paths, findings, caps, opts)
+}
+
+// removeFindingsShownUnderAPath drops, from every group's Findings, any
+// finding on a path (PathIDs set by findingsToItems from
+// control.PathIDsFor): anchored, gated or walked, the path's block already
+// tells its story. A group left with no findings is dropped entirely:
+// there is nothing left for it to report under the other findings.
+func removeFindingsShownUnderAPath(groups []findingGroup) []findingGroup {
+	out := make([]findingGroup, 0, len(groups))
+	for _, g := range groups {
+		var kept []detailedFinding
+		dismissed := 0
+		for _, f := range g.Findings {
+			if len(f.PathIDs) > 0 {
+				continue
+			}
+			kept = append(kept, f)
+			if f.Dismissed {
+				dismissed++
+			}
+		}
+		if len(kept) == 0 {
+			continue
+		}
+		g.Findings = kept
+		g.Dismissed = dismissed
+		out = append(out, g)
+	}
+	return out
 }
 
 // renderNotEvaluatedControlsSummary prints the "Not Evaluated" section: the
@@ -407,26 +485,42 @@ func renderFailedControl(g findingGroup) {
 	}
 	fmt.Printf("\n      %sIssues Found:%s\n", colorYellow, colorReset)
 	for _, f := range g.Findings {
-		tag := severityTag(f.Code)
-		message := sanitizeTerminal(f.Message)
-		if f.Dismissed {
-			message += " [dismissed on the platform]"
-		}
-		fmt.Printf("        %s [%s] %s\n", tag, f.Code, message)
-		for _, line := range f.DetailLines {
-			fmt.Printf("         └─ %s\n", sanitizeTerminal(line))
-		}
-		if f.Location != "" {
-			// The bare path is emitted last so VS Code, iTerm
-			// and similar tools detect it as a clickable
-			// file:line reference and jump straight to the job.
-			fmt.Printf("         %s↳ at %s%s\n", colorDim, sanitizeTerminal(f.Location), colorReset)
-		}
-		if f.DocURL != "" {
-			fmt.Printf("         %s↳ docs: %s%s\n", colorDim, f.DocURL, colorReset)
-		}
+		renderFindingBlock(os.Stdout, f, "        ", f.Role)
 	}
 	fmt.Println()
+}
+
+// renderFindingBlock prints one finding the way every finding listing in
+// the report prints it, indented by indent: the "[sev] [CODE] message"
+// line (with the dismissed tag), the role line when there is one, the
+// detail lines, the location and the doc URL. The Failed Controls listing
+// and the other findings both print through it (renderFailedControl).
+func renderFindingBlock(out io.Writer, f detailedFinding, indent, role string) {
+	// The registered severity's badge: only the per-control view prints
+	// through here, and the contextual report prints its findings at their
+	// contextual severity through codeGroupLines instead.
+	tag := severityTag(f.Code)
+	message := sanitizeTerminal(f.Message)
+	if f.Dismissed {
+		message += " [dismissed on the platform]"
+	}
+	// Errors discarded: out is the terminal (os.Stdout) or a test buffer.
+	_, _ = fmt.Fprintf(out, "%s%s [%s] %s\n", indent, tag, f.Code, message)
+	if role != "" {
+		_, _ = fmt.Fprintf(out, "%s  %s\n", indent, sanitizeTerminal(role))
+	}
+	for _, line := range f.DetailLines {
+		_, _ = fmt.Fprintf(out, "%s └─ %s\n", indent, sanitizeTerminal(line))
+	}
+	if f.Location != "" {
+		// The bare path is emitted last so VS Code, iTerm
+		// and similar tools detect it as a clickable
+		// file:line reference and jump straight to the job.
+		_, _ = fmt.Fprintf(out, "%s %s↳ at %s%s\n", indent, colorDim, sanitizeTerminal(f.Location), colorReset)
+	}
+	if f.DocURL != "" {
+		_, _ = fmt.Fprintf(out, "%s %s↳ docs: %s%s\n", indent, colorDim, f.DocURL, colorReset)
+	}
 }
 
 // findingGroupSeverity tallies the severities of a group's findings from
@@ -1542,5 +1636,23 @@ func originKindMatches(originType, kindFilter string) bool {
 		return originType != "component" && originType != "hardcoded" && originType != ""
 	default:
 		return false
+	}
+}
+
+// pathTierTag renders an attack path's tier as the same filled severity
+// badge the Issues Found listing uses for a code's registered severity
+// (renderSeverityBadge, cmd/analyze_gitlab.go): PathTier and IssueSeverity
+// share their string values ("critical"|"high"|"medium"|"low"), so the
+// tier reads straight through without a second color scheme.
+func pathTierTag(t control.PathTier) string {
+	switch t {
+	case control.TierCritical:
+		return renderSeverityBadge(control.SeverityCritical, " CRIT ")
+	case control.TierHigh:
+		return renderSeverityBadge(control.SeverityHigh, " HIGH ")
+	case control.TierMedium:
+		return renderSeverityBadge(control.SeverityMedium, " MED  ")
+	default:
+		return renderSeverityBadge(control.SeverityLow, " LOW  ")
 	}
 }

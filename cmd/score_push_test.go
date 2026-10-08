@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -557,6 +558,67 @@ func TestHandleScorePublishing_PublishesOnce(t *testing.T) {
 
 	if got := posts.Load(); got != 1 {
 		t.Fatalf("score POSTed %d times, want exactly 1", got)
+	}
+}
+
+// A whole contextual run with --score-push posts the score exactly once:
+// the report printed before the publish leg consumes nothing of the guard
+// handleScorePublishing runs under, and prints no badge tip.
+func TestContinueRunContextualScorePublishesOnce(t *testing.T) {
+	newGateFlagsCmd(t)
+	gh := &providerPkg.GitHubProvider{}
+	conf := configuration.NewDefaultConfiguration()
+	conf.PlumberConfig = defaultGitHubPlumberConfig(t)
+	result := releaseMutableActionResult()
+	result.ProjectPath, result.DefaultBranch = "octo/repo", "main"
+	s := buildComplianceSummary(gh, result, conf)
+	if !closesOnFinalScreen(s, false) {
+		t.Fatalf("the fixture is not a contextual run: %+v", s.score)
+	}
+
+	oidc := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]string{"value": "id-tok"})
+	}))
+	defer oidc.Close()
+	var posts atomic.Int32
+	var body []byte
+	score := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		posts.Add(1)
+		body, _ = io.ReadAll(r.Body)
+		w.WriteHeader(http.StatusCreated)
+	}))
+	defer score.Close()
+
+	defer func(pp bool, e, pf string, po bool) {
+		pushScore, scoreEndpoint, platformURL, printOutput = pp, e, pf, po
+	}(pushScore, scoreEndpoint, platformURL, printOutput)
+	pushScore, scoreEndpoint, platformURL, printOutput = true, score.URL, "", true
+	scorePublishOnce = sync.Once{}
+
+	t.Setenv("CI", "true")
+	t.Setenv("GITHUB_ACTIONS", "true")
+	t.Setenv("GITHUB_REF_TYPE", "branch")
+	t.Setenv("GITHUB_REF_NAME", "main")
+	t.Setenv("GITHUB_REPOSITORY", "octo/repo")
+	t.Setenv("GITHUB_SERVER_URL", "https://github.com")
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_URL", oidc.URL)
+	t.Setenv("ACTIONS_ID_TOKEN_REQUEST_TOKEN", "req")
+
+	var out string
+	stderr := captureStderr(t, func() {
+		out = captureStdoutAll(t, func() { _ = continueRun(gh, nil, conf, result, s, nil, nil) })
+	})
+	if !strings.Contains(out, "Plumber Score  ") {
+		t.Fatalf("the run printed no contextual report:\n%s", out)
+	}
+	if got := posts.Load(); got != 1 {
+		t.Fatalf("score POSTed %d times, want exactly 1 (stderr %q)", got, stderr)
+	}
+	if !bytes.Contains(body, []byte(`"plumberScore"`)) {
+		t.Errorf("the pushed payload carries no score: %s", body)
+	}
+	if strings.Contains(stderr, "score-push") {
+		t.Errorf("a run that pushed printed a score-push tip: %q", stderr)
 	}
 }
 

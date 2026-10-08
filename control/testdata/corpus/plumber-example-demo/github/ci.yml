@@ -1,0 +1,26 @@
+name: ci
+
+on:
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    # The image tag "latest" changes whenever upstream publishes.
+    container: node:latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      # A version with a published security advisory (the March 2025 compromise).
+      - uses: tj-actions/changed-files@2d756ea4c53f7f6b397767d8723b3a10a9f35bf2 # v44
+
+      # Downloads a script from the internet and runs it unchecked.
+      - run: curl -sSL https://example.com/install.sh | bash
+
+      # The pull request title is pasted into a shell command.
+      - run: echo "Building ${{ github.event.pull_request.title }}"

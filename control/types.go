@@ -119,11 +119,18 @@ type AnalysisResult struct {
 	// Nil on the GitHub path, which has GitHubPipeline below.
 	Pipeline *ir.NormalizedPipeline `json:"-"`
 
-	// Situation carries the per-job situation facts (entries, privilege,
-	// impact, feeds) derived from the pipeline, for the later contextual
+	// Situation carries the per-job situation facts (trigger facts,
+	// privilege, impact, feeds) derived from the pipeline, for the later contextual
 	// score to read. Not user-visible: it never serializes and nothing
 	// downstream of the report changes because of it.
 	Situation *Situation `json:"-"`
+
+	// Paths is set by ComputeScoreForProfile under scoring-v4: the attack
+	// paths assembled from Findings and Situation, kept on the result for
+	// the outputs that read them. Unset under scoring-v3. Not user-visible
+	// on this type: it never serializes, the same way Situation above does
+	// not.
+	Paths []AttackPath `json:"-"`
 
 	// GitHubPipeline is the normalized IR produced by the GitHub
 	// collector, retained on the result so legacy JSON / PBOM /

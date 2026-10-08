@@ -1,0 +1,18 @@
+{
+  "source": "spec worked example (section 2, a release workflow)",
+  "commit": "",
+  "captured": "2026-10-02",
+  "group": "own",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [{"name": "main", "protected": true}],
+  "note": "A release job running an unpinned action from an unauthorized owner, holding NPM_TOKEN and publishing: the reach is Critical, but nothing says the action is already bad, so it takes a compromise of the action first; the owner is outside the authorized list, which makes that compromise more likely, so the path is capped at High rather than Medium, and the unauthorized source rides the same path. Hand count: one High path 15, no other finding, so 85: B.",
+  "expect": {
+    "maxTier": "high",
+    "paths": [
+      {"entryKind": "mutable_dependency", "tier": "high", "job": "release/release", "subjectContains": "some/action@v1", "reachKind": "impact:publishes", "state": "proven",
+       "sentenceContains": ["`some/action@v1`", "`release/release`", "`NPM_TOKEN`", "publishes the package", "malicious release", "capped at High"]}
+    ],
+    "letter": "B"
+  }
+}

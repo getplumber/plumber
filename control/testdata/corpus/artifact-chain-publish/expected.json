@@ -1,0 +1,19 @@
+{
+  "source": "https://github.com/vtraag/leidenalg",
+  "commit": "d7cbb3ee6f29d1214b96c0f4dd120c609c6cca65",
+  "captured": "2026-10-03",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [{"name": "main", "protected": true}],
+  "note": "The artifact chain into a publish job: the wheel builders (run on pull requests and on pushes) build with pypa/cibuildwheel by tag and upload the wheels as artifacts; upload_pypi needs every builder, downloads wheels-* and publishes them with PYPI_API_TOKEN. A new cibuildwheel release runs inside the builder, and whatever it writes into the wheel is what upload_pypi publishes one hop later: mutable dependency, walked along needs and the artifact edge to a job holding the PyPI token and a publish step, reaches a Critical; no finding says these actions are already bad and their owners are authorized, so each is only not pinned: it takes a compromise of the dependency first and each path is capped at Medium. cibuildwheel runs in the four builders: one path, four branches. Hand count: three Medium paths (cibuildwheel, setup-qemu-action, gh-action-pypi-publish) 3 x 6 = 18, two other findings (ISSUE-307 Low 2, ISSUE-801 Medium 5), so the medium and low items count 25, under the 49 they count for at most, and 100 - 25 = 75: B.",
+  "expect": {
+    "maxTier": "medium",
+    "paths": [
+      {"entryKind": "mutable_dependency", "tier": "medium", "job": "build/build_wheel_linux", "subjectContains": "pypa/cibuildwheel@v4.2.0", "reachKind": "impact:publishes", "state": "proven",
+       "sentenceContains": ["`pypa/cibuildwheel@v4.2.0`", "`build/build_wheel_linux`", "`PYPI_API_TOKEN`", "publishes the package", "capped at Medium"]},
+      {"entryKind": "mutable_dependency", "tier": "medium", "job": "build/upload_pypi", "subjectContains": "pypa/gh-action-pypi-publish@release/v1", "reachKind": "impact:publishes", "state": "proven"}
+    ],
+    "letter": "B"
+  }
+}

@@ -401,7 +401,8 @@ type legacyCommon struct {
 // projectFinding strips the verbose Rego-side fields (severity,
 // message, file, line) so the returned issue keeps only what the
 // legacy format documented: code, docUrl, plus whatever structured
-// payload the rule emitted (link/tag/variableName/…).
+// payload the rule emitted (link/tag/variableName/…). Under scoring-v4
+// the contextual severity comes back (see the end of the function).
 //
 // controlName is NOT repeated here: it lives once on the parent
 // *Result block (see _withControlMeta in legacyResultsByName), since
@@ -453,6 +454,15 @@ func projectFinding(f opaengine.Finding, jobKey string) map[string]any {
 			continue
 		}
 		out[k] = v
+	}
+	// Under scoring-v4 the issue carries its contextual severity next to
+	// baseSeverity (spec section 4), so a consumer never reads the registry
+	// value as the finding's severity. Same per-finding gate as SARIF:
+	// Data["baseSeverity"] is written only by AnnotateFindingsV4, and with
+	// it f.Severity holds the contextual value. Without it (v3, or a v4
+	// request that fell back to v3) the legacy shape is unchanged.
+	if _, ok := f.Data["baseSeverity"]; ok {
+		out["severity"] = f.Severity
 	}
 	return out
 }

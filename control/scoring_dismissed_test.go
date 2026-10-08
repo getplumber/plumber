@@ -183,7 +183,7 @@ func TestReEvaluateForConfig_DismissedFindingExcludedFromScore(t *testing.T) {
 	// This is only used to enumerate the OTHER findings the fixture produces,
 	// to build the "same evaluation minus ISSUE-705" expected score below.
 	baselineConf := &configuration.Configuration{PlumberConfig: pc}
-	baseline, _, ok := ReEvaluateForConfig(&AnalysisResult{CiValid: true, GitHubPipeline: pipeline}, baselineConf, "github", pc)
+	baseline, baselineScore, ok := ReEvaluateForConfig(&AnalysisResult{CiValid: true, GitHubPipeline: pipeline}, baselineConf, "github", pc)
 	if !ok {
 		t.Fatal("baseline re-evaluation must succeed")
 	}
@@ -216,14 +216,25 @@ func TestReEvaluateForConfig_DismissedFindingExcludedFromScore(t *testing.T) {
 	// The expected score: the baseline findings with every ISSUE-705 entry
 	// removed, scored directly, not merely "one fewer occurrence" but the
 	// exact same computation MarkDismissed's skip is meant to reproduce.
-	wantCounts := map[ErrorCode]int{}
+	// The default formula prices attack paths over the situation, so the
+	// same profile runs over the baseline's own situation, its paths reset
+	// exactly as ReEvaluateForConfig resets them.
+	wantResult := *baseline
+	wantResult.Findings = nil
+	wantResult.Paths = nil
 	for _, f := range baseline.Findings {
 		if f.Code == "ISSUE-705" {
 			continue
 		}
-		wantCounts[ErrorCode(f.Code)]++
+		wantResult.Findings = append(wantResult.Findings, f)
 	}
-	want := ComputePlumberScore(wantCounts)
+	want := ComputeScoreForProfile(ScoreProfile, &wantResult)
+	if want.ProfileID != PlumberScoreProfileIDV4 {
+		t.Fatalf("expected score priced under %q, want the default contextual score", want.ProfileID)
+	}
+	if baselineScore.FinalPoints == want.FinalPoints {
+		t.Fatalf("baseline score %v equals the score without ISSUE-705: the fixture must price the finding, or dismissing it proves nothing", baselineScore.FinalPoints)
+	}
 
 	dismissedConf := &configuration.Configuration{
 		PlumberConfig: pc,

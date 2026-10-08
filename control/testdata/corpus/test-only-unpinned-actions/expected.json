@@ -1,0 +1,19 @@
+{
+  "source": "https://github.com/amorey/starlette-wtf",
+  "commit": "4c4e8bc1bf910a06075163065fcea8091643cc6b",
+  "captured": "2026-10-03",
+  "group": "clean",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [{"name": "main", "protected": true}],
+  "note": "The spec's clean example (section 7, group b): one pull_request test matrix with permissions: contents: read, no secret, and a third-party action (astral-sh/setup-uv@v7) pinned by tag. A new setup-uv release reaches a job that holds a read token and nothing else: code execution in the runner, High, and the action is only not pinned, so the dependency cap holds it at Medium. Hand count: one Medium path 6, no other finding, so 100 - 6 = 94: A.",
+  "expect": {
+    "maxTier": "medium",
+    "paths": [
+      {"entryKind": "mutable_dependency", "tier": "medium", "job": "ci/test", "subjectContains": "astral-sh/setup-uv@v7", "reachKind": "execution", "state": "proven",
+       "sentenceContains": ["`astral-sh/setup-uv@v7`", "`ci/test`", "holds no secret"]}
+    ],
+    "noPathAbove": "high",
+    "letterAtLeast": "B"
+  }
+}

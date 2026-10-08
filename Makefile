@@ -33,8 +33,12 @@ lint:
 # finding/identity is exempt: it publishes the finding-identity recipe for
 # consumers outside this module (getplumber/plumber #403), so reachability
 # from our own main says nothing about whether its API is used. Its surface
-# is pinned by finding/identity/identity_test.go instead. Keep the exemption
-# to that one package.
+# is pinned by finding/identity/identity_test.go instead.
+#
+# internal/testsupport is exempt because only tests import it (the shared
+# YAML-to-IR readers of the rule, situation and corpus tests): deadcode does
+# not load test files, so from main it is unreachable by construction. Keep
+# the exemptions to these two.
 #
 # The analyzer runs on its own line, under set -e, and only its output is
 # filtered. Piping it straight into `grep -v ... || true` would make a broken
@@ -45,7 +49,7 @@ lint:
 deadcode:
 	@set -e; \
 	raw=$$(go run golang.org/x/tools/cmd/deadcode@09747cdf594a7924dcecb506312be3bd6e437962 ./...); \
-	out=$$(printf '%s\n' "$$raw" | grep -v '^finding/identity/' | grep -v 'unreachable func: ControlsCatalog' || true); \
+	out=$$(printf '%s\n' "$$raw" | grep -v '^finding/identity/' | grep -v '^internal/testsupport/' | grep -v 'unreachable func: ControlsCatalog' || true); \
 	if [ -n "$$out" ]; then echo "$$out"; echo "deadcode: unreachable functions found"; exit 1; fi
 
 # Vulnerability scan. First run mirrors CI (reachability: what our code can

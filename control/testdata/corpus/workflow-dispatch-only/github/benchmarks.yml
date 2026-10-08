@@ -1,0 +1,46 @@
+name: Benchmark
+
+on: workflow_dispatch
+
+env:
+  NODE_VERSION: 24
+
+permissions:
+  contents: read
+
+jobs:
+  benchmark:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Use Node.js ${{ env.NODE_VERSION }}
+        uses: actions/setup-node@v6
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install Dependencies
+        run: npm ci
+
+      - name: Install Benchmark dependencies
+        run: npm ci
+        working-directory: ./benchmarks
+
+      - name: Benchmarks
+        run: npm run benchmark
+        working-directory: ./benchmarks
+
+      - name: Create Pull Request
+        uses: peter-evans/create-pull-request@v7
+        with:
+          commit-message: Update report
+          branch: benchmarks
+          title: Update benchmarks
+          body: |
+            Update benchmarks
+          add-paths: |
+            README.md

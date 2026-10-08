@@ -275,6 +275,14 @@ type platformPolicyResult struct {
 	// rather than call it when there is genuinely no score to send. The
 	// platform's contract accepts an absent policy score.
 	Score *platformScore `json:"score,omitempty"`
+	// ScoreContext is the attack-path picture scoring-v4 priced for THIS
+	// result: its paths, its situation facts and its best fix, next to
+	// the score they explain. In platform mode each policy is a run of its
+	// own, so each result carries its own. Present only when Score is
+	// scoring-v4 (scoreProfileV4), never under scoring-v3, so a v3 push (or
+	// a v4 request that fell back to v3) stays byte-identical to the push
+	// this file sent before the field existed. See platformScoreContextFrom.
+	ScoreContext *platformScoreContext `json:"score_context,omitempty"`
 }
 
 // platformFinding is one EXPLICIT per-control result entry — see
@@ -328,12 +336,111 @@ const (
 
 // platformScore is the entry's Plumber Score. Points is RawPointsUnclamped
 // (signed, no floor); FinalPoints is the malus-capped final figure the
-// banner shows (platform contract 2026-09-10, additive). See
-// platformScoreFrom.
+// banner shows (platform contract 2026-09-10, additive). ProfileID names
+// which scoring formula produced the figures ("scoring-v3" |
+// "scoring-v4"), set only under scoring-v4 (see platformScoreFrom); under
+// scoring-v3 it stays empty, and omitempty drops the key entirely so a v3
+// push is byte-identical to the push this file sent before ProfileID
+// existed. See platformScoreFrom.
 type platformScore struct {
 	Letter      string `json:"letter,omitempty"`
 	Points      int    `json:"points"`
 	FinalPoints *int   `json:"final_points,omitempty"`
+	ProfileID   string `json:"profile_id,omitempty"`
+}
+
+// platformPathPush is one priced attack path on the wire, inside
+// score_context. Sentence is control.PathSentence(p) (names only, already
+// capped at 500 characters upstream); FindingHashes is every anchor hash
+// first, then the gate hashes, in path order, so a reader can walk from
+// the path straight to the findings that make it up without a second
+// lookup. See platformScoreContextFrom.
+type platformPathPush struct {
+	ID            string   `json:"id"`
+	Tier          string   `json:"tier"`
+	State         string   `json:"state"`
+	EntryKind     string   `json:"entry_kind"`
+	Jobs          []string `json:"jobs"`
+	ReachKind     string   `json:"reach_kind"`
+	Modifiers     []string `json:"modifiers,omitempty"`
+	Sentence      string   `json:"sentence"`
+	FindingHashes []string `json:"finding_hashes"`
+}
+
+// platformScoreContext is the attack-path picture scoring-v4 priced for one
+// result: every path up to maxPushedPaths (worst-first, the rest dropped
+// worst-last), the situation facts as text, and the single
+// highest-value fix (nil when none gains points). See
+// platformScoreContextFrom.
+type platformScoreContext struct {
+	Paths     []platformPathPush   `json:"paths"`
+	Situation string               `json:"situation"`
+	BestFix   *platformBestFixPush `json:"best_fix,omitempty"`
+}
+
+// platformBestFixPush is control.BestFix on the wire: snake_case like the
+// rest of the contract, the points rounded to one decimal, the precision
+// the sentence beside them states.
+type platformBestFixPush struct {
+	AnchorHash   string  `json:"anchor_hash"`
+	Code         string  `json:"code"`
+	Job          string  `json:"job,omitempty"`
+	Subject      string  `json:"subject,omitempty"`
+	PointsGained float64 `json:"points_gained"`
+	NewLetter    string  `json:"new_letter"`
+	Sentence     string  `json:"sentence"`
+}
+
+// platformBestFixFrom converts the computed best fix to its wire shape; nil
+// stays nil, so a run with nothing to fix sends no best_fix key.
+func platformBestFixFrom(fix *control.BestFix) *platformBestFixPush {
+	if fix == nil {
+		return nil
+	}
+	return &platformBestFixPush{
+		AnchorHash:   fix.AnchorHash,
+		Code:         string(fix.Code),
+		Job:          fix.Job,
+		Subject:      fix.Subject,
+		PointsGained: math.Round(fix.PointsGained*10) / 10,
+		NewLetter:    fix.NewLetter,
+		Sentence:     fix.Sentence,
+	}
+}
+
+// maxPushedPaths bounds how many attack paths one push carries. Paths
+// arrive already sorted worst-first (AssemblePaths), so the cap is a
+// plain truncation at this index, never a re-sort: the paths that matter
+// most are the ones kept.
+const maxPushedPaths = 200
+
+// platformScoreContextFrom builds one result's score_context from its
+// already-computed v4 score, which carries the paths it priced
+// (score.Paths). Nil for a nil score or one that is not scoring-v4
+// (scoreProfileV4), so every caller can assign the answer as it is and a v3
+// result gets no key at all.
+func platformScoreContextFrom(score *control.PlumberScoreResult) *platformScoreContext {
+	if !scoreProfileV4(score) {
+		return nil
+	}
+	ctx := &platformScoreContext{Situation: score.Situation, BestFix: platformBestFixFrom(score.BestFix), Paths: []platformPathPush{}}
+	for i, p := range score.Paths {
+		if i >= maxPushedPaths {
+			break
+		}
+		ctx.Paths = append(ctx.Paths, platformPathPush{
+			ID:            p.ID,
+			Tier:          string(p.Tier),
+			State:         string(p.State),
+			EntryKind:     string(p.EntryKind),
+			Jobs:          p.Jobs,
+			ReachKind:     p.ReachKind,
+			Modifiers:     p.Modifiers,
+			Sentence:      control.PathSentence(p),
+			FindingHashes: append(append([]string(nil), p.AllAnchorHashes()...), p.GateHashes...),
+		})
+	}
+	return ctx
 }
 
 // UnmarshalJSON decodes a score the PLATFORM sent (the push response's
@@ -358,6 +465,7 @@ func (s *platformScore) UnmarshalJSON(data []byte) error {
 		Letter      any `json:"letter"`
 		Points      any `json:"points"`
 		FinalPoints any `json:"final_points"`
+		ProfileID   any `json:"profile_id"`
 	}
 	if err := json.Unmarshal(data, &raw); err != nil {
 		return err
@@ -368,6 +476,13 @@ func (s *platformScore) UnmarshalJSON(data []byte) error {
 		s.Letter = letter
 	default:
 		return fmt.Errorf("letter: want a string, got %T", raw.Letter)
+	}
+	switch profileID := raw.ProfileID.(type) {
+	case nil:
+	case string:
+		s.ProfileID = profileID
+	default:
+		return fmt.Errorf("profile_id: want a string, got %T", raw.ProfileID)
 	}
 	points, err := roundJSONScorePoints(raw.Points)
 	if err != nil {
@@ -412,7 +527,11 @@ func roundJSONScorePoints(v any) (int, error) {
 // contract's Score.Points type actually is. FinalPoints carries the
 // malus-capped final figure (floored at 0, capped at 30 while any Critical
 // exists) so the platform can cross-check its own recompute against the
-// CLI's exact formula. Tolerates a nil score (a best-effort push should
+// CLI's exact formula. ProfileID is set only when scoreProfileV4 reports the
+// score is scoring-v4: under scoring-v3 (--score-profile v3, or a v4 request that
+// fell back to v3 for lack of a situation) it stays empty and omitempty
+// drops the key, so a v3 push is byte-identical to the push this file sent
+// before ProfileID existed. Tolerates a nil score (a best-effort push should
 // never panic a run over a nil pointer) by returning the zero value, with
 // FinalPoints left nil; every caller that can genuinely have no score to
 // send (row 45: nothing was evaluated) checks for nil itself and leaves the
@@ -422,7 +541,11 @@ func platformScoreFrom(score *control.PlumberScoreResult) platformScore {
 		return platformScore{}
 	}
 	final := int(math.Round(score.FinalPoints))
-	return platformScore{Letter: score.Score, Points: int(math.Round(score.RawPointsUnclamped)), FinalPoints: &final}
+	s := platformScore{Letter: score.Score, Points: int(math.Round(score.RawPointsUnclamped)), FinalPoints: &final}
+	if scoreProfileV4(score) {
+		s.ProfileID = score.ProfileID
+	}
+	return s
 }
 
 // policyNameFor derives a stable, human-meaningful policy name from the config
@@ -1122,6 +1245,7 @@ func platformFindingsFor(p providerPkg.Provider, result *control.AnalysisResult,
 		findings = result.Findings
 	}
 	findingsByControl := control.FindingsByControl(findings)
+	pushedPaths := pushedPathIDs(result)
 
 	for _, e := range entries {
 		fs := findingsByControl[e.ControlName]
@@ -1130,6 +1254,7 @@ func platformFindingsFor(p providerPkg.Provider, result *control.AnalysisResult,
 			continue
 		case control.StatusFailed:
 			for _, f := range fs {
+				f = withPushedPathIDs(f, pushedPaths)
 				pf := decoratedPlatformFinding(platformFindingControlName(f), platformStatusFail, platformFindingDataRaw(f))
 				pf.Dismissed = f.Dismissed
 				out = append(out, pf)
@@ -1141,6 +1266,50 @@ func platformFindingsFor(p providerPkg.Provider, result *control.AnalysisResult,
 		}
 	}
 	return out
+}
+
+// pushedPathIDs is the set of path ids a push of result carries in its
+// score_context (the first maxPushedPaths, worst-first), nil when result
+// holds no more paths than that, so nothing needs trimming.
+func pushedPathIDs(result *control.AnalysisResult) map[string]bool {
+	if result == nil || len(result.Paths) <= maxPushedPaths {
+		return nil
+	}
+	ids := make(map[string]bool, maxPushedPaths)
+	for _, p := range result.Paths[:maxPushedPaths] {
+		ids[p.ID] = true
+	}
+	return ids
+}
+
+// withPushedPathIDs returns f with Data["pathIds"] narrowed to the paths
+// the push carries (pushed, from pushedPathIDs), so a pushed finding never
+// names a path id score_context dropped past the cap; the key goes when
+// none is left. f's own Data is never mutated (the JSON report keeps the
+// full list): the narrowed finding gets a copy. A nil pushed set (nothing
+// past the cap) returns f as it is.
+func withPushedPathIDs(f opaengine.Finding, pushed map[string]bool) opaengine.Finding {
+	ids, ok := f.Data["pathIds"].([]string)
+	if pushed == nil || !ok {
+		return f
+	}
+	kept := make([]string, 0, len(ids))
+	for _, id := range ids {
+		if pushed[id] {
+			kept = append(kept, id)
+		}
+	}
+	data := make(map[string]any, len(f.Data))
+	for k, v := range f.Data {
+		data[k] = v
+	}
+	if len(kept) == 0 {
+		delete(data, "pathIds")
+	} else {
+		data["pathIds"] = kept
+	}
+	f.Data = data
+	return f
 }
 
 // notEvaluableReasonData carries WHY a control could not be evaluated, as a

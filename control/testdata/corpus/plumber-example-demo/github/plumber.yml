@@ -1,0 +1,23 @@
+name: Plumber
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+permissions:
+  contents: read
+  security-events: write
+  id-token: write # required by score-push
+
+jobs:
+  plumber:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v6
+      - uses: getplumber/plumber@4a1e7a38bd8b3ac576cbddb402d92548fcf3e465
+        with:
+          # Publishes your Plumber Score and repository name publicly on
+          # score.getplumber.io (see Score badge below). Set to false to keep them private.
+          score-push: true
+          min-score: B

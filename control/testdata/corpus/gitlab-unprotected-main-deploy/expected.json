@@ -1,0 +1,22 @@
+{
+  "source": "reconstruction of a GitLab project deploying from an unprotected default branch",
+  "commit": "",
+  "captured": "2026-10-03",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [{"name": "main", "protected": false}],
+  "settingsVariables": [
+    {"name": "KUBE_CONFIG", "type": "file", "environment": "*", "protected": false, "masked": false},
+    {"name": "REGISTRY_PASSWORD", "type": "env_var", "environment": "*", "protected": false, "masked": true}
+  ],
+  "note": "Branch protection and settings variables of a third-party project cannot be read, so this reproduces the common shape: main is not protected (so the deploy credentials are left unprotected too, or the deploy would fail), and the deploy job runs kubectl apply on every push to main with the production environment. Anyone with write access to main runs the deploy job with the registry password: the unprotected push entry (anchored by the branch finding) into a job holding a secret and deploying reaches Critical, and a push entry is capped at High (pushing needs an account with write access, an insider who amplifies but never starts a Critical path), so there is no E cap. The build job feeds deploy along needs and runs on the same push, so it is a second entry job of the same path: one thing to fix, one path, which reads as the deploy branch (the same reach on the shorter walk). Hand count: one High path 15, no other finding, so 100 - 15 = 85: B. KUBE_CONFIG is a plain file variable (neither protected nor masked), configuration rather than a secret in the facts. The production environment is a protection, never an impact by itself: the deploy is the kubectl apply step, which the facts read as a deploy (a flag between kubectl and apply included), so the path reaches impact:deploys; the tier is the push cap's High either way.",
+  "expect": {
+    "maxTier": "high",
+    "paths": [
+      {"entryKind": "unprotected_push", "tier": "high", "job": "deploy", "subjectContains": "main", "reachKind": "impact:deploys", "state": "proven",
+       "sentenceContains": ["`main`", "`deploy`", "`REGISTRY_PASSWORD`", "write access"]}
+    ],
+    "letterAtLeast": "C"
+  }
+}

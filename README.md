@@ -155,6 +155,8 @@ Self-hosted GitLab: host or mirror the component in your instance and include th
 
 ## Score badge
 
+The score follows attack paths, not issue counts: see the [scoring docs](docs/scoring.md).
+
 The badge at the top of this README comes from the hosted score service. With score push on (`score-push: true` on the Action, `score_push: true` on the component, as in the snippets above), each run on the default branch keeps an `A-E` badge for your repo up to date:
 
 ```md

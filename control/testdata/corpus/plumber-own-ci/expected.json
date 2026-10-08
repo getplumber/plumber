@@ -1,0 +1,14 @@
+{
+  "source": "https://github.com/getplumber/plumber",
+  "commit": "fb943e4efba61cf7b0a0c56f6648710a7453519b",
+  "captured": "2026-10-03",
+  "group": "own",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [{"name": "main", "protected": true}],
+  "note": "This repository's own workflows with its own .plumber.yaml (plumber.yaml here), which the project keeps at 100 points under scoring-v3: every action pinned by SHA from an authorized source, permissions declared per job, main protected. With no entry-role finding there is no path, and with no other finding the letter is A.",
+  "expect": {
+    "maxTier": "none",
+    "letter": "A"
+  }
+}

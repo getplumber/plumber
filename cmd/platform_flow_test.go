@@ -408,6 +408,10 @@ func TestPlatformFlow_UnreachablePlatform_FailWarningsStillDecidesTheExit(t *tes
 		restore := withPlatformTestEnv(t, srv.URL, "tok")
 		defer restore()
 		result := debugTraceResult()
+		// A collected run carries its situation facts. Without them the
+		// default contextual score falls back to v3 with its own warning,
+		// which --fail-warnings rightly counts as a check not verified.
+		result.Situation = &control.Situation{Jobs: map[string]control.JobSituation{"build": {}}}
 		result.Warnings = warnings
 		var err error
 		_ = captureStdoutAll(t, func() {
