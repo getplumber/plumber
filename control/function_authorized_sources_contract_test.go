@@ -6,73 +6,43 @@ import (
 
 	"github.com/getplumber/plumber/configuration"
 	defaultconfig "github.com/getplumber/plumber/defaultConfig"
+	"github.com/getplumber/plumber/gitlab"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	"github.com/getplumber/plumber/internal/ir"
 	"github.com/getplumber/plumber/policies"
 	"gopkg.in/yaml.v2"
 )
 
-// clearRegistryEnv makes gitlabRegistryHost deterministic whatever
-// environment the suite itself runs in (Plumber's own GitLab CI included).
-func clearRegistryEnv(t *testing.T) {
-	t.Helper()
-	for _, name := range []string{"CI", "CI_SERVER_HOST", "CI_TEMPLATE_REGISTRY_HOST", "CI_REGISTRY"} {
-		t.Setenv(name, "")
-	}
-}
-
-func TestGitlabRegistryHost(t *testing.T) {
+// TestApplyGitLabRegistryHost pins where the registry host that anchors
+// same-group function trust comes from: the GitLab API's image prefix, else
+// the configured instance URL. The environment is never read — on a
+// self-managed instance CI_TEMPLATE_REGISTRY_HOST is registry.gitlab.com,
+// and the scanned pipeline can redefine any of these variables.
+func TestApplyGitLabRegistryHost(t *testing.T) {
 	cases := []struct {
 		name      string
+		project   *gitlab.Project
 		gitlabURL string
-		env       map[string]string
 		want      string
 	}{
-		{name: "saas_outside_ci", gitlabURL: "https://gitlab.com", want: "registry.gitlab.com"},
-		{name: "self_hosted_outside_ci", gitlabURL: "https://gitlab.example.com/", want: "registry.gitlab.example.com"},
-		{name: "no_url", gitlabURL: "", want: ""},
-		{
-			// Outside a pipeline the environment is never read.
-			name:      "env_ignored_outside_ci",
-			gitlabURL: "https://gitlab.com",
-			env:       map[string]string{"CI_TEMPLATE_REGISTRY_HOST": "registry.other.example"},
-			want:      "registry.gitlab.com",
-		},
-		{
-			name:      "ci_template_registry_host",
-			gitlabURL: "https://gitlab.example.com",
-			env:       map[string]string{"CI": "true", "CI_SERVER_HOST": "gitlab.example.com", "CI_TEMPLATE_REGISTRY_HOST": "cr.example.com", "CI_REGISTRY": "other.example.com"},
-			want:      "cr.example.com",
-		},
-		{
-			name:      "ci_registry_fallback",
-			gitlabURL: "https://gitlab.example.com",
-			env:       map[string]string{"CI": "true", "CI_SERVER_HOST": "gitlab.example.com", "CI_REGISTRY": "gitlab.example.com:5050"},
-			want:      "gitlab.example.com:5050",
-		},
-		{
-			name:      "ci_no_registry_env_derived",
-			gitlabURL: "https://gitlab.example.com",
-			env:       map[string]string{"CI": "true", "CI_SERVER_HOST": "gitlab.example.com"},
-			want:      "registry.gitlab.example.com",
-		},
-		{
-			// Plumber running on gitlab.com while scanning a self-hosted
-			// instance: the job's own registry is the wrong instance's.
-			name:      "ci_other_instance_derived",
-			gitlabURL: "https://gitlab.example.com",
-			env:       map[string]string{"CI": "true", "CI_SERVER_HOST": "gitlab.com", "CI_TEMPLATE_REGISTRY_HOST": "registry.gitlab.com"},
-			want:      "registry.gitlab.example.com",
-		},
+		{name: "api_prefix_saas", project: &gitlab.Project{ContainerRegistryImagePrefix: "registry.gitlab.com/my-group/my-project"}, gitlabURL: "https://gitlab.com", want: "registry.gitlab.com"},
+		{name: "api_prefix_custom_host_and_port", project: &gitlab.Project{ContainerRegistryImagePrefix: "gitlab.example.com:5050/my-group/my-project"}, gitlabURL: "https://gitlab.example.com", want: "gitlab.example.com:5050"},
+		{name: "api_prefix_lowercased", project: &gitlab.Project{ContainerRegistryImagePrefix: "Registry.Example.com/g/p"}, gitlabURL: "https://gitlab.example.com", want: "registry.example.com"},
+		{name: "no_prefix_derived_from_url", project: &gitlab.Project{}, gitlabURL: "https://gitlab.example.com/", want: "registry.gitlab.example.com"},
+		{name: "nil_project_derived_from_url", project: nil, gitlabURL: "https://gitlab.com", want: "registry.gitlab.com"},
+		{name: "nothing_known", project: nil, gitlabURL: "", want: ""},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			clearRegistryEnv(t)
-			for k, v := range tc.env {
-				t.Setenv(k, v)
-			}
-			if got := gitlabRegistryHost(tc.gitlabURL); got != tc.want {
-				t.Fatalf("gitlabRegistryHost(%q) = %q, want %q", tc.gitlabURL, got, tc.want)
+			// A pipeline redefining these must change nothing.
+			t.Setenv("CI", "true")
+			t.Setenv("CI_SERVER_HOST", "gitlab.example.com")
+			t.Setenv("CI_TEMPLATE_REGISTRY_HOST", "registry.evil.example")
+			t.Setenv("CI_REGISTRY", "registry.evil.example")
+			p := &ir.NormalizedPipeline{Provider: ir.ProviderGitLab}
+			applyGitLabRegistryHost(p, tc.project, tc.gitlabURL)
+			if p.RegistryHost != tc.want {
+				t.Fatalf("RegistryHost = %q, want %q", p.RegistryHost, tc.want)
 			}
 		})
 	}
@@ -84,7 +54,11 @@ func TestGitlabRegistryHost(t *testing.T) {
 // rego's object.get keys) fails here instead of shipping silently behind
 // hand-built test configs.
 func TestFunctionAuthorizedSourcesConfigContract(t *testing.T) {
-	clearRegistryEnv(t)
+	// Plumber's own CI job (or a scanned pipeline) setting these must not
+	// move the trust anchor: the registry host comes from the API.
+	t.Setenv("CI", "true")
+	t.Setenv("CI_TEMPLATE_REGISTRY_HOST", "registry.evil.example")
+	t.Setenv("CI_REGISTRY", "registry.evil.example")
 
 	var conf configuration.PlumberConfig
 	if err := yaml.Unmarshal(defaultconfig.Get(), &conf); err != nil {
@@ -106,6 +80,7 @@ func TestFunctionAuthorizedSourcesConfigContract(t *testing.T) {
 			ProjectPath: "my-group/my-project",
 			Jobs:        []ir.Job{job},
 		}
+		applyGitLabRegistryHost(p, &gitlab.Project{ContainerRegistryImagePrefix: "registry.gitlab.com/my-group/my-project"}, "https://gitlab.com")
 		findings, err := evaluateStrict(engine, context.Background(), p, engineCfg)
 		if err != nil {
 			t.Fatalf("evaluate: %v", err)
@@ -139,6 +114,26 @@ func TestFunctionAuthorizedSourcesConfigContract(t *testing.T) {
 		{
 			name: "other_namespace_oci_ref",
 			job:  ir.Job{Name: "build", Functions: []ir.Function{{Name: "deploy", Ref: "registry.gitlab.com/attacker/x/deploy:1.0.0", Kind: "oci"}}},
+			want: 1,
+		},
+		{
+			// The registry the environment names is not the project's: an
+			// own-namespace path on it stays untrusted.
+			name: "own_namespace_on_env_registry_untrusted",
+			job:  ir.Job{Name: "build", Functions: []ir.Function{{Name: "pwn", Ref: "registry.evil.example/my-group/backdoor:1", Kind: "oci"}}},
+			want: 1,
+		},
+		{
+			// The structured git form reaches the policy like the short
+			// form: under the own namespace it is trusted...
+			name: "own_namespace_structured_git_ref",
+			job:  ir.Job{Name: "build", Functions: []ir.Function{{Name: "deploy", Ref: "gitlab.com/my-group/funcs/-/deploy@main", Kind: "git", Deprecated: true}}},
+			want: 0,
+		},
+		{
+			// ...and a reference Plumber could not read fails closed.
+			name: "unknown_structured_ref_fails_closed",
+			job:  ir.Job{Name: "build", Functions: []ir.Function{{Name: "deploy", Ref: `{"oci":{"repository":"registry.gitlab.com/my-group/x"}}`, Kind: "unknown"}}},
 			want: 1,
 		},
 		{

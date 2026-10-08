@@ -115,7 +115,15 @@ A reference is **trusted** when any of these hold:
   (wildcards supported, `$VAR`/`${VAR}` notation both accepted);
 - `trustSameGroupFunctions` (default `true`) and the function is
   hosted on the scanned GitLab instance, under the project's own
-  root namespace.
+  root namespace. "Hosted on the instance" means its web host (git
+  form) or its container registry host (OCI form). The registry host
+  is the one the GitLab API reports for the project, never a CI/CD
+  variable such as `CI_TEMPLATE_REGISTRY_HOST`, which the pipeline
+  can redefine.
+
+The structured form (`func: {git: {url, rev, dir, file}}`) is checked
+like the equivalent `url/-/dir/file@rev` string. A `func:` value
+Plumber cannot read is reported as untrusted, never skipped.
 
 Local (relative/absolute filesystem path) function references are
 same-repo and always out of scope.

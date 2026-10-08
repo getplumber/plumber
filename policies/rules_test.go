@@ -2819,6 +2819,7 @@ func TestIssue415_FunctionAuthorizedSources(t *testing.T) {
 		name          string
 		fn            ir.Function
 		projectPath   string
+		registryHost  string
 		globalVars    map[string]string
 		jobLocalVars  map[string]string
 		cfg           map[string]any
@@ -2860,6 +2861,42 @@ func TestIssue415_FunctionAuthorizedSources(t *testing.T) {
 			expectFinding: false,
 		},
 		{
+			// A configured registryHost is ignored: only the pipeline's,
+			// which comes from the GitLab API, anchors same-group trust.
+			name:          "config_registry_host_ignored",
+			fn:            ir.Function{Name: "say_hi", Ref: "registry.evil.example/my-group/backdoor:1", Kind: "oci"},
+			projectPath:   "my-group/my-project",
+			registryHost:  "registry.gitlab.com",
+			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true, "instanceHost": "gitlab.com", "registryHost": "registry.evil.example"}},
+			expectFinding: true,
+		},
+		{
+			// The structured `func: {git: {...}}` form, normalized by the
+			// collector to the short git form: same-group trust applies.
+			name:          "structured_git_own_namespace_trusted",
+			fn:            ir.Function{Name: "say_hi", Ref: "gitlab.com/my-group/funcs/-/echo@main", Kind: "git", Deprecated: true},
+			projectPath:   "my-group/my-project",
+			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true, "instanceHost": "gitlab.com"}},
+			expectFinding: false,
+		},
+		{
+			name:          "structured_git_external_flagged",
+			fn:            ir.Function{Name: "say_hi", Ref: "gitlab.com/funcs/my-git-repo@main", Kind: "git", Deprecated: true},
+			projectPath:   "my-group/my-project",
+			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true, "instanceHost": "gitlab.com"}},
+			expectFinding: true,
+		},
+		{
+			// A `func:` value the collector could not read is kept as
+			// Kind "unknown": it must fail closed, never be skipped.
+			name:          "unknown_reference_fails_closed",
+			fn:            ir.Function{Name: "say_hi", Ref: `{"oci":{"repository":"registry.gitlab.com/my-group/x"}}`, Kind: "unknown"},
+			projectPath:   "my-group/my-project",
+			registryHost:  "registry.gitlab.com",
+			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true, "instanceHost": "gitlab.com"}},
+			expectFinding: true,
+		},
+		{
 			name:          "local_ref_excluded",
 			fn:            ir.Function{Name: "say_hi", Ref: "./funcs/release/dry-run.yml", Kind: "local"},
 			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{}},
@@ -2868,13 +2905,13 @@ func TestIssue415_FunctionAuthorizedSources(t *testing.T) {
 		{
 			// Same-group trust requires both the host AND the path to
 			// match — not the path alone. The OCI form lives on the
-			// registry host, not the web host, so it is registryHost that
-			// anchors it (the values buildEngineConfig projects on
-			// gitlab.com).
+			// registry host, not the web host, so it is the pipeline's
+			// registryHost (from the GitLab API) that anchors it.
 			name:          "same_group_host_and_path_match_trusted",
 			fn:            ir.Function{Name: "say_hi", Ref: "registry.gitlab.com/my-group/my-project/echo:1", Kind: "oci"},
 			projectPath:   "my-group/my-project",
-			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true, "instanceHost": "gitlab.com", "registryHost": "registry.gitlab.com"}},
+			registryHost:  "registry.gitlab.com",
+			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true, "instanceHost": "gitlab.com"}},
 			expectFinding: false,
 		},
 		{
@@ -2890,7 +2927,8 @@ func TestIssue415_FunctionAuthorizedSources(t *testing.T) {
 			name:          "different_root_namespace_untrusted",
 			fn:            ir.Function{Name: "say_hi", Ref: "registry.gitlab.com/other-group/x/echo:1", Kind: "oci"},
 			projectPath:   "my-group/my-project",
-			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true, "instanceHost": "gitlab.com", "registryHost": "registry.gitlab.com"}},
+			registryHost:  "registry.gitlab.com",
+			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true, "instanceHost": "gitlab.com"}},
 			expectFinding: true,
 		},
 		{
@@ -2901,7 +2939,8 @@ func TestIssue415_FunctionAuthorizedSources(t *testing.T) {
 			name:          "same_group_different_host_untrusted",
 			fn:            ir.Function{Name: "say_hi", Ref: "registry.evil.example/my-group/whatever:1", Kind: "oci"},
 			projectPath:   "my-group/my-project",
-			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true, "instanceHost": "gitlab.example.com", "registryHost": "registry.gitlab.example.com"}},
+			registryHost:  "registry.gitlab.example.com",
+			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true, "instanceHost": "gitlab.example.com"}},
 			expectFinding: true,
 		},
 		{
@@ -2991,6 +3030,7 @@ func TestIssue415_FunctionAuthorizedSources(t *testing.T) {
 			pipeline := &ir.NormalizedPipeline{
 				Provider:        ir.ProviderGitLab,
 				ProjectPath:     tc.projectPath,
+				RegistryHost:    tc.registryHost,
 				GlobalVariables: tc.globalVars,
 				Jobs:            []ir.Job{{Name: "build", LocalVariables: tc.jobLocalVars, Functions: []ir.Function{tc.fn}}},
 			}

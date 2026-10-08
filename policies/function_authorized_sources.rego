@@ -10,9 +10,14 @@
 # A reference is trusted when it matches an explicit trustedFunctions
 # allowlist pattern, or (trustSameGroupFunctions, default true) the ref is
 # hosted on the scanned GitLab instance — its container registry host
-# (registryHost, the supported OCI form) or its web host (instanceHost, the
-# deprecated git form) — and its path starts with the project's own root
-# namespace (top-level group). A same-namespace check that only looks at
+# (input.pipeline.registryHost, the supported OCI form) or its web host
+# (instanceHost, the deprecated git form) — and its path starts with the
+# project's own root namespace (top-level group). The registry host is the
+# one the GitLab API reports for the scanned project
+# (container_registry_image_prefix), never a CI/CD variable: a variable such
+# as CI_TEMPLATE_REGISTRY_HOST points at registry.gitlab.com on a
+# self-managed instance, and any pipeline can redefine it to its own
+# registry (ISSUE-415 hardening). A same-namespace check that only looks at
 # the path after an unvalidated host segment would trust any registry that
 # happens to name a top-level path after the victim's namespace (ISSUE-415
 # hardening).
@@ -119,11 +124,11 @@ _matches_own_namespace(ref) if {
 }
 
 # _on_own_host reports whether ref starts with one of the scanned
-# instance's hosts: its container registry host (registryHost), where GitLab
-# Function OCI references live, or its web host (instanceHost), used by the
-# deprecated git reference form.
+# instance's hosts: its container registry host (input.pipeline.registryHost,
+# reported by the GitLab API), where GitLab Function OCI references live, or
+# its web host (instanceHost), used by the deprecated git reference form.
 _on_own_host(ref) if {
-	host := object.get(input.config.functionAuthorizedSources, "registryHost", "")
+	host := object.get(input.pipeline, "registryHost", "")
 	host != ""
 	startswith(ref, sprintf("%s/", [host]))
 }

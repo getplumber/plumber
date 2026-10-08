@@ -25,6 +25,14 @@ type NormalizedPipeline struct {
 	Branches      []Branch          `json:"branches,omitempty"`
 	Dependabot    *DependabotConfig `json:"dependabot,omitempty"`
 
+	// RegistryHost is the container registry host of the scanned GitLab
+	// project's instance (e.g. registry.gitlab.com), where GitLab Function
+	// OCI references live. It comes from the GitLab API
+	// (container_registry_image_prefix) or, when the API reports none, is
+	// derived from the configured instance URL — never from a CI/CD
+	// variable, which the scanned pipeline itself can redefine. GitLab only.
+	RegistryHost string `json:"registryHost,omitempty"`
+
 	// SelfActionMutableExec is set when the scanned repository is itself
 	// a GitHub Action (has an action.yml) whose own source fetches and
 	// executes mutable remote code at runtime. This is the producer-side
