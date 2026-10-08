@@ -2,11 +2,14 @@ package control
 
 import (
 	"fmt"
+	"sort"
+	"strconv"
 	"strings"
 	"unicode"
 
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/gitlab"
+	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	"github.com/sirupsen/logrus"
 )
 
@@ -142,7 +145,17 @@ func generateMRComment(result *AnalysisResult, pc *configuration.PlumberConfig, 
 
 	b.WriteString("*If this merge request is merged, the expected Plumber Score will be as shown above.*\n\n")
 
-	if scorePointMode && score != nil {
+	// isV4 gates on the computed score's own ProfileID, never on the
+	// package-level ScoreProfile variable: a --score-profile v4 request
+	// that fell back to scoring-v3 for lack of a usable situation must
+	// still render the ordinary v3 comment below. Under the contextual
+	// score the comment opens on its summary; the path details close it,
+	// after the controls and the other findings in detail.
+	isV4 := score != nil && score.ProfileID == PlumberScoreProfileIDV4
+	switch {
+	case isV4:
+		b.WriteString(v4CommentSummary(result, score, scorePointMode))
+	case scorePointMode && score != nil:
 		b.WriteString("### Plumber Score\n\n")
 		fmt.Fprintf(&b, "- **Profile:** `%s`\n", score.ProfileID)
 		fmt.Fprintf(&b, "- **Issues by severity:** critical %d, high %d, medium %d, low %d\n",
@@ -154,10 +167,17 @@ func generateMRComment(result *AnalysisResult, pc *configuration.PlumberConfig, 
 		}
 		fmt.Fprintf(&b, "- **Score (letter):** **%s**\n", score.Score)
 		b.WriteString("\n")
-	} else if scoreMode && score != nil {
+	case scoreMode && score != nil:
 		b.WriteString("### Plumber Score\n\n")
 		fmt.Fprintf(&b, "- **Score:** **%s**\n\n", score.Score)
 	}
+
+	// renderedPaths is the id set of the attack paths the path details
+	// at the end of the comment print (the first maxCommentPaths, worst first);
+	// computed once here and threaded into both the otherIssues tally
+	// below and writeIssueDetails, so a finding riding a path beyond the
+	// cap is judged against the same set in both places.
+	renderedPaths := renderedPathIDs(result.Paths)
 
 	// Gather controls from the config-driven catalog joined with the
 	// Rego Findings list. An empty findings list is not automatically a
@@ -174,11 +194,17 @@ func generateMRComment(result *AnalysisResult, pc *configuration.PlumberConfig, 
 	findingsByControl := FindingsByControl(result.Findings)
 	var controls []controlEntry
 	var totalIssues int
+	// otherIssues counts, under v4 only, the findings the Attack paths
+	// list does not tell the story of (no pathIds in their
+	// Data): what is left to show under "Individual findings". Unused, and so
+	// always zero, under v3.
+	var otherIssues int
 
 	mrEntries := GitLabControls(pc)
 	MarkSkippedByFilter(mrEntries, controlsFilterList, skipControlsList)
 	for _, e := range mrEntries {
-		count := len(findingsByControl[e.ControlName])
+		findings := findingsByControl[e.ControlName]
+		count := len(findings)
 		// Keyed on result.NotEvaluable, not StatusFor: StatusFor also
 		// returns StatusError for the older run-wide degradation signals,
 		// and re-bucketing those would change what a STANDALONE run posts.
@@ -191,6 +217,9 @@ func generateMRComment(result *AnalysisResult, pc *configuration.PlumberConfig, 
 		})
 		if !e.Skipped {
 			totalIssues += count
+			if isV4 {
+				otherIssues += countWithoutPathIDs(findings, renderedPaths)
+			}
 		}
 	}
 
@@ -217,10 +246,22 @@ func generateMRComment(result *AnalysisResult, pc *configuration.PlumberConfig, 
 	// Status line after the table
 	writeMRStatusLine(&b, passed, gateLine)
 
-	// Issue details as a normal section
-	if totalIssues > 0 {
+	// Issue details. Under the contextual score the path details below tell the
+	// story of every finding that anchors or walks a path; this section is
+	// renamed "Individual findings in detail" and carries only what is left, so
+	// nothing is told twice. Under v3 nothing changes: the heading, and
+	// every finding able to reach it, are exactly what they were before v4
+	// existed.
+	switch {
+	case isV4 && otherIssues > 0:
+		b.WriteString("### Individual findings in detail\n\n")
+		writeIssueDetails(&b, result, renderedPaths)
+	case !isV4 && totalIssues > 0:
 		b.WriteString("### Issues\n\n")
-		writeIssueDetails(&b, result)
+		writeIssueDetails(&b, result, nil)
+	}
+	if isV4 {
+		b.WriteString(v4CommentPathDetails(result, scorePointMode))
 	}
 
 	writeMRFooter(&b)
@@ -336,20 +377,263 @@ func sanitizeMarkdownInline(s string) string {
 // registry so the section headings line up with the controls table.
 // Order within each group follows the Rego evaluation order so repeated
 // runs produce stable output.
-func writeIssueDetails(b *strings.Builder, result *AnalysisResult) {
+//
+// rendered is non-nil only for the contextual score's "Individual findings
+// in detail" section: it drops every finding whose pathIds are all within
+// the path details (rendered there in full), leaving the findings no rendered path
+// reached. A finding riding at least one path beyond the cap is kept,
+// since the path details never told its story. Under v3
+// rendered is always nil and nothing here changes.
+func writeIssueDetails(b *strings.Builder, result *AnalysisResult, rendered map[string]bool) {
 	findingsByControl := FindingsByControl(result.Findings)
+	numbers := map[string]int{}
+	for i, p := range PathsWorstFirst(result.Paths) {
+		numbers[p.ID] = i + 1
+	}
 	for _, g := range mrCommentControlOrder {
-		findings := findingsByControl[g.controlName]
+		all := findingsByControl[g.controlName]
+		findings := all
+		if rendered != nil {
+			findings = withoutPathIDs(all, rendered)
+		}
 		if len(findings) == 0 {
 			continue
 		}
 		fmt.Fprintf(b, "**%s:**\n", g.heading)
+		if note := elsewhereNote(all, rendered, numbers); note != "" {
+			fmt.Fprintf(b, "_%s._\n", note)
+		}
 		for _, f := range findings {
 			docURL := ErrorCode(f.Code).DocURL()
 			fmt.Fprintf(b, "- `%s` %s ([docs](%s))\n", f.Code, sanitizeMarkdownInline(f.Message), docURL)
 		}
 		b.WriteString("\n")
 	}
+}
+
+// maxCommentPaths bounds the attack paths of one comment; the rest are
+// counted on one line, worst-first order keeping the ones that matter.
+const maxCommentPaths = 20
+
+// v4CommentSummary is the top of the contextual score's comment, read
+// first on a web page: the score and the best fix, the other findings in
+// one line, and the attack paths as a table. Under scorePoint the score
+// section adds the arithmetic: the subtraction, the caps, the adjustment
+// line, and why the best fix recovers what it does. Every name is
+// attacker text on a merge request pipeline and goes through
+// sanitizeMarkdownInline.
+func v4CommentSummary(result *AnalysisResult, score *PlumberScoreResult, scorePoint bool) string {
+	var b strings.Builder
+	b.WriteString("### Plumber Score\n\n")
+	fmt.Fprintf(&b, "- **%s / 100** (%s)\n", formatPoints(score.FinalPoints), score.Score)
+	fix := BestFixSummary(score)
+	if scorePoint {
+		pathsLoss, otherLoss := BucketLosses(score)
+		fmt.Fprintf(&b, "- 100 - %s (attack paths) - %s (individual findings)\n", formatPoints(pathsLoss), formatPoints(otherLoss))
+		for _, note := range CapNotes(score) {
+			fmt.Fprintf(&b, "- %s\n", note)
+		}
+		if line := ScoreAdjustment(score); line != "" {
+			fmt.Fprintf(&b, "- %s\n", line)
+		}
+		if score.BestFix != nil && score.BestFix.Reason != "" {
+			fix += " (" + score.BestFix.Reason + ")"
+		}
+	} else if score.BestFix != nil && score.BestFix.Stays != "" {
+		fix = strings.TrimSuffix(fix, " "+score.BestFix.Stays)
+	}
+	if worst := WorstCase(result.Paths); worst != "" {
+		fmt.Fprintf(&b, "- **Worst case:** %s\n", sanitizeMarkdownInline(worst))
+	}
+	fmt.Fprintf(&b, "- **Best fix:** %s\n", sanitizeMarkdownInline(fix))
+
+	count := 0
+	if score.OtherFindings != nil {
+		count = score.OtherFindings.Count
+	}
+	if count == 0 {
+		b.WriteString("\n### Individual findings (0)\n")
+	} else {
+		fmt.Fprintf(&b, "\n### Individual findings (%d)\n\n- %s\n", count, OtherFindingsSummary(score))
+	}
+
+	ordered := PathsWorstFirst(result.Paths)
+	fmt.Fprintf(&b, "\n### Attack paths (%d)\n", len(ordered))
+	if len(ordered) > 0 {
+		b.WriteString("\n| # | Tier | Entry | Job | Reaches |\n| --- | --- | --- | --- | --- |\n")
+	}
+	for i, p := range ordered {
+		if i == maxCommentPaths {
+			fmt.Fprintf(&b, "\nand %s\n", plural(len(ordered)-maxCommentPaths, "more path", "more paths"))
+			break
+		}
+		row := PathRowOf(p)
+		fmt.Fprintf(&b, "| %d | %s | %s | %s | %s |\n", i+1, tierTitle(p.Tier), sanitizeMarkdownInline(row.Entry), sanitizeMarkdownInline(row.Jobs), sanitizeMarkdownInline(row.Reaches))
+	}
+	b.WriteString("\n")
+	return b.String()
+}
+
+// v4CommentPathDetails is one block per attack path, worst first, at most
+// maxCommentPaths of them: the same graph as the terminal, in a code
+// block, then its findings with their documentation links. Under
+// scorePoint each block also says why its path stops at a cap.
+func v4CommentPathDetails(result *AnalysisResult, scorePoint bool) string {
+	ordered := PathsWorstFirst(result.Paths)
+	if len(ordered) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("### Attack path details\n\n")
+	for i, p := range ordered {
+		if i == maxCommentPaths {
+			break
+		}
+		blk := NewPathBlock(p, result.Findings)
+		blk.ShowCap = scorePoint
+		state := ""
+		if blk.Unverified {
+			state = " (unverified)"
+		}
+		fmt.Fprintf(&b, "#### %s path %d%s\n\n", strings.ToUpper(string(p.Tier)), i+1, state)
+		// Inside a code block nothing is read as Markdown; a fence longer
+		// than any backtick run of the block keeps attacker text inside it.
+		graph := PathGraph(i+1, blk.Clean(codeBlockText), commentGraphWidth)
+		fence := codeFence(graph)
+		fmt.Fprintf(&b, "%stext\n%s\n%s\n\n", fence, strings.Join(graph, "\n"), fence)
+		for _, f := range blk.Findings {
+			where := sanitizeMarkdownInline(f.Location)
+			if f.Count > 1 {
+				where = fmt.Sprintf("%d findings", f.Count)
+			}
+			if where != "" {
+				where += ", "
+			}
+			fmt.Fprintf(&b, "- `%s` %s (%s[docs](%s))\n", f.Code, f.Title, where, f.Code.DocURL())
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
+}
+
+// commentGraphWidth is the width a path graph is laid out at in a
+// comment: a code block on a merge request page scrolls, but the terminal's
+// default width reads without it.
+const commentGraphWidth = 100
+
+// renderedPathIDs is the id set of the attack paths v4CommentPathDetails
+// actually prints: the first maxCommentPaths of result.Paths, worst first
+// (AssemblePaths's own order, the one PathsWorstFirst keeps). A path beyond the cap is only ever
+// summarized on the "and N more paths" line, never told on its own, so its
+// id does not belong in this set.
+func renderedPathIDs(paths []AttackPath) map[string]bool {
+	n := len(paths)
+	if n > maxCommentPaths {
+		n = maxCommentPaths
+	}
+	ids := make(map[string]bool, n)
+	for _, p := range paths[:n] {
+		ids[p.ID] = true
+	}
+	return ids
+}
+
+// findingHasPathIDs reports whether a finding is already told IN FULL by
+// the path details: AnnotateFindingsV4 writes Data["pathIds"] only
+// when PathIDsFor returned at least one id, and omits the key otherwise.
+// A finding with every one of its path ids in rendered was shown there; a
+// finding with even one id beyond the maxCommentPaths cap was not, and
+// must stay visible somewhere, or it disappears from the comment entirely.
+func findingHasPathIDs(f opaengine.Finding, rendered map[string]bool) bool {
+	ids, ok := f.Data["pathIds"].([]string)
+	if !ok || len(ids) == 0 {
+		return false
+	}
+	for _, id := range ids {
+		if !rendered[id] {
+			return false
+		}
+	}
+	return true
+}
+
+// elsewhereNote says how many of a control's findings the path details
+// list instead ("2 more of these are listed under attack path 1"), ""
+// when none: numbers is each path's number, worst first.
+func elsewhereNote(findings []opaengine.Finding, rendered map[string]bool, numbers map[string]int) string {
+	if rendered == nil {
+		return ""
+	}
+	n := 0
+	var on []int
+	seen := map[int]bool{}
+	for _, f := range findings {
+		if !findingHasPathIDs(f, rendered) {
+			continue
+		}
+		n++
+		ids, _ := f.Data["pathIds"].([]string)
+		for _, id := range ids {
+			if k := numbers[id]; k > 0 && !seen[k] {
+				seen[k] = true
+				on = append(on, k)
+			}
+		}
+	}
+	return ElsewhereNote(n, on)
+}
+
+// ElsewhereNote is the line a control split between attack paths and the
+// other findings carries under the other findings: n more of its findings
+// are listed under the paths numbered on. "" when n is 0.
+func ElsewhereNote(n int, on []int) string {
+	if n == 0 {
+		return ""
+	}
+	sort.Ints(on)
+	nums := make([]string, len(on))
+	for i, k := range on {
+		nums[i] = strconv.Itoa(k)
+	}
+	where := "the attack paths"
+	switch len(nums) {
+	case 0:
+	case 1:
+		where = "attack path " + nums[0]
+	default:
+		where = "attack paths " + strings.Join(nums[:len(nums)-1], ", ") + " and " + nums[len(nums)-1]
+	}
+	verb := "are"
+	if n == 1 {
+		verb = "is"
+	}
+	return fmt.Sprintf("%d more of these %s listed under %s", n, verb, where)
+}
+
+// withoutPathIDs filters out every finding findingHasPathIDs reports true
+// for against rendered, preserving the input order (the Rego evaluation
+// order FindingsByControl already produced).
+func withoutPathIDs(findings []opaengine.Finding, rendered map[string]bool) []opaengine.Finding {
+	out := make([]opaengine.Finding, 0, len(findings))
+	for _, f := range findings {
+		if !findingHasPathIDs(f, rendered) {
+			out = append(out, f)
+		}
+	}
+	return out
+}
+
+// countWithoutPathIDs is withoutPathIDs without the allocation, for the
+// otherIssues tally that decides whether the "Individual findings" heading
+// renders at all.
+func countWithoutPathIDs(findings []opaengine.Finding, rendered map[string]bool) int {
+	n := 0
+	for _, f := range findings {
+		if !findingHasPathIDs(f, rendered) {
+			n++
+		}
+	}
+	return n
 }
 
 // mrCommentControlOrder drives the per-control detail sections of the MR

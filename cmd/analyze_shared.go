@@ -8,6 +8,7 @@ import (
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
+	"github.com/getplumber/plumber/internal/ir"
 	"github.com/getplumber/plumber/provider"
 	"github.com/sirupsen/logrus"
 	"github.com/spf13/cobra"
@@ -72,15 +73,33 @@ func continueRun(p provider.Provider, cmd *cobra.Command, conf *configuration.Co
 	if summary.platformMode && !summary.noControls {
 		return runPlatformMode(p, cmd, conf, result, summary, controlsFilterList, skipControlsList)
 	}
+	// The contextual report closes on its final screen, so its artifacts
+	// are written first: their notices print above the report, never
+	// under the situation facts. A write error still waits for the report.
+	writeFirst := printOutput && closesOnFinalScreen(summary, result.DataCollectionDegraded)
+	var writeErr error
+	if writeFirst {
+		writeErr = writeOutputsWithProvider(p, result, conf, summary, nil, nil)
+	}
 	if printOutput {
 		if err := outputTextWithProvider(p, result, conf, summary, controlsFilterList, skipControlsList); err != nil {
 			return err
 		}
 	}
-	if err := writeOutputsWithProvider(p, result, conf, summary, nil, nil); err != nil {
-		return err
+	if !writeFirst {
+		writeErr = writeOutputsWithProvider(p, result, conf, summary, nil, nil)
+	}
+	if writeErr != nil {
+		return writeErr
 	}
 	return publishAndFinalize(p, cmd, result, conf, summary, nil)
+}
+
+// closesOnFinalScreen reports whether the text report ends on the
+// contextual score's final screen: the run is priced under scoring-v4 and
+// its score is shown (scoreWithheld is the banner's own condition).
+func closesOnFinalScreen(s complianceSummary, degraded bool) bool {
+	return scoreProfileV4(s.score) && !scoreWithheld(s.score, s.scoreMode, degraded)
 }
 
 // runPlatformMode is the platform-mode tail: evaluate the resolved policies,
@@ -201,6 +220,21 @@ func runPlatformMode(p provider.Provider, cmd *cobra.Command, conf *configuratio
 // here - runWithProvider for GitLab, presentResultWithProvider for the GitHub
 // paths - rather than repeating the sequence, because a copy is a copy that can
 // silently lose a step (the ONE thing #447's wiring is exposed to).
+// defaultBranchOf is the analysed pipeline's default branch, which a
+// finding on no path is priced against: the situation's, else the
+// collected pipeline's; empty when neither is known.
+func defaultBranchOf(result *control.AnalysisResult) string {
+	if result.Situation != nil && result.Situation.DefaultBranch != "" {
+		return result.Situation.DefaultBranch
+	}
+	for _, p := range []*ir.NormalizedPipeline{result.Pipeline, result.GitHubPipeline} {
+		if p != nil && p.DefaultBranch != "" {
+			return p.DefaultBranch
+		}
+	}
+	return ""
+}
+
 func finalizeFindings(p provider.Provider, conf *configuration.Configuration, result *control.AnalysisResult) complianceSummary {
 	newLocationLinker(conf, result, p.Name()).Annotate(result.Findings)
 	opaengine.StampFingerprints(result.Findings, conf.GitRepoRoot)
@@ -293,22 +327,17 @@ func publishAndFinalize(p provider.Provider, cmd *cobra.Command, result *control
 // the same order, so the two paths cannot drift.
 func publishRun(p provider.Provider, conf *configuration.Configuration, result *control.AnalysisResult, summary complianceSummary, runs []policyRun) (*platformVerdict, error) {
 	// The score-publishing leg publishes nothing under --platform, but it is
-	// not silent: with score-push off it invites the operator to turn a live
-	// badge on. A linked run that evaluated nothing (row 63) has no score and
-	// no verdict, so there is nothing to put on a badge and nothing to
-	// advertise - and this push is the only reason that invitation would be
-	// printed here at all, since the branch used to return before the publish
-	// leg. Every other run keeps it.
+	// not silent: an explicit --score-push says it was skipped. A linked run
+	// that evaluated nothing has no score and no verdict, so there is
+	// nothing to put on a badge and nothing to say about one. Every other
+	// run keeps the leg.
 	//
 	// "Evaluated nothing" is keyed on runsProduceNoPolicyResult, the same
 	// predicate buildPlatformPush/buildPolicyResults use to decide the
 	// push's results array is empty (and so stamps the push's own
 	// nothing-evaluated marker): an empty runs slice is one way to reach
 	// it, and a linked run whose every resolved policy came back
-	// Applied == false (all unappliable, row 63) is another. len(runs) == 0
-	// alone caught only the first, letting the second sail through with a
-	// non-empty runs slice and start advertising a badge for a verdict
-	// nobody computed.
+	// Applied == false (all unappliable) is another.
 	nothingEvaluated := summary.platformMode && runsProduceNoPolicyResult(runs)
 	if !nothingEvaluated {
 		jsonPayload := buildPublishPayload(p, conf, result, summary)
@@ -464,8 +493,33 @@ func buildComplianceSummary(p provider.Provider, result *control.AnalysisResult,
 	// definition of "evaluated" the render and push layers use.
 	evaluatedCount := control.EvaluatedControlCount(providerControlEntries(p, conf), result)
 	score := computeScoreResult(result, scoreMode, evaluatedCount)
+	// Annotate findings with their v4 story (contextual severity, base
+	// severity, role, path ids, path sentence) right after the score that
+	// would carry that story is computed, and only when it actually is a
+	// v4 score: scoreProfileV4 reads score.ProfileID, not the bare
+	// --score-profile flag, so a v4 request that fell back to v3 for lack
+	// of a situation (control.situationUnavailable) annotates nothing,
+	// exactly like a plain v3 run.
+	//
+	// Never in platform mode: there each policy is a run of its own, and
+	// control.ReEvaluateForConfig annotates that policy's findings against
+	// its own paths. The run-level paths here are the local
+	// configuration's, which this mode does not publish, so they are
+	// dropped along with the local score.
+	//
+	// Never when the score itself is withheld: a degraded run can still
+	// evaluate a control and price a v4 score (StatusFor fails a control on
+	// its findings before it ever looks at the degraded reasons), but every
+	// render path hides that score behind scoreWithheld, so the machine-
+	// readable outputs (SARIF, GLSAST, CSV, OCSF, JSON) have to read the
+	// same predicate or they would ship the contextual story the human-
+	// facing report withholds.
+	if scoreProfileV4(score) && !platformMode && !scoreWithheld(score, scoreMode, result.DataCollectionDegraded) {
+		control.AnnotateFindingsV4(result)
+	}
 	if platformMode {
 		score = nil
+		result.Paths = nil
 	}
 	return complianceSummary{
 		compliance:   compliance,
@@ -502,7 +556,14 @@ func outputTextWithProvider(p provider.Provider, result *control.AnalysisResult,
 		renderDegradedCaveat(result.DegradedReasons)
 	}
 
-	controls, groups := buildProviderControlSummariesAndGroups(p, result, conf.PlumberConfig, conf.PlatformRun.Active(), controlsFilterList, skipControlsList)
+	// The v4 view (the contextual severities, the Situation, the attack
+	// paths and their Points) is shown only when the run is priced under
+	// scoring-v4 AND its score is shown: a withheld score (a degraded run,
+	// say) states no tier and no best fix either, and the report falls back
+	// to the plain per-control view. scoreWithheld is the banner's own
+	// condition.
+	v4 := closesOnFinalScreen(s, result.DataCollectionDegraded)
+	controls, groups := buildProviderControlSummariesAndGroups(p, result, conf.PlumberConfig, conf.PlatformRun.Active(), controlsFilterList, skipControlsList, v4)
 	// Nothing was selected, so listing every control as "skipped" is noise
 	// that reads like a misconfiguration.
 	if s.noControls {
@@ -511,12 +572,30 @@ func outputTextWithProvider(p provider.Provider, result *control.AnalysisResult,
 	// On a degraded run the per-control verdict is untrustworthy; render only
 	// the findings we DID surface (a real violation on partial data is still
 	// real) and drop the green stat blocks (#220).
-	renderFindingGroups(filterGroupsForDegraded(groups, result.DataCollectionDegraded))
+	filteredGroups := filterGroupsForDegraded(groups, result.DataCollectionDegraded)
+	if v4 {
+		opts := reportBlock
+		opts.ScorePoint = s.scorePoint
+		renderFindingGroupsV4(filteredGroups, s.score, result.Findings, opts)
+	} else {
+		renderFindingGroups(filteredGroups)
+	}
 	renderWarnings(result.Warnings)
 	renderApprovalRulesTierCaveat(result)
 	renderMRApprovalSettingsTierCaveat(result)
 	renderMRSettingsPremiumCaveat(result)
 	renderSecurityPolicyTierCaveat(result)
+
+	// Under the contextual score the report closes on the final screen
+	// and has no Summary section: the path blocks and the other findings
+	// already say each control's findings at their contextual severity,
+	// and the verdict against the gate is a line of the score block.
+	if v4 {
+		st := s.gateStatus()
+		renderFinalScreen(os.Stdout, s.score, detectTermCaps(), s.scorePoint,
+			finalNotes{Status: &st, NotEvaluated: countNotEvaluated(groups)})
+		return nil
+	}
 
 	printSectionHeader("Summary")
 	fmt.Println()
@@ -594,7 +673,13 @@ func countNotEvaluated(groups []findingGroup) int {
 // 62) - the caller supplies it rather than this function inspecting a
 // *configuration.Configuration itself, because the platform-render caller
 // passes r.Config (the POLICY's configuration), never the run's conf.
-func buildProviderControlSummariesAndGroups(p provider.Provider, result *control.AnalysisResult, pc *configuration.PlumberConfig, linked bool, controlsFilterList, skipControlsList []string) ([]controlSummary, []findingGroup) {
+//
+// v4 is whether the caller renders the scoring-v4 view of this result: every
+// item then carries its contextual severity, role and path ids (read
+// against result.Paths), and a control's Summary severity is the strongest
+// contextual severity among its findings. False renders exactly what v3
+// always has.
+func buildProviderControlSummariesAndGroups(p provider.Provider, result *control.AnalysisResult, pc *configuration.PlumberConfig, linked bool, controlsFilterList, skipControlsList []string, v4 bool) ([]controlSummary, []findingGroup) {
 	findingsByControl := control.FindingsByControl(result.Findings)
 	entries := p.Controls(pc)
 	control.MarkSkippedByFilter(entries, controlsFilterList, skipControlsList)
@@ -607,7 +692,7 @@ func buildProviderControlSummariesAndGroups(p provider.Provider, result *control
 		if e.ControlName == "branchMustBeProtected" {
 			sortBranchProtectionFindingsForDisplay(findings)
 		}
-		codes, items := findingsToItems(findings)
+		codes, items := findingsToItems(findings, result.Paths, v4, defaultBranchOf(result))
 		dismissed := 0
 		for _, item := range items {
 			if item.Dismissed {
@@ -732,10 +817,22 @@ func writeOutputsWithProvider(p provider.Provider, result *control.AnalysisResul
 	if len(runs) > 0 {
 		reportResult = platformUnionResult(result, runs)
 	}
+	// The JSON report goes to --output when asked, and always to the run
+	// cache, where `plumber explain -a` reads it back. The cache never fails
+	// the run, and keeps nothing when the report could not be built.
+	params := jsonOutputParams{filePath: outputFile, provider: p.Name(), includeOnly: conf.ControlsFilter, skip: conf.SkipControlsFilter, noControls: conf.NoControls}
+	payload, jsonErr := buildAnalysisJSONReport(result, conf.PlumberConfig, s, params, runs, verdict)
+	if jsonErr == nil {
+		cacheReport(p.Name(), result.ProjectPath, payload)
+	} else {
+		logrus.Debugf("run cache: no report to keep: %v", jsonErr)
+	}
 	if outputFile != "" {
-		params := jsonOutputParams{filePath: outputFile, provider: p.Name(), includeOnly: conf.ControlsFilter, skip: conf.SkipControlsFilter, noControls: conf.NoControls}
-		if err := writeJSONToFile(result, conf.PlumberConfig, s, params, runs, verdict); err != nil {
-			return err
+		if jsonErr != nil {
+			return jsonErr
+		}
+		if err := os.WriteFile(outputFile, payload, 0o644); err != nil {
+			return fmt.Errorf("failed to create output file: %w", err)
 		}
 		fmt.Fprintf(os.Stderr, "Results written to: %s\n", outputFile)
 	}
@@ -874,7 +971,7 @@ func computeScoreResult(result *control.AnalysisResult, scoreMode bool, evaluate
 	if !scoreMode || evaluatedCount == 0 {
 		return nil
 	}
-	s := control.ComputePlumberScore(control.AggregateIssueCodeCounts(result))
+	s := control.ComputeScoreForProfile(control.ScoreProfile, result)
 	return &s
 }
 

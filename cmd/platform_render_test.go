@@ -62,8 +62,11 @@ func TestRenderPolicySections_OneSectionPerRun_SharedNamesCollapsed(t *testing.T
 	if strings.Index(out, "== Policy: A, B") > strings.Index(out, "== Policy: C") {
 		t.Fatal("sections must follow /context order")
 	}
-	assertContains(t, out, "Failed Controls (1)") // the debug-trace finding under A, B
-	assertContains(t, out, "Plumber Score")       // the per-policy banner
+	// The debug-trace finding under A, B is a privilege on no attack path:
+	// the contextual score lists it under the other findings, not Failed
+	// Controls.
+	assertContains(t, out, "Individual findings (1)")
+	assertContains(t, out, "Plumber Score") // the per-policy banner
 	if strings.Count(out, "Plumber Score") != 2 {
 		t.Fatalf("want one banner per run, got %d", strings.Count(out, "Plumber Score"))
 	}
@@ -224,8 +227,12 @@ func TestRenderPlatformVerdict_BlockingAndGlobal(t *testing.T) {
 	a := policyWithTree("A", "pipelineMustNotEnableDebugTrace", debugTraceControlConfig)
 	c := policyWithTree("Prod", "pipelineMustNotEnableDebugTrace", debugTraceControlConfigWide)
 	c.Enforcement = platform.EnforcementBlock
-	eighty := 80
-	c.MinPoints = &eighty
+	// Under the contextual score Prod's one debug-trace finding is a
+	// privilege on no attack path, an other finding at its registry price
+	// (Critical, 20: 80), so min_points 100 is what puts its own run below
+	// its threshold.
+	hundred := 100
+	c.MinPoints = &hundred
 	runs := evaluatePlatformPolicies(testProvider(t), confWithPolicies(t, a, c), debugTraceResult())
 	v := &platformVerdict{
 		Gate: &platformGate{Evaluated: true, Blocking: true, Policies: []platformGatePolicy{
@@ -240,11 +247,11 @@ func TestRenderPlatformVerdict_BlockingAndGlobal(t *testing.T) {
 
 	assertContains(t, out, "== Platform verdict")
 	// The exact columns of "  %-*s   %-6s   %s" at width 4 ("Prod"). Prod's
-	// own re-evaluated run scores 30 (one Critical, malus applied), which is
-	// the figure its section printed: the reason line explains the
-	// platform's verdict in the numbers the reader just saw.
+	// own re-evaluated run scores 80 (one other finding), which is the
+	// figure its section printed: the reason line explains the platform's
+	// verdict in the numbers the reader just saw.
 	assertContains(t, out, "  A      report   not blocking\n")
-	assertContains(t, out, "  Prod   block    BLOCKING (30 < min_points 80)\n")
+	assertContains(t, out, "  Prod   block    BLOCKING (80 < min_points 100)\n")
 	assertContains(t, out, "  Global score (platform): B  83 / 100 pts\n")
 	assertContains(t, out, "  Exit 1: Prod blocks\n")
 }

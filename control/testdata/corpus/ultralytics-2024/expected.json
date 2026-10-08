@@ -1,0 +1,22 @@
+{
+  "source": "https://github.com/ultralytics/ultralytics",
+  "commit": "21162bd870444550286983a601afbfb142f4c198",
+  "captured": "2026-10-03",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [{"name": "main", "protected": true}],
+  "note": "The December 2024 compromise: format.yml runs on pull_request_target and hands two secrets to ultralytics/actions@main, which checked out the fork head and interpolated the branch name in a shell inside the action (invisible from this repository, so no pr_target fact can be proven here); the poisoned cache then reached publish.yml, which publishes to PyPI. From the workflow files the spec gives a High path through the mutable action into the secrets-holding format job, and a path through the mutable PyPI publish action into the publishing job that reaches a Critical; no finding says either action is already bad and both owners are authorized, so each is only not pinned and capped at Medium, as is the Slack action into the publishing job. The setup-python pip cache that carried the poison is the key family setup-python-pip in the IR, and the cache-poisoning finding on the publishing job (that cache restored on a release trigger) is the entry of its own path into that job, named for the cache (pip cache of setup-python), the incident's own route. Its writers are the jobs entered by another path in a run whose cache the release run reads, whatever caches they declare (code there can save any key), never the restoring job itself: the pull_request_target format job alone, entered by ultralytics/actions@main. The cache path holds at the strongest ceiling among the paths entering its writers, and the only one is that mutable action, only not pinned and capped at Medium (the checkout of the fork head happens inside the action, invisible from this repository): the cache path reaches a Critical and holds at Medium. Each of the three entries into the publishing job is one path, whatever it publishes or deploys. Hand count: four Medium paths 4 x 6 = 24, no other finding, so 100 - 24 = 76: B.",
+  "expect": {
+    "maxTier": "medium",
+    "paths": [
+      {"entryKind": "mutable_dependency", "tier": "medium", "job": "format/format", "subjectContains": "ultralytics/actions@main", "reachKind": "secrets", "state": "proven",
+       "sentenceContains": ["`ultralytics/actions@main`", "`format/format`", "`OPENAI_API_KEY`", "`_GITHUB_TOKEN`"]},
+      {"entryKind": "mutable_dependency", "tier": "medium", "job": "publish/publish", "subjectContains": "pypa/gh-action-pypi-publish@release/v1", "reachKind": "impact:publishes", "state": "proven",
+       "sentenceContains": ["`pypa/gh-action-pypi-publish@release/v1`", "`publish/publish`", "publishes the package", "capped at Medium"]},
+      {"entryKind": "poisoned_cache", "tier": "medium", "job": "publish/publish", "subjectContains": "pip cache of setup-python", "reachKind": "impact:publishes", "state": "proven",
+       "sentenceContains": ["A run that is not trusted can write the pip cache of setup-python that `publish/publish` restores", "`OPENAI_API_KEY`", "publishes the package"]}
+    ],
+    "letter": "B"
+  }
+}

@@ -45,8 +45,8 @@ type CatalogControl struct {
 	// sibling map so the IssueCodes array keeps its shape for consumers.
 	IssueCodeRoles map[string]string `json:"issueCodeRoles"`
 	// IssueCodeEntryKinds maps each entry-role code in IssueCodes to the
-	// situation fact it anchors to (fork_pr, pr_target, untrusted_expression,
-	// mutable_dependency, unprotected_push). Codes with another role are
+	// situation fact it anchors to (pr_target, untrusted_expression,
+	// mutable_dependency, poisoned_cache). Codes with another role are
 	// absent: a sibling map, same shape rule as IssueCodeRoles.
 	IssueCodeEntryKinds map[string]string `json:"issueCodeEntryKinds"`
 }

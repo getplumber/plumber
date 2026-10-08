@@ -314,8 +314,7 @@ func scoreWarn(msg string) {
 
 // printScorePushSkippedForPlatform tells the operator that their explicit
 // --score-push was preempted by --platform, so an explicitly requested badge
-// push is never dropped without a trace. Unlike maybeScoreNudge, this is NOT
-// gated by --print/--silent: the global "the skip is never silent" rule for
+// push is never dropped without a trace. It is NOT gated by --print/--silent: the global "the skip is never silent" rule for
 // --platform vs --score-push is a hard requirement, not a cosmetic one.
 func printScorePushSkippedForPlatform(target string) {
 	fmt.Fprintf(os.Stderr, "ℹ️  --score-push skipped: results are being pushed to the platform at %s instead.\n", target)
@@ -325,11 +324,10 @@ func printScorePushSkippedForPlatform(target string) {
 // once. The two entry points — runWithProvider (GitLab) and
 // presentResultWithProvider (GitHub) — are mutually exclusive today, but a
 // future refactor that routes a provider through both must not POST the badge
-// (or print the nudge) twice. Reset in tests via scorePublishOnce = sync.Once{}.
+// twice. Reset in tests via scorePublishOnce = sync.Once{}.
 var scorePublishOnce sync.Once
 
-// handleScorePublishing publishes the score when push is enabled, otherwise
-// nudges the user (interactive local runs only) to wire it into CI. payload is
+// handleScorePublishing publishes the score when push is enabled. payload is
 // the same analysis JSON bytes buildAnalysisJSONReport produced for --output,
 // built once by the caller and shared with the platform push, so the badge
 // record and the file on disk never diverge. Never fails the run, and runs at
@@ -341,17 +339,13 @@ func handleScorePublishing(p providerPkg.Provider, conf *configuration.Configura
 func handleScorePublishingOnce(p providerPkg.Provider, conf *configuration.Configuration, result *control.AnalysisResult, payload []byte) {
 	if push, _ := effectiveScorePush(); !push {
 		// A push was explicitly requested (--score-push) but --platform preempted
-		// it: say so instead of falling through to the "you should turn on
-		// score-push" nudge, which would be both wrong (it's already on) and,
-		// under --silent, would print nothing at all — silently dropping an
+		// it: say so, even under --silent, rather than silently dropping an
 		// explicit request.
 		if pushScore {
 			if platformPush, target := effectivePlatformPush(); platformPush {
 				printScorePushSkippedForPlatform(target)
-				return
 			}
 		}
-		maybeScoreNudge()
 		return
 	}
 	// Skip a degraded run: an incomplete or rate-limited collection must not
@@ -369,16 +363,4 @@ func handleScorePublishingOnce(p providerPkg.Provider, conf *configuration.Confi
 		return
 	}
 	maybePushScore(p, conf, payload, result.DefaultBranch)
-}
-
-// maybeScoreNudge prints an invitation to publish a live badge whenever text
-// output is on — including in CI — so a run that isn't already publishing a
-// score still points the user at how to turn it on. Suppressed only when
-// terminal output is off (e.g. --silent / JSON-only) so it never spams
-// machine-readable output.
-func maybeScoreNudge() {
-	if !printOutput {
-		return
-	}
-	fmt.Fprintln(os.Stderr, "💡 Display a live Plumber Score badge for this repo: turn on score-push in your CI pipeline. Learn more: https://getplumber.io/docs/plumber-score")
 }

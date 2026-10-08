@@ -1,0 +1,22 @@
+{
+  "source": "reconstruction of a GitLab project testing on node:latest with a pinned release",
+  "commit": "",
+  "captured": "2026-10-03",
+  "group": "clean",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [{"name": "main", "protected": true}],
+  "settingsVariables": [
+    {"name": "NPM_TOKEN", "type": "env_var", "environment": "npm", "protected": true, "masked": true}
+  ],
+  "note": "The spec's own clean example (section 7, group b): the tests run on node:latest, a mutable image, in a job no secret is scoped to (NPM_TOKEN is scoped to the npm environment, which only the release job uses); the release runs on tags with a digest-pinned image. Settings of a third-party project cannot be read, so the facts are reproduced. A mutable image into a job holding nothing is code execution in the runner: High, held at Medium by the dependency cap since the image is only not pinned, and the only path is that one image (the forbidden tag and the missing digest are two findings on one subject, so they anchor one path together). Hand count: one Medium path 6, no other finding, so 100 - 6 = 94: A.",
+  "expect": {
+    "maxTier": "medium",
+    "paths": [
+      {"entryKind": "mutable_dependency", "tier": "medium", "job": "unit-tests", "subjectContains": "node:latest", "reachKind": "execution",
+       "sentenceContains": ["node:latest`", "`unit-tests`", "holds no secret"], "sentenceOmits": ["NPM_TOKEN"]}
+    ],
+    "noPathAbove": "high",
+    "letterAtLeast": "B"
+  }
+}

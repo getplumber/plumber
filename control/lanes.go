@@ -1,6 +1,8 @@
 package control
 
 import (
+	"strings"
+
 	"github.com/getplumber/plumber/configuration"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	"github.com/getplumber/plumber/internal/ir"
@@ -770,7 +772,8 @@ func branchListLostOnTheWire(r *AnalysisResult) bool {
 // under B, not merely an imprecise label.
 //
 // Nothing is re-collected. The IR is the one the run already built, so this
-// costs a rule evaluation and no git-host traffic. A run with no retained
+// costs a rule evaluation (two under scoring-v4, which also re-evaluates
+// the situation facts) and no git-host traffic. A run with no retained
 // pipeline (the GitHub path, or a limited analysis that never built one)
 // returns ok=false and the caller keeps the run's own verdict rather than
 // inventing an empty one.
@@ -887,11 +890,14 @@ func ReEvaluateForConfig(
 		MarkDismissed(scopedResult.Findings, conf.PlatformRun.Context.DismissedIssues)
 	}
 
-	// codeCountsForFindings (control/scoring.go) counts one per distinct
-	// identity per code (row 41), the same rule AggregateIssueCodeCounts
-	// applies to the run-level score, so a policy's own score and the
-	// platform's recompute over the same findings never disagree.
-	counts := codeCountsForFindings(scopedResult.Findings)
+	// ComputeScoreForProfile runs scoring-v3's per-distinct-identity-per-code
+	// count (the same rule AggregateIssueCodeCounts applies to the
+	// run-level score, so a policy's own score and the platform's recompute
+	// over the same findings never disagree) or scoring-v4's attack-path
+	// formula, whichever ScoreProfile names; both read scopedResult.Findings,
+	// so the per-policy score and the run's score are always the same
+	// formula.
+	//
 	// The whole scoped result is returned, not just its findings. The marks
 	// computed just above are what StatusFor reads to report a control as
 	// not_evaluable, and DropNotEvaluableFindings has already removed the
@@ -899,7 +905,47 @@ func ReEvaluateForConfig(
 	// an empty list and the RUN's marks, so a control this policy enables
 	// over a dead lane was pushed as `pass` - the drop making it look clean
 	// rather than making it honest.
-	return &scopedResult, ComputePlumberScore(counts), true
+	//
+	// Under scoring-v4 a policy is a run of its own: its score is the full
+	// v4 score over its own findings (paths, situation facts, best fix),
+	// and its findings carry the story of THOSE paths. The paths the copy
+	// inherited from the run are the local configuration's, so they are
+	// dropped before scoring rather than read by anything here.
+	scopedResult.Paths = nil
+	// The situation the copy inherited is the run's too, evaluated against
+	// the local configuration, while the facts read the same config keys as
+	// the controls (the publish actions and scripts): a policy's findings
+	// priced against another config's facts miss an impact their own facts
+	// prove, or count one they do not. Re-evaluated from the same IR under this
+	// policy's config: one more Rego evaluation per policy, no collection.
+	// The run's own situation warnings are dropped first so this policy's
+	// v3 fallback follows its own evaluation, not the run's.
+	if ScoreProfile == "v4" {
+		scopedResult.Warnings = withoutSituationWarnings(result.Warnings)
+		attachSituation(l.WithField("scope", "per-policy"), &scopedConf, provider, pipeline, &scopedResult)
+	}
+	score = ComputeScoreForProfile(ScoreProfile, &scopedResult)
+	// Gated on the computed score, never on the bare ScoreProfile: a v4
+	// request that fell back to v3 leaves every finding as the registry and
+	// the engine produced it.
+	if score.ProfileID == PlumberScoreProfileIDV4 {
+		AnnotateFindingsV4(&scopedResult)
+	}
+	return &scopedResult, score, true
+}
+
+// withoutSituationWarnings returns a fresh copy of warnings without the two
+// a situation evaluation decides ("situation facts unavailable: ..." and
+// the v3 fallback notice), so a per-policy result can record its own.
+func withoutSituationWarnings(warnings []string) []string {
+	var out []string
+	for _, w := range warnings {
+		if strings.HasPrefix(w, "situation facts unavailable:") || w == contextualScoreUnavailableWarning {
+			continue
+		}
+		out = append(out, w)
+	}
+	return out
 }
 
 // evaluatedPipeline returns the normalized IR this run built, from whichever

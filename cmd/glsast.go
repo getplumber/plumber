@@ -161,9 +161,18 @@ func buildGLSAST(findings []opaengine.Finding, provider string) glsastReport {
 		if f.Code == "" {
 			continue
 		}
+		// Same gate as buildSARIF (cmd/sarif.go): a finding carrying
+		// Data["baseSeverity"] was annotated by AnnotateFindingsV4 under
+		// scoring-v4, and f.Severity now holds the contextual value, which
+		// wins. Without that key (v3, or a v4 request that fell back to
+		// v3), the codes registry is the source of truth exactly as before,
+		// so the report stays byte-identical to pre-v4 output.
 		severity := f.Severity
 		if info := control.LookupCode(control.ErrorCode(f.Code)); info != nil {
 			severity = string(info.Severity)
+		}
+		if _, ok := f.Data["baseSeverity"]; ok {
+			severity = f.Severity
 		}
 		v := glsastVuln{
 			ID:          glsastID(f),
@@ -223,6 +232,17 @@ func buildGLSAST(findings []opaengine.Finding, provider string) glsastReport {
 				v.Description = v.Description + "\n\nFinding: " + f.Message
 			} else {
 				v.Description = f.Message
+			}
+		}
+		// Under scoring-v4 an anchor finding carries its path's sentence
+		// (Data["explanation"], written by AnnotateFindingsV4 alone), and
+		// spec section 4 appends it here as SARIF appends it to the
+		// message. Absent under v3, so a v3 report is unchanged.
+		if expl, ok := f.Data["explanation"].(string); ok && expl != "" {
+			if v.Description != "" {
+				v.Description += "\n\n" + expl
+			} else {
+				v.Description = expl
 			}
 		}
 		vulns = append(vulns, v)

@@ -1,0 +1,15 @@
+{
+  "source": "https://github.com/joypad-ai/joypad-os",
+  "commit": "5c4b8e553715455f43bdd0400b7d11eadece2de9",
+  "captured": "2026-10-03",
+  "group": "clean",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [{"name": "main", "protected": true}],
+  "note": "A documentation site built and deployed on push to the protected main: mkdocs build, then GitHub's own configure, upload and deploy pages actions, with contents: read plus the pages and id-token writes the deploy action needs. Only GitHub-owned actions run, which the shipped configuration trusts, the branch is protected, and nothing else enters the job, so no path is anchored. Had a third-party action built the site, its path would reach the github-pages environment (a deploys impact) and the id-token and pages write tokens: Critical. The id-token write alone is a privilege, never a signs_or_releases impact, since no signing or release step runs.",
+  "expect": {
+    "maxTier": "none",
+    "noPathAbove": "medium",
+    "letterAtLeast": "B"
+  }
+}

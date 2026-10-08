@@ -1,0 +1,23 @@
+{
+  "source": "reconstruction of a GitLab project accepting fork merge requests with every variable protected",
+  "commit": "",
+  "captured": "2026-10-03",
+  "group": "clean",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [{"name": "main", "protected": true}],
+  "settingsVariables": [
+    {"name": "PYPI_TOKEN", "type": "env_var", "environment": "*", "protected": true, "masked": true},
+    {"name": "CODECOV_TOKEN", "type": "env_var", "environment": "*", "protected": true, "masked": true}
+  ],
+  "note": "Settings variables of a third-party project cannot be read, so this reproduces the shape: fork merge requests run the tests on python:3.12-slim (a tag, no digest), every variable is protected, and the release runs on tags with a digest-pinned image. GitLab exports protected variables only to protected branches and tags, so the merge-request-only test job holds nothing and its mutable image is code execution in the runner: High, and the image is only not pinned, so the dependency cap holds it at Medium. Hand count: one Medium path 6, no other finding, so 100 - 6 = 94: A. The release holds PYPI_TOKEN and publishes, but nothing mutable enters it.",
+  "expect": {
+    "maxTier": "medium",
+    "paths": [
+      {"entryKind": "mutable_dependency", "tier": "medium", "job": "test", "subjectContains": "python:3.12-slim", "reachKind": "execution",
+       "sentenceContains": ["`test`", "holds no secret"], "sentenceOmits": ["PYPI_TOKEN", "CODECOV_TOKEN"]}
+    ],
+    "noPathAbove": "high",
+    "letterAtLeast": "B"
+  }
+}

@@ -1,0 +1,21 @@
+stages:
+- build
+- deploy
+build:
+  stage: build
+  image: golang:1.22.5-alpine3.20@sha256:8c9183f715b0b4eca05b8b3dbf59766aaedb41ec07477b132ee2891ac0110a07
+  script:
+  - go build -o app ./cmd/server
+  artifacts:
+    paths:
+    - app
+deploy:
+  stage: deploy
+  image: alpine/k8s:1.29.2@sha256:7f0d3a0e5a7b1c2d3e4f5a6b7c8d9e0f1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d
+  environment: production
+  needs:
+  - build
+  rules:
+  - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+  script:
+  - kubectl --kubeconfig "$KUBE_CONFIG" apply -f k8s/

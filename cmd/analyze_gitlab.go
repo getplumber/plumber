@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -82,7 +83,16 @@ var (
 	// surface is a property of the whole flag set, not of this flag.
 	noControls   bool
 	ciConfigPath string
+	// scoreProfile selects the scoring formula: "v4" (attack paths,
+	// contextual severity, explanations; the default) or "v3" (the previous
+	// per-code severities). Case-insensitive, trimmed; validated by
+	// validateScoreProfile.
+	scoreProfile string
 )
+
+// defaultScoreProfile is the --score-profile default: the contextual
+// score (v4) in every mode; v3 selects the previous formula.
+const defaultScoreProfile = "v4"
 
 const (
 	errConfigFileNotFound = "configuration file not found: %w. Create one with `plumber config generate` or `plumber config init`"
@@ -122,6 +132,10 @@ GitLab (gitlab.com or self-hosted remote, or a GitLab TARGET / --gitlab-url):
   configuration and project settings from the platform, so a CI job can run with
   no GitLab token at all.
 
+Every run keeps its JSON report in the user cache directory, under
+plumber/runs/<provider>/<owner>/<repo>.json (plumber/runs/local/<hash>.json
+without a project), where plumber explain -a N reads an attack path back.
+
 Flags (auto-detected from git remote if not specified; TARGET sets them for you):
   --gitlab-url    GitLab instance URL (auto-detected from git remote)
   --github-url    GitHub Enterprise Server API host (empty = api.github.com)
@@ -144,6 +158,7 @@ Optional flags:
   --score-point      Same as --score plus full points breakdown in stdout and MR comment (optional; wins if both set)
   --score-push       Publish this repo's Plumber Score to the hosted badge service (CI only; a local run is a no-op) (optional)
   --score-endpoint   Score service base URL (default https://score.getplumber.io); override only for a self-hosted score service (optional)
+  --score-profile    Scoring formula: v4 (attack paths, default) or v3 (per-code severities)
   --controls         Run only listed controls (comma-separated)
   --skip-controls    Skip listed controls (comma-separated)
   --no-controls      Run no control at all: collect the pipeline, write the requested inventory
@@ -238,6 +253,7 @@ func init() {
 	analyzeCmd.Flags().BoolVar(&noControls, "no-controls", false, "Run no controls at all: collect the pipeline and write the requested inventory artifacts (PBOM, JSON, CSV, OCSF), skip evaluation, withhold the score, and never fail the gate")
 	analyzeCmd.Flags().BoolVar(&failWarnings, "fail-warnings", false, "Treat configuration warnings as errors (exit 2)")
 	analyzeCmd.Flags().StringVar(&ciConfigPath, "ci-config-path", "", "Override the CI configuration file path (default: auto-detected from GitLab project settings, usually .gitlab-ci.yml)")
+	analyzeCmd.Flags().StringVar(&scoreProfile, "score-profile", defaultScoreProfile, "Scoring formula: v4 (attack paths, default) or v3 (per-code severities)")
 
 	for flag, envKey := range envKeys {
 		if f := analyzeCmd.Flags().Lookup(flag); f != nil {
@@ -295,6 +311,9 @@ func buildRunHeaderRows(providerName string, result *control.AnalysisResult, con
 		platform += " · " + conf.GithubAPIHost
 	}
 	rows = append(rows, headerRow{"Platform", platform})
+	if providerName == "github" {
+		rows = append(rows, headerRow{"Auth", githubAuthValue(conf.GithubAPIHost)})
+	}
 
 	// In platform mode the controls, their configuration and the verdict all
 	// come from the platform's policies (spec s2). Naming a local file (or
@@ -640,6 +659,7 @@ var envKeys = map[string]string{
 	"fail-warnings":       "PLUMBER_ANALYZE_FAIL_WARNINGS",
 	"ci-config-path":      "PLUMBER_ANALYZE_CI_CONFIG_PATH",
 	"verbose":             "PLUMBER_ANALYZE_VERBOSE",
+	"score-profile":       "PLUMBER_ANALYZE_SCORE_PROFILE",
 }
 
 func envStringFallback(cmd *cobra.Command, flag, envKey string, dest *string) error {
@@ -707,6 +727,33 @@ func resolveGateFlags(cmd *cobra.Command) error {
 	return nil
 }
 
+// validateScoreProfile refuses anything but "v3" or "v4", case-insensitive
+// and trimmed; everything downstream (control.ScoreProfile, the formula
+// switch in control.ComputeScoreForProfile) trusts this already ran.
+func validateScoreProfile(p string) error {
+	switch strings.ToLower(strings.TrimSpace(p)) {
+	case "v3", "v4":
+		return nil
+	}
+	return fmt.Errorf("--score-profile must be v3 or v4 (got %q)", p)
+}
+
+// scoreProfileV4 reports whether score was actually priced under the
+// contextual (attack-path) formula, not merely whether --score-profile v4
+// was requested: control.ComputeScoreForProfile falls back to plain v3
+// pricing when the situation facts never evaluated (invariant I3, never a
+// fake verdict; control/score_profile.go's situationUnavailable), and the
+// fallback's ProfileID stays "scoring-v3" even though control.ScoreProfile
+// itself still reads "v4". Gating every v4-only render block on the bare
+// flag would show that fallback's real v3-priced findings under this
+// run's v4 severity defaults (Low for everything but a gate code),
+// understating a finding the banner's own v3 score prices at its full
+// registered severity. Every render decision in this file and in
+// render_details.go reads this, never control.ScoreProfile directly.
+func scoreProfileV4(score *control.PlumberScoreResult) bool {
+	return score != nil && score.ProfileID == control.PlumberScoreProfileIDV4
+}
+
 func envFloat64Fallback(cmd *cobra.Command, flag, envKey string, dest *float64) error {
 	if !cmd.Flags().Changed(flag) {
 		if v := os.Getenv(envKey); v != "" {
@@ -721,6 +768,7 @@ func envFloat64Fallback(cmd *cobra.Command, flag, envKey string, dest *float64) 
 }
 
 func runAnalyze(cmd *cobra.Command, args []string) error {
+	useReportColor(detectTermCaps().Color)
 	if err := envBoolFallback(cmd, "verbose", envKeys["verbose"], &verbose); err != nil {
 		return err
 	} else if verbose {
@@ -760,6 +808,9 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 		func() error { return envStringFallback(cmd, "skip-controls", envKeys["skip-controls"], &skipControls) },
 		func() error {
 			return envStringFallback(cmd, "ci-config-path", envKeys["ci-config-path"], &ciConfigPath)
+		},
+		func() error {
+			return envStringFallback(cmd, "score-profile", envKeys["score-profile"], &scoreProfile)
 		},
 		func() error { return envFloat64Fallback(cmd, "threshold", envKeys["threshold"], &threshold) },
 		func() error { return envStringFallback(cmd, "min-score", envKeys["min-score"], &minScore) },
@@ -804,6 +855,11 @@ func runAnalyze(cmd *cobra.Command, args []string) error {
 	if err := resolveGateFlags(cmd); err != nil {
 		return err
 	}
+
+	if err := validateScoreProfile(scoreProfile); err != nil {
+		return err
+	}
+	control.ScoreProfile = strings.ToLower(strings.TrimSpace(scoreProfile))
 
 	controlsFilterList, skipControlsList, err := parseControlsFilters()
 	if err != nil {
@@ -1015,6 +1071,13 @@ func buildAnalysisJSONReport(result *control.AnalysisResult, pc *configuration.P
 	// local grade could still reach the file if that ever changed.
 	if scoreMode && score != nil && !s.platformMode {
 		output["plumberScore"] = score
+		// Each path's block as the terminal prints it, its findings
+		// included, so `plumber explain -a` reads a report back without the
+		// run: the block's words come from facts the paths do not carry.
+		// The score service has no use for them.
+		if len(score.Paths) > 0 && !p.forScorePush {
+			output["pathBlocks"] = jsonPathBlocks(score.Paths, result.Findings, defaultBranchOf(result))
+		}
 	}
 	// Platform mode replaces both of the above (spec s5). `passed` is the
 	// platform's gate verdict, the only gate there is; `plumberScore` is the
@@ -1243,18 +1306,6 @@ func platformPolicyReportEntries(runs []policyRun) []map[string]any {
 	return out
 }
 
-// writeJSONToFile builds the analysis JSON report and writes it to p.filePath.
-func writeJSONToFile(result *control.AnalysisResult, pc *configuration.PlumberConfig, s complianceSummary, p jsonOutputParams, runs []policyRun, verdict *platformVerdict) error {
-	payload, err := buildAnalysisJSONReport(result, pc, s, p, runs, verdict)
-	if err != nil {
-		return err
-	}
-	if err := os.WriteFile(p.filePath, payload, 0o644); err != nil {
-		return fmt.Errorf("failed to create output file: %w", err)
-	}
-	return nil
-}
-
 // partialControlEntries lists controls whose evaluation was partial —
 // some inputs reachable, others not. CI gates parse this to decide
 // whether to fail loud ("we never actually checked your protection
@@ -1283,7 +1334,7 @@ var analysisJSONLegacyKeyHead = []string{
 	"projectPath", "projectId", "defaultBranch",
 	"ciConfigSource", "ciValid", "ciMissing", "ciErrors",
 	"pipelineOriginMetrics", "pipelineImageMetrics",
-	"minPoints", "minScore", "threshold", "passed", "plumberScore",
+	"minPoints", "minScore", "threshold", "passed", "plumberScore", "pathBlocks",
 	// platformMode and policies are the platform-mode block (spec s5); both
 	// are absent from every other run, so these entries change no standalone
 	// report.
@@ -1406,17 +1457,11 @@ func marshalLegacyAnalysisJSONObject(output map[string]any) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// ANSI color codes
-const (
-	colorReset       = "\033[0m"
-	colorRed         = "\033[31m"
-	colorGreen       = "\033[32m"
-	colorYellow      = "\033[33m"
-	colorBlue        = "\033[34m"
-	colorCyan        = "\033[36m"
-	colorGreenBright = "\033[92m"
-	colorBold        = "\033[1m"
-	colorDim         = "\033[2m"
+// ANSI color codes, set by useReportColor: empty when the report prints
+// without colour.
+var (
+	colorReset, colorRed, colorGreen, colorYellow, colorBlue, colorCyan string
+	colorGreenBright, colorOrange, colorBold, colorDim                  string
 )
 
 func severityTag(code control.ErrorCode) string {
@@ -1489,7 +1534,7 @@ func scoreLetterColor(letter string) string {
 	case "C":
 		return colorYellow
 	case "D":
-		return "\033[38;5;208m" // orange
+		return colorOrange
 	default:
 		return colorRed
 	}
@@ -1522,7 +1567,7 @@ func scoreBar(finalPoints float64, width int) string {
 	return full + track
 }
 
-// jsonOutputParams bundles the non-result arguments for writeJSONToFile.
+// jsonOutputParams bundles the non-result arguments for buildAnalysisJSONReport.
 type jsonOutputParams struct {
 	filePath    string
 	provider    string
@@ -1734,26 +1779,19 @@ func sortControlSummariesForIssuesTable(s []controlSummary) {
 	})
 }
 
-// printBanner renders the Plumber ASCII-art banner followed by the
-// tagline and community link. The banner keeps Plumber's signature
-// green color for brand recognition.
+// printBanner renders the Plumber wordmark followed by the
+// tagline and community link.
 func printBanner() {
-	asciiArt := lipgloss.NewStyle().Foreground(colPass).Bold(true).Render(
-		"  ██████╗ ██╗     ██╗   ██╗ ███╗   ███╗██████╗ ███████╗██████╗ \n" +
-			"  ██╔══██╗██║     ██║   ██║ ████╗ ████║██╔══██╗██╔════╝██╔══██╗\n" +
-			"  ██████╔╝██║     ██║   ██║ ██╔████╔██║██████╔╝█████╗  ██████╔╝\n" +
-			"  ██╔═══╝ ██║     ██║   ██║ ██║╚██╔╝██║██╔══██╗██╔══╝  ██╔══██╗\n" +
-			"  ██║     ███████╗╚██████╔╝ ██║ ╚═╝ ██║██████╔╝███████╗██║  ██║\n" +
-			"  ╚═╝     ╚══════╝ ╚═════╝  ╚═╝     ╚═╝╚═════╝ ╚══════╝╚═╝  ╚═╝",
-	)
 	fmt.Println()
-	fmt.Println(asciiArt)
+	for _, line := range renderBanner(detectTermCaps()) {
+		fmt.Println(line)
+	}
 	fmt.Printf("  %s  %s\n",
 		styleTitle.Render("CI/CD Security Scanner"),
 		styleMuted.Render("v"+Version),
 	)
 	fmt.Printf("  %s %s\n\n",
-		styleMuted.Render("Join our community:"),
+		styleMuted.Render("Give your feedback:"),
 		styleAccent.Render("https://getplumber.io/discord"),
 	)
 }
@@ -1793,21 +1831,45 @@ func printNoControlsWarning(result *control.AnalysisResult) {
 }
 
 // findingsToItems converts a slice of OPA findings into the parallel
-// (codes, items) slices used by the table and group renderers.
-func findingsToItems(findings []opaengine.Finding) ([]control.ErrorCode, []detailedFinding) {
+// (codes, items) slices used by the table and group renderers. v4 is
+// scoreProfileV4(score) read at the call site: when true, every item also
+// carries the contextual severity, role line, path ids and role on each of
+// those paths control/explain.go derives from paths
+// (control.ContextualSeverity, control.FindingLine, control.PathIDsFor,
+// control.RoleOnPath). Under v3 (v4 false) these
+// fields stay at their zero value and the rest of this function is
+// unchanged, so a v3 run renders byte-identical to before this.
+func findingsToItems(findings []opaengine.Finding, paths []control.AttackPath, v4 bool, defaultBranch string) ([]control.ErrorCode, []detailedFinding) {
 	codes := make([]control.ErrorCode, 0, len(findings))
 	items := make([]detailedFinding, 0, len(findings))
 	for _, f := range findings {
 		code := control.ErrorCode(f.Code)
 		codes = append(codes, code)
-		items = append(items, detailedFinding{
+		item := detailedFinding{
 			Code:        code,
 			Message:     f.Message,
 			DocURL:      code.DocURL(),
 			Location:    formatFindingLocation(f),
+			Job:         f.Job,
+			File:        f.File,
 			DetailLines: detailLinesFromFinding(f),
 			Dismissed:   f.Dismissed,
-		})
+		}
+		if v4 {
+			item.ContextualSeverity = string(control.ContextualSeverity(f, paths, defaultBranch))
+			item.Role = control.FindingLine(f, paths)
+			item.PathIDs = control.PathIDsFor(f, paths)
+			for _, p := range paths {
+				if !slices.Contains(item.PathIDs, p.ID) {
+					continue
+				}
+				if item.RoleOnPath == nil {
+					item.RoleOnPath = map[string]string{}
+				}
+				item.RoleOnPath[p.ID] = control.RoleOnPath(f, p)
+			}
+		}
+		items = append(items, item)
 	}
 	return codes, items
 }
@@ -1962,7 +2024,7 @@ func printScoreBreakdown(score *control.PlumberScoreResult) {
 		colorGreen, colorReset, colorDim, colorReset,
 		colorGreenBright, colorReset, colorDim, colorReset,
 		colorYellow, colorReset, colorDim, colorReset,
-		"\033[38;5;208m", colorReset, colorDim, colorReset,
+		colorOrange, colorReset, colorDim, colorReset,
 		colorRed, colorReset)
 	fmt.Println()
 }
@@ -2041,7 +2103,28 @@ func printScoreWithheld(headline, hint string) {
 	fmt.Println()
 }
 
+// scoreWithheld reports whether the run shows no score at all: score mode
+// is off (--no-controls), collection degraded, or nothing was evaluated
+// (a nil score). It is the banner's one condition, and every block that
+// states the score in other words (the scoring-v4 Situation, attack paths
+// and Points) reads it too, so none of them can show what the banner
+// withholds.
+func scoreWithheld(score *control.PlumberScoreResult, scoreMode, degraded bool) bool {
+	return !scoreMode || degraded || score == nil
+}
+
 func printSummaryScoreBanner(score *control.PlumberScoreResult, scoreMode, degraded bool) {
+	if scoreWithheld(score, scoreMode, degraded) {
+		printScoreWithheldNotice(scoreMode, degraded)
+		return
+	}
+	printScoreBadge(score)
+}
+
+// printScoreWithheldNotice says why printSummaryScoreBanner shows no score:
+// nothing under --no-controls (the header already says so), the degraded
+// notice, or the nothing-evaluated one.
+func printScoreWithheldNotice(scoreMode, degraded bool) {
 	if !scoreMode {
 		return
 	}
@@ -2050,12 +2133,15 @@ func printSummaryScoreBanner(score *control.PlumberScoreResult, scoreMode, degra
 	// the letter grade would be meaningless (an empty pipeline reads as a clean
 	// A). Withhold the badge and say so plainly (#220).
 	//
-	// Checked before the generic nil-score case below: a degraded run also
-	// evaluates nothing trustworthy (every content control reports
-	// StatusError, so EvaluatedControlCount is zero and score is nil too),
-	// and the degraded wording is the accurate one here ("collection
-	// failed"), not the generic "nothing was checked" (review finding
-	// 6c38fbc735473281, platform decision row 45).
+	// Checked before the generic nil-score case below, and not because a
+	// degraded run has a nil score: a content control that reports a
+	// finding still fails (StatusFor returns StatusFailed on findingCount
+	// alone, before it ever looks at the degraded reasons), so
+	// EvaluatedControlCount, and the score with it, can be nonzero on a
+	// degraded run. The ordering matters anyway, because degraded has its
+	// own accurate wording ("collection failed"), not the generic "nothing
+	// was checked" one below (review finding 6c38fbc735473281, platform
+	// decision row 45).
 	if degraded {
 		printScoreWithheld(
 			"Score withheld — analysis ran on incomplete data",
@@ -2072,25 +2158,25 @@ func printSummaryScoreBanner(score *control.PlumberScoreResult, scoreMode, degra
 	// deduction-score a perfect 100/A, which reads as a clean pass rather
 	// than as nothing having been checked. Say so in the same withheld
 	// wording family as the degraded case above (platform decision row 45).
-	if score == nil {
-		printScoreWithheld(
-			"Score withheld: no control was evaluated",
-			"Nothing was checked, so this run makes no claim about the pipeline.",
-		)
-		return
-	}
+	printScoreWithheld(
+		"Score withheld: no control was evaluated",
+		"Nothing was checked, so this run makes no claim about the pipeline.",
+	)
+}
 
+// printScoreBadge prints the shown score: the block-letter badge, the
+// points, the bar and the severity chips.
+func printScoreBadge(score *control.PlumberScoreResult) {
 	letterColor := scoreLetterLipglossColor(score.Score)
 
-	// Block-letter ASCII badge — six lines tall, matches the project
-	// banner lettering style.
+	// Block-letter badge, six lines tall, the banner's lettering.
 	badge := scoreLetterASCIIArt(score.Score)
 
 	letterStyle := lipgloss.NewStyle().Foreground(letterColor).Bold(true)
 	pointsLine := letterStyle.Render(fmt.Sprintf("%.0f / 100 pts", score.FinalPoints))
 	bar := scoreBar(score.FinalPoints, 28)
 	meaning := ""
-	if m := control.ScoreLetterMeaning(score.Score); m != "" {
+	if m := control.ScoreLetterMeaningFor(score.ProfileID, score.Score, score.CriticalPaths); m != "" {
 		meaning = styleMuted.Render(m)
 	}
 	chips := fmt.Sprintf("%s   %s   %s   %s",
@@ -2125,10 +2211,16 @@ func printSummaryScoreBanner(score *control.PlumberScoreResult, scoreMode, degra
 	fmt.Println(indentBlock(body, " "))
 
 	if score.CriticalMalusApplied {
+		// Under scoring-v4 the cap follows a Critical attack path, not a
+		// Critical issue, so the line says so; v3 keeps its wording.
+		remains := "any Critical remains"
+		if score.ProfileID == control.PlumberScoreProfileIDV4 {
+			remains = "a Critical attack path remains"
+		}
 		fmt.Println()
 		fmt.Printf(" %s  %s\n",
 			styleFail.Render("▲ Critical malus applied"),
-			styleMuted.Render(fmt.Sprintf("(final points capped at %.0f while any Critical remains)", score.CriticalMalusMax)))
+			styleMuted.Render(fmt.Sprintf("(final points capped at %.0f while %s)", score.CriticalMalusMax, remains)))
 	}
 
 	fmt.Println()

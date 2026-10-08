@@ -12,7 +12,7 @@ const (
 )
 
 // An entry-role code anchors to a situation fact of one EntryKind; the type
-// and its five values are declared with the facts in situation.go.
+// and its six values are declared with the facts in situation.go.
 
 // RoleForCode returns the code's role; an unknown code is hygiene, so it can
 // never anchor a path or amplify one.

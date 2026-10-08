@@ -1,0 +1,95 @@
+on: [push, pull_request]
+name: ci
+jobs:
+  Test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: setup Go 1.12
+        uses: actions/setup-go@v1
+        with:
+          go-version: 1.12
+        id: go
+
+      - name: check out
+        uses: actions/checkout@master
+
+      - name: kind create a k8s cluster
+        run: |
+          kind create cluster
+
+      # - name: lint
+      #   run: |
+      #     make lint
+
+      - name: unit test
+        env:
+          DOCKER_PASSWORD: ${{ secrets.DOCKER_PASSWORD }}
+          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
+          CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
+        run: |
+          # export KUBECONFIG="$(kind get kubeconfig-path)"
+          make unit-test
+          bash <(curl -s https://codecov.io/bash) -t ${CODECOV_TOKEN}
+
+      - name: build fx
+        run: |
+          make build
+
+      - name: test fx-docker
+        run: |
+          cd ./contrib/docker_packer
+          make linux-build
+          make docker-build
+          make test
+          # make docker-publish #TODO in release workflow
+
+      - name: test fx cli
+        env:
+          REMOTE_HOST_ADDR: ${{secrets.DOCKER_REMOTE_HOST_ADDR}}
+          REMOTE_HOST_USER: ${{secrets.DOCKER_REMOTE_HOST_USER}}
+          REMOTE_HOST_PASSWORD: ${{secrets.DOCKER_REMOTE_HOST_PASSWORD}}
+        run: |
+          echo $KUBECONFIG
+          unset KUBECONFIG
+          make cli-test-ci
+
+      - name: test AKS
+        env:
+          AKS_KUBECONFIG: ${{ secrets.AKS_KUBECONFIG }}
+        run: |
+          echo "skip since aks environment not ready yet"
+          # export KUBECONFIG=${HOME}/.kube/aks
+          # echo ${AKS_KUBECONFIG} | base64 -d > $KUBECONFIG
+          # if [[ -z "$AKS_KUBECONFIG" ]];then
+          #   echo "skip deploy test since no valid KUBECONFIG"
+          # else
+          #   DEBUG=true ./build/fx up -n hello -p 12345 examples/functions/JavaScript/func.js
+          #   ./build/fx down hello
+          #   rm ${KUBECONFIG}
+          # fi
+
+  Installation:
+    runs-on: ${{ matrix.os }}
+    needs: [Test]
+    strategy:
+      fail-fast: true
+      matrix:
+        os:
+          - ubuntu-latest
+          # TODO enable window and mac
+          # - macOS-latest
+          # - windows-latest
+        version:
+          - latest
+          - v0.117.0
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v1
+      - name: install fx
+        run: |
+          # install with non-root user
+          bash ./scripts/install.sh
+          ./fx -v
+          # install with root
+          sudo bash ./scripts/install.sh
+          ./fx -v

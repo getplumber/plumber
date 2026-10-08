@@ -284,8 +284,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Use images from an authorized registry configured in .plumber.yaml under containerImageMustComeFromAuthorizedSources.trustedUrls, or add the registry to the authorized list.",
 		DocURL:      docsBaseURL + string(CodeImageUnauthorizedSource),
 		ControlName: "containerImageMustComeFromAuthorizedSources",
-		Role:        RoleEntry,
-		EntryKind:   EntryMutableDependency,
+		// Role: hygiene, not entry: a registry outside the authorized list is a trust policy finding; ISSUE-102 and ISSUE-103 anchor the path when the reference can change.
+		Role: RoleHygiene,
 	},
 	CodeImageForbiddenTag: {
 		Code:        CodeImageForbiddenTag,
@@ -328,8 +328,9 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Either disable the cache entirely on release/publish jobs, or scope the `key:` to the ref being released (e.g. `key: release-${{ github.ref_name }}-${{ hashFiles('**/go.sum') }}`) without a `restore-keys:` fallback that reaches into PR-populated entries. Verify artefacts against a checksum after restoring.",
 		DocURL:      docsBaseURL + string(CodeCachePoisoning),
 		ControlName: "releaseWorkflowsMustNotRestoreUntrustedCache",
-		// Role: gate: restoring an untrusted cache removes the cache isolation scoped to the released ref.
-		Role: RoleGate,
+		// Role: entry: the cache a run that is not trusted can write is how its content gets into the release job.
+		Role:      RoleEntry,
+		EntryKind: EntryPoisonedCache,
 	},
 	CodeCachePoisoningUnresolved: {
 		Code:        CodeCachePoisoningUnresolved,
@@ -339,8 +340,9 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Make the condition statically checkable: use the `${{ github.event_name != '<publish trigger>' && '<manager>' || '' }}` form (or its == inverse) so the cache is provably off on the publish trigger, split caching into a step whose `if:` excludes the publish trigger, or scope the cache key (and any restore-keys) to the release ref.",
 		DocURL:      docsBaseURL + string(CodeCachePoisoningUnresolved),
 		ControlName: "releaseWorkflowsMustNotRestoreUntrustedCache",
-		// Role: gate, as ISSUE-705: a possible untrusted cache restore removes the cache isolation scoped to the released ref.
-		Role: RoleGate,
+		// Role: entry, as ISSUE-705; the restore is conditional, so the entry is unresolvable.
+		Role:      RoleEntry,
+		EntryKind: EntryPoisonedCache,
 	},
 	CodeActionArchivedRepo: {
 		Code:        CodeActionArchivedRepo,
@@ -361,8 +363,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Use an action from an authorized source. Configure the allowlist in .plumber.yaml under githubActionMustComeFromAuthorizedSources: keep trustGithubOfficialActions on for actions/* and github/*, add trusted owners or actions to trustedGithubActions (exact `owner/repo` or `owner/*`), and optionally set minimumStars to require a popularity threshold. Vendoring the action into a local `./.github/actions/…` directory removes the external dependency entirely.",
 		DocURL:      docsBaseURL + string(CodeActionUnauthorizedSource),
 		ControlName: "githubActionMustComeFromAuthorizedSources",
-		Role:        RoleEntry,
-		EntryKind:   EntryMutableDependency,
+		// Role: hygiene, not entry: an owner outside the authorized list is a trust policy finding; ISSUE-701 and its siblings anchor the path when the reference can change.
+		Role: RoleHygiene,
 	},
 	CodeActionMutableRemoteExec: {
 		Code:        CodeActionMutableRemoteExec,
@@ -480,7 +482,9 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Store the password in a repository, environment, or organization secret and reference it via `${{ secrets.<NAME> }}`. If the password is already exposed in git history, rotate it immediately and purge the literal with `git filter-repo` or a BFG run before re-publishing.",
 		DocURL:      docsBaseURL + string(CodeContainerHardcodedCredentials),
 		ControlName: "containerCredentialsMustComeFromSecrets",
-		Role:        RolePrivilege,
+		// Role: gate. The password sits in the repository's history, readable
+		// by anyone with read access, whether or not a path reaches the job.
+		Role: RoleGate,
 	},
 
 	// CI/CD variable controls (2xx)
@@ -1028,8 +1032,9 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Remove the `insecure-external-code-execution: allow` entry. If a specific ecosystem genuinely requires executing upstream scripts to resolve versions, scope the allowance narrowly with `enable-beta-ecosystems: false` and pair it with a dedicated runner isolation review; do not set it repository-wide.",
 		DocURL:      docsBaseURL + string(CodeDependabotInsecureExec),
 		ControlName: "dependabotMustNotAllowInsecureExternalCodeExecution",
-		// Role: hygiene (Repository Hygiene category): Dependabot runs outside the pipeline, so no CI path reaches it.
-		Role: RoleHygiene,
+		// Role: gate. Dependabot runs the hooks on its own schedule, outside
+		// the pipeline, so the risk needs no CI path to reach it.
+		Role: RoleGate,
 	},
 	CodeMissingConcurrency: {
 		Code:        CodeMissingConcurrency,

@@ -1,0 +1,209 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build (Go ${{ matrix.go-version }})
+    runs-on: ubuntu-24.04
+    strategy:
+      matrix:
+        # Exact patch versions: floating specs (stable/oldstable) resolve
+        # to a different toolchain over time without any workflow change.
+        # Floor is 1.26.0, the module's minimum (go.mod `go` directive, raised
+        # to 1.26 by golang.org/x/crypto v0.56.0 which clears the x/crypto/ssh
+        # advisories); 1.26.6 matches the pinned toolchain.
+        go-version: ['1.26.6', '1.26.0']
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: ${{ matrix.go-version }}
+
+      - name: Build
+        run: go build ./...
+
+  clean-tree-build:
+    name: Build from committed tree
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.6'
+
+      # Build from what git actually tracks. Every other job builds the
+      # working tree, which can contain generated or git-ignored files that
+      # never reach the published module zip, so they all stayed green while
+      # `go install` was broken for months (getplumber/plumber#405). This job
+      # is the only one that sees what a consumer sees.
+      - name: Build from committed tree only
+        run: |
+          set -eo pipefail
+          tmp=$(mktemp -d)
+          git archive HEAD | tar -x -C "$tmp"
+          cd "$tmp"
+          go build ./...
+
+  test:
+    name: Test
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.6'
+
+      - name: Run tests
+        run: go test ./... -race -coverprofile=coverage.out -covermode=atomic
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: coverage
+          path: coverage.out
+          retention-days: 14
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.6'
+
+      # Run golangci-lint via `go install` instead of the third-party
+      # golangci-lint-action wrapper — no external action is trusted, and
+      # the linter is built from an immutable commit pin (v2.10.1). Go's
+      # module checksum database (sum.golang.org) verifies the download
+      # cryptographically, so no separate checksum step is needed.
+      - name: golangci-lint
+        run: |
+          go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@5d1e709b7be35cb2025444e19de266b056b7b7ee # v2.10.1
+          golangci-lint run
+
+      # Whole-program dead code check. The `unused` linter can't flag
+      # unreachable exported functions or code kept alive only by its own
+      # tests; deadcode does reachability analysis from main. The tool
+      # always exits 0, so fail on any output. Built from an immutable
+      # commit pin like golangci-lint; sum.golang.org verifies the
+      # download cryptographically.
+      #
+      # finding/identity is exempt: it publishes the finding-identity recipe
+      # for consumers outside this module (#403), so reachability from our own
+      # main says nothing about whether its API is used. Its surface is pinned
+      # by finding/identity/identity_test.go instead.
+      #
+      # ControlsCatalog and ConfigSchemas are exempt for the same reason: they
+      # are catalog exports consumed by the platform (#440, #458), not by this
+      # module's main.
+      #
+      # The analyzer runs on its own line, and only its output is filtered.
+      # Piping it straight into `grep -v ... || true` would make a broken run
+      # (module download failure, toolchain mismatch, a package that does not
+      # compile) indistinguishable from a clean one: the `|| true` needed for
+      # the healthy path, where grep suppresses every line, would swallow the
+      # tool's own failure and pass the step with the safety net switched off.
+      - name: deadcode
+        run: |
+          raw=$(go run golang.org/x/tools/cmd/deadcode@09747cdf594a7924dcecb506312be3bd6e437962 ./...) # v0.30.0
+          out=$(printf '%s\n' "$raw" | grep -v '^finding/identity/' | grep -v 'unreachable func: ControlsCatalog' | grep -v 'unreachable func: ConfigSchemas' || true)
+          if [ -n "$out" ]; then echo "$out"; echo "dead code detected"; exit 1; fi
+
+  govulncheck:
+    name: Govulncheck
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version: '1.26.6'
+
+      - name: Install and run govulncheck
+        # setup-go pins GOTOOLCHAIN=local, which makes `go` ignore the
+        # `toolchain` directive in go.mod. Override to auto so the pinned
+        # patched toolchain (go.mod) is downloaded/used and stdlib advisories
+        # fixed in that release are picked up.
+        env:
+          GOTOOLCHAIN: auto
+        run: go run golang.org/x/vuln/cmd/govulncheck@v1.1.4 ./...
+
+  grype:
+    name: Container Scan
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Build Docker image
+        run: docker build -t plumber:ci .
+
+      # Grype is installed directly from a pinned release and verified
+      # against a checksum committed to this repo, NOT via
+      # anchore/scan-action. The action, though pinnable by SHA, fetches
+      # and executes install.sh from anchore/grype@main at runtime — a
+      # moving ref that voids the immutability the SHA pin implies. The
+      # hash below is the only trust anchor; bump both together.
+      - name: Install grype (pinned + checksum-verified)
+        env:
+          GRYPE_VERSION: "0.116.0"
+          GRYPE_SHA256: "40aff724297312f91ea390d003bed8d8651c74cc7f5b26732db80b3a408d2fc5"
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          curl -sSfL -o "$tmp/grype.tar.gz" \
+            "https://github.com/anchore/grype/releases/download/v${GRYPE_VERSION}/grype_${GRYPE_VERSION}_linux_amd64.tar.gz"
+          echo "${GRYPE_SHA256}  $tmp/grype.tar.gz" | sha256sum -c -
+          tar -xzf "$tmp/grype.tar.gz" -C "$tmp" grype
+          sudo install "$tmp/grype" /usr/local/bin/grype
+          grype version
+
+      - name: Grype image scan
+        env:
+          GRYPE_CHECK_FOR_APP_UPDATE: "false"
+        run: grype "plumber:ci" --fail-on high --only-fixed
+
+  # trivy:
+  #   name: Container Scan (Trivy)
+  #   runs-on: ubuntu-24.04
+  #   steps:
+  #     - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+  #
+  #     - name: Build Docker image
+  #       run: docker build -t plumber:ci .
+  #
+  #     - name: Trivy image scan
+  #       uses: aquasecurity/trivy-action@97e0b3872f55f89b95b2f65b3dbab56962816478 # 0.34.2
+  #       with:
+  #         image-ref: plumber:ci
+  #         format: table
+  #         exit-code: 1
+  #         severity: CRITICAL,HIGH

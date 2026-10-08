@@ -2,7 +2,10 @@ package pbom
 
 import (
 	"encoding/json"
+	"strings"
 	"testing"
+
+	"github.com/getplumber/plumber/control"
 )
 
 // platformPBOM is a PBOM as a platform-mode run writes it: no run-level
@@ -108,5 +111,29 @@ func TestToCycloneDX_PlatformMode_PolicyProperties(t *testing.T) {
 	}
 	if _, present := props["plumber:score"]; present {
 		t.Errorf("plumber:score is the run-level grade and there is none in platform mode: %q", props["plumber:score"])
+	}
+}
+
+// Spec section 4: under scoring-v4 the PBOM's plumberScore carries the path
+// count per tier (non-zero tiers only), so its counts agree with the
+// Situation's "1 critical, 0 high, 6 medium"; a v3 score carries none.
+func TestPBOM_PlumberScoreCarriesPathCountsUnderV4(t *testing.T) {
+	marshal := func(score *control.PlumberScoreResult) string {
+		t.Helper()
+		pb := NewGenerator("acme/target", 42, "https://gitlab.com", "main").Generate(nil, nil)
+		pb.PlumberScore = BuildPlumberScoreSummary(score, true)
+		raw, err := json.Marshal(pb)
+		if err != nil {
+			t.Fatalf("marshal pbom: %v", err)
+		}
+		return string(raw)
+	}
+	v4 := &control.PlumberScoreResult{ProfileID: control.PlumberScoreProfileIDV4, PathCounts: map[string]int{"critical": 1, "medium": 6}}
+	if got := marshal(v4); !strings.Contains(got, `"pathCounts":{"critical":1,"medium":6}`) {
+		t.Errorf("v4 PBOM lacks the per-tier path counts: %s", got)
+	}
+	v3 := &control.PlumberScoreResult{ProfileID: control.PlumberScoreProfileID}
+	if got := marshal(v3); strings.Contains(got, "pathCounts") {
+		t.Errorf("v3 PBOM must carry no pathCounts: %s", got)
 	}
 }

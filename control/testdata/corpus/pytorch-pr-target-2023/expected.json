@@ -1,0 +1,16 @@
+{
+  "source": "https://github.com/pytorch/pytorch",
+  "commit": "f0f0f709046123340f28c5d3c7f661b53bd88276",
+  "captured": "2026-10-03",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [{"name": "main", "protected": true}],
+  "note": "The 2023 PyTorch research (persistent self-hosted runners reachable from fork pull requests): check-labels.yml runs on pull_request_target on the self-hosted linux.20_04.4x runner with the repository-default token. The workflow checks out the base, not the fork head, so no pull request code runs. The checkout action it calls, pytorch/pytorch/.github/actions/checkout-pytorch@main, lives in the repository itself (the owner/repo is the repository's own name): it changes only with a commit on the repository's main branch, so it is no third-party dependency and starts no path, the same as a ./ reference. Plumber does not tell self-hosted runners apart, so the persistent runner, which is what the research exploited, is not scored, and no path is left: the incident is out of what the engine models today.",
+  "expect": {
+    "maxTier": "none",
+    "noPathSubjects": [
+      "pytorch/pytorch/.github/actions/checkout-pytorch"
+    ]
+  }
+}

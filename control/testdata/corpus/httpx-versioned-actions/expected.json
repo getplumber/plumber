@@ -1,0 +1,15 @@
+{
+  "source": "https://github.com/encode/httpx",
+  "commit": "b5addb64f0161ff6bfe94c124ef76f6a1fba5254",
+  "captured": "2026-10-03",
+  "group": "own",
+  "visibility": "public",
+  "defaultBranch": "master",
+  "branches": [{"name": "master", "protected": true}],
+  "note": "The outreach pushback on versioned actions: the test matrix and the tag-triggered publish job use only GitHub's own actions, pinned by tag. The shipped configuration trusts the actions and github owners for pinning, so no entry-role finding reports those tags and no path is anchored (an entry fact alone starts nothing, spec section 2); what is left are other findings. Hand count: no path, the persisted checkout token twice (ISSUE-307, Low, 2 x 2) and the missing permissions block twice (ISSUE-801, Medium, 2 x 5), so 100 - 14 = 86: B. With no Critical and no High item the caps alone keep the score at 51 or more (C); B is what the count gives.",
+  "expect": {
+    "maxTier": "none",
+    "noPathAbove": "medium",
+    "letterAtLeast": "B"
+  }
+}
