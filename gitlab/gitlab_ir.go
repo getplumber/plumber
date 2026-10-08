@@ -946,8 +946,11 @@ func extractGitLabTags(v any) []string {
 // {name, func, step, inputs, env} maps) into a flat list of ir.Function
 // entries. `func:` is the current keyword; `step:` is the deprecated
 // alias GitLab renamed away from (docs.gitlab.com/ci/functions) — using
-// it marks the function Deprecated regardless of its trust status. Ref
-// is stored exactly as parsed, with no variable substitution.
+// it marks the function Deprecated regardless of its trust status. A
+// string Ref is stored exactly as parsed, with no variable substitution;
+// a structured (map) reference goes through functionRefFromMap. A step
+// that names a function in any shape is never dropped: an unreadable one
+// is kept as Kind "unknown" so the trust check fails closed on it.
 func extractGitLabRunSteps(v any) []ir.Function {
 	list, ok := v.([]any)
 	if !ok {
@@ -960,18 +963,21 @@ func extractGitLabRunSteps(v any) []ir.Function {
 			continue
 		}
 		name, _ := m["name"].(string)
-		ref, _ := m["func"].(string)
-		usedDeprecatedKey := false
-		if ref == "" {
-			if step, ok := m["step"].(string); ok && step != "" {
-				ref = step
-				usedDeprecatedKey = true
-			}
+		raw, usedDeprecatedKey := m["func"], false
+		if isEmptyFunctionValue(raw) {
+			raw, usedDeprecatedKey = m["step"], true
 		}
-		if ref == "" {
+		if isEmptyFunctionValue(raw) {
 			continue
 		}
-		kind, deprecatedForm := classifyFunctionRef(ref)
+		var ref, kind string
+		var deprecatedForm bool
+		if s, ok := raw.(string); ok {
+			ref = s
+			kind, deprecatedForm = classifyFunctionRef(ref)
+		} else {
+			ref, kind, deprecatedForm = functionRefFromMap(raw)
+		}
 		out = append(out, ir.Function{
 			Name:       name,
 			Ref:        ref,
@@ -980,6 +986,77 @@ func extractGitLabRunSteps(v any) []ir.Function {
 		})
 	}
 	return out
+}
+
+// isEmptyFunctionValue reports whether a `func:`/`step:` value names no
+// function at all (key absent, null, or an empty string).
+func isEmptyFunctionValue(v any) bool {
+	if v == nil {
+		return true
+	}
+	s, ok := v.(string)
+	return ok && s == ""
+}
+
+// functionRefFromMap normalizes the structured `func:` form. The documented
+// shape is the deprecated long-form git reference,
+//
+//	func:
+//	  git:
+//	    url: gitlab.com/funcs/my-git-repo
+//	    rev: main
+//	    dir: my-functions/sub-directory  # optional
+//	    file: my-func.yml                # optional
+//
+// which is rewritten to the equivalent string form
+// (<url>[/-/<dir>[/<file>]]@<rev>, Kind "git", deprecated) so the trust
+// check compares its host and path exactly as it does for the short form.
+// Any other shape — an unknown key, a git map missing url or rev, a
+// non-map value — yields Kind "unknown" with the value rendered as
+// sorted-key JSON: it can never match a trusted host or pattern, so the
+// policy fails closed instead of skipping the step.
+func functionRefFromMap(v any) (ref, kind string, deprecated bool) {
+	if m, ok := NormalizeYAMLValue(v).(map[string]any); ok && len(m) == 1 {
+		if git, ok := m["git"].(map[string]any); ok {
+			url, _ := git["url"].(string)
+			rev := fmt.Sprint(git["rev"])
+			if url != "" && git["rev"] != nil && rev != "" {
+				ref = stripURLSchemeAndCredentials(url)
+				if dir, _ := git["dir"].(string); dir != "" {
+					ref += "/-/" + strings.Trim(dir, "/")
+					if file, _ := git["file"].(string); file != "" {
+						ref += "/" + file
+					}
+				} else if file, _ := git["file"].(string); file != "" {
+					ref += "/-/" + file
+				}
+				return ref + "@" + rev, "git", true
+			}
+		}
+	}
+	rendered, err := json.Marshal(NormalizeYAMLValue(v))
+	if err != nil {
+		rendered = []byte(fmt.Sprint(v))
+	}
+	return string(rendered), "unknown", false
+}
+
+// stripURLSchemeAndCredentials turns a git URL into the host/path form the
+// string reference uses: "https://user:token@gitlab.com/g/p.git" and
+// "gitlab.com/g/p" both become "gitlab.com/g/p". The credentials are
+// dropped so the host comparison sees the real host, not the userinfo.
+func stripURLSchemeAndCredentials(raw string) string {
+	s := strings.TrimSpace(raw)
+	if i := strings.Index(s, "://"); i >= 0 {
+		s = s[i+3:]
+	}
+	if slash := strings.Index(s, "/"); slash >= 0 {
+		if at := strings.LastIndex(s[:slash], "@"); at >= 0 {
+			s = s[at+1:]
+		}
+	}
+	s = strings.TrimSuffix(strings.TrimSuffix(s, "/"), ".git")
+	return s
 }
 
 // classifyFunctionRef reports the reference form of a GitLab Function

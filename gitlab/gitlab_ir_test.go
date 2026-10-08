@@ -541,3 +541,103 @@ func TestExtractGitLabRunSteps(t *testing.T) {
 		t.Fatalf("unexpected step: entry: %+v", fns[1])
 	}
 }
+
+// The structured `func: {git: {...}}` form is a live reference the runner
+// loads; it must reach the policy like the short form, never be dropped.
+func TestExtractGitLabRunStepsStructuredForm(t *testing.T) {
+	cases := []struct {
+		name       string
+		step       map[any]any
+		wantRef    string
+		wantKind   string
+		wantDeprec bool
+	}{
+		{
+			name:       "git_url_rev",
+			step:       map[any]any{"func": map[any]any{"git": map[any]any{"url": "gitlab.com/funcs/my-git-repo", "rev": "main"}}},
+			wantRef:    "gitlab.com/funcs/my-git-repo@main",
+			wantKind:   "git",
+			wantDeprec: true,
+		},
+		{
+			name:       "git_dir_and_file",
+			step:       map[any]any{"func": map[any]any{"git": map[any]any{"url": "gitlab.com/funcs/repo", "rev": "v1.0.0", "dir": "/my-functions/sub/", "file": "my-func.yml"}}},
+			wantRef:    "gitlab.com/funcs/repo/-/my-functions/sub/my-func.yml@v1.0.0",
+			wantKind:   "git",
+			wantDeprec: true,
+		},
+		{
+			name:       "git_file_only",
+			step:       map[any]any{"func": map[any]any{"git": map[any]any{"url": "gitlab.com/funcs/repo", "rev": "main", "file": "other.yml"}}},
+			wantRef:    "gitlab.com/funcs/repo/-/other.yml@main",
+			wantKind:   "git",
+			wantDeprec: true,
+		},
+		{
+			// Scheme and credentials are dropped so the host the policy
+			// compares is the real one, not the userinfo.
+			name:       "git_url_scheme_and_credentials",
+			step:       map[any]any{"func": map[any]any{"git": map[any]any{"url": "https://gitlab-ci-token:secret@gitlab.com/my-group/repo.git", "rev": "main"}}},
+			wantRef:    "gitlab.com/my-group/repo@main",
+			wantKind:   "git",
+			wantDeprec: true,
+		},
+		{
+			// A numeric rev (`rev: 1`) is decoded as an int by yaml.v2.
+			name:       "git_numeric_rev",
+			step:       map[any]any{"func": map[any]any{"git": map[any]any{"url": "gitlab.com/funcs/repo", "rev": 1}}},
+			wantRef:    "gitlab.com/funcs/repo@1",
+			wantKind:   "git",
+			wantDeprec: true,
+		},
+		{
+			name:       "step_alias_map",
+			step:       map[any]any{"step": map[any]any{"git": map[any]any{"url": "gitlab.com/funcs/repo", "rev": "main"}}},
+			wantRef:    "gitlab.com/funcs/repo@main",
+			wantKind:   "git",
+			wantDeprec: true,
+		},
+		{
+			name:     "git_missing_rev_fails_closed",
+			step:     map[any]any{"func": map[any]any{"git": map[any]any{"url": "gitlab.com/funcs/repo"}}},
+			wantRef:  `{"git":{"url":"gitlab.com/funcs/repo"}}`,
+			wantKind: "unknown",
+		},
+		{
+			name:     "unknown_shape_fails_closed",
+			step:     map[any]any{"func": map[any]any{"oci": map[any]any{"repository": "registry.example.com/x", "tag": "1"}}},
+			wantRef:  `{"oci":{"repository":"registry.example.com/x","tag":"1"}}`,
+			wantKind: "unknown",
+		},
+		{
+			name:     "list_value_fails_closed",
+			step:     map[any]any{"func": []any{"a", "b"}},
+			wantRef:  `["a","b"]`,
+			wantKind: "unknown",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tc.step["name"] = "say_hi"
+			fns := extractGitLabRunSteps([]any{tc.step})
+			if len(fns) != 1 {
+				t.Fatalf("expected 1 function, got %d (%+v)", len(fns), fns)
+			}
+			got := fns[0]
+			if got.Name != "say_hi" || got.Ref != tc.wantRef || got.Kind != tc.wantKind || got.Deprecated != tc.wantDeprec {
+				t.Fatalf("got %+v, want ref=%q kind=%q deprecated=%v", got, tc.wantRef, tc.wantKind, tc.wantDeprec)
+			}
+		})
+	}
+}
+
+func TestExtractGitLabRunStepsSkipsStepsWithoutFunction(t *testing.T) {
+	steps := []any{
+		map[any]any{"name": "inline", "script": "echo hi"},
+		map[any]any{"name": "null_func", "func": nil},
+		map[any]any{"name": "empty_func", "func": ""},
+	}
+	if fns := extractGitLabRunSteps(steps); len(fns) != 0 {
+		t.Fatalf("expected no functions, got %+v", fns)
+	}
+}
