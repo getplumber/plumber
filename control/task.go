@@ -819,13 +819,14 @@ func toAnyGroups(groups [][]string) []any {
 }
 
 // gitlabInstanceHost strips the scheme (and any trailing slash) from a
-// GitLab base URL, e.g. "https://gitlab.com" -> "gitlab.com".
+// GitLab base URL and lowercases it, e.g. "https://GitLab.com/" ->
+// "gitlab.com". Hostnames are case-insensitive.
 func gitlabInstanceHost(gitlabURL string) string {
 	host := gitlabURL
 	if i := strings.Index(host, "://"); i >= 0 {
 		host = host[i+3:]
 	}
-	return strings.TrimSuffix(host, "/")
+	return strings.ToLower(strings.TrimSuffix(host, "/"))
 }
 
 // isGitlabSaaS reports whether gitlabURL points at gitlab.com, the
@@ -848,7 +849,7 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 		ProjectPath: conf.ProjectPath,
 	}
 
-	// /////////////////////
+	///////////////////////
 	// Fetch Project Info from GitLab
 	///////////////////////
 	reportProgress(conf, 1, "Fetching project information")
@@ -965,9 +966,9 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 		result.HeadCommitSha = projectInfo.LatestHeadCommitSha
 	}
 
-	// /////////////////////
+	///////////////////////
 	// Resolve CI config source (local file vs remote)
-	// /////////////////////
+	///////////////////////
 
 	// Priority:
 	// 1. If --branch is defined: use remote file on that branch
@@ -1021,9 +1022,9 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 		result.CIConfigSource = "local"
 	}
 
-	// /////////////////////
+	///////////////////////
 	// Run Data Collections
-	// /////////////////////
+	///////////////////////
 
 	// 1. Run Pipeline Origin data collection
 	reportProgress(conf, 2, "Collecting pipeline origins")

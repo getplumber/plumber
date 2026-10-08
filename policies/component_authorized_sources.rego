@@ -25,6 +25,9 @@
 # The prefixes name the literal gitlab.com host: a same-named namespace
 # on a self-hosted instance is administered by that instance, not by
 # GitLab, so it is not covered.
+#
+# Hosts and namespaces compare case-insensitively, as GitLab resolves them
+# (an include of gitlab.com/MyGroup/x loads gitlab.com/mygroup/x).
 package component_authorized_sources
 
 import rego.v1
@@ -35,7 +38,7 @@ deny contains finding if {
 	inc := input.pipeline.includes[i]
 	inc.kind == "component"
 	inc.source != ""
-	not _is_authorized(inc.source)
+	not _is_trusted(inc.source)
 	finding := {
 		"code":     "ISSUE-414",
 		"severity": "high",
@@ -54,6 +57,11 @@ deny contains finding if {
 	}
 }
 
+_is_trusted(source) if {
+	not _has_dot_segment(source)
+	_is_authorized(source)
+}
+
 _is_authorized(source) if _in_allowlist(source)
 
 _is_authorized(source) if _is_same_group(source)
@@ -64,25 +72,25 @@ _is_authorized(source) if _is_official(source)
 
 _in_allowlist(source) if {
 	pattern := input.config.componentAuthorizedSources.trustedComponents[_]
-	glob.match(_normalize_var(pattern), null, _normalize_var(source))
+	glob.match(lower(_normalize_var(pattern)), null, lower(_normalize_var(source)))
 }
 
 _is_same_group(source) if {
 	object.get(input.config.componentAuthorizedSources, "trustSameGroupComponents", true) == true
-	instanceHost := object.get(input.config.componentAuthorizedSources, "instanceHost", "")
+	instanceHost := lower(object.get(input.config.componentAuthorizedSources, "instanceHost", ""))
 	instanceHost != ""
-	startswith(source, sprintf("%s/", [instanceHost]))
-	root := _root_namespace(object.get(input.pipeline, "projectPath", ""))
+	startswith(lower(source), sprintf("%s/", [instanceHost]))
+	root := lower(_root_namespace(object.get(input.pipeline, "projectPath", "")))
 	root != ""
-	path := _path_after_host(source)
+	path := lower(_path_after_host(source))
 	startswith(path, sprintf("%s/", [root]))
 }
 
 _is_same_instance(source) if {
 	object.get(input.config.componentAuthorizedSources, "trustSameInstanceComponents", false) == true
-	instanceHost := object.get(input.config.componentAuthorizedSources, "instanceHost", "")
+	instanceHost := lower(object.get(input.config.componentAuthorizedSources, "instanceHost", ""))
 	instanceHost != ""
-	startswith(source, sprintf("%s/", [instanceHost]))
+	startswith(lower(source), sprintf("%s/", [instanceHost]))
 }
 
 # GitLab-maintained namespaces on gitlab.com, when the user trusts them.
@@ -91,7 +99,7 @@ _official_prefixes := {"gitlab.com/components/", "gitlab.com/gitlab-org/"}
 _is_official(source) if {
 	object.get(input.config.componentAuthorizedSources, "trustGitlabOfficialComponents", false) == true
 	some prefix in _official_prefixes
-	startswith(source, prefix)
+	startswith(lower(source), prefix)
 }
 
 _root_namespace(projectPath) := parts[0] if {
@@ -112,4 +120,16 @@ _path_after_host(source) := path if {
 # _normalize_var rewrites `${VAR}` references to `$VAR` so trustedComponents
 # patterns and the actual source compare equal regardless of notation.
 # Mirrors image_authorized_sources.rego's helper of the same name.
+# _has_dot_segment reports a "." or ".." path segment (also percent-encoded):
+# a git client removes dot segments before fetching, so
+# gitlab.com/my-group/../attacker/x loads gitlab.com/attacker/x while still
+# starting with an own-namespace or allowlisted prefix. Such a reference is
+# never trusted.
+_has_dot_segment(ref) if {
+	some segment in split(ref, "/")
+	segment in {".", ".."}
+}
+
+_has_dot_segment(ref) if contains(lower(ref), "%2e")
+
 _normalize_var(s) := regex.replace(s, `\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}`, `$$$1`)

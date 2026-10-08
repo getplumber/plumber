@@ -63,6 +63,22 @@ func TestComponentAuthorizedSourcesConfigContract(t *testing.T) {
 			want:      1,
 		},
 		{
+			// GitLab resolves namespaces case-insensitively: a mixed-case
+			// spelling of the own root namespace is the own namespace.
+			name:      "saas_own_root_namespace_mixed_case",
+			gitlabURL: "https://gitlab.com",
+			source:    "gitlab.com/My-Group/ci-components/build",
+			want:      0,
+		},
+		{
+			// A mixed-case instance URL is still gitlab.com: the same-instance
+			// trust stays off there.
+			name:      "saas_mixed_case_url_other_namespace",
+			gitlabURL: "https://GitLab.com/",
+			source:    "gitlab.com/other-group/x/backdoor",
+			want:      1,
+		},
+		{
 			name:      "self_hosted_same_instance_any_namespace",
 			gitlabURL: "https://gitlab.example.com",
 			source:    "gitlab.example.com/other-group/x/build",

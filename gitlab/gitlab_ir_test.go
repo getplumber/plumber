@@ -508,6 +508,7 @@ func TestClassifyFunctionRef(t *testing.T) {
 		{"local_relative_parent", "../shared/my-function", "local", false},
 		{"local_absolute", "/opt/gitlab-functions/my-function", "local", false},
 		{"git_deprecated", "gitlab.com/funcs/my-git-repo@v1.0.0", "git", true},
+		{"builtin", "builtin://function/oci/build", "builtin", false},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -542,7 +543,7 @@ func TestExtractGitLabRunSteps(t *testing.T) {
 	}
 }
 
-// The structured `func: {git: {...}}` form is a live reference the runner
+// The structured `func: {git|oci: {...}}` forms are live references the runner
 // loads; it must reach the policy like the short form, never be dropped.
 func TestExtractGitLabRunStepsStructuredForm(t *testing.T) {
 	cases := []struct {
@@ -604,7 +605,22 @@ func TestExtractGitLabRunStepsStructuredForm(t *testing.T) {
 			wantKind: "unknown",
 		},
 		{
-			name:     "unknown_shape_fails_closed",
+			// The structured OCI form (stepOciReference in the GitLab CI
+			// schema): registry, repository and tag are all required.
+			name:     "oci_registry_repository_tag",
+			step:     map[any]any{"func": map[any]any{"oci": map[any]any{"registry": "registry.gitlab.com", "repository": "/my-group/my-project/echo/", "tag": "1.0.0", "dir": "steps", "file": "func.yml"}}},
+			wantRef:  "registry.gitlab.com/my-group/my-project/echo:1.0.0",
+			wantKind: "oci",
+		},
+		{
+			// A numeric tag (`tag: 1`) is decoded as an int by yaml.v2.
+			name:     "oci_numeric_tag_with_port",
+			step:     map[any]any{"func": map[any]any{"oci": map[any]any{"registry": "registry.example.com:5000", "repository": "x/echo", "tag": 1}}},
+			wantRef:  "registry.example.com:5000/x/echo:1",
+			wantKind: "oci",
+		},
+		{
+			name:     "oci_missing_registry_fails_closed",
 			step:     map[any]any{"func": map[any]any{"oci": map[any]any{"repository": "registry.example.com/x", "tag": "1"}}},
 			wantRef:  `{"oci":{"repository":"registry.example.com/x","tag":"1"}}`,
 			wantKind: "unknown",

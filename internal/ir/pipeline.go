@@ -550,7 +550,9 @@ type Include struct {
 // — a job's `run:` step's `func:` (or deprecated `step:`) reference. Kind
 // classifies the reference form: "oci" (registry/path:tag or @sha256:
 // digest — the supported form), "local" (relative/absolute filesystem
-// path — same-repo, no supply-chain concern), or "git" (the deprecated
+// path — same-repo, no supply-chain concern), "builtin" (builtin://...,
+// shipped inside the runner — no supply-chain concern either), "unknown"
+// (a structured value the collector could not read), or "git" (the deprecated
 // git-repository loading form, host/path@ref with no OCI tag).
 type Function struct {
 	Name string `json:"name,omitempty"`

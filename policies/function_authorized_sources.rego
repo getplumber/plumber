@@ -22,23 +22,26 @@
 # happens to name a top-level path after the victim's namespace (ISSUE-415
 # hardening).
 #
-# Allowlist patterns may themselves reference GitLab predefined CI/CD
-# variables (e.g. the shipped defaults `$CI_TEMPLATE_REGISTRY_HOST/
-# $CI_PROJECT_PATH/*` and its `${VAR}` equivalent — both notations are
-# shipped since pipeline authors write either form, and _normalize_var
-# treats them identically). GitLab predefined variables have the lowest
-# precedence, so a pipeline that redefines one of them in its own
-# `variables:` block could make Plumber trust pattern text that resolves to
-# an attacker registry at runtime — _in_allowlist guards against this by
-# rejecting a pattern match if any `$CI_*` variable referenced by that
-# pattern is redefined in the pipeline's globalVariables/localGlobalVariables
-# or in the analyzed job's own `variables:` block (localVariables), since a
-# job-level definition overrides the predefined value for that job just the
-# same (ISSUE-415 hardening).
+# Nothing is trusted by pattern out of the box: the runner does not expand
+# $VAR in a `func:` reference (it rejects `$CI_.../echo:1` as an invalid
+# reference), so a default pattern written with variables could only ever
+# match refs that never run. A user-supplied pattern may still reference
+# GitLab predefined CI/CD variables ($VAR and ${VAR} are normalized
+# identically). Those variables have the lowest precedence, so a pipeline
+# that redefines one could make Plumber trust pattern text that resolves
+# elsewhere — _in_allowlist guards against this by rejecting a pattern
+# match if any `$CI_*` variable referenced by that pattern is redefined in
+# the pipeline's globalVariables/localGlobalVariables or in the analyzed
+# job's variables, including ones inherited through `extends:` (ISSUE-415
+# hardening).
 #
 # "local" (relative/absolute filesystem path) references are same-repo
 # and out of scope entirely, mirroring how `include: local` is out of
-# scope for component-authorized-sources.
+# scope for component-authorized-sources. "builtin" references
+# (builtin://...) ship inside the GitLab runner itself, so they carry no
+# third-party supply-chain exposure either.
+#
+# Hosts and namespaces compare case-insensitively, as GitLab resolves them.
 package function_authorized_sources
 
 import rego.v1
@@ -48,8 +51,8 @@ deny contains finding if {
 	some i, j
 	job := input.pipeline.jobs[i]
 	fn := job.functions[j]
-	fn.kind != "local"
-	not _is_authorized(fn, job)
+	not fn.kind in _out_of_scope_kinds
+	not _is_trusted(fn, job)
 	finding := {
 		"code":     "ISSUE-415",
 		"severity": "high",
@@ -67,13 +70,20 @@ deny contains finding if {
 	}
 }
 
+_out_of_scope_kinds := {"local", "builtin"}
+
+_is_trusted(fn, job) if {
+	not _has_dot_segment(fn.ref)
+	_is_authorized(fn, job)
+}
+
 _is_authorized(fn, job) if _in_allowlist(fn.ref, job)
 
 _is_authorized(fn, _) if _is_same_group(fn.ref)
 
 _in_allowlist(ref, job) if {
 	pattern := input.config.functionAuthorizedSources.trustedFunctions[_]
-	glob.match(_normalize_var(pattern), null, _normalize_var(ref))
+	glob.match(lower(_normalize_var(pattern)), null, lower(_normalize_var(ref)))
 	not _pattern_redefined(pattern, job)
 }
 
@@ -117,9 +127,9 @@ _is_same_group(ref) if {
 # (ISSUE-415 hardening).
 _matches_own_namespace(ref) if {
 	_on_own_host(ref)
-	root := _root_namespace(object.get(input.pipeline, "projectPath", ""))
+	root := lower(_root_namespace(object.get(input.pipeline, "projectPath", "")))
 	root != ""
-	path := _path_after_host(ref)
+	path := lower(_path_after_host(ref))
 	startswith(path, sprintf("%s/", [root]))
 }
 
@@ -128,28 +138,32 @@ _matches_own_namespace(ref) if {
 # reported by the GitLab API), where GitLab Function OCI references live, or
 # its web host (instanceHost), used by the deprecated git reference form.
 _on_own_host(ref) if {
-	host := object.get(input.pipeline, "registryHost", "")
+	host := lower(object.get(input.pipeline, "registryHost", ""))
 	host != ""
-	startswith(ref, sprintf("%s/", [host]))
+	startswith(lower(ref), sprintf("%s/", [host]))
 }
 
 _on_own_host(ref) if {
-	host := object.get(input.config.functionAuthorizedSources, "instanceHost", "")
+	host := lower(object.get(input.config.functionAuthorizedSources, "instanceHost", ""))
 	host != ""
-	startswith(ref, sprintf("%s/", [host]))
+	startswith(lower(ref), sprintf("%s/", [host]))
 }
 
 # _var_redefined reports whether a GitLab predefined CI/CD variable is
 # redefined in a scope the function ref is resolved in: the pipeline's
 # global `variables:` — both the merged view (globalVariables) and the
 # project-authored-only view (localGlobalVariables) — or the analyzed
-# job's own `variables:` block, which takes precedence over both. The job
-# check reads the project-authored view (localVariables) rather than the
-# merged one, so a value a trusted upstream template legitimately sets does
-# not reject the pattern. Used by _pattern_redefined above.
+# job's own variables, which take precedence over both. The job check
+# reads both the merged view (variables), which carries a value inherited
+# through `extends:` or from an included template, and the
+# project-authored view (localVariables). A predefined CI_* variable has no
+# legitimate reason to be redefined by any template, so the merged view
+# fails closed. Used by _pattern_redefined above.
 _var_redefined(name, _) if object.get(input.pipeline, "globalVariables", {})[name]
 
 _var_redefined(name, _) if object.get(input.pipeline, "localGlobalVariables", {})[name]
+
+_var_redefined(name, job) if object.get(job, "variables", {})[name]
 
 _var_redefined(name, job) if object.get(job, "localVariables", {})[name]
 
@@ -171,4 +185,16 @@ _path_after_host(ref) := path if {
 # _normalize_var rewrites `${VAR}` references to `$VAR` so trustedFunctions
 # patterns and the actual ref compare equal regardless of notation.
 # Mirrors image_authorized_sources.rego's helper of the same name.
+# _has_dot_segment reports a "." or ".." path segment (also percent-encoded):
+# a git client removes dot segments before fetching, so
+# gitlab.com/my-group/../attacker/x loads gitlab.com/attacker/x while still
+# starting with an own-namespace or allowlisted prefix. Such a reference is
+# never trusted.
+_has_dot_segment(ref) if {
+	some segment in split(ref, "/")
+	segment in {".", ".."}
+}
+
+_has_dot_segment(ref) if contains(lower(ref), "%2e")
+
 _normalize_var(s) := regex.replace(s, `\$\{([a-zA-Z_][a-zA-Z0-9_]*)\}`, `$$$1`)

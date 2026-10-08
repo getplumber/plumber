@@ -162,7 +162,8 @@ const (
 	CodeDockerInDockerInsecure ErrorCode = "ISSUE-413"
 	// ISSUE-414: GitLab CI/CD component comes from an unauthorized source
 	CodeComponentUnauthorizedSource ErrorCode = "ISSUE-414"
-	// ISSUE-415: GitLab CI/CD function comes from an unauthorized source, or uses a deprecated reference form
+	// ISSUE-415: GitLab CI/CD function comes from an unauthorized source (deprecated
+	// reference forms are counted as a stat, not flagged)
 	CodeFunctionUnauthorizedSource ErrorCode = "ISSUE-415"
 	// ISSUE-802: Job reaches a dangerous trigger (workflow_run, issue_comment,
 	// pull_request_review*, discussion*, gollum, fork) AND checks out fork

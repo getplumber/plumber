@@ -998,8 +998,9 @@ func isEmptyFunctionValue(v any) bool {
 	return ok && s == ""
 }
 
-// functionRefFromMap normalizes the structured `func:` form. The documented
-// shape is the deprecated long-form git reference,
+// functionRefFromMap normalizes the structured `func:` forms the GitLab CI
+// schema accepts (stepGitReference / stepOciReference). The long-form git
+// reference,
 //
 //	func:
 //	  git:
@@ -1008,10 +1009,21 @@ func isEmptyFunctionValue(v any) bool {
 //	    dir: my-functions/sub-directory  # optional
 //	    file: my-func.yml                # optional
 //
-// which is rewritten to the equivalent string form
-// (<url>[/-/<dir>[/<file>]]@<rev>, Kind "git", deprecated) so the trust
-// check compares its host and path exactly as it does for the short form.
-// Any other shape — an unknown key, a git map missing url or rev, a
+// is rewritten to the equivalent string form
+// (<url>[/-/<dir>[/<file>]]@<rev>, Kind "git", deprecated), and the
+// long-form OCI reference,
+//
+//	func:
+//	  oci:
+//	    registry: registry.gitlab.com
+//	    repository: my-group/my-project/echo
+//	    tag: "1.0.0"
+//	    dir: my_steps/hello_world  # optional
+//	    file: func.yml             # optional
+//
+// to <registry>/<repository>:<tag> (Kind "oci"), so the trust check
+// compares its host and path exactly as it does for the short forms.
+// Any other shape — an unknown key, a map missing a required field, a
 // non-map value — yields Kind "unknown" with the value rendered as
 // sorted-key JSON: it can never match a trusted host or pattern, so the
 // policy fails closed instead of skipping the step.
@@ -1031,6 +1043,19 @@ func functionRefFromMap(v any) (ref, kind string, deprecated bool) {
 					ref += "/-/" + file
 				}
 				return ref + "@" + rev, "git", true
+			}
+		}
+		if oci, ok := m["oci"].(map[string]any); ok {
+			registry, _ := oci["registry"].(string)
+			repository, _ := oci["repository"].(string)
+			registry = strings.TrimSuffix(strings.TrimSpace(registry), "/")
+			repository = strings.Trim(strings.TrimSpace(repository), "/")
+			tag := ""
+			if oci["tag"] != nil {
+				tag = fmt.Sprint(oci["tag"])
+			}
+			if registry != "" && repository != "" && tag != "" {
+				return registry + "/" + repository + ":" + tag, "oci", false
 			}
 		}
 	}
@@ -1061,7 +1086,8 @@ func stripURLSchemeAndCredentials(raw string) string {
 
 // classifyFunctionRef reports the reference form of a GitLab Function
 // `func:`/`step:` value. "local" refs (relative or absolute filesystem
-// paths) are same-repo and carry no supply-chain concern. "oci" refs
+// paths) are same-repo and carry no supply-chain concern, nor do
+// "builtin" refs (builtin://...), which ship inside the runner. "oci" refs
 // (registry/path:tag or a @sha256: digest) are the supported form.
 // Anything else containing "@" is the deprecated git-repository
 // loading form (host/path@ref, no OCI tag) — GitLab plans to remove
@@ -1070,6 +1096,8 @@ func classifyFunctionRef(ref string) (kind string, deprecated bool) {
 	switch {
 	case strings.HasPrefix(ref, "./"), strings.HasPrefix(ref, "../"), strings.HasPrefix(ref, "/"):
 		return "local", false
+	case strings.HasPrefix(ref, "builtin://"):
+		return "builtin", false
 	case strings.Contains(ref, "@sha256:"):
 		return "oci", false
 	}

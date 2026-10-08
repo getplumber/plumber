@@ -2621,6 +2621,33 @@ func TestIssue414_ComponentAuthorizedSources(t *testing.T) {
 			expected: true,
 		},
 		{
+			// GitLab resolves namespaces case-insensitively.
+			name:        "trust_same_group_mixed_case",
+			inc:         ir.Include{Kind: "component", Source: "GitLab.Example.com/My-Group/other-project/ci-component"},
+			projectPath: "my-group/my-project",
+			cfg: map[string]any{
+				"componentAuthorizedSources": map[string]any{
+					"trustSameGroupComponents": true,
+					"instanceHost":             "gitlab.example.com",
+				},
+			},
+			expected: false,
+		},
+		{
+			// A ".." segment escapes the own namespace once the client
+			// normalizes the path: never trusted.
+			name:        "trust_same_group_dot_segment_escape",
+			inc:         ir.Include{Kind: "component", Source: "gitlab.example.com/my-group/../attacker/ci-component"},
+			projectPath: "my-group/my-project",
+			cfg: map[string]any{
+				"componentAuthorizedSources": map[string]any{
+					"trustSameGroupComponents": true,
+					"instanceHost":             "gitlab.example.com",
+				},
+			},
+			expected: true,
+		},
+		{
 			name:        "trust_same_group_disabled",
 			inc:         ir.Include{Kind: "component", Source: "gitlab.example.com/my-group/other-project/ci-component"},
 			projectPath: "my-group/my-project",
@@ -2821,6 +2848,7 @@ func TestIssue415_FunctionAuthorizedSources(t *testing.T) {
 		projectPath   string
 		registryHost  string
 		globalVars    map[string]string
+		jobVars       map[string]string
 		jobLocalVars  map[string]string
 		cfg           map[string]any
 		expectFinding bool
@@ -2997,6 +3025,56 @@ func TestIssue415_FunctionAuthorizedSources(t *testing.T) {
 			expectFinding: true,
 		},
 		{
+			// The redefinition reaches the job through `extends:` (or an
+			// included template): it is only in the merged job variables,
+			// not in the job's own block, and must still reject the pattern.
+			name:    "trusted_functions_pattern_untrusted_when_ci_var_inherited_by_job",
+			fn:      ir.Function{Name: "pwn", Ref: "$CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/backdoor:1", Kind: "oci"},
+			jobVars: map[string]string{"CI_PROJECT_PATH": "evil-ns/evil"},
+			cfg: map[string]any{"functionAuthorizedSources": map[string]any{
+				"trustedFunctions": []string{"$CI_TEMPLATE_REGISTRY_HOST/$CI_PROJECT_PATH/*"},
+			}},
+			expectFinding: true,
+		},
+		{
+			// A ".." segment escapes the own namespace once git normalizes
+			// the URL: gitlab.com/attacker/evil is what gets fetched.
+			name:          "same_group_dot_segment_escape_untrusted",
+			fn:            ir.Function{Name: "pwn", Ref: "gitlab.com/my-group/../attacker/evil@main", Kind: "git", Deprecated: true},
+			projectPath:   "my-group/my-project",
+			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true, "instanceHost": "gitlab.com"}},
+			expectFinding: true,
+		},
+		{
+			name:          "allowlist_encoded_dot_segment_escape_untrusted",
+			fn:            ir.Function{Name: "pwn", Ref: "gitlab.com/my-group/%2E%2E/attacker/evil@main", Kind: "git", Deprecated: true},
+			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustedFunctions": []string{"gitlab.com/my-group/*"}}},
+			expectFinding: true,
+		},
+		{
+			name:          "builtin_ref_excluded",
+			fn:            ir.Function{Name: "build", Ref: "builtin://function/oci/build", Kind: "builtin"},
+			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{}},
+			expectFinding: false,
+		},
+		{
+			// GitLab hosts and namespaces are case-insensitive.
+			name:          "same_group_mixed_case_trusted",
+			fn:            ir.Function{Name: "say_hi", Ref: "GitLab.com/My-Group/funcs@v1", Kind: "git", Deprecated: true},
+			projectPath:   "my-group/my-project",
+			registryHost:  "registry.gitlab.com",
+			cfg:           map[string]any{"functionAuthorizedSources": map[string]any{"trustSameGroupFunctions": true, "instanceHost": "gitlab.com"}},
+			expectFinding: false,
+		},
+		{
+			name: "allowlist_case_insensitive",
+			fn:   ir.Function{Name: "say_hi", Ref: "registry.example.com/Platform/echo:1", Kind: "oci"},
+			cfg: map[string]any{"functionAuthorizedSources": map[string]any{
+				"trustedFunctions": []string{"registry.example.com/platform/*"},
+			}},
+			expectFinding: false,
+		},
+		{
 			// The redefinition guard is generic — it isn't hardcoded to
 			// CI_TEMPLATE_REGISTRY_HOST/CI_PROJECT_PATH. A custom pattern
 			// referencing any other $CI_* variable must also be rejected
@@ -3032,7 +3110,7 @@ func TestIssue415_FunctionAuthorizedSources(t *testing.T) {
 				ProjectPath:     tc.projectPath,
 				RegistryHost:    tc.registryHost,
 				GlobalVariables: tc.globalVars,
-				Jobs:            []ir.Job{{Name: "build", LocalVariables: tc.jobLocalVars, Functions: []ir.Function{tc.fn}}},
+				Jobs:            []ir.Job{{Name: "build", Variables: tc.jobVars, LocalVariables: tc.jobLocalVars, Functions: []ir.Function{tc.fn}}},
 			}
 			findings, err := evaluateStrict(engine, context.Background(), pipeline, tc.cfg)
 			if err != nil {
