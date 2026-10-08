@@ -224,6 +224,10 @@ func buildLegacyResult(e control.ControlEntry, result *control.AnalysisResult, p
 		return "imageForbiddenTagsResult", buildImageForbiddenTagsBlock(common, result, pc, findings)
 	case "containerImageMustComeFromAuthorizedSources":
 		return "imageAuthorizedSourcesResult", buildImageAuthorizedSourcesBlock(common, result, findings)
+	case "componentMustComeFromAuthorizedSources":
+		return "componentAuthorizedSourcesResult", buildComponentAuthorizedSourcesBlock(common, result, findings)
+	case "functionMustComeFromAuthorizedSources":
+		return "functionAuthorizedSourcesResult", buildFunctionAuthorizedSourcesBlock(common, result, findings)
 	case "branchMustBeProtected":
 		return "branchProtectionResult", buildBranchProtectionBlock(common, result, pc, findings)
 	case "projectMustHaveSecurityPolicySource":
@@ -751,6 +755,76 @@ func buildImageAuthorizedSourcesBlock(c legacyCommon, result *control.AnalysisRe
 			"unresolvedRefs": unresolved,
 			"ciInvalid":      0,
 			"ciMissing":      0,
+		},
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
+	}
+}
+
+// componentSourceCounts counts the pipeline's `include: component:`
+// entries for componentMustComeFromAuthorizedSources (ISSUE-414). Every
+// finding is one unauthorized component, so authorized is derived by
+// subtraction. Shared by the terminal stats and the JSON block so the two
+// cannot drift apart.
+func componentSourceCounts(result *control.AnalysisResult, unauthorized int) (total, authorized int) {
+	if result != nil && result.Pipeline != nil {
+		for _, inc := range result.Pipeline.Includes {
+			if inc.Kind == "component" {
+				total++
+			}
+		}
+	}
+	return total, max(total-unauthorized, 0)
+}
+
+// functionSourceCounts counts the pipeline's `run:` step function
+// references for functionMustComeFromAuthorizedSources (ISSUE-415), and
+// those using a deprecated reference form (tracked apart from trust).
+func functionSourceCounts(result *control.AnalysisResult, unauthorized int) (total, authorized, deprecated int) {
+	if result != nil && result.Pipeline != nil {
+		for _, job := range result.Pipeline.Jobs {
+			total += len(job.Functions)
+			for _, fn := range job.Functions {
+				if fn.Deprecated {
+					deprecated++
+				}
+			}
+		}
+	}
+	return total, max(total-unauthorized, 0), deprecated
+}
+
+func buildComponentAuthorizedSourcesBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	unauthorized := len(findings)
+	total, authorized := componentSourceCounts(result, unauthorized)
+	return map[string]any{
+		// An include is not a job: like the other include blocks, the
+		// issues carry no `job` field.
+		"issues": projectFindings(_sortedFindings(findings), ""),
+		"metrics": map[string]any{
+			"total":        total,
+			"authorized":   authorized,
+			"unauthorized": unauthorized,
+		},
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
+	}
+}
+
+func buildFunctionAuthorizedSourcesBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	unauthorized := len(findings)
+	total, authorized, deprecated := functionSourceCounts(result, unauthorized)
+	return map[string]any{
+		"issues": projectFindings(_sortedFindings(findings), "job"),
+		"metrics": map[string]any{
+			"total":        total,
+			"authorized":   authorized,
+			"unauthorized": unauthorized,
+			"deprecated":   deprecated,
 		},
 		"version":   "0.1.0",
 		"ciValid":   c.CiValid,
