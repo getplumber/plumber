@@ -1,0 +1,9 @@
+name: clean_ghes_own_instance
+on: push
+jobs:
+  comment:
+    runs-on: self-hosted
+    steps:
+      - run: |
+          curl -H "Authorization: Bearer ${{ secrets.GITHUB_TOKEN }}" \
+            https://github.acme-corp.example/api/v3/repos/o/r/issues/1/comments

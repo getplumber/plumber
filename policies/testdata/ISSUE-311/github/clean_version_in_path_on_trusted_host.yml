@@ -1,0 +1,7 @@
+name: release
+on: push
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -d "k=${{ secrets.KEY }}" https://api.github.com/releases/1.2.3.4/upload

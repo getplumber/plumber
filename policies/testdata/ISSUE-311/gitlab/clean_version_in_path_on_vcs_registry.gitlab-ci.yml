@@ -1,0 +1,4 @@
+publish:
+  image: alpine:3.19
+  script:
+    - 'curl -d "token=$DEPLOY_TOKEN" https://registry.gitlab.example.com/v2/pkg-3.19.1.2.tgz'

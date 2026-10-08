@@ -235,6 +235,12 @@ where the finding has no sub-finding subject:
 
 Rewording any rule's prose no longer re-keys a registered finding.
 
+Codes added since then declare their subject from the start. ISSUE-311 (a
+secret sent to an untrusted host) declares `{file, job, destination}`: the
+destination host is the stable coordinate, while the secret names and the
+script line are data, so a second secret on the same line or a reworded
+command does not re-key the finding.
+
 ## Cases
 
 ### A rule with a structured subject

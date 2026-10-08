@@ -1,0 +1,7 @@
+deploy:
+  image: alpine:3.19
+  script:
+    - '# curl -d "token=$DEPLOY_TOKEN" https://old-webhook.example.com/notify'
+    - |
+      # curl -d "token=$CI_JOB_TOKEN" https://old-webhook.example.com/notify
+      echo done

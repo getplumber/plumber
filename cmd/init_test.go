@@ -208,7 +208,7 @@ func starterWizardConfig() *configuration.PlumberConfig {
 		TrustedURLsText:                 strings.Join(defaultTrustedURLs(), "\n"),
 		AuthorizedActionsUsePlumberList: true,
 		CompositionChoices: []string{
-			compHardcoded, compUpToDate, compForbidden, compRefCollision, compSecurity, compScripts, compJobVars, compDinD,
+			compHardcoded, compUpToDate, compForbidden, compRefCollision, compSecurity, compScripts, compJobVars, compDinD, compSecretEgress,
 			compActionPin, compAuthorizedActions, compDangerousTriggers, compPRTargetHead, compCheckoutPersist, compDeclarePermissions, compReusableSecrets, compOverprovSecrets, compTemplateInjection,
 			compEnvInjection, compWriteAllPerms, compRefConfusion, compArchivedActions, compKnownCVEs, compImpostorCommit, compMutableRemoteExec, compCachePoisoning, compDebugTraceGitHub,
 		},
@@ -611,6 +611,50 @@ func TestInitWizardEnablesImpostorCommit(t *testing.T) {
 	}
 	if c := off.toPlumberConfig().GitHub.Controls.ActionRefsMustExistUpstream; c != nil {
 		t.Fatal("not selecting compImpostorCommit must leave ActionRefsMustExistUpstream unset")
+	}
+}
+
+// Selecting the secret egress composition (ISSUE-311) writes
+// pipelineMustNotSendSecretsToUntrustedHosts: enabled: true under each
+// selected provider's controls in the generated config, and nothing when it
+// is not selected.
+func TestInitWizardEnablesSecretEgress(t *testing.T) {
+	for _, providers := range [][]string{{"gitlab"}, {"github"}, {"gitlab", "github"}} {
+		st := &initWizardState{
+			Providers:          providers,
+			Categories:         []string{catComposition},
+			CompositionChoices: []string{compSecretEgress},
+		}
+		out, err := yaml.Marshal(st.toPlumberConfig())
+		if err != nil {
+			t.Fatalf("marshal: %v", err)
+		}
+		// yaml.v2 decodes nested mappings as map[any]any.
+		var doc map[any]any
+		if err := yaml.Unmarshal(out, &doc); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		for _, provider := range providers {
+			section, _ := doc[provider].(map[any]any)
+			controls, _ := section["controls"].(map[any]any)
+			block, _ := controls["pipelineMustNotSendSecretsToUntrustedHosts"].(map[any]any)
+			if block["enabled"] != true {
+				t.Errorf("providers %v: %s.controls.pipelineMustNotSendSecretsToUntrustedHosts = %v, want enabled: true\n%s", providers, provider, block, out)
+			}
+		}
+
+		off := &initWizardState{
+			Providers:          providers,
+			Categories:         []string{catComposition},
+			CompositionChoices: []string{compDinD},
+		}
+		cfg := off.toPlumberConfig()
+		if cfg.GitLab != nil && cfg.GitLab.Controls.PipelineMustNotSendSecretsToUntrustedHosts != nil {
+			t.Errorf("providers %v: not selecting compSecretEgress must leave the gitlab control unset", providers)
+		}
+		if cfg.GitHub != nil && cfg.GitHub.Controls.PipelineMustNotSendSecretsToUntrustedHosts != nil {
+			t.Errorf("providers %v: not selecting compSecretEgress must leave the github control unset", providers)
+		}
 	}
 }
 

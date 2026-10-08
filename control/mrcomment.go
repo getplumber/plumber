@@ -386,6 +386,7 @@ var mrCommentControlOrder = []struct {
 	{"pipelineMustNotOverrideJobVariables", "Pipeline must not override job variables"},
 	{"securityJobsMustNotBeWeakened", "Security jobs must not be weakened"},
 	{"pipelineMustNotExecuteUnverifiedScripts", "Pipeline must not execute unverified scripts"},
+	{"pipelineMustNotSendSecretsToUntrustedHosts", "Pipeline must not send secrets to untrusted hosts"},
 	{"pipelineMustNotUseDockerInDocker", "Pipeline must not use Docker-in-Docker"},
 	{"workflowMustNotInjectUserInputInScripts", "Workflows must not inject user input in scripts"},
 	{"workflowMustNotReEnableInsecureCommands", "Workflows must not re-enable insecure commands"},

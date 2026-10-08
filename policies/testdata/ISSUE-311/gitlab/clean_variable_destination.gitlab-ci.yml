@@ -1,0 +1,4 @@
+hook:
+  image: alpine:3.19
+  script:
+    - curl -d "token=$DEPLOY_TOKEN" "$WEBHOOK_URL"

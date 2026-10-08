@@ -1,0 +1,5 @@
+fetch:
+  image: alpine:3.19
+  script:
+    - 'curl -H "JOB-TOKEN: $CI_JOB_TOKEN" https://gitlab.example.com/api/v4/x -o out.txt'
+    - 'curl -H "JOB-TOKEN: $CI_JOB_TOKEN" -d @payload.json https://gitlab.example.com/api/v4/y'

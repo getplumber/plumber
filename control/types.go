@@ -275,6 +275,9 @@ type GitHubAnalysisStats struct {
 	// Unverified script execution (ISSUE-411).
 	UnverifiedScriptsFound int
 
+	// Secret egress (ISSUE-311).
+	SecretEgressFound int
+
 	// Workflows + properties (ISSUE-802, ISSUE-801).
 	WorkflowsTotal                int
 	WorkflowsWithDangerousTrigger int

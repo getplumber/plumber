@@ -1,0 +1,10 @@
+name: clean_commented_out_line
+on: push
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          # legacy webhook, disabled:
+          # curl -d "token=${{ secrets.DEPLOY_TOKEN }}" https://old-webhook.example.com/notify
+          echo done

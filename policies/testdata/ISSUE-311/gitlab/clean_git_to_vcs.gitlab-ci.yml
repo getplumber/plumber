@@ -1,0 +1,4 @@
+sync:
+  image: alpine:3.19
+  script:
+    - git clone https://gitlab-ci-token:${CI_JOB_TOKEN}@gitlab.example.com/g/p.git

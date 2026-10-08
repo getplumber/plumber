@@ -1,0 +1,5 @@
+charts:
+  image: alpine:3.19
+  script:
+    - helm repo add --password "$DEPLOY_TOKEN" myrepo https://charts.example/wget --force-update
+    - 'curl -H "X: $DEPLOY_TOKEN" https://gitlab.example.com/api/v4/curl'

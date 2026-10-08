@@ -82,6 +82,8 @@ var gitLabMessageStyleKeys = map[string][]string{
 	"ISSUE-204": {"job", "variableName"},
 	// Controlled variable overridden: same shape, root form carries no job.
 	"ISSUE-205": {"job", "variableName"},
+	// Secret sent to an untrusted host: the job and the destination host.
+	"ISSUE-311": {"job", "destination"},
 	// Hardcoded job: the job (hardcodedJob is the same name, for the identity).
 	"ISSUE-401": {"job"},
 	// Ref collision: the GitHub form carries job + uses, the GitLab form
@@ -146,6 +148,9 @@ var dataArrayKinds = map[string]bool{
 	// the same thing in English (see mr_settings_compliant.rego's _labels).
 	"ISSUE-503.deviatingSettings": false,
 	"ISSUE-506.deviatingSettings": false,
+	// The secret names an ISSUE-311 line sends, raw variable names. A consumer
+	// parses these; the message quotes the same names.
+	"ISSUE-311.secretNames": false,
 }
 
 // messageBranches is the render manifest, and the answer to a defect class
@@ -182,6 +187,8 @@ var messageBranches = []messageBranch{
 	{"ISSUE-204", "unsafe expansion", "expands `$", ""},
 	{"ISSUE-205", "job form", "` overrides the controlled variable `", ""},
 	{"ISSUE-205", "root variables form", "configuration overrides the controlled variable `", ""},
+	{"ISSUE-311", "one secret", "sends the secret `", ""},
+	{"ISSUE-311", "several secrets", "sends the secrets `", ""},
 	{"ISSUE-401", "hardcoded job", "is defined in the project CI configuration", ""},
 	{"ISSUE-402", "github action ref", "whose ref resolves as both a tag", ""},
 	{"ISSUE-402", "gitlab include ref", "` pins the ref `", ""},

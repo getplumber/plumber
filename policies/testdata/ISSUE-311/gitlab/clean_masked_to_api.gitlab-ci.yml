@@ -1,0 +1,4 @@
+release:
+  image: alpine:3.19
+  script:
+    - 'curl -H "PRIVATE-TOKEN: $DEPLOY_TOKEN" "$CI_API_V4_URL/projects/$CI_PROJECT_ID/releases"'

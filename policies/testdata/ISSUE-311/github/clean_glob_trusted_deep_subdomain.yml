@@ -1,0 +1,7 @@
+name: clean_glob_trusted_deep_subdomain
+on: push
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - run: curl -d "k=${{ secrets.KEY }}" https://a.b.internal.example.com/x

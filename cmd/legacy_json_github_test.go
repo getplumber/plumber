@@ -335,3 +335,58 @@ func TestCachePoisoningJSONBlock(t *testing.T) {
 		t.Errorf("clean metrics = %v, want both counters 0", cmm)
 	}
 }
+
+// TestSecretEgressJSONBlockGitHub locks the results.json detail block for
+// the GitHub secret-egress control (ISSUE-311): the dispatch must route it
+// to secretEgressResult and the metrics must read the GitHubStats total,
+// not the GitLab script-line counter.
+func TestSecretEgressJSONBlockGitHub(t *testing.T) {
+	entry := control.ControlEntry{
+		DisplayName: "Pipeline must not send secrets to untrusted hosts",
+		ControlName: "pipelineMustNotSendSecretsToUntrustedHosts",
+	}
+	findings := []opaengine.Finding{{
+		Code: "ISSUE-311",
+		Job:  "exfil",
+		Data: map[string]any{
+			"destination": "193.32.204.199",
+			"secretNames": []any{"DEPLOY_TOKEN"},
+		},
+	}}
+	result := &control.AnalysisResult{
+		CiValid:     true,
+		GitHubStats: &control.GitHubAnalysisStats{ScriptLinesTotal: 3},
+	}
+
+	name, block := buildLegacyResultGitHub(entry, result, nil, findings)
+	if name != "secretEgressResult" {
+		t.Fatalf("block name = %q, want secretEgressResult", name)
+	}
+	m, ok := block.(map[string]any)
+	if !ok {
+		t.Fatalf("block is %T, want map[string]any", block)
+	}
+	metrics, ok := m["metrics"].(map[string]any)
+	if !ok {
+		t.Fatalf("metrics is %T, want map[string]any", m["metrics"])
+	}
+	if metrics["totalScriptLinesChecked"] != 3 {
+		t.Errorf("totalScriptLinesChecked = %v, want 3 (the GitHubStats total)", metrics["totalScriptLinesChecked"])
+	}
+	if metrics["secretsSentToUntrustedHosts"] != 1 {
+		t.Errorf("secretsSentToUntrustedHosts = %v, want 1", metrics["secretsSentToUntrustedHosts"])
+	}
+	if issues, ok := m["issues"].([]map[string]any); !ok || len(issues) != 1 {
+		t.Fatalf("issues = %v, want exactly 1 entry", m["issues"])
+	}
+
+	// Clean run: no findings, counter at zero.
+	cleanName, cleanBlock := buildLegacyResultGitHub(entry, result, nil, nil)
+	if cleanName != "secretEgressResult" {
+		t.Fatalf("clean block name = %q", cleanName)
+	}
+	cmetrics := cleanBlock.(map[string]any)["metrics"].(map[string]any)
+	if cmetrics["secretsSentToUntrustedHosts"] != 0 {
+		t.Errorf("clean secretsSentToUntrustedHosts = %v, want 0", cmetrics["secretsSentToUntrustedHosts"])
+	}
+}

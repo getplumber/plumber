@@ -73,6 +73,8 @@ func buildLegacyResultGitHub(e control.ControlEntry, result *control.AnalysisRes
 		return "debugTraceResult", buildDebugTraceBlockGitHub(common, result, findings)
 	case "pipelineMustNotExecuteUnverifiedScripts":
 		return "unverifiedScriptsResult", buildUnverifiedScriptsBlockGitHub(common, result, findings)
+	case "pipelineMustNotSendSecretsToUntrustedHosts":
+		return "secretEgressResult", buildSecretEgressBlockGitHub(common, result, findings)
 	}
 	return "", nil
 }
@@ -787,6 +789,25 @@ func buildUnverifiedScriptsBlockGitHub(c legacyCommon, result *control.AnalysisR
 			"jobsChecked":             s.JobsTotal,
 			"totalScriptLinesChecked": s.ScriptLinesTotal,
 			"unverifiedScriptsFound":  len(findings),
+		},
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
+	}
+}
+
+// buildSecretEgressBlockGitHub emits the legacy JSON block for the
+// secret-egress control (ISSUE-311) on the GitHub side. Mirrors
+// buildSecretEgressBlock, reading the GitHub stats total instead of
+// counting GitLab script lines directly.
+func buildSecretEgressBlockGitHub(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	s := statsOf(result)
+	return map[string]any{
+		"issues": projectFindings(_sortedFindings(findings), "job"),
+		"metrics": map[string]any{
+			"totalScriptLinesChecked":     s.ScriptLinesTotal,
+			"secretsSentToUntrustedHosts": len(findings),
 		},
 		"version":   "0.1.0",
 		"ciValid":   c.CiValid,

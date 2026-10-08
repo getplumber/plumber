@@ -1,0 +1,8 @@
+name: clean_git_to_vcs
+on: push
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          git clone https://x:${{ secrets.K }}@github.com/o/r

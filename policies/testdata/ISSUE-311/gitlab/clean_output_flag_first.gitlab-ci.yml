@@ -1,0 +1,6 @@
+fetch:
+  image: alpine:3.19
+  script:
+    - 'curl --output artifacts.zip --header "JOB-TOKEN: $CI_JOB_TOKEN" "$CI_API_V4_URL/projects/1/jobs/artifacts/main/download?job=build"'
+    - 'curl -o out.txt -H "PRIVATE-TOKEN: $DEPLOY_TOKEN" https://gitlab.example.com/api/v4/x'
+    - 'wget -O app.tar.gz --header "JOB-TOKEN: $CI_JOB_TOKEN" https://gitlab.example.com/api/v4/y'

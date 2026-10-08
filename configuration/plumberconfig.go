@@ -95,6 +95,9 @@ var validControlSchema = map[string][]string{
 	"pipelineMustNotExecuteUnverifiedScripts": {
 		"enabled", "trustedUrls",
 	},
+	"pipelineMustNotSendSecretsToUntrustedHosts": {
+		"enabled", "trustVcsHosts", "trustedHosts",
+	},
 	"pipelineMustNotOverrideJobVariables": {
 		"enabled", "variables",
 	},
@@ -363,6 +366,11 @@ type ControlsConfig struct {
 
 	// PipelineMustNotExecuteUnverifiedScripts control configuration
 	PipelineMustNotExecuteUnverifiedScripts *UnverifiedScriptsControlConfig `yaml:"pipelineMustNotExecuteUnverifiedScripts,omitempty"`
+
+	// PipelineMustNotSendSecretsToUntrustedHosts control configuration
+	// (GitLab and GitHub). Flags a script line that sends a secret to a
+	// host the policy does not trust (ISSUE-311).
+	PipelineMustNotSendSecretsToUntrustedHosts *SecretEgressControlConfig `yaml:"pipelineMustNotSendSecretsToUntrustedHosts,omitempty"`
 
 	// PipelineMustNotOverrideJobVariables control configuration
 	PipelineMustNotOverrideJobVariables *JobVariablesOverrideControlConfig `yaml:"pipelineMustNotOverrideJobVariables,omitempty"`
@@ -1094,6 +1102,33 @@ type UnverifiedScriptsControlConfig struct {
 	TrustedUrls []string `yaml:"trustedUrls,omitempty"`
 }
 
+// SecretEgressControlConfig configures the secret-egress check (ISSUE-311):
+// a job must not send a secret over the network to a host the policy does
+// not trust. Enabled with no other key is a complete configuration.
+type SecretEgressControlConfig struct {
+	// Enabled controls whether this check runs.
+	Enabled *bool `yaml:"enabled,omitempty"`
+
+	// TrustVcsHosts trusts the VCS itself as a destination: github.com,
+	// api.github.com, uploads.github.com, ghcr.io and *.githubusercontent.com
+	// on GitHub; the instance host and its registry host on GitLab. Default
+	// true when unset.
+	TrustVcsHosts *bool `yaml:"trustVcsHosts,omitempty"`
+
+	// TrustedHosts lists host[:port] glob patterns that may receive secrets,
+	// for example "*.internal.example.com" or "10.*". Empty by default.
+	TrustedHosts []string `yaml:"trustedHosts,omitempty"`
+}
+
+// IsEnabled reports whether the control is enabled. Returns false when the
+// wrapper or the field is nil, the same convention as every other IsEnabled().
+func (c *SecretEgressControlConfig) IsEnabled() bool {
+	if c == nil || c.Enabled == nil {
+		return false
+	}
+	return *c.Enabled
+}
+
 // JobVariablesOverrideControlConfig configuration for the job variable override control
 type JobVariablesOverrideControlConfig struct {
 	// Enabled controls whether this check runs
@@ -1635,6 +1670,15 @@ func (c *UnverifiedScriptsControlConfig) IsEnabled() bool {
 		return false
 	}
 	return *c.Enabled
+}
+
+// GetPipelineMustNotSendSecretsToUntrustedHostsConfig returns the control
+// configuration of the GitLab section. Returns nil if not configured.
+func (c *PlumberConfig) GetPipelineMustNotSendSecretsToUntrustedHostsConfig() *SecretEgressControlConfig {
+	if c == nil {
+		return nil
+	}
+	return c.ControlsFor("gitlab").PipelineMustNotSendSecretsToUntrustedHosts
 }
 
 // GetPipelineMustNotOverrideJobVariablesConfig returns the control configuration

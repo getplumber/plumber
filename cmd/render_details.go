@@ -676,6 +676,11 @@ func buildGitHubControlStats(controlName string, stats *control.GitHubAnalysisSt
 			{Label: statScriptLinesChecked, Value: fmt.Sprintf("%d", stats.ScriptLinesTotal)},
 			{Label: "Unverified Scripts", Value: fmt.Sprintf("%d", stats.UnverifiedScriptsFound)},
 		}
+	case "pipelineMustNotSendSecretsToUntrustedHosts":
+		return []statLine{
+			{Label: statScriptLinesChecked, Value: fmt.Sprintf("%d", stats.ScriptLinesTotal)},
+			{Label: "Secrets Sent Elsewhere", Value: fmt.Sprintf("%d", len(findings))},
+		}
 	case "reusableWorkflowsMustNotInheritSecrets":
 		return []statLine{
 			{Label: "Reusable Workflow Calls", Value: fmt.Sprintf("%d", stats.ReusableCalls)},
@@ -964,6 +969,14 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 			{Label: statJobsChecked, Value: fmt.Sprintf("%d", jobTotal)},
 			{Label: statScriptLinesChecked, Value: fmt.Sprintf("%d", _countScriptLines(result))},
 			{Label: "Unverified Scripts", Value: fmt.Sprintf("%d", findingsCount)},
+		}
+	case "pipelineMustNotSendSecretsToUntrustedHosts":
+		if lines := variablesUnreadableCaveat(result); lines != nil {
+			return lines
+		}
+		return []statLine{
+			{Label: statScriptLinesChecked, Value: fmt.Sprintf("%d", _countScriptLines(result))},
+			{Label: "Secrets Sent Elsewhere", Value: fmt.Sprintf("%d", findingsCount)},
 		}
 	case "securityJobsMustNotBeWeakened":
 		// Stable's "Security Jobs Found" counts how many of the merged

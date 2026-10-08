@@ -1,0 +1,6 @@
+fetch:
+  image: alpine:3.19
+  script:
+    - 'curl --cert client.pem -H "X: $DEPLOY_TOKEN" "$URL"'
+    - 'curl -D headers.txt -H "X: $DEPLOY_TOKEN" "$URL"'
+    - 'wget -q -o wget.log --header "X: $DEPLOY_TOKEN" "$URL"'

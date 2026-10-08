@@ -1,0 +1,9 @@
+name: clean_fetch_then_publish
+on: push
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl -fsSL https://deb.nodesource.com/setup_20.x | bash - && npm publish --token ${{ secrets.NPM_TOKEN }}
+          curl -sSL https://sh.rustup.rs | sh -s -- -y && curl -H "Authorization: Bearer ${{ secrets.TOKEN }}" https://api.github.com/user

@@ -258,6 +258,8 @@ func buildLegacyResult(e control.ControlEntry, result *control.AnalysisResult, p
 		return "securityJobsWeakenedResult", buildSecurityJobsBlock(common, result, pc, findings)
 	case "pipelineMustNotExecuteUnverifiedScripts":
 		return "unverifiedScriptsResult", buildUnverifiedScriptsBlock(common, result, findings)
+	case "pipelineMustNotSendSecretsToUntrustedHosts":
+		return "secretEgressResult", buildSecretEgressBlock(common, result, findings)
 	case "pipelineMustNotOverrideJobVariables":
 		return "jobVariablesOverrideResult", buildJobVariablesOverrideBlock(common, result, findings)
 	case "pipelineMustNotUseDockerInDocker":
@@ -1195,6 +1197,24 @@ func buildUnverifiedScriptsBlock(c legacyCommon, result *control.AnalysisResult,
 			"jobsChecked":             jobs,
 			"totalScriptLinesChecked": _countScriptLines(result),
 			"unverifiedScriptsFound":  len(findings),
+		},
+		"version":   "0.1.0",
+		"ciValid":   c.CiValid,
+		"ciMissing": c.CiMissing,
+		"skipped":   c.Skipped,
+	}
+}
+
+// buildSecretEgressBlock emits the legacy JSON block for the secret-egress
+// control (ISSUE-311). Findings are per job and destination; each issue
+// carries destination / secretNames / scriptLine from f.Data, preserved by
+// projectFindings.
+func buildSecretEgressBlock(c legacyCommon, result *control.AnalysisResult, findings []opaengine.Finding) map[string]any {
+	return map[string]any{
+		"issues": projectFindings(findings, "job"),
+		"metrics": map[string]any{
+			"totalScriptLinesChecked":     _countScriptLines(result),
+			"secretsSentToUntrustedHosts": len(findings),
 		},
 		"version":   "0.1.0",
 		"ciValid":   c.CiValid,

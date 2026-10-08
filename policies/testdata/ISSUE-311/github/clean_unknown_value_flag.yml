@@ -1,0 +1,13 @@
+name: clean_unknown_value_flag
+on: push
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - env:
+          K: ${{ secrets.API_KEY }}
+          URL: ${{ vars.API_URL }}
+        run: |
+          curl --cert client.pem -H "X: $K" "$URL"
+          curl -D headers.txt -H "X: $K" "$URL"
+          wget -q -o wget.log --header "X: $K" "$URL"

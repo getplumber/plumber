@@ -65,6 +65,47 @@ func TestCicdVariableControlEnabled(t *testing.T) {
 			t.Fatal("expected false when --controls omits both variable controls")
 		}
 	})
+
+	// The secret egress control (ISSUE-311) reads the masked flags of the
+	// same listing on GitLab: enabled alone, it opens the gate; filtered
+	// out, it does not.
+	egressOn := &configuration.SecretEgressControlConfig{Enabled: boolPtr(true)}
+	egressOnly := func(protected, masked *configuration.EnabledOnlyControlConfig) *configuration.Configuration {
+		conf := cfgWith(protected, masked)
+		conf.PlumberConfig.GitLab.Controls.PipelineMustNotSendSecretsToUntrustedHosts = egressOn
+		return conf
+	}
+	t.Run("secret egress only -> true", func(t *testing.T) {
+		if !cicdVariableControlEnabled(egressOnly(nil, nil)) {
+			t.Fatal("expected true when only the secret egress control is enabled")
+		}
+	})
+	t.Run("secret egress only, variable controls disabled -> true", func(t *testing.T) {
+		if !cicdVariableControlEnabled(egressOnly(off, off)) {
+			t.Fatal("expected true when secret egress is enabled and both variable controls are disabled")
+		}
+	})
+	t.Run("--skip-controls excludes secret egress -> false", func(t *testing.T) {
+		conf := egressOnly(off, off)
+		conf.SkipControlsFilter = []string{controlSecretEgress}
+		if cicdVariableControlEnabled(conf) {
+			t.Fatal("expected false when the only enabled control is in --skip-controls")
+		}
+	})
+	t.Run("--controls omitting secret egress -> false", func(t *testing.T) {
+		conf := egressOnly(off, off)
+		conf.ControlsFilter = []string{"branchMustBeProtected"}
+		if cicdVariableControlEnabled(conf) {
+			t.Fatal("expected false when --controls omits the secret egress control")
+		}
+	})
+	t.Run("--controls keeping only secret egress -> true", func(t *testing.T) {
+		conf := egressOnly(on, on)
+		conf.ControlsFilter = []string{controlSecretEgress}
+		if !cicdVariableControlEnabled(conf) {
+			t.Fatal("expected true when --controls keeps only the secret egress control")
+		}
+	})
 }
 
 // TestStatusFor_VariablesDegradedCarveOut pins the fix for the "variables

