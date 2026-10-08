@@ -637,6 +637,23 @@ func TestBuildAnalysisJSONReport_GateContract(t *testing.T) {
 		}
 		assertAbsent(t, m, "minPoints", "minScore", "compliance")
 	})
+
+	// plumberScore is the whole PlumberScoreResult: a v4 score's profileId
+	// must come through the report exactly as the score carries it, which
+	// is also what scoreProfileV4 reads to decide whether to annotate
+	// findings.
+	t.Run("v4 profile id serializes under plumberScore", func(t *testing.T) {
+		score := scoreWithPoints(100)
+		score.ProfileID = control.PlumberScoreProfileIDV4
+		m := decode(t, complianceSummary{minPoints: 100, score: score, scoreMode: true, controlCount: 1})
+		plumberScore, ok := m["plumberScore"].(map[string]any)
+		if !ok {
+			t.Fatalf("plumberScore = %v, want an object", m["plumberScore"])
+		}
+		if plumberScore["profileId"] != control.PlumberScoreProfileIDV4 {
+			t.Fatalf("profileId = %v, want %q", plumberScore["profileId"], control.PlumberScoreProfileIDV4)
+		}
+	})
 }
 
 // rawPointsUnclamped exists ONLY to be read out of the pushed report (the

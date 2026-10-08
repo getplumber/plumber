@@ -1,0 +1,17 @@
+{
+  "source": "https://github.com/tj-actions/changed-files",
+  "commit": "3b3041225bddb25fd9637f44aa4e9a5178c6792e",
+  "captured": "2026-10-03",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [{"name": "main", "protected": true}],
+  "note": "The first link of the March 2025 chain (CVE-2025-30154): tj-actions/changed-files' own CI ran tj-actions/eslint-changed-files@v25, which pulled reviewdog/action-setup@v1, in the build job holding PAT_TOKEN (the bot token later used to move the changed-files tags) and the Codacy token. There is no publish step in this job; the push action that uses the PAT is ad-m/github-push-action, outside the known repository-writer list, so no writes_repo impact is proven. The build job feeds the test jobs (needs); the runner a job runs on is not read, so none of them adds anything to the reach. The path through the mutable action is secrets alone: High, proven, and the action is only not pinned (tj-actions is the repository's own owner, so authorized), so the dependency cap holds it at Medium; the same holds for the two other tj-actions paths. The three third-party actions from owners outside the authorized list (nrwl/nx-set-shas, ad-m/github-push-action, codacy/codacy-coverage-reporter-action) stay High: an unauthorized source raises the cap to High. Hand count: three High paths 3 x 15 = 45, three Medium paths 3 x 6 = 18, no other finding, so the items count 63, under the 69 that high, medium and low items count for at most, and 100 - 63 = 37: D.",
+  "expect": {
+    "maxTier": "high",
+    "paths": [
+      {"entryKind": "mutable_dependency", "tier": "medium", "job": "test/build", "subjectContains": "tj-actions/eslint-changed-files@v25", "reachKind": "secrets", "state": "proven",
+       "sentenceContains": ["`tj-actions/eslint-changed-files@v25`", "`test/build`", "`PAT_TOKEN`"]}
+    ]
+  }
+}

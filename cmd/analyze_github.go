@@ -124,8 +124,6 @@ func runGitHubAnalyze(info *utils.GitRemoteInfo, controlsFilterList, skipControl
 	conf := buildGitHubLocalConf(info, plumberConfig, configPath, controlsFilterList, skipControlsList)
 	platformModeNotices(conf)
 
-	printGitHubAuthBanner(conf.GithubAPIHost, false)
-
 	p, ok := plumberprovider.Get("github")
 	if !ok {
 		return fmt.Errorf("github provider not registered")
@@ -173,7 +171,6 @@ func runGitHubAnalyzeRemote(host, project, ref string, controlsFilterList, skipC
 	}
 
 	apiHost := strings.TrimPrefix(strings.TrimPrefix(host, "https://"), "http://")
-	printGitHubAuthBanner(apiHost, true)
 
 	conf := buildGitHubRemoteConf(owner, repo, ref, apiHost, plumberConfig, configPath, controlsFilterList, skipControlsList)
 	platformModeNotices(conf)
@@ -204,31 +201,24 @@ func runGitHubAnalyzeRemote(host, project, ref string, controlsFilterList, skipC
 	return presentResultWithProvider(p, nil, result, conf)
 }
 
-// printGitHubAuthBanner emits a one-line stderr banner naming which
-// auth source go-gh will use for this run. Cheap (no network) — pure
-// env-var inspection — and complementary to the postflight skipped-
-// control markers: tells the user up front "this is the credential
-// I'm running with", so a later "ISSUE-505 was skipped because the
-// token lacks Administration:Read" message lands with context.
+// githubAuthValue names which auth source go-gh will use for this run,
+// the value of the run header's Auth row. Cheap (no network) - pure
+// env-var inspection - and complementary to the postflight skipped-
+// control markers: tells the user "this is the credential I'm running
+// with", so a later "ISSUE-505 was skipped because the token lacks
+// Administration:Read" message lands with context.
 //
-// upstreamFetch=true means the run will fail outright if no auth is
-// resolvable (ErrAuthRequired path). For local-clone runs, "no auth"
-// is a degraded mode rather than a hard error, and the banner says so.
-func printGitHubAuthBanner(apiHost string, upstreamFetch bool) {
-	source := detectGitHubAuthSource(apiHost)
-	switch source {
+// For local-clone runs, "no auth" is a degraded mode rather than a hard
+// error, and the value says so; an upstream-fetch run without auth fails
+// with ErrAuthRequired before any header prints.
+func githubAuthValue(apiHost string) string {
+	switch source := detectGitHubAuthSource(apiHost); source {
 	case "":
-		if upstreamFetch {
-			// runGitHubAnalyzeRemote will surface ErrAuthRequired
-			// almost immediately; banner here would just be noise
-			// before the actionable error.
-			return
-		}
-		fmt.Fprintf(os.Stderr, "GitHub auth: none — running in degraded mode (workflow-content controls only).\n")
-	case "GH_TOKEN", "GITHUB_TOKEN", "GH_ENTERPRISE_TOKEN":
-		fmt.Fprintf(os.Stderr, "GitHub auth: %s env var\n", source)
+		return "none, running in degraded mode (workflow-content controls only)"
 	case "gh":
-		fmt.Fprintf(os.Stderr, "GitHub auth: gh CLI (~/.config/gh)\n")
+		return "gh CLI (~/.config/gh)"
+	default:
+		return source + " env var"
 	}
 }
 

@@ -117,7 +117,7 @@ func TestBuildProviderControlSummariesAndGroups_Row62_BucketsLikeThePush(t *test
 		}}}
 		result := &control.AnalysisResult{CiValid: true, VariablesData: nil}
 
-		_, groups := buildProviderControlSummariesAndGroups(p, result, pc, true, nil, nil)
+		_, groups := buildProviderControlSummariesAndGroups(p, result, pc, true, nil, nil, false)
 
 		found := 0
 		for _, g := range groups {
@@ -147,7 +147,7 @@ func TestBuildProviderControlSummariesAndGroups_Row62_BucketsLikeThePush(t *test
 		}}}
 		result := &control.AnalysisResult{CiValid: true, VariablesData: nil}
 
-		_, groups := buildProviderControlSummariesAndGroups(p, result, pc, false, nil, nil)
+		_, groups := buildProviderControlSummariesAndGroups(p, result, pc, false, nil, nil, false)
 
 		found := 0
 		for _, g := range groups {
@@ -177,7 +177,7 @@ func TestBuildProviderControlSummariesAndGroups_Row62_BucketsLikeThePush(t *test
 		}
 
 		for _, linked := range []bool{true, false} {
-			_, groups := buildProviderControlSummariesAndGroups(p, result, pc, linked, nil, nil)
+			_, groups := buildProviderControlSummariesAndGroups(p, result, pc, linked, nil, nil, false)
 			for _, g := range groups {
 				if g.Title != "Branch must be protected" {
 					continue
@@ -198,7 +198,7 @@ func TestBuildProviderControlSummariesAndGroups_Row62_BucketsLikeThePush(t *test
 		}}}
 		result := &control.AnalysisResult{CiValid: true}
 
-		_, groups := buildProviderControlSummariesAndGroups(p, result, pc, true, nil, nil)
+		_, groups := buildProviderControlSummariesAndGroups(p, result, pc, true, nil, nil, false)
 		for _, g := range groups {
 			if g.Title != "Branch must be protected" {
 				continue
@@ -222,7 +222,7 @@ func TestBuildProviderControlSummariesAndGroups_Row62_BucketsLikeThePush(t *test
 		}
 
 		for _, linked := range []bool{true, false} {
-			_, groups := buildProviderControlSummariesAndGroups(p, result, pc, linked, nil, nil)
+			_, groups := buildProviderControlSummariesAndGroups(p, result, pc, linked, nil, nil, false)
 			for _, g := range groups {
 				if g.Title != "CI/CD variables must be protected" {
 					continue

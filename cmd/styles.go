@@ -14,7 +14,7 @@ var (
 	colMedium   = lipgloss.Color("#F2C744")
 	colLow      = lipgloss.Color("#4FACF7")
 	colPass     = lipgloss.Color("#5BC976")
-	colAccent   = lipgloss.Color("#5CCDEF")
+	colAccent   = lipgloss.Color("#30D158") // the brand green
 	colMuted    = lipgloss.Color("#6C7280")
 	colBody     = lipgloss.Color("#D5D8DC")
 

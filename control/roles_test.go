@@ -28,12 +28,18 @@ func TestSpecAnchoredRoles(t *testing.T) {
 		"ISSUE-207": {RoleEntry, EntryUntrustedExpression},
 		"ISSUE-411": {RoleEntry, EntryMutableDependency},
 		"ISSUE-703": {RoleEntry, EntryMutableDependency},
-		"ISSUE-713": {RoleEntry, EntryMutableDependency},
 		"ISSUE-714": {RoleEntry, EntryMutableDependency},
+		// An owner or a registry outside the authorized list is a trust
+		// policy finding, not a way in: the pinning codes anchor the path
+		// when the reference can change.
+		"ISSUE-101": {RoleHygiene, ""},
+		"ISSUE-713": {RoleHygiene, ""},
 		"ISSUE-802": {RoleEntry, EntryPRTarget},
 		"ISSUE-501": {RoleGate, ""},
 		"ISSUE-505": {RoleGate, ""},
 		"ISSUE-305": {RoleGate, ""},
+		"ISSUE-704": {RoleGate, ""},
+		"ISSUE-901": {RoleGate, ""},
 		"ISSUE-307": {RolePrivilege, ""},
 		"ISSUE-310": {RolePrivilege, ""},
 		"ISSUE-803": {RolePrivilege, ""},
@@ -60,7 +66,6 @@ func TestSpecAnchoredRoles(t *testing.T) {
 // without a row here fails the count before it can go unpinned.
 func TestEntryKindsPinned(t *testing.T) {
 	want := map[ErrorCode]EntryKind{
-		"ISSUE-101": EntryMutableDependency,
 		"ISSUE-102": EntryMutableDependency,
 		"ISSUE-103": EntryMutableDependency,
 		"ISSUE-204": EntryUntrustedExpression,
@@ -73,10 +78,11 @@ func TestEntryKindsPinned(t *testing.T) {
 		"ISSUE-701": EntryMutableDependency,
 		"ISSUE-703": EntryMutableDependency,
 		"ISSUE-707": EntryMutableDependency,
-		"ISSUE-713": EntryMutableDependency,
 		"ISSUE-714": EntryMutableDependency,
 		"ISSUE-715": EntryMutableDependency,
 		"ISSUE-716": EntryMutableDependency,
+		"ISSUE-705": EntryPoisonedCache,
+		"ISSUE-717": EntryPoisonedCache,
 		"ISSUE-802": EntryPRTarget,
 		"ISSUE-804": EntryPRTarget,
 	}

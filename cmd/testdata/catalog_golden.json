@@ -425,7 +425,7 @@
         "ISSUE-704"
       ],
       "issueCodeRoles": {
-        "ISSUE-704": "privilege"
+        "ISSUE-704": "gate"
       },
       "issueCodeEntryKinds": {}
     },
@@ -484,11 +484,9 @@
         "ISSUE-101"
       ],
       "issueCodeRoles": {
-        "ISSUE-101": "entry"
+        "ISSUE-101": "hygiene"
       },
-      "issueCodeEntryKinds": {
-        "ISSUE-101": "mutable_dependency"
-      }
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-102",
@@ -577,7 +575,7 @@
         "ISSUE-901"
       ],
       "issueCodeRoles": {
-        "ISSUE-901": "hygiene"
+        "ISSUE-901": "gate"
       },
       "issueCodeEntryKinds": {}
     },
@@ -722,11 +720,9 @@
         "ISSUE-713"
       ],
       "issueCodeRoles": {
-        "ISSUE-713": "entry"
+        "ISSUE-713": "hygiene"
       },
-      "issueCodeEntryKinds": {
-        "ISSUE-713": "mutable_dependency"
-      }
+      "issueCodeEntryKinds": {}
     },
     {
       "id": "CTRL-306",
@@ -1650,10 +1646,13 @@
         "ISSUE-717"
       ],
       "issueCodeRoles": {
-        "ISSUE-705": "gate",
-        "ISSUE-717": "gate"
+        "ISSUE-705": "entry",
+        "ISSUE-717": "entry"
       },
-      "issueCodeEntryKinds": {}
+      "issueCodeEntryKinds": {
+        "ISSUE-705": "poisoned_cache",
+        "ISSUE-717": "poisoned_cache"
+      }
     },
     {
       "id": "CTRL-712",

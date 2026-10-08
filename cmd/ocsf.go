@@ -324,11 +324,27 @@ func ocsfRemediationText(codes []control.ErrorCode) string {
 	return strings.Join(parts, " ")
 }
 
+// ocsfFindingSeverity is the severity OCSF reports for one finding: the
+// registry's, or, under scoring-v4, the contextual one. Same per-finding
+// gate as SARIF, the GitLab SAST report and the CSV: Data["baseSeverity"]
+// is written only by AnnotateFindingsV4, and with it f.Severity holds the
+// contextual value. ok is false for a code the registry does not know and
+// no contextual value, which contributes nothing, as before.
+func ocsfFindingSeverity(f opaengine.Finding) (sev control.IssueSeverity, ok bool) {
+	if _, annotated := f.Data["baseSeverity"]; annotated {
+		return control.IssueSeverity(f.Severity), true
+	}
+	if info := control.LookupCode(control.ErrorCode(f.Code)); info != nil {
+		return info.Severity, true
+	}
+	return "", false
+}
+
 func ocsfMaxSeverityID(findings []opaengine.Finding) int {
 	maxID := 1
 	for _, f := range findings {
-		if info := control.LookupCode(control.ErrorCode(f.Code)); info != nil {
-			if id := ocsfSeverityID(info.Severity); id > maxID {
+		if sev, ok := ocsfFindingSeverity(f); ok {
+			if id := ocsfSeverityID(sev); id > maxID {
 				maxID = id
 			}
 		}
@@ -336,9 +352,32 @@ func ocsfMaxSeverityID(findings []opaengine.Finding) int {
 	return maxID
 }
 
+// ocsfSeverityCounts tallies the findings by the severity OCSF reports for
+// each (ocsfFindingSeverity). Without any v4 annotation this is exactly
+// control.SeverityCountsFromIssueCodes over their codes.
+func ocsfSeverityCounts(findings []opaengine.Finding) control.SeverityCounts {
+	var c control.SeverityCounts
+	for _, f := range findings {
+		sev, ok := ocsfFindingSeverity(f)
+		if !ok {
+			sev = control.SeverityForCode(control.ErrorCode(f.Code))
+		}
+		switch sev {
+		case control.SeverityCritical:
+			c.Critical++
+		case control.SeverityHigh:
+			c.High++
+		case control.SeverityLow:
+			c.Low++
+		default:
+			c.Medium++
+		}
+	}
+	return c
+}
+
 func ocsfFailUnmapped(findings []opaengine.Finding) map[string]any {
 	records := make([]map[string]any, 0, len(findings))
-	codes := make([]control.ErrorCode, 0, len(findings))
 	for _, f := range findings {
 		rec := map[string]any{
 			"issue_code": f.Code,
@@ -369,11 +408,10 @@ func ocsfFailUnmapped(findings []opaengine.Finding) map[string]any {
 			rec["src_url"] = f.URL
 		}
 		records = append(records, rec)
-		codes = append(codes, control.ErrorCode(f.Code))
 	}
 	return map[string]any{
 		"plumber_findings":        records,
-		"plumber_severity_counts": control.SeverityCountsFromIssueCodes(codes),
+		"plumber_severity_counts": ocsfSeverityCounts(findings),
 	}
 }
 

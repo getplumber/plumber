@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/getplumber/plumber/configuration"
@@ -91,14 +92,27 @@ func renderPolicySections(p providerPkg.Provider, conf *configuration.Configurat
 		}
 		var controls []controlSummary
 		var groups []findingGroup
+		// Each policy is a run of its own: under scoring-v4 its section
+		// shows its own Situation and attack paths, its findings at their
+		// contextual severity, unless its score is withheld (the banner's
+		// own condition, as on a standalone run).
+		v4 := scoreProfileV4(r.Score) && !scoreWithheld(r.Score, !noControls, r.Result.DataCollectionDegraded)
 		// Under --no-controls nothing was selected, so listing every
 		// control as "skipped" is noise that reads like a
 		// misconfiguration, and the banner is withheld rather than
 		// stamping a perfect score on a run that evaluated nothing.
 		if !noControls {
-			controls, groups = buildProviderControlSummariesAndGroups(p, r.Result, r.Config, linked, controlsFilterList, skipControlsList)
+			controls, groups = buildProviderControlSummariesAndGroups(p, r.Result, r.Config, linked, controlsFilterList, skipControlsList, v4)
 		}
-		renderFindingGroups(filterGroupsForDegraded(groups, r.Result.DataCollectionDegraded))
+		filtered := filterGroupsForDegraded(groups, r.Result.DataCollectionDegraded)
+		if v4 {
+			// The contextual section closes on its final screen, which
+			// says what the Controls table and the caveat below would.
+			renderFindingGroupsV4(filtered, r.Score, r.Result.Findings, platformBlock)
+			renderFinalScreen(os.Stdout, r.Score, detectTermCaps(), false, finalNotes{NotEvaluated: countNotEvaluated(groups)})
+			continue
+		}
+		renderFindingGroups(filtered)
 		if n := countNotEvaluated(groups); n > 0 {
 			fmt.Printf("  %s⚠️  %d control(s) could not be evaluated, the score below is computed over the rest%s\n\n", colorYellow, n, colorReset)
 		}

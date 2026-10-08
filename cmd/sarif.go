@@ -339,10 +339,71 @@ func sarifCodeSpanJob(f opaengine.Finding) string {
 // disk: the repository root, the one path every commit has.
 const repoRootURI = "."
 
+// sarifContextualSeverity reads the gate AnnotateFindingsV4 (control/annotate.go)
+// leaves on a finding: Data["baseSeverity"] is written on every finding it
+// touches, so its presence alone (whatever string it holds, even if empty)
+// says this run priced the finding under scoring-v4 and f.Severity now holds
+// the contextual value, not the registered one. Absent, this is a v3 run (or
+// a v4 request that fell back to v3), and the caller must fall back to the
+// registry exactly as before (no global ScoreProfile check needed), and the
+// v3 path stays byte-identical to pre-v4 output.
+func sarifContextualSeverity(f opaengine.Finding) (string, bool) {
+	_, ok := f.Data["baseSeverity"]
+	if !ok {
+		return "", false
+	}
+	return f.Severity, true
+}
+
+// sarifRank orders a severity string low..critical for the rule-level
+// aggregate below; control.TierRank already orders exactly this vocabulary
+// (critical/high/medium/low) for attack-path tiers, and IssueSeverity shares
+// the same string values, so it is reused rather than duplicated here.
+func sarifRank(severity string) int {
+	return control.TierRank(control.PathTier(severity))
+}
+
 func buildSARIF(findings []opaengine.Finding, fallbackURI, provider string) sarifLog {
 	if fallbackURI == "" {
 		fallbackURI = repoRootURI
 	}
+
+	// First pass: per code, the registry/today fallback severity (unchanged
+	// from before), and, when at least one of this run's findings for that
+	// code carries the v4 gate, the HIGHEST contextual severity among them,
+	// so a rule with several results at different contextual severities is
+	// never bucketed under its lowest one.
+	infoByCode := map[string]*control.ErrorCodeInfo{}
+	fallbackSeverity := map[string]string{}
+	contextualMaxSeverity := map[string]string{}
+	for _, f := range findings {
+		if f.Code == "" {
+			continue
+		}
+		info, seen := infoByCode[f.Code]
+		if !seen {
+			info = control.LookupCode(control.ErrorCode(f.Code))
+			infoByCode[f.Code] = info
+		}
+		fb := f.Severity
+		if info != nil {
+			fb = string(info.Severity)
+		}
+		fallbackSeverity[f.Code] = fb
+
+		if contextual, ok := sarifContextualSeverity(f); ok {
+			if cur, has := contextualMaxSeverity[f.Code]; !has || sarifRank(contextual) > sarifRank(cur) {
+				contextualMaxSeverity[f.Code] = contextual
+			}
+		}
+	}
+	ruleSeverityFor := func(code string) string {
+		if sev, ok := contextualMaxSeverity[code]; ok {
+			return sev
+		}
+		return fallbackSeverity[code]
+	}
+
 	rulesByID := map[string]sarifRule{}
 	results := make([]sarifResult, 0, len(findings))
 
@@ -350,20 +411,20 @@ func buildSARIF(findings []opaengine.Finding, fallbackURI, provider string) sari
 		if f.Code == "" {
 			continue
 		}
+		info := infoByCode[f.Code]
 
-		// The codes registry is the source of truth for a code's severity
-		// (it drives the score, the terminal output, and the GitLab SAST
-		// report). Use it for both the rule and the result so the SARIF is
-		// internally consistent and agrees with the other outputs; fall back
-		// to the finding's own severity only for codes not in the registry.
-		info := control.LookupCode(control.ErrorCode(f.Code))
-		severity := f.Severity
-		if info != nil {
-			severity = string(info.Severity)
+		// Under v4 (the gate above) the result's own severity is
+		// the finding's contextual value; under v3, the codes registry is
+		// the source of truth for a code's severity (it drives the score,
+		// the terminal output, and the GitLab SAST report), so the result
+		// stays byte-identical to before this change.
+		severity := fallbackSeverity[f.Code]
+		if contextual, ok := sarifContextualSeverity(f); ok {
+			severity = contextual
 		}
 
 		if _, seen := rulesByID[f.Code]; !seen {
-			rulesByID[f.Code] = sarifRuleFor(f.Code, severity, provider, info)
+			rulesByID[f.Code] = sarifRuleFor(f.Code, ruleSeverityFor(f.Code), provider, info)
 		}
 
 		res := sarifResult{
@@ -371,6 +432,40 @@ func buildSARIF(findings []opaengine.Finding, fallbackURI, provider string) sari
 			Kind:    "fail",
 			Level:   sarifLevel(severity),
 			Message: sarifText{Text: sarifMessage(f, info)},
+		}
+		// The explanation (the path's plain-language sentence, written only
+		// on the finding that anchors a path) rides on the message itself:
+		// SARIF viewers and Code Scanning's inline PR comment both render
+		// message.text, and nothing else here is guaranteed to surface.
+		// The role line is NOT appended here: it lives in
+		// properties below, for a consumer that wants it structured.
+		// The sentence quotes names from the scanned workflow, so it is
+		// escaped like the message body: the message carries an embedded
+		// link (sarifMessage), and a job named like a link must stay text.
+		if expl, ok := f.Data["explanation"].(string); ok && expl != "" {
+			res.Message.Text += "\n\n" + sarifLinkEscaper.Replace(expl)
+		}
+		// plumber/role, plumber/pathIds and plumber/baseSeverity
+		// ride in the property bag, written only when present on the
+		// finding, so a v3 result (nothing in Data) carries none of them and
+		// stays byte-identical to before this change.
+		if role, ok := f.Data["role"].(string); ok && role != "" {
+			if res.Properties == nil {
+				res.Properties = map[string]any{}
+			}
+			res.Properties["plumber/role"] = role
+		}
+		if ids, ok := f.Data["pathIds"].([]string); ok && len(ids) > 0 {
+			if res.Properties == nil {
+				res.Properties = map[string]any{}
+			}
+			res.Properties["plumber/pathIds"] = ids
+		}
+		if base, ok := f.Data["baseSeverity"].(string); ok && base != "" {
+			if res.Properties == nil {
+				res.Properties = map[string]any{}
+			}
+			res.Properties["plumber/baseSeverity"] = base
 		}
 		if f.Fingerprint != "" {
 			res.PartialFingerprints = map[string]string{
@@ -388,7 +483,10 @@ func buildSARIF(findings []opaengine.Finding, fallbackURI, provider string) sari
 		// VS Code SARIF viewer) can surface it without breaking the
 		// Code Scanning ingestion contract.
 		if f.URL != "" {
-			res.Properties = map[string]any{"url": f.URL}
+			if res.Properties == nil {
+				res.Properties = map[string]any{}
+			}
+			res.Properties["url"] = f.URL
 		}
 		// The policies that reported this finding (platform mode, spec s5).
 		// SARIF has no first-class field for it and the results are the

@@ -81,8 +81,11 @@ func TestEvaluatePlatformPolicies_GroupsByFingerprintInContextOrder(t *testing.T
 	if !runs[0].Applied || runs[0].Score == nil || runs[0].Result == nil {
 		t.Fatalf("shared run must be applied with a scoped result and score: %+v", runs[0])
 	}
-	if runs[0].Score.Score == "A" {
-		t.Fatalf("A+B enable the debug-trace control and the IR carries a finding: score must not be A")
+	// The debug-trace finding is a privilege on no attack path (this IR has
+	// no entry), so the contextual score prices it as one other finding at
+	// its registry price (Critical, 20).
+	if runs[0].Score.FinalPoints != 80 || runs[0].Score.OtherFindings == nil || runs[0].Score.OtherFindings.Count != 1 {
+		t.Fatalf("A+B enable the debug-trace control and the IR carries a finding: want 80 with one other finding, got %+v", runs[0].Score)
 	}
 	if runs[1].Score == nil || runs[1].Score.Score != "A" {
 		t.Fatalf("C enables only docker-in-docker, no finding: want A, got %+v", runs[1].Score)
@@ -164,8 +167,11 @@ func TestEvaluatePlatformPolicies_DerivedPlaceholder_UsesEmbeddedDefault(t *test
 	if len(runs) != 1 || !runs[0].Applied || !runs[0].Derived {
 		t.Fatalf("want one applied derived run, got %+v", runs)
 	}
-	if runs[0].Score.Score == "A" {
-		t.Fatal("the embedded default enables the debug-trace control, so the finding must count: got A")
+	// The debug-trace finding is a privilege on no attack path (this IR has
+	// no entry), so the contextual score prices it as one other finding at
+	// its registry price (Critical, 20).
+	if runs[0].Score.FinalPoints != 80 || runs[0].Score.OtherFindings == nil || runs[0].Score.OtherFindings.Count != 1 {
+		t.Fatalf("the embedded default enables the debug-trace control, so the finding must count: want 80 with one other finding, got %+v", runs[0].Score)
 	}
 }
 

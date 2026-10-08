@@ -90,6 +90,9 @@ type PlumberScoreSummary struct {
 	CriticalMalusApplied bool               `json:"criticalMalusApplied,omitempty"`
 	CriticalMalusMax     float64            `json:"criticalMalusMax,omitempty"`
 	Counts               PlumberScoreCounts `json:"counts"`
+	// PathCounts is the scoring-v4 attack-path count per tier, non-zero
+	// tiers only; absent under scoring-v3.
+	PathCounts map[string]int `json:"pathCounts,omitempty"`
 }
 
 // PolicyScore is one resolved platform policy's own verdict over its own

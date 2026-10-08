@@ -2,6 +2,7 @@ package control
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"path/filepath"
 	"regexp"
@@ -10,11 +11,13 @@ import (
 	"testing"
 
 	"github.com/getplumber/plumber/configuration"
+	defaultconfig "github.com/getplumber/plumber/defaultConfig"
 	"github.com/getplumber/plumber/gitlab"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	"github.com/getplumber/plumber/internal/ir"
 	"github.com/getplumber/plumber/internal/platform"
 	"github.com/getplumber/plumber/policies"
+	"github.com/sirupsen/logrus"
 )
 
 // attributionSignals are the IR fields that only exist because the git
@@ -631,6 +634,11 @@ func TestReEvaluateForConfigWorksForGitHub(t *testing.T) {
 // per-policy score must count this pair once, the same as
 // AggregateIssueCodeCounts would for the run-level score.
 func TestReEvaluateForConfig_Row41CollapsesIdentityCollision(t *testing.T) {
+	// Pins the previous formula: the expected score is v3's per-code
+	// count, which is what the identity dedupe feeds.
+	old := ScoreProfile
+	ScoreProfile = "v3"
+	t.Cleanup(func() { ScoreProfile = old })
 	pc := &configuration.PlumberConfig{
 		Version: "2.0",
 		GitHub: &configuration.ProviderConfig{
@@ -682,6 +690,11 @@ func TestReEvaluateForConfig_Row41CollapsesIdentityCollision(t *testing.T) {
 // ISSUE-701 findings because job is a declared identity field, and both
 // must count.
 func TestReEvaluateForConfig_Row41CountsDistinctIdentitiesSeparately(t *testing.T) {
+	// Pins the previous formula: the expected score is v3's per-code
+	// count, which is what the identity dedupe feeds.
+	old := ScoreProfile
+	ScoreProfile = "v3"
+	t.Cleanup(func() { ScoreProfile = old })
 	pc := &configuration.PlumberConfig{
 		Version: "2.0",
 		GitHub: &configuration.ProviderConfig{
@@ -1040,4 +1053,400 @@ func TestMarkFailedCollections(t *testing.T) {
 			t.Fatal("a collection that never ran is the other markers' concern, not this one's")
 		}
 	})
+}
+
+// TestComputeScoreForProfileSelectsTheFormula: "v3" still runs the
+// per-code formula over the same findings, "v4" assembles paths first and
+// runs the contextual formula over them. An unprotected default branch
+// alone is a gate finding, not a path, so v4 must not read it as a
+// Critical/E situation the way v3's per-code weights do.
+func TestComputeScoreForProfileSelectsTheFormula(t *testing.T) {
+	res := &AnalysisResult{
+		Findings:  []opaengine.Finding{{Code: "ISSUE-501", Data: map[string]any{"branchName": "main"}}},
+		Situation: &Situation{Exposure: "public", Jobs: map[string]JobSituation{}},
+	}
+	v3 := ComputeScoreForProfile("v3", res)
+	v4 := ComputeScoreForProfile("v4", res)
+	if v3.ProfileID != PlumberScoreProfileID || v3.Score != "E" {
+		t.Errorf("v3 = %+v", v3)
+	}
+	if v4.ProfileID != PlumberScoreProfileIDV4 || v4.Score != "B" {
+		t.Errorf("v4: an unprotected branch alone is a gate, not an E: %+v", v4)
+	}
+}
+
+// Spec section 2, Points (withholding rules), invariant I3: a "v4"
+// request over a run whose situation never evaluated must not hand out a
+// fake-good score (every entry finding priced as cheap hygiene). It falls
+// back to scoring-v3 and says so in result.Warnings, exactly once.
+func TestComputeScoreForProfileV4FallsBackToV3WithoutASituation(t *testing.T) {
+	res := &AnalysisResult{Findings: []opaengine.Finding{
+		{Code: "ISSUE-701", Job: "release", Data: map[string]any{"uses": "some/action@v1"}},
+	}}
+	want := ComputePlumberScore(AggregateIssueCodeCounts(res))
+	got := ComputeScoreForProfile("v4", res)
+	if got.ProfileID != PlumberScoreProfileID || got.FinalPoints != want.FinalPoints || got.Score != want.Score {
+		t.Fatalf("want a v3 fallback score, got %+v, want %+v", got, want)
+	}
+	n := 0
+	for _, w := range res.Warnings {
+		if w == "contextual score unavailable, scoring-v3 used" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("want the fallback warning exactly once, got %v", res.Warnings)
+	}
+}
+
+// The same fallback applies to the degraded empty situation (no jobs
+// recorded while the pipeline itself has jobs), not only a nil one, and
+// says so in Warnings exactly once, the same as the nil case.
+func TestComputeScoreForProfileV4FallsBackOnADegradedEmptySituation(t *testing.T) {
+	res := &AnalysisResult{
+		Findings:  []opaengine.Finding{{Code: "ISSUE-701", Job: "release", Data: map[string]any{"uses": "some/action@v1"}}},
+		Situation: &Situation{Exposure: ir.VisibilityUnknown, Jobs: map[string]JobSituation{}},
+		Pipeline:  &ir.NormalizedPipeline{Jobs: []ir.Job{{Name: "release"}}},
+	}
+	got := ComputeScoreForProfile("v4", res)
+	if got.ProfileID != PlumberScoreProfileID {
+		t.Fatalf("want a v3 fallback on a degraded empty situation, got %+v", got)
+	}
+	n := 0
+	for _, w := range res.Warnings {
+		if w == "contextual score unavailable, scoring-v3 used" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("want the fallback warning exactly once, got %v", res.Warnings)
+	}
+}
+
+// A result whose Situation looks healthy (non-nil, with jobs) but
+// whose Warnings already carry attachSituation's own "situation facts
+// unavailable:" prefix must still fall back to v3, with the fallback
+// warning appended once.
+func TestComputeScoreForProfileV4FallsBackOnAPrefixWarning(t *testing.T) {
+	res := &AnalysisResult{
+		Findings:  []opaengine.Finding{{Code: "ISSUE-701", Job: "release", Data: map[string]any{"uses": "some/action@v1"}}},
+		Situation: releaseSituation(ir.VisibilityPublic),
+		Warnings:  []string{"situation facts unavailable: boom"},
+	}
+	got := ComputeScoreForProfile("v4", res)
+	if got.ProfileID != PlumberScoreProfileID {
+		t.Fatalf("want a v3 fallback on a prefix warning, got %+v", got)
+	}
+	n := 0
+	for _, w := range res.Warnings {
+		if w == "contextual score unavailable, scoring-v3 used" {
+			n++
+		}
+	}
+	if n != 1 {
+		t.Errorf("want the fallback warning exactly once, got %v", res.Warnings)
+	}
+}
+
+// A healthy situation (real jobs recorded) scores v4 normally, with no
+// fallback warning.
+func TestComputeScoreForProfileV4ScoresNormallyWithAHealthySituation(t *testing.T) {
+	res := &AnalysisResult{
+		Findings:  []opaengine.Finding{{Code: "ISSUE-701", Job: "release", Data: map[string]any{"uses": "some/action@v1"}}},
+		Situation: releaseSituation(ir.VisibilityPublic),
+	}
+	got := ComputeScoreForProfile("v4", res)
+	if got.ProfileID != PlumberScoreProfileIDV4 {
+		t.Fatalf("want v4, got %+v", got)
+	}
+	for _, w := range res.Warnings {
+		if w == "contextual score unavailable, scoring-v3 used" {
+			t.Errorf("want no fallback warning on a healthy situation, got %v", res.Warnings)
+		}
+	}
+}
+
+// defaultGitHubConfig loads the embedded default configuration, the one a
+// zero-config run evaluates.
+func defaultGitHubConfig(t *testing.T) *configuration.PlumberConfig {
+	t.Helper()
+	pc, _, _, err := configuration.LoadPlumberConfigFromBytes(defaultconfig.Get(), "test-default")
+	if err != nil {
+		t.Fatalf("LoadPlumberConfigFromBytes: %v", err)
+	}
+	return pc
+}
+
+// releaseActionPipeline is a GitHub pipeline whose release job uses an
+// unpinned action from an unauthorized owner and publishes with a secret:
+// under the embedded default configuration it fires ISSUE-701 and
+// ISSUE-713, and the situation evaluated over it gives them the path
+// releaseSituation describes (mutable dependency, NPM_TOKEN, publishes).
+func releaseActionPipeline() *ir.NormalizedPipeline {
+	return &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{{
+		Name: "release", WorkflowName: "release",
+		Uses:    []ir.Action{{Uses: "some/action@v1"}},
+		Scripts: []string{"npm publish --token ${{ secrets.NPM_TOKEN }}"},
+	}}}
+}
+
+// releaseImagePipeline is releaseActionPipeline with the release job running
+// in node:latest: the forbidden tag (ISSUE-102, registered Medium) anchors
+// the image's path, which reaches Critical and which the dependency cap
+// holds at Medium, the reference being only not pinned.
+func releaseImagePipeline() *ir.NormalizedPipeline {
+	p := releaseActionPipeline()
+	p.Jobs[0].Image = &ir.Image{Name: "node", Tag: "latest"}
+	return p
+}
+
+// In platform mode each policy is a run of its own: under scoring-v4 the
+// per-policy score is the full v4 score (paths, situation facts, best
+// fix) over that policy's own findings, and those findings carry their v4
+// story (contextual severity, base severity, role, path ids), computed
+// against that policy's paths, never the run's.
+func TestReEvaluateForConfigV4ScoresAndAnnotatesThePolicysOwnRun(t *testing.T) {
+	old := ScoreProfile
+	ScoreProfile = "v4"
+	defer func() { ScoreProfile = old }()
+
+	pc := defaultGitHubConfig(t)
+	conf := &configuration.Configuration{PlumberConfig: pc}
+	result := &AnalysisResult{CiValid: true, GitHubPipeline: releaseImagePipeline()}
+	scoped, score, ok := ReEvaluateForConfig(result, conf, "github", pc)
+	if !ok {
+		t.Fatal("want a re-evaluable result")
+	}
+	if score.ProfileID != PlumberScoreProfileIDV4 {
+		t.Fatalf("fixture drifted off v4: %+v", score)
+	}
+	if len(score.Paths) == 0 || score.Situation == "" {
+		t.Fatalf("a per-policy v4 score carries its paths and situation, got paths=%d situation=%q", len(score.Paths), score.Situation)
+	}
+	if len(scoped.Paths) != len(score.Paths) {
+		t.Errorf("scoped.Paths = %d, want the score's own %d", len(scoped.Paths), len(score.Paths))
+	}
+	var anchor *opaengine.Finding
+	for i := range scoped.Findings {
+		if scoped.Findings[i].Code == "ISSUE-102" {
+			anchor = &scoped.Findings[i]
+		}
+	}
+	if anchor == nil {
+		t.Fatalf("fixture must produce ISSUE-102, got %+v", scoped.Findings)
+	}
+	if anchor.Data["baseSeverity"] != string(SeverityForCode("ISSUE-102")) {
+		t.Errorf("baseSeverity = %v", anchor.Data["baseSeverity"])
+	}
+	if anchor.Severity != string(TierMedium) {
+		t.Errorf("Severity = %q, want the contextual medium of its capped path", anchor.Severity)
+	}
+	if role, _ := anchor.Data["role"].(string); !strings.HasPrefix(role, "Entry of path ") {
+		t.Errorf("role = %v", anchor.Data["role"])
+	}
+	if result.Findings != nil || result.Paths != nil {
+		t.Errorf("the run's own result must stay untouched, got findings=%v paths=%v", result.Findings, result.Paths)
+	}
+}
+
+// TestReEvaluateForConfigV4FallsBackToV3WhenTheSituationDegrades covers the
+// gate at control/lanes.go's AnnotateFindingsV4 call: it reads the
+// COMPUTED score.ProfileID, not the bare ScoreProfile variable, so a
+// per-policy run requesting v4 whose own attachSituation degrades (the
+// situation module fails to evaluate, the same seam
+// TestEvaluateSituationSourceErrorDegrades uses) must fall back to the v3
+// profile id and leave every scoped finding without baseSeverity or role.
+// Every other v4 lanes test runs under a healthy situation, so this
+// fallback path never ran before.
+func TestReEvaluateForConfigV4FallsBackToV3WhenTheSituationDegrades(t *testing.T) {
+	old := ScoreProfile
+	ScoreProfile = "v4"
+	defer func() { ScoreProfile = old }()
+
+	withSituationSource(t, func() (string, error) {
+		return "", fmt.Errorf("boom: situation module unavailable")
+	})
+
+	pc := defaultGitHubConfig(t)
+	conf := &configuration.Configuration{PlumberConfig: pc}
+	result := &AnalysisResult{CiValid: true, GitHubPipeline: releaseActionPipeline()}
+	scoped, score, ok := ReEvaluateForConfig(result, conf, "github", pc)
+	if !ok {
+		t.Fatal("want a re-evaluable result")
+	}
+	if score.ProfileID != PlumberScoreProfileID {
+		t.Fatalf("a degraded per-policy situation must fall back to the v3 profile id, got %+v", score)
+	}
+	if len(scoped.Findings) == 0 {
+		t.Fatal("fixture must still produce findings to exercise the fallback, got none")
+	}
+	for _, f := range scoped.Findings {
+		if _, ok := f.Data["baseSeverity"]; ok {
+			t.Errorf("%s carries baseSeverity on a v3 fallback score, want none", f.Code)
+		}
+		if _, ok := f.Data["role"]; ok {
+			t.Errorf("%s carries role on a v3 fallback score, want none", f.Code)
+		}
+	}
+}
+
+// Under scoring-v4 a policy's situation facts come from that policy's own
+// controls config, never the run's: the facts read the same config keys
+// as the controls (cachePoisoning.publishScriptPatterns here), so pricing
+// a policy's findings against the local file's facts would miss an impact
+// the policy's own facts prove. The run forbids "dev" and keeps the
+// default publish patterns, so neither ISSUE-102 nor a publishes impact
+// lands on build; policy A forbids "latest" and names my-release as a
+// publish command (ISSUE-102 fires, and its path reaches the publish),
+// policy B is the run's config again (no finding, no impact, no path).
+func TestReEvaluateForConfigV4EvaluatesTheSituationUnderThePolicysConfig(t *testing.T) {
+	old := ScoreProfile
+	ScoreProfile = "v4"
+	defer func() { ScoreProfile = old }()
+
+	withConfig := func(publish []string, tags ...string) *configuration.PlumberConfig {
+		pc := defaultGitHubConfig(t)
+		pc.GitHub.Controls.ContainerImageMustNotUseForbiddenTags.Tags = tags
+		if publish != nil {
+			pc.GitHub.Controls.ReleaseWorkflowsMustNotRestoreUntrustedCache.PublishScriptPatterns = publish
+		}
+		return pc
+	}
+	local, policyA, policyB := withConfig(nil, "dev"), withConfig([]string{"my-release"}, "latest"), withConfig(nil, "dev")
+	conf := &configuration.Configuration{PlumberConfig: local}
+	pipeline := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{{
+		Name: "build", WorkflowName: "ci",
+		Permissions: "read-all", // a publish can only come from the script
+		Image:       &ir.Image{Name: "foo", Tag: "latest", Digest: "sha256:" + strings.Repeat("a", 64)},
+		Scripts:     []string{"my-release --all"},
+	}}}
+	result := &AnalysisResult{CiValid: true, GitHubPipeline: pipeline}
+	attachSituation(logrus.NewEntry(logrus.New()), conf, "github", pipeline, result)
+
+	publishes := func(s *Situation) bool {
+		for _, i := range s.Jobs["build"].Impact {
+			if i.Kind == "publishes" {
+				return true
+			}
+		}
+		return false
+	}
+	if publishes(result.Situation) {
+		t.Fatalf("fixture drifted: the run's own config must record no publishes impact, got %+v", result.Situation.Jobs["build"])
+	}
+
+	scopedA, scoreA, ok := ReEvaluateForConfig(result, conf, "github", policyA)
+	if !ok {
+		t.Fatal("want a re-evaluable result")
+	}
+	scopedB, scoreB, ok := ReEvaluateForConfig(result, conf, "github", policyB)
+	if !ok {
+		t.Fatal("want a re-evaluable result")
+	}
+	if scopedA.Situation == result.Situation || !publishes(scopedA.Situation) {
+		t.Errorf("policy A's situation must be its own, with the publishes impact, got %+v", scopedA.Situation)
+	}
+	if publishes(scopedB.Situation) {
+		t.Errorf("policy B names no publish command build runs, want no publishes impact, got %+v", scopedB.Situation.Jobs["build"])
+	}
+	var pathA *AttackPath
+	for i := range scoreA.Paths {
+		if scoreA.Paths[i].AnchorCode == "ISSUE-102" {
+			pathA = &scoreA.Paths[i]
+		}
+	}
+	if pathA == nil || pathA.Entry.Subject != "foo:latest" || pathA.ReachKind != "impact:publishes" {
+		t.Errorf("policy A's ISSUE-102 must start a path on its own image reaching its own publish impact, got %+v", scoreA.Paths)
+	}
+	for _, p := range scoreB.Paths {
+		if p.AnchorCode == "ISSUE-102" {
+			t.Errorf("policy B has no ISSUE-102, want no such path, got %+v", p)
+		}
+	}
+	if publishes(result.Situation) {
+		t.Error("the run's own situation must stay untouched")
+	}
+}
+
+// TestWithoutSituationWarnings pins withoutSituationWarnings' own
+// filtering: the run's "situation facts unavailable: ..." prefix warning
+// and its v3-fallback notice are both stripped, an unrelated warning
+// survives, and a warning carrying neither shape is left untouched. A
+// regression here (the wrong prefix string, or dropping the equality
+// check against contextualScoreUnavailableWarning) would let a stale
+// run-level warning ride into a per-policy result's own Warnings and
+// force ComputeScoreForProfile("v4", ...) to fall back to scoring-v3
+// even though that policy's own situation is healthy.
+func TestWithoutSituationWarnings(t *testing.T) {
+	in := []string{
+		"situation facts unavailable: boom",
+		contextualScoreUnavailableWarning,
+		"keep me",
+	}
+	got := withoutSituationWarnings(in)
+	if len(got) != 1 || got[0] != "keep me" {
+		t.Fatalf("withoutSituationWarnings(%v) = %v, want only the unrelated warning kept", in, got)
+	}
+}
+
+// TestReEvaluateForConfigV4DropsTheRunsStaleSituationWarning pins that a
+// run whose own Warnings already carry a stale "situation facts
+// unavailable:" notice (left over from evaluating under some OTHER
+// policy's config, or from an earlier degraded attempt) does not poison
+// this policy's own v4 result: ReEvaluateForConfig strips the run's
+// situation warnings (control/lanes.go's withoutSituationWarnings) before
+// attachSituation computes this policy's own, healthy situation and
+// ComputeScoreForProfile scores it. If withoutSituationWarnings regressed
+// and let the stale warning through, ComputeScoreForProfile would read
+// its prefix and silently fall back every per-policy v4 result to
+// scoring-v3, with nothing failing.
+func TestReEvaluateForConfigV4DropsTheRunsStaleSituationWarning(t *testing.T) {
+	old := ScoreProfile
+	ScoreProfile = "v4"
+	defer func() { ScoreProfile = old }()
+
+	pc := defaultGitHubConfig(t)
+	conf := &configuration.Configuration{PlumberConfig: pc}
+	result := &AnalysisResult{
+		CiValid:        true,
+		GitHubPipeline: releaseActionPipeline(),
+		Warnings:       []string{"situation facts unavailable: boom"},
+	}
+	scoped, score, ok := ReEvaluateForConfig(result, conf, "github", pc)
+	if !ok {
+		t.Fatal("want a re-evaluable result")
+	}
+	if score.ProfileID != PlumberScoreProfileIDV4 {
+		t.Fatalf("a stale run warning must not force a v3 fallback on a per-policy result with its own healthy situation, got %+v", score)
+	}
+	for _, w := range scoped.Warnings {
+		if strings.HasPrefix(w, "situation facts unavailable:") || w == contextualScoreUnavailableWarning {
+			t.Errorf("scoped.Warnings must not carry the run's stale situation warning, got %v", scoped.Warnings)
+		}
+	}
+	if len(result.Warnings) != 1 || result.Warnings[0] != "situation facts unavailable: boom" {
+		t.Errorf("the run's own Warnings must stay untouched, got %v", result.Warnings)
+	}
+}
+
+// Under scoring-v3 a per-policy run writes nothing v4 onto its findings.
+func TestReEvaluateForConfigV3AnnotatesNothing(t *testing.T) {
+	old := ScoreProfile
+	ScoreProfile = "v3"
+	t.Cleanup(func() { ScoreProfile = old })
+	pc := defaultGitHubConfig(t)
+	conf := &configuration.Configuration{PlumberConfig: pc}
+	result := &AnalysisResult{CiValid: true, GitHubPipeline: releaseActionPipeline(), Situation: releaseSituation(ir.VisibilityPublic)}
+	scoped, score, ok := ReEvaluateForConfig(result, conf, "github", pc)
+	if !ok {
+		t.Fatal("want a re-evaluable result")
+	}
+	if score.ProfileID != PlumberScoreProfileID || score.Paths != nil || scoped.Paths != nil {
+		t.Fatalf("want a plain v3 score with no paths, got %+v", score)
+	}
+	for _, f := range scoped.Findings {
+		if _, ok := f.Data["baseSeverity"]; ok {
+			t.Errorf("%s carries baseSeverity under v3", f.Code)
+		}
+	}
 }

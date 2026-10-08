@@ -1,0 +1,28 @@
+stages:
+- test
+- release
+default:
+  image: node:20.11.1-alpine3.19@sha256:9a1b6ed2bd0d7a3e5c3d8c3b7c8f2e1d0a9b8c7d6e5f4a3b2c1d0e9f8a7b6c5d
+  cache:
+    key: pnpm-store
+    paths:
+    - .pnpm-store/
+lint:
+  stage: test
+  rules:
+  - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+  script:
+  - curl -fsSL https://get.pnpm.io/install.sh | sh -
+  - pnpm config set store-dir .pnpm-store
+  - pnpm install --frozen-lockfile
+  - pnpm lint
+publish:
+  stage: release
+  rules:
+  - if: $CI_COMMIT_TAG
+  script:
+  - corepack enable
+  - pnpm config set store-dir .pnpm-store
+  - pnpm install --frozen-lockfile
+  - pnpm build
+  - npm publish --access public

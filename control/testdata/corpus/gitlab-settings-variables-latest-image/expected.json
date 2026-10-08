@@ -1,0 +1,28 @@
+{
+  "source": "reconstruction of a private GitLab project",
+  "commit": "",
+  "captured": "2026-10-03",
+  "group": "own",
+  "visibility": "private",
+  "defaultBranch": "main",
+  "branches": [{"name": "main", "protected": true}, {"name": "feature/preview", "protected": false}],
+  "settingsVariables": [
+    {"name": "DEPLOY_TOKEN", "type": "env_var", "environment": "*", "protected": false, "masked": true},
+    {"name": "API_KEY", "type": "env_var", "environment": "*", "protected": false, "masked": true},
+    {"name": "REGISTRY_TOKEN", "type": "env_var", "environment": "*", "protected": false, "masked": true},
+    {"name": "SSH_DEPLOY_KEY", "type": "env_var", "environment": "*", "protected": false, "masked": false},
+    {"name": "APP_ENV", "type": "env_var", "environment": "*", "protected": false, "masked": false},
+    {"name": "APP_ENV", "type": "env_var", "environment": "main", "protected": true, "masked": false},
+    {"name": "LOG_LEVEL", "type": "env_var", "environment": "*", "protected": true, "masked": false},
+    {"name": "CONFIG_FILE", "type": "file", "environment": "*", "protected": true, "masked": false}
+  ],
+  "note": "A private GitLab project reproduced with neutral names: one job on alpine:latest (a forbidden tag, no digest) that runs on every push and holds every masked or protected variable scoped to all environments, while an unprotected feature branch sits next to the protected default branch. A mutable image into a job holding secrets with no impact is High; the private visibility does not lower a third-party entry; the image is only not pinned (docker.io is an authorized registry), so the dependency cap holds it at Medium. The default branch is protected, so no push path. The two image findings (forbidden tag, no digest) are two findings on one subject, so they anchor one path together. Hand count: one Medium path 6, no other finding, so 100 - 6 = 94: A.",
+  "expect": {
+    "maxTier": "medium",
+    "paths": [
+      {"entryKind": "mutable_dependency", "tier": "medium", "job": "check-config", "subjectContains": "alpine:latest", "reachKind": "secrets", "state": "proven",
+       "sentenceContains": ["`docker.io/alpine:latest`", "`check-config`", "`API_KEY`"]}
+    ],
+    "letterAtLeast": "B"
+  }
+}

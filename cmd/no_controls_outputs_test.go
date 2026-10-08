@@ -52,8 +52,12 @@ func TestJSONReport_NoControlsDoesNotClaimControlsPassed(t *testing.T) {
 			conf := &configuration.Configuration{PlumberConfig: pc, NoControls: true}
 			s := buildComplianceSummary(&provider.GitLabProvider{}, result, conf)
 			params := jsonOutputParams{filePath: path, provider: prov, noControls: conf.NoControls}
-			if err := writeJSONToFile(result, pc, s, params, nil, nil); err != nil {
-				t.Fatalf("write json: %v", err)
+			payload, err := buildAnalysisJSONReport(result, pc, s, params, nil, nil)
+			if err != nil {
+				t.Fatalf("build json: %v", err)
+			}
+			if err := os.WriteFile(path, payload, 0o600); err != nil {
+				t.Fatal(err)
 			}
 
 			raw, err := os.ReadFile(path)
@@ -110,8 +114,12 @@ func TestJSONReport_ControlsStillReportedByDefault(t *testing.T) {
 
 			conf := &configuration.Configuration{PlumberConfig: pc}
 			s := buildComplianceSummary(&provider.GitLabProvider{}, result, conf)
-			if err := writeJSONToFile(result, pc, s, jsonOutputParams{filePath: path, provider: prov}, nil, nil); err != nil {
-				t.Fatalf("write json: %v", err)
+			payload, err := buildAnalysisJSONReport(result, pc, s, jsonOutputParams{filePath: path, provider: prov}, nil, nil)
+			if err != nil {
+				t.Fatalf("build json: %v", err)
+			}
+			if err := os.WriteFile(path, payload, 0o600); err != nil {
+				t.Fatal(err)
 			}
 			raw, _ := os.ReadFile(path)
 			var out map[string]any

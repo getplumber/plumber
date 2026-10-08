@@ -48,6 +48,9 @@ func buildPolicyResults(runs []policyRun, p providerPkg.Provider, conf *configur
 			s := platformScoreFrom(run.Score)
 			score = &s
 		}
+		// Each run is a policy's own analysis: under scoring-v4 its paths,
+		// situation and best fix ride next to its own score.
+		scoreContext := platformScoreContextFrom(run.Score)
 		for _, pol := range run.Policies {
 			out = append(out, platformPolicyResult{
 				Policy: pol.Name,
@@ -60,6 +63,7 @@ func buildPolicyResults(runs []policyRun, p providerPkg.Provider, conf *configur
 				EffectiveConfig: effective,
 				Findings:        findings,
 				Score:           score,
+				ScoreContext:    scoreContext,
 			})
 		}
 	}
@@ -69,7 +73,7 @@ func buildPolicyResults(runs []policyRun, p providerPkg.Provider, conf *configur
 // runsProduceNoPolicyResult reports whether buildPolicyResults would return
 // an empty results array for runs: true when there is no run, or none of
 // them applied (the only condition the loop above filters on). publishRun's
-// badge-nudge skip keys on this exact predicate rather than reimplementing
+// score-publishing skip keys on this exact predicate rather than reimplementing
 // its own idea of "nothing evaluated" (len(runs) == 0 alone), so the skip
 // and the push's own nothing-evaluated marker cannot drift apart: a linked
 // run whose policies all failed to apply (row 63) has runs != nil but still
@@ -308,5 +312,6 @@ func standalonePolicyResult(
 		EffectiveConfig: platformEffectiveConfigRaw(pc, p.Name()),
 		Findings:        platformFindingsFor(p, result, pc, includeOnly, skip),
 		Score:           wireScore,
+		ScoreContext:    platformScoreContextFrom(score),
 	}
 }

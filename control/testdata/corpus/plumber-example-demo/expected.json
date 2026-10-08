@@ -1,0 +1,26 @@
+{
+  "source": "https://github.com/getplumber-examples/plumber-example-demo",
+  "commit": "9f539175551bc1fa2c830ded9fef19d270388bcf",
+  "captured": "2026-10-03",
+  "group": "own",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [{"name": "main", "protected": false}],
+  "note": "The spec's worked example (section 2): the pull request title in a shell, node:latest, curl | bash and the tj-actions pin into ci/build, which holds a read token and no secret, so every path there is code execution, High, one per subject (the forbidden tag and the missing digest of node:latest anchor one path together); node:latest is only not pinned, so the dependency cap holds its path at Medium, while the fetched script is no reference to pin and stays High. The tj-actions pin is a full commit SHA: offline the advisory is not fetched, and the unauthorized source alone is no entry (nothing changes without a commit here), so it is an other finding at High; with the advisory it would anchor a High path, the unauthorized source joining it. plumber.yml runs on push to main with id-token: write and security-events: write: a write token, but no signing or release step, so no impact, and the unprotected main anchors an unprotected_push path into it that is High (a token, no impact) and could never be Critical (a push entry is capped at High). The getplumber/plumber action is SHA-pinned from a default trusted owner, so it anchors nothing. Hand count: three High paths (the unprotected_push path, the pull request title and the fetched script into ci/build) 3 x 15 = 45, one Medium path (node:latest) 6, one other finding, the unauthorized source at High 10 (the persisted credentials on plumber/plumber ride the push path), so the high, medium and low items count 61, under the 69 they count for at most, and 100 - 61 = 39, no Critical path: D.",
+  "expect": {
+    "maxTier": "high",
+    "paths": [
+      {"entryKind": "unprotected_push", "tier": "high", "job": "plumber/plumber", "subjectContains": "main", "reachKind": "token", "state": "proven",
+       "sentenceContains": ["Anyone with write access to `main` runs `plumber/plumber`", "`id-token`"]},
+      {"entryKind": "untrusted_expression", "tier": "high", "job": "ci/build", "subjectContains": "github.event.pull_request.title", "reachKind": "execution", "state": "proven",
+       "sentenceContains": ["`github.event.pull_request.title`", "`ci/build`", "holds no secret"]},
+      {"entryKind": "mutable_dependency", "tier": "medium", "job": "ci/build", "subjectContains": "node:latest", "reachKind": "execution",
+       "sentenceContains": ["`node:latest`", "`ci/build`"]},
+      {"entryKind": "mutable_dependency", "tier": "high", "job": "ci/build", "subjectContains": "https://example.com/install.sh", "reachKind": "execution",
+       "sentenceContains": ["`https://example.com/install.sh`", "`ci/build`"]}
+    ],
+    "noPathAbove": "high",
+    "noPathSubjects": ["getplumber/plumber@", "tj-actions/changed-files@"],
+    "letterAtLeast": "D"
+  }
+}

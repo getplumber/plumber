@@ -1,0 +1,7 @@
+---
+check-config:
+  image: alpine:latest
+  stage: test
+  script:
+  - echo $CONFIG_FILE
+  - cat $CONFIG_FILE

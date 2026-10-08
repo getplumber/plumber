@@ -3,8 +3,12 @@ package cmd
 import (
 	"testing"
 
+	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
+
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
+	plumberprovider "github.com/getplumber/plumber/provider"
 )
 
 // findRow returns the value of the header row with the given label, and whether
@@ -169,5 +173,29 @@ func TestBuildRunHeaderRows_NoControlsUnderPlatformKeepsTheLocalConfigRow(t *tes
 
 	if got, ok := findRow(rows, "Config"); !ok || got != ".plumber.yaml" {
 		t.Fatalf("Config row = %q (present=%v), want the local path", got, ok)
+	}
+}
+
+// A GitHub run names the credential it runs with as a row of the header,
+// after the platform, aligned with the others; a GitLab run has no such
+// row.
+func TestRunHeaderNamesTheGitHubAuth(t *testing.T) {
+	old := lipgloss.ColorProfile()
+	t.Cleanup(func() { lipgloss.SetColorProfile(old) })
+	lipgloss.SetColorProfile(termenv.Ascii)
+	t.Setenv("GH_TOKEN", "tok")
+	gh, ok := plumberprovider.Get("github")
+	if !ok {
+		t.Skip("github provider not registered")
+	}
+	result := &control.AnalysisResult{ProjectPath: "owner/repo", CIConfigSource: "remote"}
+	conf := &configuration.Configuration{GithubAPIHost: "ghe.example.com", ConfigFilePath: builtinDefaultConfigSource}
+	out := captureStdout(t, func() { renderRunHeader(gh, result, conf) })
+	want := "\n  Project    owner/repo\n  Platform   GitHub · ghe.example.com\n  Auth       GH_TOKEN env var\n  Config     built-in default\n  CI config  fetched from GitHub\n\n"
+	if out != want {
+		t.Errorf("header:\n%q\nwant:\n%q", out, want)
+	}
+	if _, ok := findRow(buildRunHeaderRows("gitlab", result, &configuration.Configuration{}), "Auth"); ok {
+		t.Errorf("a GitLab run has an Auth row")
 	}
 }

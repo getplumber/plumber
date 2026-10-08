@@ -17,14 +17,37 @@ var (
 )
 
 var explainCmd = &cobra.Command{
-	Use:   "explain [ISSUE-CODE]",
-	Short: "Show detailed information about a Plumber issue code",
+	Use:   "explain [ISSUE-CODE | -a N]",
+	Short: "Show detailed information about a Plumber issue code or an attack path",
 	Long: `Display detailed information about a Plumber issue code, including
 its description, remediation guidance, and documentation link.
 
-Use --list to see all available issue codes, or --all for a full reference dump.`,
+Use --list to see all available issue codes, or --all for a full reference dump.
+
+With -a N (--attack N), print attack path N of the last plumber analyze run,
+numbered as its report numbers them, with every finding on it and their
+documentation; -a all prints every path. The run is read from the user cache
+directory (plumber/runs), where every analyze run keeps its JSON report;
+--project owner/repo (with --provider when two providers have it) reads that
+project's last run instead, and --run report.json reads a report written by
+plumber analyze --output, a CI artifact for instance.
+
+Examples:
+  plumber explain ISSUE-412
+  plumber explain -a 1
+  plumber explain -a all --project owner/repo
+  plumber explain -a 2 --run plumber-report.json`,
 	Args: cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if explainAttack != "" || explainRun != "" || explainProject != "" || explainProvider != "" {
+			if len(args) > 0 {
+				return fmt.Errorf("explain takes either an issue code or --attack (-a), not both")
+			}
+			// An error here is about the report read, not the command line:
+			// one line, no usage.
+			cmd.SilenceUsage = true
+			return runExplainAttack(os.Stdout, explainAttack, attackSource{run: explainRun, project: explainProject, provider: explainProvider}, detectTermCaps())
+		}
 		if explainList {
 			return runExplainList()
 		}
@@ -183,5 +206,9 @@ func init() {
 	explainCmd.Flags().BoolVar(&explainJSON, "json", false, "Output in JSON format")
 	explainCmd.Flags().BoolVar(&explainList, "list", false, "List all issue codes with short descriptions")
 	explainCmd.Flags().BoolVar(&explainAll, "all", false, "Show detailed information for all issue codes")
+	explainCmd.Flags().StringVarP(&explainAttack, "attack", "a", "", "Print attack path N of the last analyze run, with its findings (N or all)")
+	explainCmd.Flags().StringVar(&explainProject, "project", "", "With --attack: read the last cached run of this project (owner/repo) instead of the last run")
+	explainCmd.Flags().StringVar(&explainProvider, "provider", "", "With --attack --project: the provider of the project ('github' or 'gitlab') when both have a cached run")
+	explainCmd.Flags().StringVar(&explainRun, "run", "", "With --attack: read this JSON report (written by analyze --output) instead of the cache")
 	rootCmd.AddCommand(explainCmd)
 }

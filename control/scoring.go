@@ -65,8 +65,41 @@ type PlumberScoreResult struct {
 
 	// Losses is a per-severity rollup of capped per-code losses.
 	Losses []SeverityLoss `json:"losses"`
-	// CodeLosses is the per-code breakdown that drives the score in scoring-v3.
+	// CodeLosses is the per-code breakdown that drives the score in scoring-v3;
+	// under scoring-v4 it lists the other findings per code, each code's
+	// CappedLoss its share of the capped bucket.
 	CodeLosses []CodeLoss `json:"codeLosses"`
+
+	// The fields below are scoring-v4 only (ComputePlumberScoreV4): all
+	// omitempty, and left empty by scoring-v3's ComputePlumberScore.
+
+	// Paths is the assembled attack-path set scoring-v4 priced.
+	Paths []AttackPath `json:"paths,omitempty"`
+	// PathLosses is the attack-path bucket, one entry per tier present.
+	PathLosses []PathLoss `json:"pathLosses,omitempty"`
+	// OtherFindings is the other-findings bucket, nil when every live
+	// finding is consumed by a path.
+	OtherFindings *OtherFindingsLoss `json:"otherFindings,omitempty"`
+	// FloorApplied and FloorPoints are kept for the consumers that read
+	// them and are never set: the contextual score has no floor, its nested
+	// caps keep a run with no Critical item at 31 or more, with no High at
+	// 51 or more, with no Medium at 71 or more.
+	FloorApplied bool    `json:"floorApplied,omitempty"`
+	FloorPoints  float64 `json:"floorPoints,omitempty"`
+	// CriticalPaths is how many assembled paths are Tier Critical; > 0 is
+	// what drives scoring-v4's own Critical malus (CriticalMalusApplied),
+	// a gate alone never does.
+	CriticalPaths int `json:"criticalPaths,omitempty"`
+	// PathCounts is how many assembled paths each tier holds, keyed
+	// critical/high/medium/low, non-zero tiers only (spec section 4: the
+	// PBOM carries it); nil when no path assembled.
+	PathCounts map[string]int `json:"pathCounts,omitempty"`
+	// Situation is the situation facts as text (SituationText): visibility,
+	// the default branch, the jobs. Empty under scoring-v3.
+	Situation string `json:"situation,omitempty"`
+	// BestFix is the single highest-value fix ScoreV4WithExplanations found
+	// among the run's non-dismissed findings, nil when none gains points.
+	BestFix *BestFix `json:"bestFix,omitempty"`
 }
 
 // forEachIssueCode invokes fn for every issue code emitted by the
@@ -377,6 +410,39 @@ func FindingsByControl(findings []opaengine.Finding) map[string][]opaengine.Find
 		out[control] = append(out[control], f)
 	}
 	return out
+}
+
+// ScoreLetterMeaningFor returns the letter's description under the formula
+// that produced it (profileID). No scoring-v4 legend asserts a number or
+// kind of paths: a report can land on any letter through other findings
+// alone, with no path at all, so A to D speak only of exposure. E is the
+// one exception, because it is true of every E: criticalPaths (the run's
+// PlumberScoreResult.CriticalPaths) says whether at least one assembled
+// path is Tier Critical, in which case the legend names it; otherwise
+// (two Critical gates and no path, say) it falls back to the accumulated-
+// losses wording. Any other profile keeps ScoreLetterMeaning, the previous
+// per-issue wording, and ignores criticalPaths.
+func ScoreLetterMeaningFor(profileID, letter string, criticalPaths int) string {
+	if profileID != PlumberScoreProfileIDV4 {
+		return ScoreLetterMeaning(letter)
+	}
+	switch letter {
+	case "A":
+		return "Excellent: no significant exposure found"
+	case "B":
+		return "Good: minor exposure"
+	case "C":
+		return "Moderate: exposure worth fixing"
+	case "D":
+		return "Poor: significant accumulated exposure"
+	case "E":
+		if criticalPaths > 0 {
+			return "Critical: a Critical attack path remains"
+		}
+		return "Critical: heavy accumulated losses"
+	default:
+		return ""
+	}
 }
 
 // ScoreLetterMeaning returns a short human-readable description of what a

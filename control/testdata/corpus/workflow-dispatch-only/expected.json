@@ -1,0 +1,20 @@
+{
+  "source": "https://github.com/terser/html-minifier-terser",
+  "commit": "289fcec2fc9ee53fe8da89366ed8e14b28289640",
+  "captured": "2026-10-03",
+  "group": "clean",
+  "visibility": "public",
+  "defaultBranch": "master",
+  "branches": [{"name": "master", "protected": true}],
+  "note": "A manual benchmark: workflow_dispatch only, permissions: contents: read, no secret, and peter-evans/create-pull-request@v7 by tag to propose the refreshed report. Only someone with write access can start it, and a new create-pull-request release reaches a job that holds a read token and nothing else, but the action is a proven push (the facts read create-pull-request as one, whatever token it is given): the path reaches impact:writes_repo, High, and the action is only not pinned, so the dependency cap holds it at Medium. Hand count: one Medium path 6, no other finding, so 100 - 6 = 94: A.",
+  "expect": {
+    "maxTier": "medium",
+    "paths": [
+      {"entryKind": "mutable_dependency", "tier": "medium", "job": "benchmarks/benchmark", "subjectContains": "peter-evans/create-pull-request@v7", "reachKind": "impact:writes_repo", "state": "proven",
+       "sentenceContains": ["`peter-evans/create-pull-request@v7`", "`benchmarks/benchmark`", "holds no secret but pushes to the repository"],
+       "sentenceOmits": ["cannot write anything"]}
+    ],
+    "noPathAbove": "high",
+    "letterAtLeast": "B"
+  }
+}

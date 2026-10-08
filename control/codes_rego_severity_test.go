@@ -8,11 +8,13 @@ import (
 	"github.com/getplumber/plumber/policies"
 )
 
-// minFilesWithLiteral is how many policies/*.rego files carry at least one
-// literal code/severity pair today (all 72 but placeholder.rego). A rule
-// rewritten to build its finding through a helper would drop out of this
-// test silently; the floor makes that loss of coverage fail instead.
-const minFilesWithLiteral = 71
+// minLiteralPairs is how many literal code/severity pairs policies/*.rego
+// carry today, counted per rule, not per file: a file such as
+// security_jobs_weakened.rego emits ISSUE-410 from three rules, and a
+// per-file floor would not notice one of them rewritten to build its
+// finding through a helper. Any rule dropping out of this test makes the
+// floor fail instead of passing silently.
+const minLiteralPairs = 86
 
 var findingLiteral = regexp.MustCompile(`"code":\s*"(ISSUE-\d+)"[^}]*?"severity":\s*"(\w+)"|"severity":\s*"(\w+)"[^}]*?"code":\s*"(ISSUE-\d+)"`)
 
@@ -30,9 +32,7 @@ func TestRegoSeverityLiteralsMatchRegistry(t *testing.T) {
 			return err
 		}
 		matches := findingLiteral.FindAllStringSubmatch(string(src), -1)
-		if len(matches) > 0 {
-			covered++
-		}
+		covered += len(matches)
 		for _, m := range matches {
 			code, sev := m[1], m[2]
 			if code == "" {
@@ -47,7 +47,7 @@ func TestRegoSeverityLiteralsMatchRegistry(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if covered < minFilesWithLiteral {
-		t.Errorf("only %d rego files carry a literal code/severity pair, want at least %d: a rule stopped being checked against the registry", covered, minFilesWithLiteral)
+	if covered < minLiteralPairs {
+		t.Errorf("only %d literal code/severity pairs found across the rego rules, want at least %d: a rule stopped being checked against the registry", covered, minLiteralPairs)
 	}
 }
