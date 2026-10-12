@@ -47,7 +47,10 @@ change what runs), High otherwise.
 A source is **trusted** when any of these hold:
 
 - it matches an explicit `trustedComponents` allowlist pattern
-  (wildcards supported, `$VAR`/`${VAR}` notation both accepted);
+  (wildcards supported, `$VAR`/`${VAR}` notation both accepted); the
+  shipped allowlist carries Plumber's own component
+  (`gitlab.com/getplumber/*`), the same way the image control trusts
+  Plumber's own container image;
 - `trustSameGroupComponents` (default `true`) and the component lives
   under the scanned project's own root namespace, on the same GitLab
   instance;
@@ -98,7 +101,9 @@ componentMustComeFromAuthorizedSources:
   # gitlab.com/components/* and gitlab.com/gitlab-org/*
   trustGitlabOfficialComponents: true
   # Additional trusted component source URLs and patterns (wildcards supported)
-  trustedComponents: []
+  trustedComponents:
+    # Plumber's own CI/CD component ships trusted, like its container image
+    - gitlab.com/getplumber/*
 ```
 
 ---

@@ -544,7 +544,9 @@ gitlab:
       # gitlab.com/components/* and gitlab.com/gitlab-org/*
       trustGitlabOfficialComponents: true
       # Additional trusted component source URLs and patterns (supports wildcards)
-      trustedComponents: []
+      trustedComponents:
+        # Plumber's own CI/CD component ships trusted, like its container image above
+        - gitlab.com/getplumber/*
     # ===========================================
     # GitLab Functions must come from authorized sources
     # ===========================================
