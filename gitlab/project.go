@@ -60,6 +60,8 @@ func FetchProjectDetails(projectPath string, token string, instanceURL string, c
 		project.CreatedAt = *gitlabProject.CreatedAt
 	}
 
+	project.ContainerRegistryImagePrefix = gitlabProject.ContainerRegistryImagePrefix
+
 	// Get CI config path if custom
 	if gitlabProject.CIConfigPath != "" {
 		project.CiConfPath = gitlabProject.CIConfigPath
