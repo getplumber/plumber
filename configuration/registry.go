@@ -284,6 +284,23 @@ var controlsMeta = map[string]ControlMeta{
 		RequiresConfig: true,
 	},
 
+	// GitLab-only. Components and Functions are GitLab CI/CD-specific
+	// concepts with no GitHub Actions equivalent.
+	"componentMustComeFromAuthorizedSources": {
+		Providers:   []string{ProviderGitLab},
+		DisplayName: "Components must come from authorized sources",
+		Category:    CategoryPipelineComposition,
+		ID:          "CTRL-414",
+		Description: "Verifies that every CI/CD component the pipeline includes comes from a trusted source: an allowlisted pattern, the project's own root namespace, or the same GitLab instance.",
+	},
+	"functionMustComeFromAuthorizedSources": {
+		Providers:   []string{ProviderGitLab},
+		DisplayName: "Functions must come from authorized sources",
+		Category:    CategoryPipelineComposition,
+		ID:          "CTRL-415",
+		Description: "Verifies that every CI/CD function referenced by a job's run: steps comes from a trusted source: an allowlisted pattern or the project's own root namespace on the same GitLab instance.",
+	},
+
 	// GitHub-only.
 	"actionPinCommentsMustMatchSha": {
 		Providers:   []string{ProviderGitHub},

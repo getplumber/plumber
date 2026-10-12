@@ -240,6 +240,38 @@ var controlFieldDocs = map[string]FieldDoc{
 	"actionsMustBePinnedByCommitSha.trustedOwners": {
 		Description: "List of action-owner prefixes exempt from the pin-by-SHA requirement; only owners already inside the workflow's trust boundary should be listed.",
 	},
+	"componentMustComeFromAuthorizedSources.enabled": {
+		Description: "Turns the control on; when false or absent the control is skipped.",
+	},
+	"componentMustComeFromAuthorizedSources.trustedComponents": {
+		Description: "Lists component sources that are always allowed; each entry is matched against the resolved component source and supports wildcards.",
+	},
+	"componentMustComeFromAuthorizedSources.trustSameGroupComponents": {
+		Description: "Trusts components hosted under the scanned project's root namespace on the same GitLab instance; defaults to true when unset.",
+		Default:     "true",
+		Toggle:      true,
+	},
+	"componentMustComeFromAuthorizedSources.trustSameInstanceComponents": {
+		Description: "Trusts any component hosted on the same GitLab instance as the scanned project; defaults to true when unset and is always off on gitlab.com.",
+		Default:     "true",
+		Toggle:      true,
+	},
+	"componentMustComeFromAuthorizedSources.trustGitlabOfficialComponents": {
+		Description: "Trusts GitLab's own curated component namespaces on gitlab.com (gitlab.com/components/*, gitlab.com/gitlab-org/*); defaults to true when unset.",
+		Default:     "true",
+		Toggle:      true,
+	},
+	"functionMustComeFromAuthorizedSources.enabled": {
+		Description: "Turns the control on; when false or absent the control is skipped.",
+	},
+	"functionMustComeFromAuthorizedSources.trustedFunctions": {
+		Description: "Lists function sources that are always allowed; each entry is matched as literal text against the func: reference and supports wildcards.",
+	},
+	"functionMustComeFromAuthorizedSources.trustSameGroupFunctions": {
+		Description: "Trusts function references hosted on the scanned GitLab instance under the project's root namespace; defaults to true when unset.",
+		Default:     "true",
+		Toggle:      true,
+	},
 	"githubActionMustComeFromAuthorizedSources.enabled": {
 		Description: "Turns the control on; when false or absent the control is skipped.",
 	},

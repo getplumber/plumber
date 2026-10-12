@@ -54,7 +54,7 @@ func TestMRApprovalMinApprovalsConfigContract(t *testing.T) {
 			Enabled:                  boolPtr(true),
 			MinimumRequiredApprovals: intPtr(2),
 		},
-	})
+	}, "")
 	if _, ok := cfg2["mergeRequestApprovalRulesMustRequireMinimumApprovals"]; !ok {
 		t.Fatal("buildEngineConfig did not project a mergeRequestApprovalRulesMustRequireMinimumApprovals block")
 	}
@@ -68,7 +68,7 @@ func TestMRApprovalMinApprovalsConfigContract(t *testing.T) {
 		MergeRequestApprovalRulesMustRequireMinimumApprovals: &configuration.MRApprovalRulesMinApprovalsControlConfig{
 			Enabled: boolPtr(true),
 		},
-	})
+	}, "")
 	if n := count502(cfgNil); n != 0 {
 		t.Fatalf("min unset (treated as 0): expected 0 ISSUE-502, got %d", n)
 	}
@@ -124,7 +124,7 @@ func TestMRApprovalSettingsConfigContract(t *testing.T) {
 			RequireReAuthToApprove:          boolPtr(true),
 			BehaviorWhenCommitIsAdded:       strPtr(ir.MRApprovalBehaviorRemoveAllApprovals),
 		},
-	})
+	}, "")
 	if _, ok := cfgAll["mergeRequestApprovalSettingsMustBeCompliant"]; !ok {
 		t.Fatal("buildEngineConfig did not project a mergeRequestApprovalSettingsMustBeCompliant block")
 	}
@@ -139,7 +139,7 @@ func TestMRApprovalSettingsConfigContract(t *testing.T) {
 			Enabled:                 boolPtr(true),
 			PreventApprovalByAuthor: boolPtr(true),
 		},
-	})
+	}, "")
 	devs := deviations503(cfgOne)
 	if len(devs) != 1 || devs[0] != "preventApprovalByAuthor" {
 		t.Fatalf("one expectation set: expected exactly [preventApprovalByAuthor], got %v", devs)
@@ -202,7 +202,7 @@ func TestMRSettingsConfigContract(t *testing.T) {
 			PrintingMergeRequestLinkEnabled: boolPtr(true),
 			RemoveSourceBranchAfterMerge:    boolPtr(true),
 		},
-	})
+	}, "")
 	if _, ok := cfgAll["mergeRequestSettingsMustBeCompliant"]; !ok {
 		t.Fatal("buildEngineConfig did not project a mergeRequestSettingsMustBeCompliant block")
 	}
@@ -217,7 +217,7 @@ func TestMRSettingsConfigContract(t *testing.T) {
 			Enabled:     boolPtr(true),
 			MergeMethod: strPtr("ff"),
 		},
-	})
+	}, "")
 	devs := deviations506(cfgOne)
 	if len(devs) != 1 || devs[0] != "mergeMethod" {
 		t.Fatalf("one expectation set: expected exactly [mergeMethod], got %v", devs)

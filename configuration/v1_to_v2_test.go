@@ -27,6 +27,45 @@ func TestConvertV1ToV2_emptyConfig(t *testing.T) {
 	}
 }
 
+// A v1 file whose only top-level control is one of the authorized-sources
+// controls must still migrate: controlsConfigIsZero has to see them, or
+// the block is neither moved under gitlab.controls nor reported.
+func TestConvertV1ToV2_movesAuthorizedSourcesControls(t *testing.T) {
+	cases := map[string]ControlsConfig{
+		"componentMustComeFromAuthorizedSources": {
+			ComponentMustComeFromAuthorizedSources: &ComponentAuthorizedSourcesControlConfig{
+				Enabled:           boolPtr(true),
+				TrustedComponents: []string{"gitlab.example.com/my-group/*"},
+			},
+		},
+		"functionMustComeFromAuthorizedSources": {
+			FunctionMustComeFromAuthorizedSources: &FunctionAuthorizedSourcesControlConfig{
+				Enabled:          boolPtr(true),
+				TrustedFunctions: []string{"registry.example.com/my-group/*"},
+			},
+		},
+	}
+	for name, controls := range cases {
+		t.Run(name, func(t *testing.T) {
+			pc := &PlumberConfig{Controls: controls}
+			warnings := convertV1ToV2(pc)
+
+			if pc.GitLab == nil || controlsConfigIsZero(pc.GitLab.Controls) {
+				t.Fatalf("expected %s moved to gitlab.controls, got GitLab=%#v", name, pc.GitLab)
+			}
+			if !controlsConfigEqual(pc.GitLab.Controls, controls) {
+				t.Errorf("expected gitlab.controls to carry the v1 %s block unchanged", name)
+			}
+			if !controlsConfigIsZero(pc.Controls) {
+				t.Errorf("expected legacy Controls cleared, got %#v", pc.Controls)
+			}
+			if len(warnings) == 0 {
+				t.Error("expected the legacy-schema warning")
+			}
+		})
+	}
+}
+
 func TestConvertV1ToV2_movesControlsToGitLab(t *testing.T) {
 	pc := &PlumberConfig{
 		Controls: ControlsConfig{

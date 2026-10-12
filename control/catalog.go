@@ -31,7 +31,7 @@ func GitLabControls(pc *configuration.PlumberConfig) []ControlEntry {
 		return nil
 	}
 	c := pc.ControlsFor("gitlab")
-	entries := make([]ControlEntry, 0, 15)
+	entries := make([]ControlEntry, 0, 16)
 
 	// Container images must not use forbidden reference
 	cfgForbiddenTags := c.ContainerImageMustNotUseForbiddenTags
@@ -118,6 +118,16 @@ func GitLabControls(pc *configuration.PlumberConfig) []ControlEntry {
 		DisplayName: "Pipeline must include required templates",
 		ControlName: "pipelineMustIncludeTemplate",
 		Skipped:     c.PipelineMustIncludeTemplate == nil || !c.PipelineMustIncludeTemplate.IsEnabled(),
+	})
+	entries = append(entries, ControlEntry{
+		DisplayName: "Components must come from authorized sources",
+		ControlName: "componentMustComeFromAuthorizedSources",
+		Skipped:     c.ComponentMustComeFromAuthorizedSources == nil || !c.ComponentMustComeFromAuthorizedSources.IsEnabled(),
+	})
+	entries = append(entries, ControlEntry{
+		DisplayName: "Functions must come from authorized sources",
+		ControlName: "functionMustComeFromAuthorizedSources",
+		Skipped:     c.FunctionMustComeFromAuthorizedSources == nil || !c.FunctionMustComeFromAuthorizedSources.IsEnabled(),
 	})
 	entries = append(entries, ControlEntry{
 		DisplayName: "Pipeline must not enable debug trace",

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/getplumber/plumber/configuration"
@@ -301,6 +302,29 @@ func applyGitLabVisibility(pipeline *ir.NormalizedPipeline, project *gitlab.Proj
 	pipeline.Visibility = ir.NormalizeVisibility(project.Visibility)
 }
 
+// applyGitLabRegistryHost sets the container registry host the scanned
+// project's GitLab Function OCI references are trusted on. It is the host of
+// the image prefix GitLab reported for the project; when there is none (the
+// registry is disabled, or platform mode built the project from the CI
+// environment without an API call) it is derived from the configured
+// instance URL as registry.<instance host>, GitLab's default layout. It is
+// never read from CI_TEMPLATE_REGISTRY_HOST / CI_REGISTRY: the first points
+// at registry.gitlab.com on a self-managed instance, and the scanned
+// pipeline can redefine either to its own registry. A wrong derived guess
+// only withholds trust (false positives), it never grants any.
+func applyGitLabRegistryHost(pipeline *ir.NormalizedPipeline, project *gitlab.Project, gitlabURL string) {
+	if project != nil {
+		if prefix := strings.TrimSpace(project.ContainerRegistryImagePrefix); prefix != "" {
+			host, _, _ := strings.Cut(prefix, "/")
+			pipeline.RegistryHost = strings.ToLower(host)
+			return
+		}
+	}
+	if instanceHost := gitlabInstanceHost(gitlabURL); instanceHost != "" {
+		pipeline.RegistryHost = "registry." + instanceHost
+	}
+}
+
 // runRegoEngine invokes the experimental Rego/OPA rule engine on the
 // GitLab collector outputs and returns the aggregated findings. The
 // legacy Go controls always run and remain authoritative until parity
@@ -329,6 +353,7 @@ func runRegoEngine(
 		securityPolicyData,
 	)
 	applyGitLabVisibility(pipeline, project)
+	applyGitLabRegistryHost(pipeline, project, conf.GitlabURL)
 	// Retained so a later per-policy evaluation can re-run the rules over the
 	// SAME collected data under a different policy's parameters, without
 	// re-collecting anything from the git host.
@@ -354,7 +379,7 @@ func attachSituation(l *logrus.Entry, conf *configuration.Configuration, provide
 	controls := conf.PlumberConfig.ControlsFor(provider)
 	ctx, cancel := context.WithTimeout(context.Background(), opaEvaluateTimeout)
 	defer cancel()
-	sit, err := EvaluateSituation(ctx, pipeline, buildEngineConfig(controls))
+	sit, err := EvaluateSituation(ctx, pipeline, buildEngineConfig(controls, conf.GitlabURL))
 	result.Situation = sit
 	if err != nil {
 		l.WithError(err).Warn("situation facts unavailable")
@@ -402,7 +427,7 @@ func evaluatePolicies(l *logrus.Entry, conf *configuration.Configuration, provid
 	controls := conf.PlumberConfig.ControlsFor(provider)
 	ctx, cancel := context.WithTimeout(context.Background(), opaEvaluateTimeout)
 	defer cancel()
-	findings, failed, err := engine.EvaluateModules(ctx, pipeline, buildEngineConfig(controls))
+	findings, failed, err := engine.EvaluateModules(ctx, pipeline, buildEngineConfig(controls, conf.GitlabURL))
 	if err != nil {
 		// Nothing could run at all (nil pipeline, unbuildable input): the
 		// failure carries no controls, applyPolicyFailures records it as a
@@ -436,8 +461,10 @@ func evaluatePolicies(l *logrus.Entry, conf *configuration.Configuration, provid
 // buildEngineConfig projects the relevant bits of the user's .plumber.yaml
 // onto a Rego-friendly map. Policies read it as `input.config.<rule>.<key>`.
 // Only the sections consumed by already-ported policies are included;
-// additional entries land with each new policy.
-func buildEngineConfig(controls *configuration.ControlsConfig) map[string]any {
+// additional entries land with each new policy. gitlabURL is
+// conf.GitlabURL — only used to derive the scanned GitLab instance's host
+// for componentAuthorizedSources; callers scoped to GitHub may pass "".
+func buildEngineConfig(controls *configuration.ControlsConfig, gitlabURL string) map[string]any {
 	if controls == nil {
 		return nil
 	}
@@ -665,6 +692,70 @@ func buildEngineConfig(controls *configuration.ControlsConfig) map[string]any {
 		}
 	}
 
+	// componentAuthorizedSources: no environment-variable resolution.
+	// Trust is either an explicit trustedComponents allowlist pattern, or
+	// derived dynamically from the scanned project's own namespace/instance
+	// via trustSameGroupComponents / trustSameInstanceComponents — modeled
+	// on githubActionMustComeFromAuthorizedSources's trustSameOrgActions,
+	// which reads input.pipeline.projectPath instead of trusting Plumber's
+	// own process environment.
+	if c := controls.ComponentMustComeFromAuthorizedSources; c != nil && c.IsEnabled() {
+		trustSameGroup := true
+		if c.TrustSameGroupComponents != nil {
+			trustSameGroup = *c.TrustSameGroupComponents
+		}
+
+		trustSameInstance := true
+		if c.TrustSameInstanceComponents != nil {
+			trustSameInstance = *c.TrustSameInstanceComponents
+		}
+
+		if isGitlabSaaS(gitlabURL) {
+			trustSameInstance = false
+		}
+
+		// trustGitlabOfficialComponents defaults to true: GitLab's own
+		// curated catalog (gitlab.com/components/*, gitlab.com/gitlab-org/*)
+		// is the most common legitimate component source on gitlab.com,
+		// like trustGithubOfficialActions for actions/* and github/*.
+		trustOfficial := true
+		if c.TrustGitlabOfficialComponents != nil {
+			trustOfficial = *c.TrustGitlabOfficialComponents
+		}
+
+		entry := map[string]any{
+			"trustSameGroupComponents":      trustSameGroup,
+			"trustSameInstanceComponents":   trustSameInstance,
+			"trustGitlabOfficialComponents": trustOfficial,
+			"instanceHost":                  gitlabInstanceHost(gitlabURL),
+		}
+		if len(c.TrustedComponents) > 0 {
+			entry["trustedComponents"] = c.TrustedComponents
+		}
+		cfg["componentAuthorizedSources"] = entry
+	}
+
+	// functionAuthorizedSources: same dynamic same-namespace model as
+	// componentAuthorizedSources — same-group trust is host-bound. A ref
+	// may name the instance's web host (deprecated git form, projected
+	// here) or its container registry host (OCI form, the supported one),
+	// which travels on the pipeline as input.pipeline.registryHost (see
+	// applyGitLabRegistryHost).
+	if c := controls.FunctionMustComeFromAuthorizedSources; c != nil && c.IsEnabled() {
+		trustSameGroup := true
+		if c.TrustSameGroupFunctions != nil {
+			trustSameGroup = *c.TrustSameGroupFunctions
+		}
+		entry := map[string]any{
+			"trustSameGroupFunctions": trustSameGroup,
+			"instanceHost":            gitlabInstanceHost(gitlabURL),
+		}
+		if len(c.TrustedFunctions) > 0 {
+			entry["trustedFunctions"] = c.TrustedFunctions
+		}
+		cfg["functionAuthorizedSources"] = entry
+	}
+
 	if c := controls.ActionsMustBePinnedByCommitSha; c != nil && c.IsEnabled() {
 		entry := map[string]any{}
 		if len(c.TrustedOwners) > 0 {
@@ -725,6 +816,24 @@ func toAnyGroups(groups [][]string) []any {
 		out[i] = inner
 	}
 	return out
+}
+
+// gitlabInstanceHost strips the scheme (and any trailing slash) from a
+// GitLab base URL and lowercases it, e.g. "https://GitLab.com/" ->
+// "gitlab.com". Hostnames are case-insensitive.
+func gitlabInstanceHost(gitlabURL string) string {
+	host := gitlabURL
+	if i := strings.Index(host, "://"); i >= 0 {
+		host = host[i+3:]
+	}
+	return strings.ToLower(strings.TrimSuffix(host, "/"))
+}
+
+// isGitlabSaaS reports whether gitlabURL points at gitlab.com, the
+// multi-tenant SaaS instance — as opposed to a self-hosted instance,
+// which is already inside the scanning org's trust boundary.
+func isGitlabSaaS(gitlabURL string) bool {
+	return gitlabInstanceHost(gitlabURL) == "gitlab.com"
 }
 
 // RunAnalysis executes the complete pipeline analysis for a GitLab project

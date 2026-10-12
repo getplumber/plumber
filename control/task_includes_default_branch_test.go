@@ -24,7 +24,7 @@ func TestBuildEngineConfig_DefaultBranchForbiddenWhenTheKeyIsUnset(t *testing.T)
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := buildEngineConfig(&configuration.ControlsConfig{IncludesMustNotUseForbiddenVersions: tc.cfg})
+			cfg := buildEngineConfig(&configuration.ControlsConfig{IncludesMustNotUseForbiddenVersions: tc.cfg}, "")
 			block, ok := cfg["includesForbiddenVersions"].(map[string]any)
 			if !ok {
 				t.Fatalf("no includesForbiddenVersions block in %#v", cfg)

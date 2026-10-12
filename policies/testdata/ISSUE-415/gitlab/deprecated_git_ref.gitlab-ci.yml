@@ -1,0 +1,4 @@
+build:
+  run:
+    - name: say_hi
+      func: gitlab.com/funcs/my-git-repo@v1.0.0

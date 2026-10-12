@@ -38,7 +38,7 @@ func TestDefaultConfig_TrustsDependabotAndPlumberActionOwners(t *testing.T) {
 		ProjectPath: "example-org/example-repo",
 		Jobs:        []ir.Job{{Name: "auto-merge", Permissions: map[string]any{"contents": "write"}, Uses: uses}},
 	}
-	cfg := buildEngineConfig(pc.ControlsFor("github"))
+	cfg := buildEngineConfig(pc.ControlsFor("github"), "")
 	findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)

@@ -41,7 +41,7 @@ func TestDefaultConfig_PinBySHATrustsOnlyGitHubOwnedActions(t *testing.T) {
 			{Name: "docker", Uses: []ir.Action{{Uses: "docker/login-action@v4"}}},
 		},
 	}
-	findings, err := evaluateStrict(engine, context.Background(), pipeline, buildEngineConfig(pc.ControlsFor("github")))
+	findings, err := evaluateStrict(engine, context.Background(), pipeline, buildEngineConfig(pc.ControlsFor("github"), ""))
 	if err != nil {
 		t.Fatalf("evaluate: %v", err)
 	}
