@@ -235,3 +235,33 @@ func TestATrustedImmutableDependencyAnchorsNoPath(t *testing.T) {
 		t.Errorf("a dependency path of a code with no words reads actor %d, want the dependency rule", kindActors[EntryMutableDependency])
 	}
 }
+
+// The GitLab source codes read as their dependency: a component source
+// finding is about an include, a function source finding about a function,
+// and each names its fix with a trusted source and its own kind of pin.
+func TestTheGitLabSourceCodesReadAsTheirDependency(t *testing.T) {
+	for _, tc := range []struct {
+		code       ErrorCode
+		kind, fix  string
+		pinnedFix  string
+		pinnedBy   string
+		familyWord string
+	}{
+		{CodeComponentUnauthorizedSource, "include", "use a component from a trusted source and pin it on a commit SHA", "use a component from a trusted source", "@" + pinnedSHA, "component"},
+		{CodeFunctionUnauthorizedSource, "function", "use a function from a trusted source and pin it by digest", "use a function from a trusted source", "@sha256:" + strings.Repeat("a", 64), "function"},
+	} {
+		p := wordingPath(EntryMutableDependency, "gitlab.example.com/group/dep"+tc.pinnedBy, tc.code)
+		if got := dependencyKind(p); got != tc.kind {
+			t.Errorf("%s: dependency kind %q, want %q", tc.code, got, tc.kind)
+		}
+		if got := entryFamily(p); got != tc.familyWord {
+			t.Errorf("%s: family %q, want %q", tc.code, got, tc.familyWord)
+		}
+		if got := entryFix(tc.code); got != tc.fix {
+			t.Errorf("%s: fix %q, want %q", tc.code, got, tc.fix)
+		}
+		if words := entryCodes[tc.code]; words.pinnedFix != tc.pinnedFix {
+			t.Errorf("%s: pinned fix %q, want %q", tc.code, words.pinnedFix, tc.pinnedFix)
+		}
+	}
+}

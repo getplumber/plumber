@@ -67,8 +67,22 @@ deny contains finding if {
 		"line":     object.get(job, "originLine", 0),
 		"link":     fn.ref,
 		"status":   "unauthorized",
+		# occurrenceSeverity: what this reference deserves, the registered
+		# severity above staying the code's own: medium when pinned by an
+		# image digest (the source can no longer change what runs), high on
+		# a tag the source can move.
+		"pinnedBySha":        _pinned_by_digest(fn.ref),
+		"occurrenceSeverity": _occurrence_severity(fn.ref),
 	}
 }
+
+# _pinned_by_digest: the reference ends in an image digest ("@sha256:"
+# and 64 hex characters). A tag can be moved.
+_pinned_by_digest(ref) if {
+	regex.match(`@sha256:[0-9a-fA-F]{64}$`, ref)
+} else := false
+
+_occurrence_severity(ref) := "medium" if _pinned_by_digest(ref) else := "high"
 
 _out_of_scope_kinds := {"local", "builtin"}
 

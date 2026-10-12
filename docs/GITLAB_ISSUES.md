@@ -37,6 +37,13 @@ trusted. Components run arbitrary code with the job's full context
 GitHub Actions "pwn request" — so an unvetted source is a direct
 supply-chain entry point.
 
+In the score, this finding joins the attack path that the include's
+pinning finding (ISSUE-402 or ISSUE-404) anchors on the same component,
+on every job the include shapes, and lifts that path's ceiling from
+Medium to High; alone, it is an individual finding. It reads Medium when
+the component is pinned by a full commit SHA (the source can no longer
+change what runs), High otherwise.
+
 A source is **trusted** when any of these hold:
 
 - it matches an explicit `trustedComponents` allowlist pattern
@@ -108,6 +115,12 @@ Trust is evaluated identically regardless of which key form is used;
 a deprecated reference form (`step:` instead of `func:`, or a
 deprecated git-repository ref) is tracked separately as a terminal
 stat, not as a violation of this rule.
+
+In the score, this finding stands as an individual finding: no pinning
+control exists yet for functions, so there is no attack path for it to
+join. It reads Medium when the function is pinned by an image digest
+(`@sha256:` followed by 64 hex characters, so the source can no longer
+change what runs), High otherwise.
 
 A reference is **trusted** when any of these hold:
 

@@ -510,9 +510,9 @@ func entryFamily(p AttackPath) string {
 }
 
 // dependencyKind is what a dependency entry is, in the word the block's
-// lines use: "action", "reusable workflow", "image", "include" or
-// "script". A reference naming both a tag and a branch (ISSUE-402) is an
-// action's on GitHub, read off the workflow file the entry sits in, an
+// lines use: "action", "reusable workflow", "image", "include", "script"
+// or "function". A reference naming both a tag and a branch (ISSUE-402) is
+// an action's on GitHub, read off the workflow file the entry sits in, an
 // include's otherwise.
 func dependencyKind(p AttackPath) string {
 	row, _ := entryRow(p)
@@ -523,6 +523,8 @@ func dependencyKind(p AttackPath) string {
 		return "include"
 	case depScript:
 		return "script"
+	case depFunction:
+		return "function"
 	case depActionOrInclude:
 		if !strings.Contains(p.Entry.File, ".github/workflows/") {
 			return "include"
@@ -548,7 +550,9 @@ func entryNature(p AttackPath) string {
 	_, untrusted := entryAnchor(p)
 	words := n.base
 	switch {
-	// An include is never untrusted: no source code is about one.
+	// An include keeps its base nature: the untrusted variants are written
+	// for actions, and a component source finding (ISSUE-414) joining an
+	// include path says so through the So line, not the Entry line.
 	case untrusted && kind != "include":
 		words = n.untrusted
 	case n.own != "" && own:

@@ -2996,6 +2996,53 @@ func TestIssue414_ComponentAuthorizedSources(t *testing.T) {
 			[]string{"gitlab.example.com/attacker/evil-component"})
 		assertNoJob(t, findings, "ISSUE-414")
 	})
+
+	// The finding names the include at its ref as its subject, the way the
+	// include fact and ISSUE-404 do, so the attack path on that include is
+	// the one it joins; and it says what this occurrence deserves: medium
+	// when the component is pinned by a full commit SHA, high otherwise.
+	t.Run("subject_and_occurrence_severity", func(t *testing.T) {
+		const source = "gitlab.example.com/attacker/evil-component"
+		const sha = "0123456789abcdef0123456789abcdef01234567"
+		for _, tc := range []struct {
+			name, ref, subject string
+			pinned             bool
+			severity           string
+		}{
+			{"pinned by sha", sha, source + "@" + sha, true, "medium"},
+			{"on a version", "1.0.0", source + "@1.0.0", false, "high"},
+			{"without a ref", "", source, false, "high"},
+		} {
+			pipeline := &ir.NormalizedPipeline{
+				Provider:    ir.ProviderGitLab,
+				ProjectPath: "my-group/my-project",
+				Includes:    []ir.Include{{Kind: "component", Source: source, Ref: tc.ref}},
+			}
+			findings, err := evaluateStrict(engine, context.Background(), pipeline, map[string]any{"componentAuthorizedSources": map[string]any{}})
+			if err != nil {
+				t.Fatalf("%s: evaluate: %v", tc.name, err)
+			}
+			var got []opaengine.Finding
+			for _, f := range findings {
+				if f.Code == "ISSUE-414" {
+					got = append(got, f)
+				}
+			}
+			if len(got) != 1 {
+				t.Fatalf("%s: want one ISSUE-414 finding, got %+v", tc.name, findings)
+			}
+			f := got[0]
+			if f.Subject != tc.subject {
+				t.Errorf("%s: subject %q, want %q", tc.name, f.Subject, tc.subject)
+			}
+			if pinned, _ := f.Data["pinnedBySha"].(bool); pinned != tc.pinned {
+				t.Errorf("%s: pinnedBySha %v, want %v", tc.name, f.Data["pinnedBySha"], tc.pinned)
+			}
+			if sev, _ := f.Data["occurrenceSeverity"].(string); sev != tc.severity {
+				t.Errorf("%s: occurrenceSeverity %q, want %q", tc.name, sev, tc.severity)
+			}
+		}
+	})
 }
 
 // TestIssue415_FunctionAuthorizedSources exercises
@@ -3339,6 +3386,46 @@ func TestIssue415_FunctionAuthorizedSources(t *testing.T) {
 		}
 		if len(fingerprints) != 2 {
 			t.Fatalf("ISSUE-415: want 2 distinctly-fingerprinted findings, got %d", len(fingerprints))
+		}
+	})
+
+	// The finding says what this occurrence deserves: medium when the
+	// function is pinned by an image digest, high otherwise.
+	t.Run("occurrence_severity", func(t *testing.T) {
+		for _, tc := range []struct {
+			name, ref string
+			pinned    bool
+			severity  string
+		}{
+			{"pinned by digest", "registry.evil.example/x/backdoor@sha256:" + strings.Repeat("a", 64), true, "medium"},
+			{"on a tag", "registry.evil.example/x/backdoor:1", false, "high"},
+			{"on a short digest", "registry.evil.example/x/backdoor@sha256:" + strings.Repeat("a", 40), false, "high"},
+		} {
+			pipeline := &ir.NormalizedPipeline{
+				Provider:    ir.ProviderGitLab,
+				ProjectPath: "my-group/my-project",
+				Jobs:        []ir.Job{{Name: "build", Functions: []ir.Function{{Name: "step_a", Ref: tc.ref, Kind: "oci"}}}},
+			}
+			findings, err := evaluateStrict(engine, context.Background(), pipeline, map[string]any{"functionAuthorizedSources": map[string]any{}})
+			if err != nil {
+				t.Fatalf("%s: evaluate: %v", tc.name, err)
+			}
+			var got []opaengine.Finding
+			for _, f := range findings {
+				if f.Code == "ISSUE-415" {
+					got = append(got, f)
+				}
+			}
+			if len(got) != 1 {
+				t.Fatalf("%s: want one ISSUE-415 finding, got %+v", tc.name, findings)
+			}
+			f := got[0]
+			if pinned, _ := f.Data["pinnedBySha"].(bool); pinned != tc.pinned {
+				t.Errorf("%s: pinnedBySha %v, want %v", tc.name, f.Data["pinnedBySha"], tc.pinned)
+			}
+			if sev, _ := f.Data["occurrenceSeverity"].(string); sev != tc.severity {
+				t.Errorf("%s: occurrenceSeverity %q, want %q", tc.name, sev, tc.severity)
+			}
 		}
 	})
 }

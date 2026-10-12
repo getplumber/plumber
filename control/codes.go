@@ -682,9 +682,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Include components only from a trusted source: add it to .plumber.yaml under componentMustComeFromAuthorizedSources.trustedComponents, or rely on trustSameGroupComponents / trustSameInstanceComponents if it already lives in your own namespace or instance, or on trustGitlabOfficialComponents for GitLab's official gitlab.com/components/* and gitlab.com/gitlab-org/* components.",
 		DocURL:      docsBaseURL + string(CodeComponentUnauthorizedSource),
 		ControlName: "componentMustComeFromAuthorizedSources",
-		// Role: entry, as ISSUE-402/701: an untrusted source runs unvetted upstream code in the job.
-		Role:      RoleEntry,
-		EntryKind: EntryMutableDependency,
+		// Role: hygiene, not entry: a source outside the authorized list is a trust policy finding; the pinning codes (ISSUE-402, ISSUE-404) anchor the path when the reference can change.
+		Role: RoleHygiene,
 	},
 	CodeFunctionUnauthorizedSource: {
 		Code:        CodeFunctionUnauthorizedSource,
@@ -694,9 +693,8 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Remediation: "Reference functions only from a trusted source: add it to .plumber.yaml under functionMustComeFromAuthorizedSources.trustedFunctions, or rely on trustSameGroupFunctions if it already lives in your own namespace.",
 		DocURL:      docsBaseURL + string(CodeFunctionUnauthorizedSource),
 		ControlName: "functionMustComeFromAuthorizedSources",
-		// Role: entry, as ISSUE-402/701: an untrusted source runs unvetted upstream code in the job.
-		Role:      RoleEntry,
-		EntryKind: EntryMutableDependency,
+		// Role: hygiene, not entry: a source outside the authorized list is a trust policy finding; no pinning code exists yet for functions, so the finding stands alone.
+		Role: RoleHygiene,
 	},
 
 	// Access and authorization controls (5xx)

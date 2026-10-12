@@ -365,11 +365,14 @@ var pinningDependencyCodes = map[ErrorCode]bool{
 
 // sourceDependencyCodes are the codes saying a dependency comes from a
 // source outside the authorized list: an action or reusable workflow owner
-// (ISSUE-713), an image registry (ISSUE-101). They join the path their
-// subject's pinning code anchors (subjectFindingCodes).
+// (ISSUE-713), an image registry (ISSUE-101), a GitLab component source
+// (ISSUE-414), a GitLab function source (ISSUE-415). They join the path
+// their subject's pinning code anchors (subjectFindingCodes).
 var sourceDependencyCodes = map[ErrorCode]bool{
-	CodeActionUnauthorizedSource: true,
-	CodeImageUnauthorizedSource:  true,
+	CodeActionUnauthorizedSource:    true,
+	CodeImageUnauthorizedSource:     true,
+	CodeComponentUnauthorizedSource: true,
+	CodeFunctionUnauthorizedSource:  true,
 }
 
 // outsiderExpressions are the event payloads someone outside the team
@@ -572,7 +575,9 @@ func AssemblePaths(findings []opaengine.Finding, sit *Situation, projectPath str
 	// A finding about the subject itself starts nothing: it joins the path
 	// an entry finding already anchors on the same subject in the same
 	// job, and is priced as an other finding when there is none. It never
-	// proves the entry.
+	// proves the entry. A job-less finding (ISSUE-414 on a component
+	// include) is about every job the include shapes: it joins every
+	// branch of the path on its subject.
 	for _, f := range joining {
 		anchor, _ := findingAnchorHash(f)
 		if seen[anchor+"|"+f.Job] {
@@ -580,11 +585,20 @@ func AssemblePaths(findings []opaengine.Finding, sit *Situation, projectPath str
 		}
 		seen[anchor+"|"+f.Job] = true
 		key := string(subjectFindingCodes[ErrorCode(f.Code)]) + "|" + entrySubject(f)
-		if pg := paths[key]; pg != nil {
-			if g := pg.branches[f.Job]; g != nil {
+		pg := paths[key]
+		if pg == nil {
+			continue
+		}
+		if f.Job == "" {
+			for _, g := range pg.branches {
 				g.hashes[anchor] = true
 				g.codes[ErrorCode(f.Code)] = true
 			}
+			continue
+		}
+		if g := pg.branches[f.Job]; g != nil {
+			g.hashes[anchor] = true
+			g.codes[ErrorCode(f.Code)] = true
 		}
 	}
 	out := make([]AttackPath, 0, len(keys))
@@ -1138,13 +1152,16 @@ func findingAnchorHash(f opaengine.Finding) (string, bool) {
 }
 
 // subjectFindingCodes are the codes that say something about a dependency
-// without making it an entry: an owner (ISSUE-713) or a registry
-// (ISSUE-101) outside the authorized list is a trust policy finding. When
-// the reference can change, the pinning codes on the same subject and job
-// anchor the path, and the finding joins it, with the entry kind it joins.
+// without making it an entry: an owner (ISSUE-713), a registry (ISSUE-101),
+// a component source (ISSUE-414) or a function source (ISSUE-415) outside
+// the authorized list is a trust policy finding. When the reference can
+// change, the pinning codes on the same subject and job anchor the path,
+// and the finding joins it, with the entry kind it joins.
 var subjectFindingCodes = map[ErrorCode]EntryKind{
-	CodeActionUnauthorizedSource: EntryMutableDependency,
-	CodeImageUnauthorizedSource:  EntryMutableDependency,
+	CodeActionUnauthorizedSource:    EntryMutableDependency,
+	CodeImageUnauthorizedSource:     EntryMutableDependency,
+	CodeComponentUnauthorizedSource: EntryMutableDependency,
+	CodeFunctionUnauthorizedSource:  EntryMutableDependency,
 }
 
 // pathAnchor is one entry a finding starts, together with the job that
@@ -1347,6 +1364,12 @@ func entrySubject(f opaengine.Finding) string {
 		s = data("variableName")
 	case CodePullRequestTargetWithHeadCheckout:
 		s = strings.TrimSpace(strings.TrimSuffix(strings.TrimPrefix(data("ref"), "${{"), "}}"))
+	case CodeComponentUnauthorizedSource:
+		// The rule names the include at its ref as the subject; without
+		// one, the component path is the include's source.
+		s = data("componentPath")
+	case CodeFunctionUnauthorizedSource:
+		s = data("link")
 	default:
 		s = data("uses")
 	}

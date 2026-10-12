@@ -105,4 +105,12 @@ func TestIndividualSeverityReadsTheOccurrenceSeverity(t *testing.T) {
 	if got := IndividualSeverity(odd, "main"); got != SeverityHigh {
 		t.Errorf("unknown occurrence severity: %s, want the computed high", got)
 	}
+	component := opaengine.Finding{Code: string(CodeComponentUnauthorizedSource), Data: map[string]any{"componentPath": "gitlab.example.com/g/c/x", "occurrenceSeverity": "medium"}}
+	if got := IndividualSeverity(component, "main"); got != SeverityMedium {
+		t.Errorf("component: %s, want the occurrence's medium", got)
+	}
+	function := opaengine.Finding{Code: string(CodeFunctionUnauthorizedSource), Job: "build", Data: map[string]any{"link": "registry.example.com/g/fn:1.0", "occurrenceSeverity": "medium"}}
+	if got := IndividualSeverity(function, "main"); got != SeverityMedium {
+		t.Errorf("function: %s, want the occurrence's medium", got)
+	}
 }
