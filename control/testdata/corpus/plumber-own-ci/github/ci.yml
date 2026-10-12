@@ -23,8 +23,8 @@ jobs:
         # to a different toolchain over time without any workflow change.
         # Floor is 1.26.0, the module's minimum (go.mod `go` directive, raised
         # to 1.26 by golang.org/x/crypto v0.56.0 which clears the x/crypto/ssh
-        # advisories); 1.26.6 matches the pinned toolchain.
-        go-version: ['1.26.6', '1.26.0']
+        # advisories); 1.26.9 matches the pinned toolchain.
+        go-version: ['1.26.9', '1.26.0']
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -47,7 +47,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.26.6'
+          go-version: '1.26.9'
 
       # Build from what git actually tracks. Every other job builds the
       # working tree, which can contain generated or git-ignored files that
@@ -72,7 +72,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.26.6'
+          go-version: '1.26.9'
 
       - name: Run tests
         run: go test ./... -race -coverprofile=coverage.out -covermode=atomic
@@ -94,7 +94,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.26.6'
+          go-version: '1.26.9'
 
       # Run golangci-lint via `go install` instead of the third-party
       # golangci-lint-action wrapper — no external action is trusted, and
@@ -144,7 +144,7 @@ jobs:
 
       - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
         with:
-          go-version: '1.26.6'
+          go-version: '1.26.9'
 
       - name: Install and run govulncheck
         # setup-go pins GOTOOLCHAIN=local, which makes `go` ignore the

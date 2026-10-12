@@ -1,5 +1,5 @@
 # Build stage
-# golang:1.26-alpine — pinned to a digest shipping Go 1.26.6 (fixes stdlib
+# golang:1.26-alpine — pinned to a digest shipping Go 1.26.9 (fixes stdlib
 # advisories GO-2026-5026, GO-2026-5972, GO-2026-6089, GO-2026-6090, all High).
 # Bump this digest when go.mod's `toolchain` is raised so the bundled compiler
 # carries stdlib security fixes.
@@ -8,7 +8,7 @@
 # build and cross-compiles for the target (TARGETOS/TARGETARCH below), instead
 # of running under QEMU emulation for every non-native platform of a
 # multi-arch build.
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine@sha256:70b46548e42db77e0966aaf3619fd068734dc6c77584d526b91126504fd95816 AS builder
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine@sha256:3082400e369fa24d5fc60bca20edab3f6d604e0c5a690ec66b295eff4dd87ade AS builder
 
 # Set working directory
 WORKDIR /app
