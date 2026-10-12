@@ -47,6 +47,8 @@ const (
 	// depActionOrInclude: a reference naming both a tag and a branch, an
 	// action's in a GitHub workflow file, an include's otherwise.
 	depActionOrInclude
+	// depFunction: a GitLab CI/CD function a `run:` step references.
+	depFunction
 )
 
 // familyAction is the family of an action code: "reusable workflow" when
@@ -191,6 +193,16 @@ var entryCodes = map[ErrorCode]entryCode{
 		dependency: depActionOrInclude, family: "reference",
 		nature: mutableReferenceNature, actor: actorDependency,
 		fix: "pin the include on a commit SHA", actionFix: pinOnCommitSHA,
+	},
+	CodeComponentUnauthorizedSource: {
+		dependency: depInclude, family: "component",
+		nature: entryNatureWords{base: "untrusted component"}, actor: actorDependency,
+		fix: "use a component from a trusted source and pin it on a commit SHA", pinnedFix: "use a component from a trusted source",
+	},
+	CodeFunctionUnauthorizedSource: {
+		dependency: depFunction, family: "function",
+		nature: entryNatureWords{base: "untrusted function"}, actor: actorDependency,
+		fix: "use a function from a trusted source and pin it by digest", pinnedFix: "use a function from a trusted source",
 	},
 	CodeIncludeForbiddenVersion: {
 		dependency: depInclude, family: "include",

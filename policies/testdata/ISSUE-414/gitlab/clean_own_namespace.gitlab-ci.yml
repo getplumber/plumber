@@ -1,0 +1,6 @@
+include:
+  - component: $CI_SERVER_FQDN/$CI_PROJECT_PATH/secret-detection@1.0.0
+
+build:
+  script:
+    - echo build

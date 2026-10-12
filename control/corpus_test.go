@@ -133,7 +133,7 @@ func TestCorpus(t *testing.T) {
 			if len(failures) > 0 {
 				t.Fatalf("policy failures: %+v", failures)
 			}
-			sit, err := EvaluateSituation(context.Background(), p, buildEngineConfig(conf.PlumberConfig.ControlsFor(provider)))
+			sit, err := EvaluateSituation(context.Background(), p, buildEngineConfig(conf.PlumberConfig.ControlsFor(provider), ""))
 			if err != nil {
 				t.Fatal(err)
 			}

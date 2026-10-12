@@ -34,6 +34,8 @@ func TestSpecAnchoredRoles(t *testing.T) {
 		// when the reference can change.
 		"ISSUE-101": {RoleHygiene, ""},
 		"ISSUE-713": {RoleHygiene, ""},
+		"ISSUE-414": {RoleHygiene, ""},
+		"ISSUE-415": {RoleHygiene, ""},
 		"ISSUE-802": {RoleEntry, EntryPRTarget},
 		"ISSUE-501": {RoleGate, ""},
 		"ISSUE-505": {RoleGate, ""},

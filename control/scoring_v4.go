@@ -2,6 +2,7 @@ package control
 
 import (
 	"math"
+	"regexp"
 	"slices"
 	"sort"
 	"strconv"
@@ -173,11 +174,13 @@ type ScoreInputV4 struct {
 // IndividualSeverity is what a finding on no path is priced and labelled
 // at: its registry severity, except a missing branch protection on a
 // branch other than the default one (High; Critical on the default
-// branch, or when the default branch is unknown) and an action from an
-// unauthorized owner pinned by a full commit SHA (Medium; High
-// otherwise). The policy says so on the finding (Data
-// "occurrenceSeverity"), which is read when it holds a severity; the same
-// rule is computed here for a finding that carries none.
+// branch, or when the default branch is unknown), an action or a GitLab
+// component from an unauthorized source pinned by a full commit SHA
+// (Medium; High otherwise) and a GitLab function from an unauthorized
+// source pinned by an image digest (Medium; High otherwise). The policy
+// says so on the finding (Data "occurrenceSeverity"), which is read when
+// it holds a severity; the same rule is computed here for a finding that
+// carries none.
 func IndividualSeverity(f opaengine.Finding, defaultBranch string) IssueSeverity {
 	if occ, _ := f.Data["occurrenceSeverity"].(string); occ != "" {
 		switch sev := IssueSeverity(occ); sev {
@@ -190,14 +193,22 @@ func IndividualSeverity(f opaengine.Finding, defaultBranch string) IssueSeverity
 		if branch, _ := f.Data["branchName"].(string); branch != "" && defaultBranch != "" && branch != defaultBranch {
 			return SeverityHigh
 		}
-	case CodeActionUnauthorizedSource:
+	case CodeActionUnauthorizedSource, CodeComponentUnauthorizedSource:
 		if fullCommitSHARef.MatchString(entrySubject(f)) {
+			return SeverityMedium
+		}
+		return SeverityHigh
+	case CodeFunctionUnauthorizedSource:
+		if imageDigestRef.MatchString(entrySubject(f)) {
 			return SeverityMedium
 		}
 		return SeverityHigh
 	}
 	return SeverityForCode(ErrorCode(f.Code))
 }
+
+// imageDigestRef is a reference pinned by an image digest.
+var imageDigestRef = regexp.MustCompile(`@sha256:[0-9a-f]{64}$`)
 
 // findingHash is identity.PlatformHash(f.IdentityInput()) with the ok flag
 // folded into deduped: false only for a codeless finding, which has

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"math/rand"
 	"reflect"
+	"slices"
 	"sort"
 	"strings"
 	"testing"
@@ -14,6 +15,105 @@ import (
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	"github.com/getplumber/plumber/internal/ir"
 )
+
+// componentSituation is a GitLab pipeline whose jobs are shaped by one
+// component include at ref, each job holding a secret and publishing, as
+// releaseSituation's job does: a path through it is Critical before any
+// ceiling applies.
+func componentSituation(ref string, jobNames ...string) *Situation {
+	s := &Situation{Exposure: ir.VisibilityPublic, Jobs: map[string]JobSituation{},
+		Includes: []IncludeFact{{Subject: "gitlab.example.com/attacker/components/backdoor@" + ref, File: ".gitlab-ci.yml", Line: 2, Jobs: jobNames}}}
+	for _, name := range jobNames {
+		s.Jobs[name] = releaseSituation(ir.VisibilityPublic).Jobs["release"]
+	}
+	return s
+}
+
+// componentSourceFinding is the job-less ISSUE-414 finding on the component
+// include of componentSituation at ref: its subject is the include's, its
+// data names the source without the ref, as the rule emits it. An empty
+// ref leaves the subject unset.
+func componentSourceFinding(ref string) opaengine.Finding {
+	const source = "gitlab.example.com/attacker/components/backdoor"
+	f := opaengine.Finding{Code: "ISSUE-414", File: ".gitlab-ci.yml", Line: 2, Data: map[string]any{"componentPath": source, "link": source}}
+	if ref != "" {
+		f.Subject = source + "@" + ref
+	}
+	return f
+}
+
+// A component from an unauthorized source is a trust policy finding, not a
+// way in. On a component whose ref can change, the include's pinning
+// finding (ISSUE-404) anchors the path on every job the include shapes, and
+// the job-less source finding on the same include joins every one of those
+// branches: both findings anchor the one path, the entry reads as the
+// pinning code, every branch holds at High with the source modifier where
+// the pinning code alone holds at Medium, and the source finding is charged
+// through the path.
+func TestAJobLessUnauthorizedComponentJoinsEveryBranchOfItsIncludePath(t *testing.T) {
+	sit := componentSituation("main", "build", "deploy")
+	pin := opaengine.Finding{Code: "ISSUE-404", Subject: "gitlab.example.com/attacker/components/backdoor@main", Data: map[string]any{"includePath": "gitlab.example.com/attacker/components/backdoor"}}
+	alone := assemblePaths([]opaengine.Finding{pin}, sit)
+	if len(alone) != 1 || alone[0].Tier != TierMedium {
+		t.Fatalf("the pinning code alone holds at Medium: %+v", alone)
+	}
+	findings := []opaengine.Finding{componentSourceFinding("main"), pin}
+	paths := assemblePaths(findings, sit)
+	if len(paths) != 1 {
+		t.Fatalf("want one path, got %+v", paths)
+	}
+	p := paths[0]
+	if !reflect.DeepEqual(p.AnchorCodes, []ErrorCode{"ISSUE-404", "ISSUE-414"}) || !reflect.DeepEqual(p.AnchorHashes, hashesOf(t, findings)) {
+		t.Errorf("anchors = %v %v, want both findings", p.AnchorCodes, p.AnchorHashes)
+	}
+	if p.AnchorCode != "ISSUE-404" {
+		t.Errorf("the entry reads as the pinning code: %s", p.AnchorCode)
+	}
+	if p.Tier != TierHigh || !slices.Contains(p.Modifiers, "source_cap") {
+		t.Errorf("the source lifts the ceiling to High: tier %s, modifiers %v", p.Tier, p.Modifiers)
+	}
+	if len(p.Branches) != 2 {
+		t.Fatalf("want a branch per job the include shapes, got %+v", p.Branches)
+	}
+	for _, b := range p.Branches {
+		if b.Tier != TierHigh || !slices.Contains(b.Modifiers, "source_cap") {
+			t.Errorf("branch %s: the source finding joined it: tier %s, modifiers %v", b.Job, b.Tier, b.Modifiers)
+		}
+	}
+	s := ComputePlumberScoreV4(ScoreInputV4{Findings: findings, Paths: paths})
+	if s.OtherFindings != nil {
+		t.Errorf("the joined finding is charged through the path: %+v", s.OtherFindings)
+	}
+}
+
+// An unauthorized component or function alone starts no path: nothing says
+// the reference can change, so the finding is priced on its own.
+func TestAnUnauthorizedComponentOrFunctionAloneStartsNoPath(t *testing.T) {
+	sit := componentSituation("main", "build", "deploy")
+	if paths := assemblePaths([]opaengine.Finding{componentSourceFinding("main")}, sit); len(paths) != 0 {
+		t.Errorf("an unauthorized component alone is no entry, got %+v", paths)
+	}
+	fn := opaengine.Finding{Code: "ISSUE-415", Job: "build", File: ".gitlab-ci.yml", Line: 7, Data: map[string]any{"link": "registry.example.com/attacker/fn:1.0", "step": "run"}}
+	if paths := assemblePaths([]opaengine.Finding{fn}, sit); len(paths) != 0 {
+		t.Errorf("an unauthorized function alone is no entry, got %+v", paths)
+	}
+}
+
+// The entry subject of a source finding on a component is the include's
+// subject when the rule names it, else the component path; a function's
+// is the function reference.
+func TestEntrySubjectOfTheGitLabSourceFindings(t *testing.T) {
+	if got := entrySubject(componentSourceFinding("main")); got != "gitlab.example.com/attacker/components/backdoor@main" {
+		t.Errorf("component with a subject: %q", got)
+	}
+	if got := entrySubject(componentSourceFinding("")); got != "gitlab.example.com/attacker/components/backdoor" {
+		t.Errorf("component without a subject: %q", got)
+	}
+	fn := opaengine.Finding{Code: "ISSUE-415", Job: "build", Data: map[string]any{"link": "registry.example.com/attacker/fn:1.0", "step": "run"}}
+	if got := entrySubject(fn); got != "registry.example.com/attacker/fn:1.0" {
+		t.Errorf("function: %q", got)
+	}
+}
 
 func finding(code, job string, data map[string]any) opaengine.Finding {
 	return opaengine.Finding{Code: code, Job: job, File: ".github/workflows/ci.yml", Line: 10, Data: data}
