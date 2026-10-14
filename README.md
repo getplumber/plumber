@@ -77,6 +77,16 @@ Other options besides Homebrew:
 - A binary from [GitHub Releases](https://github.com/getplumber/plumber/releases)
 - The Docker image [`docker.io/getplumber/plumber`](https://hub.docker.com/r/getplumber/plumber) on Docker Hub
 
+### Upgrade
+
+```bash
+brew upgrade plumber
+# or
+mise upgrade github:getplumber/plumber
+```
+
+A `mise use` install pins the version it resolved at install time, so an upgrade is an explicit step. `plumber version` prints an upgrade notice, with the command for your install, whenever a newer release exists.
+
 ## Authenticate
 
 ```bash
