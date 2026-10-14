@@ -451,15 +451,15 @@ func ScoreLetterMeaningFor(profileID, letter string, criticalPaths int) string {
 func ScoreLetterMeaning(letter string) string {
 	switch letter {
 	case "A":
-		return "Excellent — very low risk, clean pipeline"
+		return "Excellent: very low risk, clean pipeline"
 	case "B":
-		return "Good — a few Low/Medium issues"
+		return "Good: a few Low or Medium findings"
 	case "C":
-		return "Moderate — Medium issues or accumulating Low findings, worth fixing"
+		return "Moderate: Medium findings or accumulating Low findings, worth fixing"
 	case "D":
-		return "Poor — High-severity issues impacting the pipeline"
+		return "Poor: High-severity findings impacting the pipeline"
 	case "E":
-		return "Critical — at least one Critical issue or heavy accumulated losses"
+		return "Critical: at least one Critical finding or heavy accumulated losses"
 	default:
 		return ""
 	}

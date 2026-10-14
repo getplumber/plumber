@@ -158,12 +158,12 @@ func generateMRComment(result *AnalysisResult, pc *configuration.PlumberConfig, 
 	case scorePointMode && score != nil:
 		b.WriteString("### Plumber Score\n\n")
 		fmt.Fprintf(&b, "- **Profile:** `%s`\n", score.ProfileID)
-		fmt.Fprintf(&b, "- **Issues by severity:** critical %d, high %d, medium %d, low %d\n",
+		fmt.Fprintf(&b, "- **Findings by severity:** critical %d, high %d, medium %d, low %d\n",
 			score.Counts.Critical, score.Counts.High, score.Counts.Medium, score.Counts.Low)
 		fmt.Fprintf(&b, "- **Raw points (before Critical malus):** %.1f / 100\n", score.RawPoints)
 		fmt.Fprintf(&b, "- **Final points:** %.1f / 100\n", score.FinalPoints)
 		if score.CriticalMalusApplied {
-			fmt.Fprintf(&b, "- **Critical malus:** final points capped at %.0f when any Critical issue exists\n", score.CriticalMalusMax)
+			fmt.Fprintf(&b, "- **Critical malus:** final points capped at %.0f when any Critical finding exists\n", score.CriticalMalusMax)
 		}
 		fmt.Fprintf(&b, "- **Score (letter):** **%s**\n", score.Score)
 		b.WriteString("\n")
@@ -225,8 +225,8 @@ func generateMRComment(result *AnalysisResult, pc *configuration.PlumberConfig, 
 
 	// Controls summary table
 	b.WriteString("### Controls\n\n")
-	b.WriteString("| Control | Status | Issues |\n")
-	b.WriteString("|---------|--------|--------|\n")
+	b.WriteString("| Control | Status | Findings |\n")
+	b.WriteString("|---------|--------|----------|\n")
 	for _, c := range controls {
 		switch {
 		case c.skipped:
@@ -246,18 +246,17 @@ func generateMRComment(result *AnalysisResult, pc *configuration.PlumberConfig, 
 	// Status line after the table
 	writeMRStatusLine(&b, passed, gateLine)
 
-	// Issue details. Under the contextual score the path details below tell the
+	// Finding details. Under the contextual score the path details below tell the
 	// story of every finding that anchors or walks a path; this section is
 	// renamed "Individual findings in detail" and carries only what is left, so
-	// nothing is told twice. Under v3 nothing changes: the heading, and
-	// every finding able to reach it, are exactly what they were before v4
-	// existed.
+	// nothing is told twice. Under v3 the heading is "Findings" and every
+	// finding reaches it.
 	switch {
 	case isV4 && otherIssues > 0:
 		b.WriteString("### Individual findings in detail\n\n")
 		writeIssueDetails(&b, result, renderedPaths)
 	case !isV4 && totalIssues > 0:
-		b.WriteString("### Issues\n\n")
+		b.WriteString("### Findings\n\n")
 		writeIssueDetails(&b, result, nil)
 	}
 	if isV4 {

@@ -1166,7 +1166,7 @@ func entryFix(code ErrorCode) string {
 	if row, ok := entryCodes[code]; ok {
 		return row.fix
 	}
-	return "see the issue reference"
+	return "see the documentation of the finding"
 }
 
 // pathFixOf is the fix of p, read off the code the block reads it by

@@ -246,7 +246,7 @@ func analyzedCommitResources(result *control.AnalysisResult) []ocsfResource {
 func ocsfControlMessage(displayName, status string, n int) string {
 	switch status {
 	case control.StatusFailed:
-		return fmt.Sprintf("Control %q failed: %d issue(s).", displayName, n)
+		return fmt.Sprintf("Control %q failed: %d finding(s).", displayName, n)
 	case control.StatusPassed:
 		return fmt.Sprintf("Control %q passed.", displayName)
 	case control.StatusError:

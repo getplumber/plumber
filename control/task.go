@@ -1114,7 +1114,7 @@ func RunAnalysis(conf *configuration.Configuration) (*AnalysisResult, error) {
 	// Note: when using local CI config, errors are returned directly by the
 	// collector (hard fail) and won't reach this point.
 	if pipelineOriginData.LimitedAnalysis {
-		l.Info("Limited analysis due to CI configuration issues")
+		l.Info("Limited analysis due to CI configuration errors")
 		return result, nil
 	}
 

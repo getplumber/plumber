@@ -53,8 +53,8 @@ func TestGenerateMRComment_FailedGate(t *testing.T) {
 		t.Fatalf("failed gate must not render a pass, got:\n%s", body)
 	}
 	// The finding must appear in the Issues section with its code.
-	if !strings.Contains(body, "### Issues") || !strings.Contains(body, string(CodeBranchUnprotected)) {
-		t.Fatalf("body must list the finding under Issues, got:\n%s", body)
+	if !strings.Contains(body, "### Findings") || !strings.Contains(body, string(CodeBranchUnprotected)) {
+		t.Fatalf("body must list the finding under Findings, got:\n%s", body)
 	}
 }
 
@@ -69,8 +69,8 @@ func TestGenerateMRComment_PassedGate(t *testing.T) {
 	if strings.Contains(body, "Plumber check failed") {
 		t.Fatalf("passed gate must not render a failure, got:\n%s", body)
 	}
-	if strings.Contains(body, "### Issues") {
-		t.Fatalf("clean run must not render an Issues section, got:\n%s", body)
+	if strings.Contains(body, "### Findings") {
+		t.Fatalf("clean run must not render a Findings section, got:\n%s", body)
 	}
 }
 
@@ -439,7 +439,7 @@ func TestGenerateMRComment_V4CapsThePathListAt20(t *testing.T) {
 
 // TestGenerateMRComment_V4OtherFindingsExcludesPathTiedFindings pins the
 // renamed, filtered detail section: under v4, the heading below the
-// Controls table reads "Other findings" (not "### Issues") and carries only
+// Controls table reads "Other findings" (not "### Findings") and carries only
 // the findings the Attack paths list above did not already tell the story
 // of (no pathIds in their Data) -- here the gate finding that anchors path
 // p1 is dropped, and the unrelated privilege finding on another control
@@ -471,8 +471,8 @@ func TestGenerateMRComment_V4OtherFindingsExcludesPathTiedFindings(t *testing.T)
 	}
 	body := generateMRComment(result, mrCommentPC(), false, "gate line", score, true, false, nil, nil, nil)
 
-	if strings.Contains(body, "### Issues") {
-		t.Errorf("v4 must rename the detail section, got ### Issues in:\n%s", body)
+	if strings.Contains(body, "### Findings") {
+		t.Errorf("scoring-v4 must rename the detail section, got ### Findings in:\n%s", body)
 	}
 	i := strings.Index(body, "### Individual findings in detail")
 	if i < 0 {
@@ -557,8 +557,8 @@ func TestGenerateMRComment_V4FallbackToV3RendersV3Comment(t *testing.T) {
 			t.Errorf("fallback to v3 must not render %q:\n%s", unwanted, body)
 		}
 	}
-	if !strings.Contains(body, "### Issues") || !strings.Contains(body, string(CodeBranchUnprotected)) {
-		t.Fatalf("fallback to v3 must render the ordinary Issues section, got:\n%s", body)
+	if !strings.Contains(body, "### Findings") || !strings.Contains(body, string(CodeBranchUnprotected)) {
+		t.Fatalf("fallback to v3 must render the ordinary Findings section, got:\n%s", body)
 	}
 }
 
@@ -656,7 +656,7 @@ func TestGenerateMRComment_MalusLineFollowsTheScoreProfile(t *testing.T) {
 		profile, want string
 	}{
 		{PlumberScoreProfileIDV4, "- Capped at 30: a Critical attack path remains.\n"},
-		{PlumberScoreProfileID, "- **Critical malus:** final points capped at 30 when any Critical issue exists\n"},
+		{PlumberScoreProfileID, "- **Critical malus:** final points capped at 30 when any Critical finding exists\n"},
 	} {
 		score := &PlumberScoreResult{ProfileID: tc.profile, Score: "E", RawPoints: 70, FinalPoints: 30, CriticalMalusApplied: true, CriticalMalusMax: 30}
 		body := generateMRComment(result, mrCommentPC(), false, "gate", score, true, true, nil, nil, nil)

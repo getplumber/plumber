@@ -85,5 +85,5 @@ type IncompleteDataError struct {
 }
 
 func (e *IncompleteDataError) Error() string {
-	return fmt.Sprintf("data collection was incomplete (%d issue(s)), so the score is withheld; fix the causes listed above and re-run", len(e.Reasons))
+	return fmt.Sprintf("data collection was incomplete (%d cause(s)), so the score is withheld; fix the causes listed above and re-run", len(e.Reasons))
 }
