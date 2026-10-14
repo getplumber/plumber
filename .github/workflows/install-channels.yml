@@ -1,0 +1,215 @@
+name: Install channels
+
+# Every public install channel must serve the latest GitHub release.
+#
+# A user who ran `mise use -g github:getplumber/plumber` in May kept running
+# 0.3.27 for months: mise pins the version it resolved at install time, and
+# nothing told anyone that a channel was serving an old release. This
+# workflow installs Plumber the way users do, through each channel, and
+# fails when what gets installed is not the latest release:
+#
+#   - the Homebrew tap formula (getplumber/homebrew-plumber), then a real
+#     `brew install plumber` on macOS
+#   - `mise install github:getplumber/plumber@latest`
+#   - `go install github.com/getplumber/plumber@latest`
+#
+# It runs when a release is published (the release is created with a GitHub
+# App token, so the event fires), every Monday, and on demand. The Homebrew
+# formula is rewritten by the `homebrew` job of release.yml, minutes after
+# the release exists, and the Go module proxy refreshes its version list on
+# its own schedule, so the checks that depend on those retry for a while
+# before calling a channel stale.
+#
+# A red run means a channel is stale, not that the release is broken. A
+# pull request that edits this file runs it too, so the checks test
+# themselves before they reach main.
+
+on:
+  release:
+    types: [published]
+  pull_request:
+    paths:
+      - .github/workflows/install-channels.yml
+  schedule:
+    # Monday 06:00 UTC
+    - cron: '0 6 * * 1'
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  latest:
+    name: Latest release
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+    outputs:
+      version: ${{ steps.latest.outputs.version }}
+    steps:
+      - name: Read the latest release tag
+        id: latest
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          tag="$(gh api repos/getplumber/plumber/releases/latest --jq .tag_name)"
+          version="${tag#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::unexpected latest release tag: $tag"
+            exit 1
+          fi
+          echo "latest release: $version"
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+  tap-formula:
+    name: Homebrew tap formula
+    runs-on: ubuntu-24.04
+    needs: latest
+    permissions:
+      contents: read
+    env:
+      LATEST: ${{ needs.latest.outputs.version }}
+      FORMULA_URL: https://raw.githubusercontent.com/getplumber/homebrew-plumber/main/Formula/plumber.rb
+    steps:
+      - name: Compare the formula version with the latest release
+        run: |
+          set -euo pipefail
+          # The homebrew job of release.yml rewrites the formula a few
+          # minutes after the release is published: poll before failing.
+          installed=""
+          for attempt in $(seq 1 20); do
+            installed="$(curl -sSfL "$FORMULA_URL" | sed -n 's/^[[:space:]]*version[[:space:]]*"\([^"]*\)".*/\1/p' | head -1)"
+            echo "attempt $attempt: formula version $installed, latest release $LATEST"
+            if [[ "$installed" == "$LATEST" ]]; then
+              break
+            fi
+            sleep 60
+          done
+          if [[ "$installed" != "$LATEST" ]]; then
+            echo "::error::channel tap-formula serves $installed, latest release is $LATEST"
+            exit 1
+          fi
+
+  brew:
+    name: brew install
+    runs-on: macos-latest
+    needs: [latest, tap-formula]
+    permissions:
+      contents: read
+    env:
+      LATEST: ${{ needs.latest.outputs.version }}
+      HOMEBREW_NO_AUTO_UPDATE: "1"
+      HOMEBREW_NO_INSTALL_CLEANUP: "1"
+      PLUMBER_NO_UPDATE_CHECK: "1"
+    steps:
+      - name: Install plumber with brew
+        run: |
+          set -euo pipefail
+          brew tap getplumber/plumber
+          # `brew trust` exists only on Homebrew versions that gate third
+          # party formulae; older brews install without it.
+          if brew trust --help >/dev/null 2>&1; then
+            brew trust --formula getplumber/plumber/plumber
+          fi
+          brew install plumber
+      - name: Compare the installed version with the latest release
+        run: |
+          set -euo pipefail
+          installed="$(plumber version | head -1)"
+          echo "installed: $installed"
+          echo "latest release: $LATEST"
+          if [[ "$installed" != *"$LATEST"* ]]; then
+            echo "::error::channel brew serves $installed, latest release is $LATEST"
+            exit 1
+          fi
+
+  mise:
+    name: mise install
+    runs-on: ubuntu-24.04
+    needs: latest
+    permissions:
+      contents: read
+    env:
+      LATEST: ${{ needs.latest.outputs.version }}
+      # mise resolves github: tools through the GitHub API; unauthenticated
+      # calls hit the rate limit on shared runners.
+      GITHUB_TOKEN: ${{ github.token }}
+      MISE_YES: "1"
+      PLUMBER_NO_UPDATE_CHECK: "1"
+    steps:
+      # mise is installed from a pinned release binary verified against a
+      # checksum committed here, NOT with its install.sh: that script is a
+      # moving target fetched at run time. The hash is the trust anchor;
+      # bump both together (the release ships a SHASUMS256.txt to read it
+      # from).
+      - name: Install mise (pinned + checksum-verified)
+        env:
+          MISE_VERSION: "2026.10.9"
+          MISE_SHA256: "6ab6646b52b83f6bbd51c9d0d3ae54264ffa90efd1ac6d7c0ec5a86bbc6a0030"
+        run: |
+          set -euo pipefail
+          tmp="$(mktemp -d)"
+          curl -sSfL -o "$tmp/mise" \
+            "https://github.com/jdx/mise/releases/download/v${MISE_VERSION}/mise-v${MISE_VERSION}-linux-x64"
+          echo "${MISE_SHA256}  $tmp/mise" | sha256sum -c -
+          chmod +x "$tmp/mise"
+          sudo install "$tmp/mise" /usr/local/bin/mise
+          mise --version
+      - name: Install plumber with mise
+        run: |
+          set -euo pipefail
+          echo "newest version mise sees: $(mise ls-remote github:getplumber/plumber | tail -1)"
+          mise install github:getplumber/plumber@latest
+      - name: Compare the installed version with the latest release
+        run: |
+          set -euo pipefail
+          installed="$(mise exec github:getplumber/plumber@latest -- plumber version | head -1)"
+          echo "installed: $installed"
+          echo "latest release: $LATEST"
+          if [[ "$installed" != *"$LATEST"* ]]; then
+            echo "::error::channel mise serves $installed, latest release is $LATEST"
+            exit 1
+          fi
+
+  go-install:
+    name: go install
+    runs-on: ubuntu-24.04
+    needs: latest
+    permissions:
+      contents: read
+    env:
+      LATEST: ${{ needs.latest.outputs.version }}
+      PLUMBER_NO_UPDATE_CHECK: "1"
+    steps:
+      - uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          # Same pin as ci.yml: the toolchain go.mod asks for.
+          go-version: '1.26.9'
+          # This workflow runs on the release trigger; a restored build cache
+          # is a poisoning path there, and the install has nothing to cache.
+          cache: false
+      - name: Install plumber with go install and compare with the latest release
+        run: |
+          set -euo pipefail
+          # The module proxy learns about a new tag on its own schedule, so
+          # @latest can lag the release by a few minutes: retry before failing.
+          # The version compared is the module version Go stamps into the
+          # binary (`go version -m`): releases before the build-info fallback
+          # in cmd/version.go report "dev" from `plumber version` when built
+          # this way, and that line is printed for information only.
+          bin="$(go env GOPATH)/bin/plumber"
+          installed=""
+          for attempt in $(seq 1 20); do
+            go install github.com/getplumber/plumber@latest
+            installed="$(go version -m "$bin" | awk '$1 == "mod" && $2 == "github.com/getplumber/plumber" { print $3 }')"
+            echo "attempt $attempt: module $installed, latest release $LATEST"
+            if [[ "$installed" == "v$LATEST" ]]; then
+              break
+            fi
+            sleep 60
+          done
+          echo "plumber version says: $("$bin" version | head -1)"
+          if [[ "$installed" != "v$LATEST" ]]; then
+            echo "::error::channel go-install serves $installed, latest release is $LATEST"
+            exit 1
+          fi

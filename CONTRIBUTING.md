@@ -917,6 +917,8 @@ The README carries no pinned version (`uses: getplumber/plumber@<version>`), so 
 
 Also automated: the Homebrew formula (the `release.yml` Homebrew job) and `CHANGELOG.md` (semantic-release).
 
+Also checked: `.github/workflows/install-channels.yml` ("Install channels") runs on every published release, weekly, and on demand. It installs Plumber through each public channel (the Homebrew tap formula and `brew install`, `mise install github:getplumber/plumber@latest`, `go install github.com/getplumber/plumber@latest`) and fails when a channel serves anything other than the latest GitHub release. A red run means a channel is stale, not that the release is broken: re-run the Homebrew job of `release.yml` or wait for the Go module proxy, then re-run the check with `gh workflow run install-channels.yml`.
+
 ### Propagated automatically by marker — do not hand-edit
 
 The GitLab component repo and the website used to be a manual checklist. They are not any more. `release.yml` ends with a `propagate` job (`.github/workflows/propagate.yml`) that pushes each release outward: it syncs `templates/plumber.yml`, rewrites pins and `RELEASE_NOTES.md` in the GitLab component repo and tags `v${VERSION}` there (which makes the GitLab tag pipeline publish the Catalog release), then opens a pin-bump PR against `getplumber.io`.
