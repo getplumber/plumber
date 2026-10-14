@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/getplumber/plumber/configuration"
+	"github.com/getplumber/plumber/control"
 	"github.com/getplumber/plumber/internal/platform"
 	providerPkg "github.com/getplumber/plumber/provider"
 )
@@ -92,23 +93,40 @@ func renderPolicySections(p providerPkg.Provider, conf *configuration.Configurat
 		}
 		var controls []controlSummary
 		var groups []findingGroup
-		// Each policy is a run of its own: under scoring-v4 its section
-		// shows its own Situation and attack paths, its findings at their
-		// contextual severity, unless its score is withheld (the banner's
-		// own condition, as on a standalone run).
-		v4 := scoreProfileV4(r.Score) && !scoreWithheld(r.Score, !noControls, r.Result.DataCollectionDegraded)
+		// Each policy is a run of its own, laid out as a standalone run
+		// is (closesOnFinalScreen): under scoring-v4 its section closes
+		// on the Score block, its score shown or withheld. The profile is
+		// the score's own when the policy has one; when nothing was
+		// evaluated (a nil score) the request decides. A scoring-v4
+		// request that fell back to v3 keeps the previous layout, as does
+		// --no-controls, a request for no verdict at all.
+		v4 := !noControls && (scoreProfileV4(r.Score) || (r.Score == nil && control.ScoreProfile == "v4"))
+		// The withheld score (degraded collection, nothing evaluated) is
+		// the one condition every output reads: the contextual
+		// severities, roles and path ids are shown only when the score is.
+		withheld := scoreWithheld(r.Score, !noControls, r.Result.DataCollectionDegraded)
 		// Under --no-controls nothing was selected, so listing every
 		// control as "skipped" is noise that reads like a
 		// misconfiguration, and the banner is withheld rather than
 		// stamping a perfect score on a run that evaluated nothing.
 		if !noControls {
-			controls, groups = buildProviderControlSummariesAndGroups(p, r.Result, r.Config, linked, controlsFilterList, skipControlsList, v4)
+			controls, groups = buildProviderControlSummariesAndGroups(p, r.Result, r.Config, linked, controlsFilterList, skipControlsList, v4 && !withheld)
 		}
 		filtered := filterGroupsForDegraded(groups, r.Result.DataCollectionDegraded)
 		if v4 {
-			// The contextual section closes on its final screen, which
-			// says what the Controls table and the caveat below would.
-			renderFindingGroupsV4(filtered, r.Score, r.Result.Findings, platformBlock)
+			// The contextual section closes on its Score block, which
+			// says what the Controls table and the caveat below would; a
+			// withheld score closes on the same block, saying why there
+			// is none.
+			shown := r.Score
+			if withheld {
+				shown = nil
+			}
+			renderFindingGroupsV4(filtered, shown, r.Result.Findings, platformBlock)
+			if withheld {
+				renderWithheldScreen(os.Stdout, detectTermCaps(), withheldScoreOf(r.Result))
+				continue
+			}
 			renderFinalScreen(os.Stdout, r.Score, detectTermCaps(), false, finalNotes{NotEvaluated: countNotEvaluated(groups)})
 			continue
 		}

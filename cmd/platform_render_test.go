@@ -125,8 +125,12 @@ func TestRenderPolicySections_NoControlsDeclared(t *testing.T) {
 // Row 45: a policy whose only declared control is config_required (#459)
 // evaluated nothing real either, even though it is Applied over a real
 // config and not the reasonNoControls empty-set case above. Its section
-// prints the withheld line rather than a perfect 100/A grade.
+// closes on the withheld Score block (the default profile is contextual)
+// saying nothing was checked, rather than on a perfect 100/A grade.
 func TestRenderPolicySections_Row45AllUnconfiguredPrintsWithheldLine(t *testing.T) {
+	t.Cleanup(func() { useReportColor(colorBasic) })
+	useReportColor(colorOff)
+	withScoreProfile(t, "v4")
 	unconfigured := policyWithTree("Unconfigured", "pipelineMustNotEnableDebugTrace", `{"enabled":true}`)
 	conf := confWithPolicies(t, unconfigured)
 	runs := evaluatePlatformPolicies(testProvider(t), conf, debugTraceResult())
@@ -134,7 +138,8 @@ func TestRenderPolicySections_Row45AllUnconfiguredPrintsWithheldLine(t *testing.
 	out := captureStdoutAll(t, func() { renderPolicySections(testProvider(t), conf, runs, nil, nil) })
 
 	assertContains(t, out, "== Policy: Unconfigured  [report]")
-	assertContains(t, out, "Score withheld: no control was evaluated")
+	assertContains(t, out, "Plumber Score  withheld")
+	assertContains(t, out, "Status: NOTHING CHECKED (no control was evaluated)")
 	if strings.Contains(out, "/ 100 pts") {
 		t.Fatalf("must not print a graded letter-score badge, got:\n%s", out)
 	}
@@ -219,6 +224,63 @@ func TestRenderPolicySections_DegradedRunWithFindingsKeepsTheIssuesTable(t *test
 		t.Fatalf("this run has findings, the table must list them:\n%s", out)
 	}
 	assertContains(t, out, "Score withheld")
+}
+
+// A degraded policy run under the contextual score closes on the same
+// withheld Score block a standalone run does: "Plumber Score  withheld",
+// the INCOMPLETE status, the cause and what to do next. None of the
+// previous layout prints under it: no boxed "Score withheld" banner, no
+// graded badge, no Controls table.
+func TestRenderPolicySections_ContextualDegradedClosesOnTheWithheldScore(t *testing.T) {
+	t.Cleanup(func() { useReportColor(colorBasic) })
+	useReportColor(colorOff)
+	withScoreProfile(t, "v4")
+	run := handMadePolicyRun(t, "A", debugTracePolicyYAML, []opaengine.Finding{debugTraceFinding()})
+	run.Score.ProfileID = control.PlumberScoreProfileIDV4
+	run.Result.DataCollectionDegraded = true
+	run.Result.DegradedReasons = []string{"branch protection fetch failed (403)"}
+
+	out := captureStdoutAll(t, func() { renderPolicySections(testProvider(t), nil, []policyRun{run}, nil, nil) })
+
+	assertContains(t, out, "== Policy: A  [report]")
+	for _, want := range []string{
+		"Plumber Score  withheld",
+		"Status: INCOMPLETE (data collection failed)",
+		"Why: branch protection fetch failed (403)",
+		"Next: fix the cause above and re-run;",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("want %q in:\n%s", want, out)
+		}
+	}
+	for _, unwanted := range []string{"Score withheld", "/ 100 pts", "│ Control "} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("a degraded contextual section printed %q:\n%s", unwanted, out)
+		}
+	}
+}
+
+// A policy run that evaluated nothing (nil score) under a contextual
+// request closes on the withheld Score block too, saying nothing was
+// checked, rather than on the previous banner.
+func TestRenderPolicySections_ContextualNothingCheckedClosesOnTheWithheldScore(t *testing.T) {
+	t.Cleanup(func() { useReportColor(colorBasic) })
+	useReportColor(colorOff)
+	withScoreProfile(t, "v4")
+	run := handMadePolicyRun(t, "A", debugTracePolicyYAML, nil)
+	run.Score = nil
+	run.Result.MarkNotEvaluable("pipelineMustNotEnableDebugTrace", control.ReasonConfigRequired)
+
+	out := captureStdoutAll(t, func() { renderPolicySections(testProvider(t), nil, []policyRun{run}, nil, nil) })
+
+	assertContains(t, out, "== Policy: A  [report]")
+	assertContains(t, out, "Plumber Score  withheld")
+	assertContains(t, out, "Status: NOTHING CHECKED (no control was evaluated)")
+	for _, unwanted := range []string{"Score withheld", "/ 100 pts", "│ Control "} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("a nothing-checked contextual section printed %q:\n%s", unwanted, out)
+		}
+	}
 }
 
 // Spec s3: the verdict block is the platform's, one line per gated policy,
