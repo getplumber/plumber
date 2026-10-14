@@ -85,7 +85,7 @@ brew upgrade plumber
 mise upgrade github:getplumber/plumber
 ```
 
-A `mise use` install pins the version it resolved at install time, so an upgrade is an explicit step. `plumber version` prints an upgrade notice, with the command for your install, whenever a newer release exists.
+A `mise use` install pins the version it resolved at install time, so an upgrade is an explicit step. mise also ignores a release younger than 24 hours by default (`minimum_release_age`), so a release of the day arrives the next day unless you set `MISE_MINIMUM_RELEASE_AGE=0`. `plumber version` prints an upgrade notice, with the command for your install, whenever a newer release exists.
 
 ## Authenticate
 

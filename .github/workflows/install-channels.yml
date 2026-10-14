@@ -135,6 +135,11 @@ jobs:
       # calls hit the rate limit on shared runners.
       GITHUB_TOKEN: ${{ github.token }}
       MISE_YES: "1"
+      # mise ignores a release younger than 24 hours by default
+      # (minimum_release_age), so right after a release it would resolve
+      # the previous one by design. The check is about what mise resolves
+      # from our releases, not about that waiting period.
+      MISE_MINIMUM_RELEASE_AGE: "0"
       PLUMBER_NO_UPDATE_CHECK: "1"
     steps:
       # mise is installed from a pinned release binary verified against a
