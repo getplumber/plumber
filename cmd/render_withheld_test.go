@@ -2,7 +2,11 @@ package cmd
 
 import (
 	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/getplumber/plumber/configuration"
@@ -327,5 +331,45 @@ func TestRenderFindingGroupsV4WithoutAScore(t *testing.T) {
 	out := captureStdoutAll(t, func() { renderFindingGroupsV4(groups, nil, nil, reportBlock) })
 	if !strings.Contains(out, "Individual findings (1)") || !strings.Contains(out, "Passed Controls (1)") || strings.Contains(out, "Attack paths") {
 		t.Errorf("want one individual finding and the passed control, no attack path:\n%s", out)
+	}
+}
+
+// A degraded run under the contextual score writes its artifacts before the
+// report too: their notices print above it, the run ends on the withheld
+// Score block, and the JSON report carries no score.
+func TestContinueRunV4DegradedClosesOnTheWithheldScoreWithArtifacts(t *testing.T) {
+	t.Cleanup(func() { useReportColor(colorBasic) })
+	useReportColor(colorOff)
+	gh, result, conf, s := v4OutputFixture(t)
+	result.DataCollectionDegraded = true
+	result.DegradedReasons = []string{"branch protection fetch failed (403)"}
+	defer func(pp bool, pf, of string, po bool) {
+		pushScore, platformURL, outputFile, printOutput = pp, pf, of, po
+	}(pushScore, platformURL, outputFile, printOutput)
+	pushScore, platformURL, printOutput = false, "", true
+	outputFile = filepath.Join(t.TempDir(), "out.json")
+	scorePublishOnce = sync.Once{}
+	out := captureOutputInOrder(t, func() { _ = continueRun(gh, nil, conf, result, s, nil, nil) })
+	written, final := strings.Index(out, "Results written to: "), strings.Index(out, "\nScore\n")
+	if written < 0 || final < 0 || written > final {
+		t.Fatalf("want the artifact notice above the withheld final screen:\n%s", out)
+	}
+	tail := "   ██╗     Next: fix the cause above and re-run; the score and the attack paths need the full\n   ╚═╝     picture\n"
+	if !strings.HasSuffix(out, tail) {
+		t.Errorf("the run does not end on the withheld score block:\n%s", out)
+	}
+	raw, err := os.ReadFile(outputFile)
+	if err != nil {
+		t.Fatalf("the JSON report was not written: %v", err)
+	}
+	var report map[string]any
+	if err := json.Unmarshal(raw, &report); err != nil {
+		t.Fatalf("report: %v", err)
+	}
+	if _, ok := report["plumberScore"]; ok {
+		t.Error("a degraded run must write no plumberScore")
+	}
+	if _, ok := report["pathBlocks"]; ok {
+		t.Error("a degraded run must write no pathBlocks")
 	}
 }
