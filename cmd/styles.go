@@ -76,12 +76,13 @@ func severityIcon(sev string) string {
 }
 
 // scoreLetterLipglossColor maps a Plumber letter grade (A–E) to the
-// palette color used across score banners.
+// palette color used across score banners; "?" (the withheld score's
+// glyph) is the palette's yellow, the colour of a warning.
 func scoreLetterLipglossColor(letter string) lipgloss.Color {
 	switch letter {
 	case "A", "B":
 		return colPass
-	case "C":
+	case "C", "?":
 		return colMedium
 	case "D":
 		return colHigh
@@ -89,10 +90,18 @@ func scoreLetterLipglossColor(letter string) lipgloss.Color {
 	return colCritical
 }
 
-// Block-letter ASCII art for Plumber letter grades (A–E). Each entry
-// is 6 lines tall / 8 columns wide, matching the project's existing
-// banner lettering style.
+// Block-letter ASCII art for Plumber letter grades (A–E) and for "?",
+// the glyph of a withheld score. Each entry is 6 lines tall / 8 columns
+// wide, matching the project's existing banner lettering style.
 var scoreLetterASCII = map[string][]string{
+	"?": {
+		"██████╗ ",
+		"╚════██╗",
+		"  ███╔═╝",
+		"  ╚══╝  ",
+		"  ██╗   ",
+		"  ╚═╝   ",
+	},
 	"A": {
 		" █████╗ ",
 		"██╔══██╗",

@@ -560,11 +560,7 @@ func renderFinalScreen(out io.Writer, score *control.PlumberScoreResult, caps te
 	width := reportWidth(caps)
 	pathsLoss, otherLoss := control.BucketLosses(score)
 
-	// Errors discarded: out is the terminal or a test buffer.
-	rule := strings.Repeat("─", 20)
-	_, _ = fmt.Fprintf(out, fmtColored, colorIf(caps, colorDim), rule, colorIf(caps, colorReset))
-	_, _ = fmt.Fprintf(out, fmtColored, colorIf(caps, colorBold), "Score", colorIf(caps, colorReset))
-	_, _ = fmt.Fprintf(out, fmtColored, colorIf(caps, colorDim), rule, colorIf(caps, colorReset))
+	fprintScoreHeading(out, caps)
 	renderScoreBlock(out, score, caps, notes, width, scorePoint, pathsLoss, otherLoss)
 	if !scorePoint || len(score.CodeLosses)+len(score.PathLosses) == 0 {
 		return
@@ -579,9 +575,113 @@ func renderFinalScreen(out io.Writer, score *control.PlumberScoreResult, caps te
 	}
 }
 
+// fprintScoreHeading prints the Score heading every final screen opens
+// on: a rule, the title, a rule. Errors discarded: out is the terminal or
+// a test buffer.
+func fprintScoreHeading(out io.Writer, caps termCaps) {
+	rule := strings.Repeat("─", 20)
+	_, _ = fmt.Fprintf(out, fmtColored, colorIf(caps, colorDim), rule, colorIf(caps, colorReset))
+	_, _ = fmt.Fprintf(out, fmtColored, colorIf(caps, colorBold), "Score", colorIf(caps, colorReset))
+	_, _ = fmt.Fprintf(out, fmtColored, colorIf(caps, colorDim), rule, colorIf(caps, colorReset))
+}
+
 // scoreTextIndent is where the score block's text starts: after the
 // letter's eight columns, a space before and two after.
 const scoreTextIndent = 11
+
+// labelledLines is name and s wrapped to width, name in colour c on the
+// first line when the report prints in colour, the rest plain.
+func labelledLines(name string, c lipgloss.Color, s string, width int, caps termCaps) []string {
+	lines := wrapCells(name+" "+s, width)
+	if caps.Color != colorOff {
+		lines[0] = paletteFor(caps.Color).NewStyle().Foreground(c).Render(name) + strings.TrimPrefix(lines[0], name)
+	}
+	return lines
+}
+
+// fprintBesideLetter prints right beside letter, line for line, after a
+// blank line: lines past the letter's six continue under the text
+// column, and a line of the letter with no text beside it prints alone.
+func fprintBesideLetter(out io.Writer, letter, right []string) {
+	_, _ = fmt.Fprintln(out)
+	for i := range max(len(right), len(letter)) {
+		l, r := "        ", ""
+		if i < len(letter) {
+			l = letter[i]
+		}
+		if i < len(right) {
+			r = right[i]
+		}
+		_, _ = fmt.Fprintln(out, trimRightStyled(fmt.Sprintf(" %s  %s", l, r)))
+	}
+}
+
+// withheldScore is why the final screen shows no score: the run's data
+// collection was degraded (Reasons says why), or nothing was evaluated
+// (CiErrors says why when the CI configuration is the cause).
+type withheldScore struct {
+	Degraded bool
+	Reasons  []string
+	CiErrors []string
+}
+
+// withheldScoreOf reads off result why its score is withheld.
+func withheldScoreOf(result *control.AnalysisResult) withheldScore {
+	return withheldScore{Degraded: result.DataCollectionDegraded, Reasons: result.DegradedReasons, CiErrors: result.CiErrors}
+}
+
+// maxWithheldCauses is how many causes the withheld Score block lists
+// before counting the rest on one line.
+const maxWithheldCauses = 3
+
+// renderWithheldScreen closes the report of a run whose score is withheld
+// on the same Score block a priced run closes on: the "?" glyph where the
+// letter goes, "Plumber Score  withheld" with no bar, the status in bold
+// yellow (INCOMPLETE on a degraded run, NOTHING CHECKED when no control
+// was evaluated), a blank line, then why, in red where the worst case
+// goes, and what to do next, in green where the best fix goes. The
+// causes are the degraded reasons, or the CI errors when nothing was
+// checked, at most maxWithheldCauses then "and N more"; with no cause
+// recorded the one reason left is that every enabled control needs
+// configuration or was skipped. No worst case, no best fix, no
+// arithmetic: there is no score to explain.
+func renderWithheldScreen(out io.Writer, caps termCaps, w withheldScore) {
+	textWidth := reportWidth(caps) - scoreTextIndent
+	fprintScoreHeading(out, caps)
+
+	status, detail, causes := "NOTHING CHECKED", "no control was evaluated", w.CiErrors
+	next := "enable or configure at least one control, then re-run"
+	if w.Degraded {
+		status, detail, causes = "INCOMPLETE", "data collection failed", w.Reasons
+		next = "fix the cause above and re-run; the score and the attack paths need the full picture"
+		if len(causes) > 1 {
+			next = strings.Replace(next, "the cause", "the causes", 1)
+		}
+	}
+	if len(causes) == 0 {
+		causes = []string{"every enabled control needs configuration or was skipped"}
+	}
+
+	right := []string{
+		"Plumber Score  withheld",
+		fmt.Sprintf("Status: %s%s%s (%s)", colorIf(caps, colorBold+colorYellow), status, colorIf(caps, colorReset), detail),
+		"",
+	}
+	for i, cause := range causes {
+		if i == maxWithheldCauses {
+			right = append(right, fmt.Sprintf("and %d more", len(causes)-maxWithheldCauses))
+			break
+		}
+		cause = sanitizeTerminal(cause)
+		if i == 0 {
+			right = append(right, labelledLines("Why:", colCritical, cause, textWidth, caps)...)
+			continue
+		}
+		right = append(right, wrapCells(cause, textWidth)...)
+	}
+	right = append(right, labelledLines("Next:", colAccent, next, textWidth, caps)...)
+	fprintBesideLetter(out, renderScoreLetter("?", caps.Color), right)
+}
 
 // colorIf is a raw sequence when the report prints in colour, "" when not.
 func colorIf(caps termCaps, seq string) string {
@@ -617,11 +717,7 @@ func renderScoreBlock(out io.Writer, score *control.PlumberScoreResult, caps ter
 	wrap := func(s string) { right = append(right, wrapCells(s, textWidth)...) }
 	// labelled wraps name and s, and colours name on the first line.
 	labelled := func(name string, c lipgloss.Color, s string) {
-		lines := wrapCells(name+" "+s, textWidth)
-		if caps.Color != colorOff {
-			lines[0] = paletteFor(caps.Color).NewStyle().Foreground(c).Render(name) + strings.TrimPrefix(lines[0], name)
-		}
-		right = append(right, lines...)
+		right = append(right, labelledLines(name, c, s, textWidth, caps)...)
 	}
 	if st := notes.Status; st != nil {
 		right = append(right, st.line(caps))
@@ -663,18 +759,7 @@ func renderScoreBlock(out io.Writer, score *control.PlumberScoreResult, caps ter
 			wrap(why)
 		}
 	}
-	letter := renderScoreLetter(score.Score, caps.Color)
-	_, _ = fmt.Fprintln(out)
-	for i := range max(len(right), len(letter)) {
-		l, r := "        ", ""
-		if i < len(letter) {
-			l = letter[i]
-		}
-		if i < len(right) {
-			r = right[i]
-		}
-		_, _ = fmt.Fprintln(out, trimRightStyled(fmt.Sprintf(" %s  %s", l, r)))
-	}
+	fprintBesideLetter(out, renderScoreLetter(score.Score, caps.Color), right)
 }
 
 // trimRightStyled is s without its trailing spaces, those inside the colour

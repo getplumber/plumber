@@ -80,8 +80,8 @@ func TestRenderFindingGroups_DismissedFindingTaggedAndExcludedFromCount(t *testi
 			},
 		})
 	})
-	if !strings.Contains(out, "1 issue, 1 dismissed") {
-		t.Fatalf("want the header to read '1 issue, 1 dismissed', the live count excluding the dismissed finding:\n%s", out)
+	if !strings.Contains(out, "1 finding, 1 dismissed") {
+		t.Fatalf("want the header to read '1 finding, 1 dismissed', the live count excluding the dismissed finding:\n%s", out)
 	}
 	if !strings.Contains(out, "dismissed one") {
 		t.Fatalf("the dismissed finding must still be shown, never silently dropped:\n%s", out)

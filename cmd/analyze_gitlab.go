@@ -110,7 +110,7 @@ var analyzeCmd = &cobra.Command{
 	// arguments were silently dropped and `plumber analyze <url>` scanned the
 	// current directory's remote instead.
 	Args: cobra.MaximumNArgs(1),
-	Long: `Analyze CI/CD configuration for security issues.
+	Long: `Analyze the CI/CD configuration and report its security findings.
 
 Without TARGET, the repository is the git remote of the current directory.
 With TARGET, it is that repository, fetched through the provider API:
@@ -1830,7 +1830,7 @@ func printNoControlsWarning(result *control.AnalysisResult) {
 		fmt.Printf(fmtIndentPara, styleDim.Render("CI configuration file is missing from the project."))
 		return
 	}
-	fmt.Printf(fmtIndentLine, styleDim.Render("Data collection failed — no checks could run."))
+	fmt.Printf(fmtIndentLine, styleDim.Render("Data collection failed: no checks could run."))
 	fmt.Printf(fmtIndentPara, styleDim.Render("Re-run with --verbose for details."))
 }
 
@@ -2264,7 +2264,7 @@ func printIssuesTable(controls []controlSummary) {
 
 	fmt.Printf(fmtIndentLine, styleTitle.Render("Controls"))
 	if len(rows) == 0 {
-		fmt.Printf(fmtIndentLine, styleDim.Render("(none with open issues)"))
+		fmt.Printf(fmtIndentLine, styleDim.Render("(none with findings)"))
 		return
 	}
 

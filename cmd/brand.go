@@ -98,8 +98,8 @@ func renderBanner(caps termCaps) []string {
 }
 
 // renderScoreLetter is the letter's block-letter art (scoreLetterASCII),
-// six lines of 8 columns, in its colour at level; an unknown letter draws
-// E.
+// six lines of 8 columns, in its colour at level: the grade's tier colour,
+// yellow for "?", the withheld score's glyph; an unknown letter draws E.
 func renderScoreLetter(letter string, level colorLevel) []string {
 	lines, ok := scoreLetterASCII[letter]
 	if !ok {

@@ -38,7 +38,8 @@ func TestComputeScoreResult_Row45WithholdsWhenNothingEvaluated(t *testing.T) {
 // (#459): GitHub's own ComputeCompliance still counts it (unlike GitLab's,
 // which excludes not_evaluable controls), so this is the shape that used to
 // print a perfect 100/A grade on a run that checked nothing real. It must
-// now print the withheld line and no graded letter badge.
+// now close on the withheld Score block, saying nothing was checked, and
+// print no graded letter badge.
 func TestOutputText_Row45WithholdsScoreWhenNothingEvaluated(t *testing.T) {
 	oPrint := printOutput
 	defer func() { printOutput = oPrint }()
@@ -70,8 +71,8 @@ func TestOutputText_Row45WithholdsScoreWhenNothingEvaluated(t *testing.T) {
 		}
 	})
 
-	if !strings.Contains(out, "Score withheld: no control was evaluated") {
-		t.Fatalf("must print the withheld line, got:\n%s", out)
+	if !strings.Contains(out, "Status: NOTHING CHECKED (no control was evaluated)") {
+		t.Fatalf("must close on the withheld Score block, got:\n%s", out)
 	}
 	if strings.Contains(out, "/ 100 pts") {
 		t.Fatalf("must not print the graded letter-score badge, got:\n%s", out)

@@ -76,7 +76,7 @@ func continueRun(p provider.Provider, cmd *cobra.Command, conf *configuration.Co
 	// The contextual report closes on its final screen, so its artifacts
 	// are written first: their notices print above the report, never
 	// under the situation facts. A write error still waits for the report.
-	writeFirst := printOutput && closesOnFinalScreen(summary, result.DataCollectionDegraded)
+	writeFirst := printOutput && closesOnFinalScreen(summary)
 	var writeErr error
 	if writeFirst {
 		writeErr = writeOutputsWithProvider(p, result, conf, summary, nil, nil)
@@ -96,10 +96,20 @@ func continueRun(p provider.Provider, cmd *cobra.Command, conf *configuration.Co
 }
 
 // closesOnFinalScreen reports whether the text report ends on the
-// contextual score's final screen: the run is priced under scoring-v4 and
-// its score is shown (scoreWithheld is the banner's own condition).
-func closesOnFinalScreen(s complianceSummary, degraded bool) bool {
-	return scoreProfileV4(s.score) && !scoreWithheld(s.score, s.scoreMode, degraded)
+// contextual score's final screen: the run is priced under scoring-v4,
+// its score shown or withheld (a degraded run closes on the withheld
+// Score block), or it evaluated no control under a scoring-v4 request
+// (nothing was priced, so the request decides). A scoring-v4 request that
+// fell back to v3 for want of a situation keeps the previous layout, as
+// do scoring-v3, --no-controls (score mode off) and platform mode.
+func closesOnFinalScreen(s complianceSummary) bool {
+	switch {
+	case s.platformMode || !s.scoreMode:
+		return false
+	case s.score != nil:
+		return scoreProfileV4(s.score)
+	}
+	return control.ScoreProfile == "v4"
 }
 
 // runPlatformMode is the platform-mode tail: evaluate the resolved policies,
@@ -556,14 +566,17 @@ func outputTextWithProvider(p provider.Provider, result *control.AnalysisResult,
 		renderDegradedCaveat(result.DegradedReasons)
 	}
 
-	// The v4 view (the contextual severities, the Situation, the attack
-	// paths and their Points) is shown only when the run is priced under
-	// scoring-v4 AND its score is shown: a withheld score (a degraded run,
-	// say) states no tier and no best fix either, and the report falls back
-	// to the plain per-control view. scoreWithheld is the banner's own
-	// condition.
-	v4 := closesOnFinalScreen(s, result.DataCollectionDegraded)
-	controls, groups := buildProviderControlSummariesAndGroups(p, result, conf.PlumberConfig, conf.PlatformRun.Active(), controlsFilterList, skipControlsList, v4)
+	// The contextual layout (the individual findings blocks, the attack
+	// paths, the Score block as the last lines) is the report of every
+	// scoring-v4 run, its score shown or withheld. The contextual
+	// severities, roles and path ids are shown only when the score is: a
+	// withheld score (a degraded run, or nothing evaluated) states no tier
+	// and no best fix, so its findings carry their registry severity and
+	// no path prints. scoreWithheld is the one condition every output
+	// reads.
+	v4 := closesOnFinalScreen(s)
+	withheld := scoreWithheld(s.score, s.scoreMode, result.DataCollectionDegraded)
+	controls, groups := buildProviderControlSummariesAndGroups(p, result, conf.PlumberConfig, conf.PlatformRun.Active(), controlsFilterList, skipControlsList, v4 && !withheld)
 	// Nothing was selected, so listing every control as "skipped" is noise
 	// that reads like a misconfiguration.
 	if s.noControls {
@@ -576,7 +589,11 @@ func outputTextWithProvider(p provider.Provider, result *control.AnalysisResult,
 	if v4 {
 		opts := reportBlock
 		opts.ScorePoint = s.scorePoint
-		renderFindingGroupsV4(filteredGroups, s.score, result.Findings, opts)
+		shown := s.score
+		if withheld {
+			shown = nil
+		}
+		renderFindingGroupsV4(filteredGroups, shown, result.Findings, opts)
 	} else {
 		renderFindingGroups(filteredGroups)
 	}
@@ -589,8 +606,13 @@ func outputTextWithProvider(p provider.Provider, result *control.AnalysisResult,
 	// Under the contextual score the report closes on the final screen
 	// and has no Summary section: the path blocks and the other findings
 	// already say each control's findings at their contextual severity,
-	// and the verdict against the gate is a line of the score block.
+	// and the verdict against the gate is a line of the score block. A
+	// withheld score closes on the same block, saying why there is none.
 	if v4 {
+		if withheld {
+			renderWithheldScreen(os.Stdout, detectTermCaps(), withheldScoreOf(result))
+			return nil
+		}
 		st := s.gateStatus()
 		renderFinalScreen(os.Stdout, s.score, detectTermCaps(), s.scorePoint,
 			finalNotes{Status: &st, NotEvaluated: countNotEvaluated(groups)})
@@ -601,7 +623,7 @@ func outputTextWithProvider(p provider.Provider, result *control.AnalysisResult,
 	fmt.Println()
 
 	if crit := control.CriticalIssueCodesSorted(result); len(crit) > 0 {
-		fmt.Printf("  %s▶ Critical issue codes:%s %s\n", colorRed, colorReset, joinStrings(crit))
+		fmt.Printf("  %s▶ Critical findings:%s %s\n", colorRed, colorReset, joinStrings(crit))
 		fmt.Println()
 	}
 
@@ -617,7 +639,7 @@ func outputTextWithProvider(p provider.Provider, result *control.AnalysisResult,
 
 	switch {
 	case result.DataCollectionDegraded:
-		fmt.Printf("  Status: %s%sINCOMPLETE — data collection failed%s\n\n", colorBold, colorYellow, colorReset)
+		fmt.Printf("  Status: %s%sINCOMPLETE (data collection failed)%s\n\n", colorBold, colorYellow, colorReset)
 	case s.passed():
 		fmt.Printf("  Status: %s%sPASSED ✓%s %s(%s)%s\n\n", colorBold, colorGreen, colorReset, colorDim, s.gateLine(), colorReset)
 	default:
@@ -628,7 +650,7 @@ func outputTextWithProvider(p provider.Provider, result *control.AnalysisResult,
 	// clean pipeline we never evaluated) and the score, which would present
 	// partial data as a verdict (#220).
 	// Under --no-controls there are no controls to tabulate, and an empty
-	// "(none with open issues)" table reads like a clean scan.
+	// "(none with findings)" table reads like a clean scan.
 	if (!result.DataCollectionDegraded || len(result.Findings) > 0) && !s.noControls {
 		printIssuesTable(controls)
 		fmt.Println()
@@ -783,7 +805,7 @@ func writeOutputsWithProvider(p provider.Provider, result *control.AnalysisResul
 	// Each format stamps itself degraded; warn so a partial report is not
 	// mistaken for authoritative (#220).
 	if result.DataCollectionDegraded && (outputFile != "" || pbomFile != "" || pbomCycloneDXFile != "" || sarifFile != "" || glsastFile != "" || csvFile != "" || ocsfFile != "") {
-		fmt.Fprintf(os.Stderr, "Note: data collection was incomplete — artifacts are written but marked degraded; treat them as partial.\n")
+		fmt.Fprintf(os.Stderr, "Note: data collection was incomplete; the artifacts are written but marked degraded, treat them as partial.\n")
 	}
 	// Resolve the analyzed commit once and stamp it on the result, so every
 	// artifact writer below reports the same commit the same way (#443).

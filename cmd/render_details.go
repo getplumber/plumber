@@ -172,11 +172,11 @@ func renderDegradedCaveat(reasons []string) {
 	if len(reasons) == 0 {
 		return
 	}
-	fmt.Printf("  %s⚠ Data collection was incomplete — results may be partial:%s\n", colorYellow, colorReset)
+	fmt.Printf("  %s⚠ Data collection was incomplete, results may be partial:%s\n", colorYellow, colorReset)
 	for _, r := range reasons {
 		fmt.Printf("    %s•%s %s\n", colorYellow, colorReset, sanitizeTerminal(r))
 	}
-	fmt.Printf("    %s↳ controls with un-collected data are marked \"not evaluated\"; the letter score is withheld until the run completes cleanly.%s\n\n", colorDim, colorReset)
+	fmt.Printf("    %s↳ controls with un-collected data are listed as not evaluated; the score is withheld until the run completes cleanly.%s\n\n", colorDim, colorReset)
 }
 
 // filterGroupsForDegraded drops every group that has no findings when the
@@ -211,7 +211,7 @@ func filterGroupsForDegraded(groups []findingGroup, degraded bool) []findingGrou
 //     could not fully verify) keeps that ⚠ line beneath its name so the
 //     warning is not silently dropped (see renderPassedControlsSummary).
 //  2. Skipped controls collapse the same way, each with its skip reason.
-//  3. Failing controls keep the full detail (stats + "Issues Found"),
+//  3. Failing controls keep the full detail (stats + "Findings"),
 //     rendered least-critical first so the control with the most
 //     critical issues prints LAST — i.e. closest to the terminal prompt,
 //     the first thing the user sees without scrolling up.
@@ -255,7 +255,9 @@ func bucketFindingGroups(groups []findingGroup) (passed, skipped, notEvaluated, 
 // renderFindingGroupsV4 is the contextual score's report body: the
 // passed, skipped and not-evaluated summaries render exactly as under v3,
 // then the other findings, then the attack path blocks, right above the
-// final screen that follows them.
+// final screen that follows them. With no score (withheld) every failing
+// control's findings are individual findings, counted live, and no path
+// prints.
 func renderFindingGroupsV4(groups []findingGroup, score *control.PlumberScoreResult, findings []opaengine.Finding, opts pathBlockOptions) {
 	passed, skipped, notEvaluated, failed := bucketFindingGroups(groups)
 
@@ -264,12 +266,16 @@ func renderFindingGroupsV4(groups []findingGroup, score *control.PlumberScoreRes
 	renderNotEvaluatedControlsSummary(notEvaluated)
 
 	distinct := -1
-	if score.OtherFindings != nil {
-		distinct = score.OtherFindings.Count
+	var paths []control.AttackPath
+	if score != nil {
+		paths = score.Paths
+		if score.OtherFindings != nil {
+			distinct = score.OtherFindings.Count
+		}
 	}
 	caps := detectTermCaps()
 	renderIndividualFindings(os.Stdout, removeFindingsShownUnderAPath(failed), distinct, caps)
-	renderPathBlocks(os.Stdout, score.Paths, findings, caps, opts)
+	renderPathBlocks(os.Stdout, paths, findings, caps, opts)
 }
 
 // removeFindingsShownUnderAPath drops, from every group's Findings, any
@@ -464,18 +470,15 @@ func renderFailedControlsSection(groups []findingGroup) {
 // renderFailedControl prints one failing control in full: a compact,
 // indented sub-header (no rule lines — those are reserved for the
 // top-level section headers so the hierarchy reads section > control),
-// the stat block, and the "Issues Found" listing with severity tag,
-// code, message and doc URL. All content is indented one level under the
+// the stat block, and the "Findings" listing with severity tag, code,
+// message and doc URL. All content is indented one level under the
 // control title.
 func renderFailedControl(g findingGroup) {
 	// The count excludes dismissed findings: they are still listed below
 	// (never silently dropped), but they are not part of the live verdict,
-	// so "1 issue" must not read as two when one of the two is dismissed.
+	// so "1 finding" must not read as two when one of the two is dismissed.
 	n := len(g.Findings) - g.Dismissed
-	count := fmt.Sprintf("%d issues", n)
-	if n == 1 {
-		count = "1 issue"
-	}
+	count := plural(n, "finding", "findings")
 	if g.Dismissed > 0 {
 		count = fmt.Sprintf("%s, %d dismissed", count, g.Dismissed)
 	}
@@ -483,7 +486,7 @@ func renderFailedControl(g findingGroup) {
 	for _, s := range g.Stats {
 		fmt.Printf("      %s: %s\n", s.Label, s.Value)
 	}
-	fmt.Printf("\n      %sIssues Found:%s\n", colorYellow, colorReset)
+	fmt.Printf("\n      %sFindings:%s\n", colorYellow, colorReset)
 	for _, f := range g.Findings {
 		renderFindingBlock(os.Stdout, f, "        ", f.Role)
 	}

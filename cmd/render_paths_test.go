@@ -140,8 +140,8 @@ func TestOutputTextV4DegradedRunPrintsNoV4Blocks(t *testing.T) {
 			t.Errorf("a degraded run printed %q:\n%s", unwanted, out)
 		}
 	}
-	if !strings.Contains(out, "Score withheld") {
-		t.Fatalf("fixture drifted: the banner did not withhold the score:\n%s", out)
+	if !strings.Contains(out, "Plumber Score  withheld") {
+		t.Fatalf("fixture drifted: the final screen did not withhold the score:\n%s", out)
 	}
 }
 

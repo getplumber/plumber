@@ -572,7 +572,7 @@ func TestContinueRunContextualScorePublishesOnce(t *testing.T) {
 	result := releaseMutableActionResult()
 	result.ProjectPath, result.DefaultBranch = "octo/repo", "main"
 	s := buildComplianceSummary(gh, result, conf)
-	if !closesOnFinalScreen(s, false) {
+	if !closesOnFinalScreen(s) {
 		t.Fatalf("the fixture is not a contextual run: %+v", s.score)
 	}
 

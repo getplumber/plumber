@@ -22,14 +22,14 @@ func TestRenderFindingGroups_failingControlRendersIssues(t *testing.T) {
 	out := captureStdout(t, func() { renderFindingGroups(groups) })
 
 	assertContains(t, out, "Failed Controls (1)")
-	assertContains(t, out, "Issues Found")
+	assertContains(t, out, "Findings:")
 	assertContains(t, out, string(codeCritical))
 	assertContains(t, out, `branch "main" must be protected`)
 	// The stat block must survive for failing controls — it carries the
 	// denominator context that makes a finding legible.
 	assertContains(t, out, "Total Branches: 67")
 	// Single-finding header uses the singular noun.
-	assertContains(t, out, "(1 issue)")
+	assertContains(t, out, "(1 finding)")
 	if strings.Contains(out, "Passed Controls") {
 		t.Fatalf("failing control must not appear in the passed summary, got:\n%s", out)
 	}
@@ -92,7 +92,7 @@ func TestRenderFindingGroups_failingControlsSortedWorstLast(t *testing.T) {
 		t.Fatalf("most-critical control must print last (after the low one), got low@%d crit@%d:\n%s", lowIdx, critIdx, out)
 	}
 	// Multi-finding header uses the plural noun.
-	assertContains(t, out, "(2 issues)")
+	assertContains(t, out, "(2 findings)")
 }
 
 // renderFailedControl renders three per-finding detail branches (DetailLines,

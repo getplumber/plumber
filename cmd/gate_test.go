@@ -533,16 +533,18 @@ func TestBuildComplianceSummary_Row45GitHubWithholdsScoreOnAllNotEvaluable(t *te
 		t.Fatalf("gateLine() = %q, want %q", got, wantGateLine)
 	}
 
+	// The report closes on the withheld Score block, whose status line
+	// says the same thing: no control was evaluated.
 	oPrint := printOutput
 	defer func() { printOutput = oPrint }()
 	printOutput = true
-	out := captureStdout(t, func() {
+	out := captureStdoutAll(t, func() {
 		if err := outputTextWithProvider(gh, result, conf, s, nil, nil); err != nil {
 			t.Fatalf("render: %v", err)
 		}
 	})
-	if !strings.Contains(out, wantGateLine) {
-		t.Fatalf("the status line must carry the withheld gate line, got:\n%s", out)
+	if !strings.Contains(out, "Status: NOTHING CHECKED (no control was evaluated)") {
+		t.Fatalf("the status line must say no control was evaluated, got:\n%s", out)
 	}
 }
 
