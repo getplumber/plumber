@@ -7,6 +7,7 @@ import (
 	"github.com/getplumber/plumber/configuration"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	"github.com/getplumber/plumber/internal/ir"
+	"github.com/getplumber/plumber/utils"
 )
 
 // AggregateGitHubStats walks the normalized pipeline IR once and
@@ -31,11 +32,19 @@ func AggregateGitHubStats(pipeline *ir.NormalizedPipeline, pc *configuration.Plu
 	}
 	forbiddenTags := defaultForbiddenImageTags
 	pinnedByDigestRequired := false
+	// The exemption reads the configured tags as written: the rules see no
+	// forbidden tag when none is configured, so the defaults above must not
+	// exempt anything the rules still judge.
+	var exempt imageExemption
 	if gh.ContainerImageMustNotUseForbiddenTags != nil {
 		if len(gh.ContainerImageMustNotUseForbiddenTags.Tags) > 0 {
 			forbiddenTags = gh.ContainerImageMustNotUseForbiddenTags.Tags
 		}
 		pinnedByDigestRequired = gh.ContainerImageMustNotUseForbiddenTags.IsPinnedByDigestRequired()
+		exempt = imageExemption{
+			images: gh.ContainerImageMustNotUseForbiddenTags.ExemptImages,
+			tags:   gh.ContainerImageMustNotUseForbiddenTags.Tags,
+		}
 	}
 	securityPatterns := defaultSecurityJobPatterns
 	if gh.SecurityJobsMustNotBeWeakened != nil && len(gh.SecurityJobsMustNotBeWeakened.SecurityJobPatterns) > 0 {
@@ -97,12 +106,10 @@ func AggregateGitHubStats(pipeline *ir.NormalizedPipeline, pc *configuration.Plu
 
 		// Container images: job-level + services.
 		if job.Image != nil {
-			stats.ImagesTotal++
-			countImage(imageRef(*job.Image), forbiddenTags, &stats.ImagesPinnedByDigest, &stats.ImagesUsingForbidden)
+			countJobImage(stats, *job.Image, forbiddenTags, exempt)
 		}
 		for j := range job.Services {
-			stats.ImagesTotal++
-			countImage(imageRef(job.Services[j]), forbiddenTags, &stats.ImagesPinnedByDigest, &stats.ImagesUsingForbidden)
+			countJobImage(stats, job.Services[j], forbiddenTags, exempt)
 		}
 
 		// Docker-in-Docker services.
@@ -332,6 +339,32 @@ func isTrustedOwner(ref string, trustedOwners []string) bool {
 
 func isShaPinned(ref string) bool {
 	return shaRefRegex.MatchString(ref)
+}
+
+// imageExemption is the exemptImages list with the configured forbidden
+// tags: an image is exempt on one of those tags only.
+type imageExemption struct {
+	images, tags []string
+}
+
+// countJobImage adds one container image to the image counters. An exempt
+// image (exemptImages entry on a forbidden tag) is judged by neither
+// ISSUE-102 nor ISSUE-103, so it stays out of "using forbidden" and "not
+// pinned", and is listed so the exemption shows in the output instead of
+// hiding the image.
+func countJobImage(stats *GitHubAnalysisStats, img ir.Image, forbiddenTags []string, exempt imageExemption) {
+	stats.ImagesTotal++
+	ref := imageRef(img)
+	if !utils.ImageExempt(exempt.images, exempt.tags, img.Registry, img.Name, img.Tag) {
+		countImage(ref, forbiddenTags, &stats.ImagesPinnedByDigest, &stats.ImagesUsingForbidden)
+		return
+	}
+	if strings.Contains(ref, "@sha256:") {
+		stats.ImagesPinnedByDigest++
+	} else {
+		stats.ImagesExemptUnpinned++
+	}
+	stats.ImagesExempted = append(stats.ImagesExempted, ref)
 }
 
 func countImage(image string, forbiddenTags []string, pinned, forbidden *int) {

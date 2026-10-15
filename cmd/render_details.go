@@ -29,6 +29,10 @@ const (
 	statSatisfiedGroups     = "Satisfied Groups"
 	statActionRefsChecked   = "Action Refs Checked"
 	statVariablesChecked    = "Variables Checked"
+	// statExemptedImages names the images exemptImages let through the
+	// forbidden-tag check, so an exemption stays visible in review instead
+	// of silently hiding the image.
+	statExemptedImages = "Exempted By Configuration"
 )
 
 // statLine is an alias for control.StatLine used within the cmd package.
@@ -276,6 +280,31 @@ func renderFindingGroupsV4(groups []findingGroup, score *control.PlumberScoreRes
 	caps := detectTermCaps()
 	renderIndividualFindings(os.Stdout, removeFindingsShownUnderAPath(failed), distinct, caps)
 	renderPathBlocks(os.Stdout, paths, findings, caps, opts)
+	renderExemptedImagesNote(failed)
+}
+
+// renderExemptedImagesNote names, for each failing control, the images its
+// configuration exempted. The contextual report prints no stat block, and an
+// exempted image raises no finding, so without this note an exemption would
+// leave no trace in the default report. A passing control carries the same
+// line under its ✓ (renderPassedControlsSummary).
+func renderExemptedImagesNote(groups []findingGroup) {
+	var lines []string
+	for _, g := range groups {
+		for _, s := range g.Stats {
+			if s.Label == statExemptedImages {
+				lines = append(lines, fmt.Sprintf("    %s•%s %s: %s", colorDim, colorReset, g.Title, s.Value))
+			}
+		}
+	}
+	if len(lines) == 0 {
+		return
+	}
+	fmt.Println()
+	fmt.Printf("  %sℹ Exempted by configuration (not checked):%s\n", colorDim, colorReset)
+	for _, l := range lines {
+		fmt.Println(l)
+	}
 }
 
 // removeFindingsShownUnderAPath drops, from every group's Findings, any
@@ -354,6 +383,13 @@ func renderPassedControlsSummary(groups []findingGroup) {
 		fmt.Printf("  %s✓%s %s\n", colorGreen, colorReset, g.Title)
 		for _, s := range caveatStatLines(g) {
 			fmt.Printf("      %s%s: %s%s\n", colorYellow, s.Label, s.Value, colorReset)
+		}
+		// An exemption is a deliberate decision rather than a caveat, but
+		// it hides images from the check all the same, so it stays visible.
+		for _, s := range g.Stats {
+			if s.Label == statExemptedImages {
+				fmt.Printf("      %s%s: %s%s\n", colorDim, s.Label, s.Value, colorReset)
+			}
 		}
 	}
 	fmt.Println()
@@ -700,6 +736,17 @@ func sortBranchProtectionFindingsForDisplay(findings []opaengine.Finding) {
 	})
 }
 
+// appendExemptedImages adds the statExemptedImages line naming each exempt
+// image on a forbidden tag once, sorted, when there is one.
+func appendExemptedImages(lines []statLine, refs []string) []statLine {
+	if len(refs) == 0 {
+		return lines
+	}
+	refs = slices.Clone(refs)
+	slices.Sort(refs)
+	return append(lines, statLine{Label: statExemptedImages, Value: strings.Join(slices.Compact(refs), ", ")})
+}
+
 // buildGitLabControlStats returns the legacy aggregated metrics that
 // the v0.2.x analyzer printed under each control header — the
 // "Total Images: 9 / Authorized: 9 / Unauthorized: 0" block. The
@@ -720,16 +767,16 @@ func buildGitHubControlStats(controlName string, stats *control.GitHubAnalysisSt
 	}
 	switch controlName {
 	case "containerImageMustNotUseForbiddenTags":
-		notPinned := stats.ImagesTotal - stats.ImagesPinnedByDigest
+		notPinned := stats.ImagesTotal - stats.ImagesPinnedByDigest - stats.ImagesExemptUnpinned
 		if notPinned < 0 {
 			notPinned = 0
 		}
-		return []statLine{
+		return appendExemptedImages([]statLine{
 			{Label: statTotalImages, Value: fmt.Sprintf("%d", stats.ImagesTotal)},
 			{Label: "Pinned By Digest", Value: fmt.Sprintf("%d", stats.ImagesPinnedByDigest)},
 			{Label: "Not Pinned By Digest", Value: fmt.Sprintf("%d", notPinned)},
 			{Label: "Using Forbidden Tags", Value: fmt.Sprintf("%d", stats.ImagesUsingForbidden)},
-		}
+		}, stats.ImagesExempted)
 	case "actionsMustBePinnedByCommitSha":
 		pinned := stats.ActionRefsTotal - stats.ActionRefsUnpinned
 		if pinned < 0 {
@@ -900,9 +947,19 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 		// while the rule emits no finding for it makes the table and the
 		// findings contradict each other, and counting it as pinned is a
 		// false green.
+		// An exempt image is the same kind of abstention: neither rule
+		// judges it, so an unpinned one is not "Not Pinned By Digest".
+		var forbiddenTags, exemptImages []string
+		if pc != nil {
+			if c := pc.ControlsFor("gitlab").ContainerImageMustNotUseForbiddenTags; c != nil {
+				forbiddenTags, exemptImages = c.Tags, c.ExemptImages
+			}
+		}
 		total := 0
 		pinned := 0
 		unresolved := 0
+		exemptUnpinned := 0
+		var exempted []string
 		if result.PipelineImageData != nil {
 			total = len(result.PipelineImageData.Images)
 			for _, img := range result.PipelineImageData.Images {
@@ -910,12 +967,20 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 					unresolved++
 					continue
 				}
-				if utils.HasDigestPin(img.Link) {
+				hasDigest := utils.HasDigestPin(img.Link)
+				if hasDigest {
 					pinned++
 				}
+				if !utils.ImageExempt(exemptImages, forbiddenTags, img.Registry, img.Name, img.Tag) {
+					continue
+				}
+				if !hasDigest {
+					exemptUnpinned++
+				}
+				exempted = append(exempted, img.Link)
 			}
 		}
-		notPinned := total - pinned - unresolved
+		notPinned := total - pinned - unresolved - exemptUnpinned
 		if notPinned < 0 {
 			notPinned = 0
 		}
@@ -938,7 +1003,7 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 		if unresolved > 0 {
 			lines = append(lines, statLine{Label: statUnresolvedImageRefs, Value: fmt.Sprintf("%d", unresolved)})
 		}
-		return lines
+		return appendExemptedImages(lines, exempted)
 	case "containerImageMustComeFromAuthorizedSources":
 		// authorized is derived by subtraction, so anything the rule
 		// abstained on lands in it by default. An image whose reference

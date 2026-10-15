@@ -1,6 +1,7 @@
 package control
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/getplumber/plumber/configuration"
@@ -172,5 +173,77 @@ func TestDangerousTriggerMetricFollowsFindings(t *testing.T) {
 	ApplyGitHubFindingCounts(s, findings)
 	if s.WorkflowsWithDangerousTrigger != 2 {
 		t.Fatalf("expected 2 distinct flagged workflows, got %d", s.WorkflowsWithDangerousTrigger)
+	}
+}
+
+// TestAggregate_ExemptImagesLeaveTheImageCounts pins the image counters to
+// the rules on exemptImages: an exempt image (exemptImages entry on a
+// forbidden tag) raises neither ISSUE-102 nor ISSUE-103, so it must count
+// neither as using a forbidden tag nor as not pinned, and is listed in
+// ImagesExempted. The same image on an allowed tag is counted as usual.
+func TestAggregate_ExemptImagesLeaveTheImageCounts(t *testing.T) {
+	pipeline := &ir.NormalizedPipeline{Jobs: []ir.Job{
+		{Name: "report", Image: &ir.Image{Name: "ghcr.io/my-org/report-tool", Tag: "latest"}},
+		{Name: "report-again", Image: &ir.Image{Name: "ghcr.io/my-org/report-tool", Tag: "latest"}},
+		{Name: "hub", Image: &ir.Image{Name: "docker.io/library/debian", Tag: "dev"}},
+		// Exempt image on an allowed tag: not exempt, not pinned.
+		{Name: "versioned", Image: &ir.Image{Name: "debian", Tag: "12"}},
+		// The GitHub collector keeps the tag inside the name when a digest
+		// follows it; the digest plays no part in the exemption.
+		{Name: "pinned", Image: &ir.Image{Name: "debian:latest", Digest: "sha256:5bc3287b25407c965a30f38e32603dc253a3869e1b12a21ac09bfc27fd8b13ce"}},
+		{Name: "deploy", Image: &ir.Image{Name: "alpine", Tag: "latest"},
+			Services: []ir.Image{{Name: "debian", Tag: "latest"}}},
+	}}
+	pc := &configuration.PlumberConfig{GitHub: &configuration.ProviderConfig{Controls: configuration.ControlsConfig{
+		ContainerImageMustNotUseForbiddenTags: &configuration.ImageForbiddenTagsControlConfig{
+			Tags:         []string{"latest", "dev"},
+			ExemptImages: []string{"ghcr.io/my-org/report-tool", "debian"},
+		},
+	}}}
+
+	s := AggregateGitHubStats(pipeline, pc)
+	if s.ImagesTotal != 7 {
+		t.Errorf("ImagesTotal = %d, want 7", s.ImagesTotal)
+	}
+	if s.ImagesUsingForbidden != 1 {
+		t.Errorf("ImagesUsingForbidden = %d, want 1 (alpine only)", s.ImagesUsingForbidden)
+	}
+	if s.ImagesPinnedByDigest != 1 {
+		t.Errorf("ImagesPinnedByDigest = %d, want 1", s.ImagesPinnedByDigest)
+	}
+	if s.ImagesExemptUnpinned != 4 {
+		t.Errorf("ImagesExemptUnpinned = %d, want 4", s.ImagesExemptUnpinned)
+	}
+	if notPinned := s.ImagesTotal - s.ImagesPinnedByDigest - s.ImagesExemptUnpinned; notPinned != 2 {
+		t.Errorf("not pinned = %d, want 2 (alpine and debian:12)", notPinned)
+	}
+	want := []string{
+		"ghcr.io/my-org/report-tool:latest",
+		"ghcr.io/my-org/report-tool:latest",
+		"docker.io/library/debian:dev",
+		"debian:latest@sha256:5bc3287b25407c965a30f38e32603dc253a3869e1b12a21ac09bfc27fd8b13ce",
+		"debian:latest",
+	}
+	if strings.Join(s.ImagesExempted, ",") != strings.Join(want, ",") {
+		t.Errorf("ImagesExempted = %v, want %v", s.ImagesExempted, want)
+	}
+}
+
+// TestAggregate_ExemptImagesNeedConfiguredTags: with no tags configured
+// the rules see no forbidden tag, so nothing is exempt, even though the
+// counters fall back to the default forbidden tags.
+func TestAggregate_ExemptImagesNeedConfiguredTags(t *testing.T) {
+	pipeline := &ir.NormalizedPipeline{Jobs: []ir.Job{
+		{Name: "report", Image: &ir.Image{Name: "ghcr.io/my-org/report-tool", Tag: "latest"}},
+	}}
+	pc := &configuration.PlumberConfig{GitHub: &configuration.ProviderConfig{Controls: configuration.ControlsConfig{
+		ContainerImageMustNotUseForbiddenTags: &configuration.ImageForbiddenTagsControlConfig{
+			ExemptImages: []string{"ghcr.io/my-org/report-tool"},
+		},
+	}}}
+
+	s := AggregateGitHubStats(pipeline, pc)
+	if len(s.ImagesExempted) != 0 || s.ImagesExemptUnpinned != 0 {
+		t.Errorf("exempted %v (%d unpinned), want nothing", s.ImagesExempted, s.ImagesExemptUnpinned)
 	}
 }

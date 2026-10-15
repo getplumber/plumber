@@ -490,10 +490,17 @@ func buildEngineConfig(controls *configuration.ControlsConfig, gitlabURL string)
 				"forbiddenTags": c.Tags,
 			}
 		}
+		// Both image rules read the digest switch and the exemptions from
+		// this one block.
+		block := map[string]any{}
 		if c.IsPinnedByDigestRequired() {
-			cfg["containerImageMustNotUseForbiddenTags"] = map[string]any{
-				"mustBePinnedByDigest": true,
-			}
+			block["mustBePinnedByDigest"] = true
+		}
+		if len(c.ExemptImages) > 0 {
+			block["exemptImages"] = c.ExemptImages
+		}
+		if len(block) > 0 {
+			cfg["containerImageMustNotUseForbiddenTags"] = block
 		}
 	}
 

@@ -28,7 +28,7 @@ const maxConfigFileBytes = 2 << 20 // 2 MiB
 // When adding a new control, add its entry here to enable validation.
 var validControlSchema = map[string][]string{
 	"containerImageMustNotUseForbiddenTags": {
-		"enabled", "tags", "containerImagesMustBePinnedByDigest",
+		"enabled", "tags", "containerImagesMustBePinnedByDigest", "exemptImages",
 	},
 	"containerImageMustComeFromAuthorizedSources": {
 		"enabled", "trustedUrls", "trustDockerHubOfficialImages", "includePlumberDefaults",
@@ -698,6 +698,13 @@ type ImageForbiddenTagsControlConfig struct {
 	// ContainerImagesMustBePinnedByDigest when true, ALL images must use immutable digest references.
 	// Takes precedence over the forbidden tags list — any image not pinned by digest is flagged.
 	ContainerImagesMustBePinnedByDigest *bool `yaml:"containerImagesMustBePinnedByDigest,omitempty"`
+
+	// ExemptImages lists images (registry/name, no tag or digest; glob
+	// patterns as in trustedUrls) that neither the forbidden-tag nor the
+	// digest check judges while they use one of Tags; on any other tag they
+	// are checked as usual. Docker Hub spellings are equivalent: `debian`
+	// also matches `docker.io/library/debian`.
+	ExemptImages []string `yaml:"exemptImages,omitempty"`
 }
 
 // IsPinnedByDigestRequired returns whether all images must be pinned by digest

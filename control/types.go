@@ -248,6 +248,13 @@ type GitHubAnalysisStats struct {
 	ImagesTotal          int
 	ImagesPinnedByDigest int
 	ImagesUsingForbidden int
+	// ImagesExemptUnpinned counts the exemptImages matches without a
+	// digest: not pinned, yet not "Not Pinned By Digest" either, since
+	// ISSUE-103 does not judge them.
+	ImagesExemptUnpinned int
+	// ImagesExempted lists the references of the exempt images whose tag
+	// is forbidden, the ones the exemption let through ISSUE-102.
+	ImagesExempted []string
 
 	// Docker-in-Docker (ISSUE-412 / ISSUE-413).
 	JobsTotal              int

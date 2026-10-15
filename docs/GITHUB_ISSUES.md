@@ -128,7 +128,25 @@ jobs:
 ```
 
 **Config.** `containerImageMustNotUseForbiddenTags.tags` — list of tags
-to forbid.
+to forbid. `exemptImages` lists images this rule and ISSUE-103 skip
+while they use one of those tags, matched on the reference without tag
+or digest, with the glob syntax of `trustedUrls`. On any other tag the
+image is checked as usual. Docker Hub spellings are equivalent: `debian`
+also matches `docker.io/library/debian`. Exempted images are named
+under "Exempted by configuration" in the report, so the exemption stays
+visible in review.
+
+```yaml
+containerImageMustNotUseForbiddenTags:
+  tags: [latest, dev]
+  containerImagesMustBePinnedByDigest: true
+  exemptImages:
+    - ghcr.io/my-org/report-tool
+```
+
+With this configuration `ghcr.io/my-org/report-tool:latest` (with or
+without a digest) raises nothing, while `ghcr.io/my-org/report-tool:v1.0.2`
+still raises ISSUE-103.
 
 ---
 
@@ -157,6 +175,9 @@ jobs:
 
 Tip: `docker inspect --format='{{index .RepoDigests 0}}' node:20.11.0`
 prints the digest for the tag you just pulled.
+
+**Config.** Images on `exemptImages` are not checked while they use a
+forbidden tag (see ISSUE-102).
 
 ---
 

@@ -62,6 +62,14 @@ gitlab:
       # an immutable digest reference will be flagged, including standard version
       # tags like alpine:3.19 or node:20.
       containerImagesMustBePinnedByDigest: true
+      # Images exempt from both checks above while they use one of the tags
+      # listed in `tags` (on any other tag they are checked as usual), matched
+      # on registry/name without tag or digest, with the glob syntax of
+      # trustedUrls. Docker Hub spellings are equivalent (`debian` also matches
+      # docker.io/library/debian). Exempted images are named under "Exempted
+      # by configuration" in the report.
+      # exemptImages:
+      #   - registry.example.com/my-group/internal-tool
     # ===========================================
     # Container images must come from authorized sources
     # ===========================================
@@ -1002,6 +1010,14 @@ github:
       # list — any image not using an immutable digest reference is
       # flagged.
       containerImagesMustBePinnedByDigest: true
+      # Images exempt from both checks above while they use one of the
+      # tags listed in `tags` (on any other tag they are checked as
+      # usual), matched on registry/name without tag or digest, with the
+      # glob syntax of trustedUrls. Docker Hub spellings are equivalent
+      # (`debian` also matches docker.io/library/debian). Exempted images
+      # are named under "Exempted by configuration" in the report.
+      # exemptImages:
+      #   - ghcr.io/my-org/report-tool
 
     # ===========================================
     # Pipeline must not use Docker-in-Docker

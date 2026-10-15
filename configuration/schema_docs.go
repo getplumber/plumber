@@ -37,6 +37,9 @@ var controlFieldDocs = map[string]FieldDoc{
 		Description: "When true, all images must use immutable digest references, taking precedence over the forbidden tags list.",
 		Toggle:      true,
 	},
+	"containerImageMustNotUseForbiddenTags.exemptImages": {
+		Description: "Images exempt from both the forbidden-tag and the digest checks while they use one of the forbidden tags, matched on registry/name without tag or digest (glob patterns as in trustedUrls).",
+	},
 	"containerImageMustComeFromAuthorizedSources.enabled": {
 		Description: "Turns the control on; when false or absent the control is skipped.",
 	},

@@ -1,0 +1,28 @@
+# The issue #506 example: report and hub use an exempt image on a forbidden
+# tag, report-release the exempt image on a version tag, deploy a non-exempt
+# image. Expected: 1 finding on deploy (report-release's tag is allowed).
+name: CI
+on: push
+
+jobs:
+  report:
+    runs-on: ubuntu-latest
+    container:
+      image: ghcr.io/my-org/report-tool:latest
+    steps:
+      - run: echo report
+  report-release:
+    runs-on: ubuntu-latest
+    container: ghcr.io/my-org/report-tool:v1.0.2
+    steps:
+      - run: echo report
+  hub:
+    runs-on: ubuntu-latest
+    container: docker.io/library/debian:latest
+    steps:
+      - run: echo hub
+  deploy:
+    runs-on: ubuntu-latest
+    container: alpine:latest
+    steps:
+      - run: echo deploy

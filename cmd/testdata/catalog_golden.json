@@ -595,6 +595,16 @@
             "nullable": true,
             "toggle": true,
             "description": "When true, all images must use immutable digest references, taking precedence over the forbidden tags list."
+          },
+          {
+            "name": "exemptImages",
+            "type": "array",
+            "optional": true,
+            "description": "Images exempt from both the forbidden-tag and the digest checks while they use one of the forbidden tags, matched on registry/name without tag or digest (glob patterns as in trustedUrls).",
+            "elem": {
+              "type": "string",
+              "optional": false
+            }
           }
         ]
       },

@@ -1,0 +1,18 @@
+# The issue #506 example: report and hub use an exempt image on a forbidden
+# tag, report-release the exempt image on a version tag, which the exemption
+# does not cover. Expected: findings on report-release and deploy.
+report:
+  image: ghcr.io/my-org/report-tool:latest
+  script: [echo report]
+
+report-release:
+  image: ghcr.io/my-org/report-tool:v1.0.2
+  script: [echo report]
+
+hub:
+  image: debian:latest
+  script: [echo hub]
+
+deploy:
+  image: alpine:latest
+  script: [echo deploy]

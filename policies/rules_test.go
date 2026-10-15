@@ -18,6 +18,7 @@ import (
 	"github.com/getplumber/plumber/internal/ir"
 	"github.com/getplumber/plumber/internal/testsupport/pipelines"
 	"github.com/getplumber/plumber/policies"
+	"github.com/getplumber/plumber/utils"
 )
 
 // parseGitLabCI and parseGitHubActions are the shared test-time parsers
@@ -56,6 +57,7 @@ func TestIssue102_ImageMutableTag(t *testing.T) {
 				{"violation_latest.gitlab-ci.yml", []string{"deploy"}},
 				{"violation_wildcards.gitlab-ci.yml", []string{"ci"}},
 				{"clean.gitlab-ci.yml", nil},
+				{"clean_exempt_image.gitlab-ci.yml", []string{"deploy"}},
 			},
 		},
 		{
@@ -66,6 +68,7 @@ func TestIssue102_ImageMutableTag(t *testing.T) {
 				{"violation_latest.workflow.yml", []string{"deploy"}},
 				{"violation_wildcards.workflow.yml", []string{"ci"}},
 				{"clean.workflow.yml", nil},
+				{"clean_exempt_image.workflow.yml", []string{"deploy"}},
 			},
 		},
 	}
@@ -73,6 +76,9 @@ func TestIssue102_ImageMutableTag(t *testing.T) {
 	forbiddenTags := []string{"latest", "dev", "*-alpha"}
 	cfg := map[string]any{
 		"imageMutableTag": map[string]any{"forbiddenTags": forbiddenTags},
+		"containerImageMustNotUseForbiddenTags": map[string]any{
+			"exemptImages": []string{"ghcr.io/my-org/report-tool", "debian"},
+		},
 	}
 
 	engine := opaengine.New()
@@ -617,6 +623,7 @@ func TestIssue103_ImagePinnedByDigest(t *testing.T) {
 			fixtures: []fixture{
 				{"violation_tagged.gitlab-ci.yml", []string{"build", "deploy"}},
 				{"clean_pinned.gitlab-ci.yml", nil},
+				{"clean_exempt_image.gitlab-ci.yml", []string{"deploy", "report-release"}},
 			},
 		},
 		{
@@ -626,13 +633,17 @@ func TestIssue103_ImagePinnedByDigest(t *testing.T) {
 			fixtures: []fixture{
 				{"violation_tagged.workflow.yml", []string{"build"}},
 				{"clean_pinned.workflow.yml", nil},
+				{"clean_exempt_image.workflow.yml", []string{"deploy", "report-release"}},
 			},
 		},
 	}
 
 	cfg := map[string]any{
+		// An exemption covers an exempt image on a forbidden tag only.
+		"imageMutableTag": map[string]any{"forbiddenTags": []string{"latest"}},
 		"containerImageMustNotUseForbiddenTags": map[string]any{
 			"mustBePinnedByDigest": true,
+			"exemptImages":         []string{"ghcr.io/my-org/report-tool", "debian"},
 		},
 	}
 
@@ -2668,6 +2679,85 @@ func TestIssue101_ImageAuthorizedSources(t *testing.T) {
 				t.Fatalf("%s: expected violation=%v, got %v (findings=%+v)", tc.name, tc.expected, found, findings)
 			}
 		})
+	}
+}
+
+// TestImageExemptParity pins the exemptImages matching of ISSUE-102 and
+// ISSUE-103 to utils.ImageExempt, which the stat lines use to leave the
+// same images out of their counts. Images are hand-built IR so each
+// registry spelling the collectors emit (empty, docker.io, unknown, a host)
+// is covered; both rules must stay silent exactly where the Go matcher
+// says the image is exempt.
+func TestImageExemptParity(t *testing.T) {
+	engine := opaengine.New()
+	if err := engine.LoadFromFSFiltered(policies.FS, nil); err != nil {
+		t.Fatalf("load embedded policies: %v", err)
+	}
+	patterns := []string{
+		"ghcr.io/my-org/report-tool",
+		"debian",
+		"quay.io/prometheus/*",
+		"docker.io/library/redis",
+		"*/busybox",
+		"${CI_REGISTRY}/team/tool",
+	}
+	cfg := map[string]any{
+		"imageMutableTag": map[string]any{"forbiddenTags": []string{"latest"}},
+		"containerImageMustNotUseForbiddenTags": map[string]any{
+			"mustBePinnedByDigest": true,
+			"exemptImages":         patterns,
+		},
+	}
+	images := []ir.Image{
+		{Name: "ghcr.io/my-org/report-tool"},
+		{Name: "my-org/report-tool", Registry: "ghcr.io"},
+		{Name: "ghcr.io/my-org/report-tool-extra"},
+		{Name: "debian"},
+		{Name: "debian", Registry: "docker.io"},
+		{Name: "library/debian"},
+		{Name: "docker.io/library/debian"},
+		{Name: "index.docker.io/debian"},
+		{Name: "public.ecr.aws/docker/library/debian"},
+		{Name: "debian-slim"},
+		{Name: "quay.io/prometheus/busybox"},
+		{Name: "prometheus/team/busybox", Registry: "quay.io"},
+		{Name: "quay.io/other/tool"},
+		{Name: "redis"},
+		{Name: "redis", Registry: "docker.io"},
+		{Name: "busybox"},
+		{Name: "my-org/tool", Registry: "unknown"},
+		{Name: "$CI_REGISTRY/team/tool"},
+		{Name: "localhost:5000/debian"},
+		{Name: "alpine"},
+	}
+	forbidden := []string{"latest"}
+	for _, img := range images {
+		// An exemption covers an exempt image on a forbidden tag only: on
+		// `latest` both rules stay silent exactly where the Go matcher
+		// exempts; on `v1.0.2` nothing is exempt and ISSUE-103 fires.
+		for _, tag := range []string{"latest", "v1.0.2"} {
+			img.Tag = tag
+			t.Run(img.Registry+"|"+img.Name+":"+tag, func(t *testing.T) {
+				pipeline := &ir.NormalizedPipeline{
+					Provider: ir.ProviderGitLab,
+					Jobs:     []ir.Job{{Name: "build", Image: &img}},
+				}
+				findings, err := evaluateStrict(engine, context.Background(), pipeline, cfg)
+				if err != nil {
+					t.Fatalf("evaluate: %v", err)
+				}
+				exempt := utils.ImageExempt(patterns, forbidden, img.Registry, img.Name, img.Tag)
+				fired := func(code string) bool {
+					return slices.ContainsFunc(findings, func(f opaengine.Finding) bool { return f.Code == code })
+				}
+				if want := !exempt && tag == "latest"; fired("ISSUE-102") != want {
+					t.Errorf("ISSUE-102 fired=%v, want %v (utils.ImageExempt=%v)", fired("ISSUE-102"), want, exempt)
+				}
+				if want := !exempt; fired("ISSUE-103") != want {
+					t.Errorf("ISSUE-103 fired=%v, want %v (utils.ImageExempt=%v)", fired("ISSUE-103"), want, exempt)
+				}
+			})
+		}
 	}
 }
 

@@ -250,6 +250,20 @@ controls:
 			wantContains:   "tags",
 		},
 		{
+			name: "exemptImages sub-key - no warnings",
+			yamlContent: `
+version: "2.0"
+github:
+  controls:
+    containerImageMustNotUseForbiddenTags:
+      enabled: true
+      tags: [latest]
+      exemptImages:
+        - ghcr.io/my-org/report-tool
+`,
+			expectWarnings: 0,
+		},
+		{
 			name: "unknown sub-key - allowForcePush typo",
 			yamlContent: `
 version: "1"
@@ -532,5 +546,35 @@ func TestIncludePlumberDefaultsIsAKnownSubKey(t *testing.T) {
 		if strings.Contains(w, "includePlumberDefaults") {
 			t.Fatalf("includePlumberDefaults flagged as unknown: %q", w)
 		}
+	}
+}
+
+// exemptImages loads on both providers as written: a plain user list,
+// with no curated base to union it with.
+func TestLoadPlumberConfigFromBytes_ExemptImages(t *testing.T) {
+	data := []byte(`version: "2.0"
+gitlab:
+  controls:
+    containerImageMustNotUseForbiddenTags:
+      enabled: true
+      exemptImages: [registry.example.com/team/tool]
+github:
+  controls:
+    containerImageMustNotUseForbiddenTags:
+      enabled: true
+      exemptImages: [ghcr.io/my-org/report-tool, debian]
+`)
+	cfg, _, warnings, err := LoadPlumberConfigFromBytes(data, "exempt-images")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", warnings)
+	}
+	if got := cfg.ControlsFor("gitlab").ContainerImageMustNotUseForbiddenTags.ExemptImages; strings.Join(got, ",") != "registry.example.com/team/tool" {
+		t.Errorf("gitlab exemptImages = %v", got)
+	}
+	if got := cfg.ControlsFor("github").ContainerImageMustNotUseForbiddenTags.ExemptImages; strings.Join(got, ",") != "ghcr.io/my-org/report-tool,debian" {
+		t.Errorf("github exemptImages = %v", got)
 	}
 }
