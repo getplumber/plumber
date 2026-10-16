@@ -66,11 +66,13 @@ func TestADeadJobIsNoBranchNoWalkAndNoWriter(t *testing.T) {
 		"ci/off": {RefTriggers: []string{"push"}, CacheScopes: defaultScope, Dead: true}, "ci/live": live, "ci/fed-off": fedOff,
 		"ci/writer-off": {RefTriggers: []string{"push"}, CacheScopes: defaultScope, Dead: true},
 	})
+	deadWriter := cacheFinding()
+	deadWriter.Job, deadWriter.Subject = "ci/writer-off", "ci/writer-off"
 	findings := []opaengine.Finding{
 		finding("ISSUE-715", "ci/off", map[string]any{"uses": "o/off@v1"}),
 		finding("ISSUE-715", "ci/live", map[string]any{"uses": "o/live@v1"}),
 		finding("ISSUE-715", "ci/writer-off", map[string]any{"uses": "o/writer@v1"}),
-		cacheFinding(),
+		deadWriter,
 	}
 	paths := assemblePaths(findings, sit)
 	for _, p := range paths {
@@ -79,8 +81,8 @@ func TestADeadJobIsNoBranchNoWalkAndNoWriter(t *testing.T) {
 				t.Errorf("a dead job is on path %s: %v", p.Entry.Subject, p.Jobs)
 			}
 		}
-		if slices.Contains(p.cacheWriters, "ci/writer-off") {
-			t.Errorf("a dead job writes the cache: %v", p.cacheWriters)
+		if p.EntryKind == EntryPoisonedCache {
+			t.Errorf("a dead job writes the cache: %v", p.Jobs)
 		}
 	}
 	i := slices.IndexFunc(paths, func(p AttackPath) bool { return p.EntryKind == EntryMutableDependency })

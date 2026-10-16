@@ -428,13 +428,12 @@ var controlsMeta = map[string]ControlMeta{
 		ID:          "CTRL-804",
 		Description: "Detects pull_request_target workflows that explicitly check out the pull request head, combining access to base-repo secrets with PR-author-controlled code.",
 	},
-	"releaseWorkflowsMustNotRestoreUntrustedCache": {
-		Providers:      []string{ProviderGitHub},
-		DisplayName:    "Release workflows must not restore an untrusted cache",
-		Category:       CategoryThirdPartyActions,
-		ID:             "CTRL-705",
-		Description:    "Flags release and publish jobs that restore a build cache whose key is not scoped to the release ref, closing the cross-branch cache poisoning vector. Conditions are resolved per trigger; a cache condition it cannot resolve is reported as a medium verify-manually finding.",
-		RequiresConfig: true,
+	"untrustedTriggersMustNotWriteCache": {
+		Providers:   []string{ProviderGitHub},
+		DisplayName: "Untrusted triggers must not write the cache",
+		Category:    CategoryThirdPartyActions,
+		ID:          "CTRL-705",
+		Description: "Flags jobs granted cache write (cache-mode: write or write-only) on an event GitHub restricts to read-only cache access, such as pull_request_target, issue_comment or workflow_run: code in such a run can poison the caches default-branch runs restore. Exempted workflows and jobs are listed as accepted risk.",
 	},
 	"releaseWorkflowsMustSignArtefacts": {
 		Providers:   []string{ProviderGitHub},
@@ -630,6 +629,17 @@ var removedControls = map[string]string{
 	// "secret leak in pipeline configuration" to 301 since before the
 	// CLI rule existed).
 	"pipelineMustNotLeakSecretsInConfig": "secret detection is no longer part of Plumber; remove this block from .plumber.yaml",
+}
+
+// RenamedControls maps control names that shipped in earlier releases to
+// the name that replaced them. A config still carrying the old key gets a
+// "renamed and ignored" warning pointing to the new key and to `plumber
+// config migrate`, which rewrites it. The old block is not carried over:
+// the control's semantics changed with its name.
+var RenamedControls = map[string]string{
+	// Issue #533: the check moved from release jobs restoring an unscoped
+	// cache to jobs granted cache write on an untrusted trigger.
+	"releaseWorkflowsMustNotRestoreUntrustedCache": "untrustedTriggersMustNotWriteCache",
 }
 
 // benchedControls is the dev-side gate for controls that are NOT yet

@@ -1,0 +1,10 @@
+on: [push, workflow_dispatch, repository_dispatch, delete, registry_package, page_build, schedule]
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    cache-mode: write
+    steps:
+      - uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ hashFiles('package-lock.json') }}

@@ -1290,64 +1290,41 @@ func TestReEvaluateForConfigV4FallsBackToV3WhenTheSituationDegrades(t *testing.T
 	}
 }
 
-// Under scoring-v4 a policy's situation facts come from that policy's own
-// controls config, never the run's: the facts read the same config keys
-// as the controls (cachePoisoning.publishScriptPatterns here), so pricing
-// a policy's findings against the local file's facts would miss an impact
-// the policy's own facts prove. The run forbids "dev" and keeps the
-// default publish patterns, so neither ISSUE-102 nor a publishes impact
-// lands on build; policy A forbids "latest" and names my-release as a
-// publish command (ISSUE-102 fires, and its path reaches the publish),
-// policy B is the run's config again (no finding, no impact, no path).
+// Under scoring-v4 a policy's findings are priced against the situation
+// evaluated for that policy, never the run's. The situation reads no
+// controls config today (its publish inventory is built in), so the facts
+// agree across policies; what differs is the finding set. The run forbids
+// "dev", so no ISSUE-102 lands on build; policy A forbids "latest"
+// (ISSUE-102 fires, and its path reaches build's publish), policy B is the
+// run's config again (no finding, no path).
 func TestReEvaluateForConfigV4EvaluatesTheSituationUnderThePolicysConfig(t *testing.T) {
 	old := ScoreProfile
 	ScoreProfile = "v4"
 	defer func() { ScoreProfile = old }()
 
-	withConfig := func(publish []string, tags ...string) *configuration.PlumberConfig {
+	withConfig := func(tags ...string) *configuration.PlumberConfig {
 		pc := defaultGitHubConfig(t)
 		pc.GitHub.Controls.ContainerImageMustNotUseForbiddenTags.Tags = tags
-		if publish != nil {
-			pc.GitHub.Controls.ReleaseWorkflowsMustNotRestoreUntrustedCache.PublishScriptPatterns = publish
-		}
 		return pc
 	}
-	local, policyA, policyB := withConfig(nil, "dev"), withConfig([]string{"my-release"}, "latest"), withConfig(nil, "dev")
+	local, policyA, policyB := withConfig("dev"), withConfig("latest"), withConfig("dev")
 	conf := &configuration.Configuration{PlumberConfig: local}
 	pipeline := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{{
 		Name: "build", WorkflowName: "ci",
 		Permissions: "read-all", // a publish can only come from the script
 		Image:       &ir.Image{Name: "foo", Tag: "latest", Digest: "sha256:" + strings.Repeat("a", 64)},
-		Scripts:     []string{"my-release --all"},
+		Scripts:     []string{"npm publish"},
 	}}}
 	result := &AnalysisResult{CiValid: true, GitHubPipeline: pipeline}
 	attachSituation(logrus.NewEntry(logrus.New()), conf, "github", pipeline, result)
 
-	publishes := func(s *Situation) bool {
-		for _, i := range s.Jobs["build"].Impact {
-			if i.Kind == "publishes" {
-				return true
-			}
-		}
-		return false
-	}
-	if publishes(result.Situation) {
-		t.Fatalf("fixture drifted: the run's own config must record no publishes impact, got %+v", result.Situation.Jobs["build"])
-	}
-
-	scopedA, scoreA, ok := ReEvaluateForConfig(result, conf, "github", policyA)
+	_, scoreA, ok := ReEvaluateForConfig(result, conf, "github", policyA)
 	if !ok {
 		t.Fatal("want a re-evaluable result")
 	}
-	scopedB, scoreB, ok := ReEvaluateForConfig(result, conf, "github", policyB)
+	_, scoreB, ok := ReEvaluateForConfig(result, conf, "github", policyB)
 	if !ok {
 		t.Fatal("want a re-evaluable result")
-	}
-	if scopedA.Situation == result.Situation || !publishes(scopedA.Situation) {
-		t.Errorf("policy A's situation must be its own, with the publishes impact, got %+v", scopedA.Situation)
-	}
-	if publishes(scopedB.Situation) {
-		t.Errorf("policy B names no publish command build runs, want no publishes impact, got %+v", scopedB.Situation.Jobs["build"])
 	}
 	var pathA *AttackPath
 	for i := range scoreA.Paths {
@@ -1356,15 +1333,12 @@ func TestReEvaluateForConfigV4EvaluatesTheSituationUnderThePolicysConfig(t *test
 		}
 	}
 	if pathA == nil || pathA.Entry.Subject != "foo:latest" || pathA.ReachKind != "impact:publishes" {
-		t.Errorf("policy A's ISSUE-102 must start a path on its own image reaching its own publish impact, got %+v", scoreA.Paths)
+		t.Errorf("policy A's ISSUE-102 must start a path on its own image reaching the publish impact, got %+v", scoreA.Paths)
 	}
 	for _, p := range scoreB.Paths {
 		if p.AnchorCode == "ISSUE-102" {
 			t.Errorf("policy B has no ISSUE-102, want no such path, got %+v", p)
 		}
-	}
-	if publishes(result.Situation) {
-		t.Error("the run's own situation must stay untouched")
 	}
 }
 

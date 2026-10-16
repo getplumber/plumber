@@ -53,7 +53,8 @@ facts(group) := {
 	"dead": every_dead(group),
 	"ownImage": every_own_image(group),
 	"callers": sort([c | some c in {caller_fact(job, c) | some job in group; some c in object.get(job, "callers", [])}]),
-	"cacheScopes": sort({sc | some job in group; some sc in cache_scopes(job)}),
+	"cacheScopes": sort({sc | some job in group; some sc in save_scopes(job)}),
+	"restoresCache": count({job | some job in group; restores_cache(job)}) > 0,
 }
 
 # every_own_image: every job sharing the name runs in a container, and
@@ -158,9 +159,13 @@ trigger_cache_scopes(_, "release") := {"tag"}
 
 trigger_cache_scopes(_, "pull_request") := {"pull_request"}
 
+trigger_cache_scopes(_, "pull_request_review") := {"pull_request"}
+
+trigger_cache_scopes(_, "pull_request_review_comment") := {"pull_request"}
+
 trigger_cache_scopes(_, "merge_group") := {"merge_group"}
 
-trigger_cache_scopes(_, t) := {"default"} if not t in {"push", "release", "pull_request", "merge_group"}
+trigger_cache_scopes(_, t) := {"default"} if not t in {"push", "release", "pull_request", "pull_request_review", "pull_request_review_comment", "merge_group"}
 
 # push_cache_scopes: a push the filters let reach the default branch saves
 # in its scope; a tag filter (or no filter at all, every ref) also in a
@@ -177,18 +182,64 @@ push_cache_scopes(job) := out if {
 	out := tags | branch
 }
 
+# cache_write_trusted: the events GitHub lets create or overwrite caches in
+# the default branch's scope. Any other event that runs on the default
+# branch (pull_request_target, issue_comment, workflow_run...) gets
+# read-only cache access unless its cache-mode grants write.
+cache_write_trusted := {
+	"push", "workflow_dispatch", "repository_dispatch", "delete",
+	"registry_package", "page_build", "schedule",
+}
+
+# cache_mode(job): the access the job's cache-mode grants (read, write,
+# write-only, none), "" when it declares none GitHub would run.
+cache_mode(job) := object.get(job, ["cacheMode", "effective"], "")
+
+# saves_under(job, t): a run of the job on event t can save a cache. An
+# explicit grant decides; without one, a trusted trigger saves and so does
+# an event that runs on its own ref (a pull request's, a tag's, a merge
+# queue's), while a low-trust event on the default branch only reads.
+saves_under(job, _) if cache_mode(job) in {"write", "write-only"}
+
+saves_under(job, t) if {
+	not cache_mode(job) in {"read", "none", "write", "write-only"}
+	t in cache_write_trusted | {"pull_request", "pull_request_review", "pull_request_review_comment", "release", "merge_group"}
+}
+
+# save_scopes: the scopes the job's runs save under, cache_scopes narrowed
+# to the events that can save.
+save_scopes(job) := {"any"} if {
+	count(effective_triggers(job)) == 0
+} else := {sc | some t in gated_triggers(job); saves_under(job, t); some sc in trigger_cache_scopes(job, t)}
+
+# restores_cache(job): the job declares a cache it restores and its
+# cache-mode leaves restoring on.
+restores_cache(job) if {
+	not cache_mode(job) in {"write-only", "none"}
+	some c in object.get(job, "caches", [])
+	c.mode in {"restore", "both"}
+}
+
 # cache_scope_reaches(saver, restorer): the restorer can read what the
 # saver saves: a default-branch save reaches every run, a save in another
 # scope reaches runs of that same scope, and an unknown scope on either
-# side is not ruled out.
-cache_scope_reaches(saver, _) if "any" in cache_scopes(saver)
-
-cache_scope_reaches(_, restorer) if "any" in cache_scopes(restorer)
-
-cache_scope_reaches(saver, _) if "default" in cache_scopes(saver)
-
+# side is not ruled out. The restorer has to restore at all.
 cache_scope_reaches(saver, restorer) if {
-	some sc in cache_scopes(saver) & cache_scopes(restorer)
+	restores_cache(restorer)
+	_scope_reaches(saver, restorer)
+}
+
+_scope_reaches(saver, _) if "any" in save_scopes(saver)
+
+_scope_reaches(saver, restorer) if {
+	count(save_scopes(saver)) > 0
+	"any" in cache_scopes(restorer)
+}
+
+_scope_reaches(saver, _) if "default" in save_scopes(saver)
+
+_scope_reaches(saver, restorer) if {
+	some sc in save_scopes(saver) & cache_scopes(restorer)
 	sc != "default"
 }
 
@@ -1290,24 +1341,21 @@ token_evidence(job, scope) := "permissions: write-all" if {
 	object.get(job, "permissions", null) == "write-all"
 } else := sprintf("permissions: %s: write", [scope])
 
-# Config comes from input.config.cachePoisoning: ReleaseWorkflowsMustNotRestoreUntrustedCache
-# is the control name, but control/task.go writes its yaml under the
-# "cachePoisoning" key (see policies/cache_poisoning.rego, which reads the
-# same input.config.cachePoisoning.publishActions/publishScriptPatterns),
-# not under the control's own name. Reusing that key keeps one operator-
-# configured publish inventory for both rules instead of two to keep in
-# sync.
-cache_cfg := object.get(input.config, "cachePoisoning", {})
+# publish_patterns and configured_publish_actions: the publish inventory,
+# the commands and actions that make a job ship what it builds. Built in:
+# no control configures it.
+publish_patterns := [
+	`(?i)(npm|pnpm|yarn|bun)\s+publish`, `(?i)cargo\s+publish`, `(?i)twine\s+upload`,
+	`(?i)poetry\s+publish`, `(?i)gh\s+release\s+create`, `(?i)goreleaser\s+release`,
+	`(?i)semantic-release`, `(?i)gradlew?\b[^\n]*\bpublish`, `(?i)\bmvnw?\b[^\n]*\bdeploy\b`,
+	`(?i)dotnet\s+nuget\s+push`, `(?i)gem\s+push`, `(?i)docker\s+push`, `(?i)helm\s+push`,
+]
 
-publish_patterns := object.get(cache_cfg, "publishScriptPatterns", [
-	`npm publish`, `twine upload`, `cargo publish`, `gem push`, `docker push`,
-	`mvn deploy`, `gradle publish`, `goreleaser release`, `helm push`,
-])
-
-configured_publish_actions := object.get(cache_cfg, "publishActions", [
-	"softprops/action-gh-release", "pypa/gh-action-pypi-publish", "docker/build-push-action",
-	"JS-DevTools/npm-publish", "goreleaser/goreleaser-action", "ncipollo/release-action",
-])
+configured_publish_actions := [
+	"pypa/gh-action-pypi-publish", "JS-DevTools/npm-publish", "gradle/publish-plugin",
+	"softprops/action-gh-release", "ncipollo/release-action", "goreleaser/goreleaser-action",
+	"crazy-max/ghaction-docker-buildx", "changesets/action",
+]
 
 # image_push_actions publish only when their push: input says so
 # (publish_action_state); they are publish actions whatever the configured
@@ -1349,19 +1397,15 @@ local_publish_script_pattern := `(^|[\s;&|(])\.{0,2}/?([\w.-]+/)*[\w.-]*(publish
 
 # publishScriptExcludePatterns: verification-only forms that veto a
 # publish-script match on the same line, they never publish anything.
-# Defaults mirror defaultConfig/.plumber.yaml's cachePoisoning block.
-publish_script_exclude_patterns := object.get(cache_cfg, "publishScriptExcludePatterns", [
-	`(?i)--dry-run`, `(?i)publishToMavenLocal`,
-])
+publish_script_exclude_patterns := [`(?i)--dry-run`, `(?i)publishToMavenLocal`]
 
 excluded(line) if {
 	some pat in publish_script_exclude_patterns
 	regex.match(pat, line)
 }
 
-# The exclusion applies to the whole script entry, as in
-# policies/cache_poisoning.rego; only the evidence is narrowed to the
-# matching line.
+# The exclusion applies to the whole script entry; only the evidence is
+# narrowed to the matching line.
 publishes(job) := {{"kind": "publishes", "state": "proven", "evidence": evidence} |
 	some line in object.get(job, "scripts", [])
 	text := publish_text(line)

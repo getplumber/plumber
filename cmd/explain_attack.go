@@ -73,7 +73,6 @@ type jsonPathBlock struct {
 	Entry           string                 `json:"entry"`
 	EntrySubject    string                 `json:"entrySubject,omitempty"`
 	Branches        []jsonPathBlockBranch  `json:"branches"`
-	EntryWriter     string                 `json:"entryWriter,omitempty"`
 	EntryUnverified string                 `json:"entryUnverified,omitempty"`
 	RunsIn          string                 `json:"runsIn,omitempty"`
 	ReachesShort    string                 `json:"reachesShort,omitempty"`
@@ -118,7 +117,7 @@ type jsonPathFindingDetail struct {
 func jsonPathBlockOf(id string, b control.PathBlock) jsonPathBlock {
 	j := jsonPathBlock{
 		ID: id, Tier: b.Tier, Unverified: b.Unverified, Loss: b.Loss, Entry: b.Entry, EntrySubject: b.EntrySubject,
-		EntryWriter: b.EntryWriter, EntryUnverified: b.EntryUnverified, RunsIn: b.RunsIn, ReachesShort: b.ReachesShort,
+		EntryUnverified: b.EntryUnverified, RunsIn: b.RunsIn, ReachesShort: b.ReachesShort,
 		ReachUnverified: b.ReachUnverified, So: b.So, Cap: b.Cap, Environment: b.Environment, Fix: b.Fix,
 		Branches: []jsonPathBlockBranch{}, Findings: []jsonPathBlockFinding{},
 	}
@@ -134,7 +133,7 @@ func jsonPathBlockOf(id string, b control.PathBlock) jsonPathBlock {
 func (j jsonPathBlock) block() control.PathBlock {
 	b := control.PathBlock{
 		Tier: j.Tier, Unverified: j.Unverified, Loss: j.Loss, Entry: j.Entry, EntrySubject: j.EntrySubject,
-		EntryWriter: j.EntryWriter, EntryUnverified: j.EntryUnverified, RunsIn: j.RunsIn, ReachesShort: j.ReachesShort,
+		EntryUnverified: j.EntryUnverified, RunsIn: j.RunsIn, ReachesShort: j.ReachesShort,
 		ReachUnverified: j.ReachUnverified, So: j.So, Cap: j.Cap, Environment: j.Environment, Fix: j.Fix,
 	}
 	for _, br := range j.Branches {

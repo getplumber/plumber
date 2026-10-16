@@ -1089,24 +1089,22 @@ func TestSigningOrReleaseScriptGrantsSignsOrReleasesImpact(t *testing.T) {
 }
 
 // TestDryRunSigningOrReleaseCommandGrantsNoImpact pins that the
-// verification-only forms vetoing a publish (publishScriptExcludePatterns,
-// --dry-run by default) veto a signing or release command on the same
-// line too: a dry run signs, publishes and releases nothing, so it gives
-// the job neither impact. A configured pattern vetoes the same way.
+// verification-only forms vetoing a publish (publish_script_exclude_patterns,
+// --dry-run) veto a signing or release command on the same line too: a
+// dry run signs, publishes and releases nothing, so it gives the job
+// neither impact.
 func TestDryRunSigningOrReleaseCommandGrantsNoImpact(t *testing.T) {
-	for _, c := range []struct {
-		line string
-		cfg  map[string]any
-	}{
-		{"npm publish --dry-run --provenance", nil},
-		{"goreleaser release --dry-run", nil},
-		{"goreleaser release --snapshot --clean", map[string]any{"cachePoisoning": map[string]any{"publishScriptExcludePatterns": []any{`(?i)--snapshot`}}}},
+	for _, line := range []string{
+		"npm publish --dry-run --provenance",
+		"goreleaser release --dry-run",
+		"./gradlew publishToMavenLocal",
 	} {
+		c := struct{ line string }{line}
 		p := &ir.NormalizedPipeline{
 			Provider: ir.ProviderGitHub,
 			Jobs:     []ir.Job{{Name: "check", Permissions: map[string]any{"id-token": "write"}, Scripts: []string{c.line}}},
 		}
-		kinds := impactKinds(evaluate(t, p, c.cfg).Jobs["check"].Impact)
+		kinds := impactKinds(evaluate(t, p, nil).Jobs["check"].Impact)
 		for _, kind := range []string{"signs_or_releases", "publishes"} {
 			if i, ok := kinds[kind]; ok {
 				t.Errorf("%q: %s = %+v, want none", c.line, kind, i)
@@ -1194,11 +1192,7 @@ func TestReleaseStepIsCountedOnce(t *testing.T) {
 		Provider: ir.ProviderGitHub,
 		Jobs:     []ir.Job{{Name: "release", Permissions: map[string]any{"contents": "write", "id-token": "write"}, Uses: []ir.Action{{Uses: "ncipollo/release-action@v1"}}}},
 	}
-	for _, cfg := range []map[string]any{
-		nil,
-		{"cachePoisoning": map[string]any{"publishActions": []any{"pypa/gh-action-pypi-publish"}}},
-		{"cachePoisoning": map[string]any{"publishActions": []any{"ncipollo/release-action"}}},
-	} {
+	for _, cfg := range []map[string]any{nil} {
 		kinds := impactKinds(evaluate(t, p, cfg).Jobs["release"].Impact)
 		if i, ok := kinds["signs_or_releases"]; !ok || i.State != "proven" || i.Evidence != "ncipollo/release-action@v1" {
 			t.Errorf("config %v: a release action is a signs_or_releases impact, got %+v", cfg, kinds)

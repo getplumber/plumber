@@ -436,6 +436,7 @@ type ghWorkflowHeader struct {
 	Permissions any            `yaml:"permissions"`
 	Concurrency any            `yaml:"concurrency"`
 	Env         any            `yaml:"env"`
+	CacheMode   any            `yaml:"cache-mode"`
 	Jobs        map[string]any `yaml:"jobs"`
 }
 
@@ -460,6 +461,8 @@ type workflowContext struct {
 	workflowRunUpstreams []string
 	name                 string
 	hasConcurrency       bool
+	cacheMode            *ir.CacheModeDecl
+	jobCacheModeLines    map[string]int
 	jobLines             map[string]int
 	usesLines            map[string][]int
 	usesComments         map[string]string
@@ -775,6 +778,12 @@ func buildJob(jobName string, section map[string]any, wfCtx workflowContext, nam
 	if _, ok := section["concurrency"]; ok {
 		job.JobHasConcurrency = true
 	}
+	if raw, ok := section["cache-mode"]; ok {
+		job.CacheMode = cacheModeDecl(raw, wfCtx.jobCacheModeLines[jobName], "job")
+	} else if wfCtx.cacheMode != nil {
+		decl := *wfCtx.cacheMode
+		job.CacheMode = &decl
+	}
 	// continue-on-error: true maps to allowFailure. Only literal booleans
 	// are honoured — runtime expressions are unpredictable statically.
 	if v, ok := section["continue-on-error"].(bool); ok && v {
@@ -881,7 +890,10 @@ func parseGitHubWorkflowJobs(data []byte, namespace, originFile string) ([]ir.Jo
 	}
 
 	pushBranches, pushBranchesIgnore, pushTags, pushTagsIgnore := extractGitHubPushFilters(wf.On)
+	wfCacheModeLine, jobCacheModeLines := scanGitHubCacheModeLines(data)
 	wfCtx := workflowContext{
+		cacheMode:            cacheModeDecl(wf.CacheMode, wfCacheModeLine, "workflow"),
+		jobCacheModeLines:    jobCacheModeLines,
 		perms:                wf.Permissions,
 		env:                  normalizeGitHubEnv(wf.Env),
 		triggers:             extractGitHubTriggers(wf.On),

@@ -26,9 +26,9 @@ const (
 	EntryUntrustedExpression EntryKind = "untrusted_expression"
 	EntryMutableDependency   EntryKind = "mutable_dependency"
 	EntryUnprotectedPush     EntryKind = "unprotected_push"
-	// EntryPoisonedCache is a cache a run that is not trusted can write,
-	// restored by the job (a release or publish job restoring a cache whose
-	// key is not scoped to the released ref).
+	// EntryPoisonedCache is a job granted cache write on an untrusted
+	// trigger (cache-mode: write on pull_request_target, issue_comment...):
+	// code running in it can write caches the jobs restoring one read.
 	EntryPoisonedCache EntryKind = "poisoned_cache"
 )
 
@@ -129,18 +129,21 @@ type JobSituation struct {
 	// sorted: FeedArtifact, FeedCache, FeedOutput.
 	FeedsVia map[string][]string `json:"feedsVia"`
 	// Caches is every cache the job restores, saves or both, with the step
-	// declaring it, sorted: the step a poisoned cache finding is about names
-	// its entry by the cache it restores (cacheEntrySubject).
+	// declaring it, sorted.
 	Caches []CacheFact `json:"caches"`
 	// CacheScopes is the refs GitHub files what the job's runs save to the
 	// cache under, sorted: "default" (the default branch: a push to it, a
-	// schedule, a dispatch, workflow_run, pull_request_target and the other
-	// events that run there), "tag", "pull_request", "merge_group",
-	// "branch" (a push to other branches only), or "any" when the job
-	// carries no trigger (GitLab). Only a "default" (or "any") save reaches
-	// a run of another ref: a cache writer for a default-branch or tag
-	// release is a job whose scopes hold one of them.
+	// schedule, a dispatch, and the other events that run there when the
+	// job's cache-mode grants them write), "tag", "pull_request",
+	// "merge_group", "branch" (a push to other branches only), or "any"
+	// when the job carries no trigger (GitLab). Empty when its runs save
+	// nothing (cache-mode read or none, or only low-trust events). Only a
+	// "default" (or "any") save reaches a run of another ref.
 	CacheScopes []string `json:"cacheScopes"`
+	// RestoresCache is set when the job declares a cache it restores and
+	// its cache-mode leaves restoring on (not write-only or none): a job a
+	// poisoned cache reaches.
+	RestoresCache bool `json:"restoresCache"`
 	// Callers is, on a job of a reusable workflow of the repository, every
 	// call that runs it, sorted. The job's own Privilege already reads
 	// through them (its token the union of theirs when it declares none,

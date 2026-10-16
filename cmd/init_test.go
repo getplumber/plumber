@@ -11,12 +11,11 @@ import (
 	"gopkg.in/yaml.v2"
 )
 
-// TestStarterCachePoisoningMatchesEmbeddedDefault deep-compares the wizard's
-// cache-poisoning inventories against the shipped .plumber.yaml. The
-// key-only TestStarterGitHubControlsMatchEmbeddedDefault does not catch
-// list-content drift; this does, so `plumber init` never emits a weaker or
-// noisier control than the embedded default.
-func TestStarterCachePoisoningMatchesEmbeddedDefault(t *testing.T) {
+// TestStarterCacheWriteMatchesEmbeddedDefault deep-compares the wizard's
+// untrusted-trigger cache write control against the shipped .plumber.yaml:
+// enabled, with no exemption (an exemption is an org's own accepted risk,
+// never a default).
+func TestStarterCacheWriteMatchesEmbeddedDefault(t *testing.T) {
 	var embedded configuration.PlumberConfig
 	if err := yaml.Unmarshal(defaultconfig.Get(), &embedded); err != nil {
 		t.Fatalf("unmarshal embedded default: %v", err)
@@ -24,31 +23,24 @@ func TestStarterCachePoisoningMatchesEmbeddedDefault(t *testing.T) {
 	if embedded.GitHub == nil {
 		t.Fatal("embedded default has no github section")
 	}
-	want := embedded.GitHub.Controls.ReleaseWorkflowsMustNotRestoreUntrustedCache
+	want := embedded.GitHub.Controls.UntrustedTriggersMustNotWriteCache
 	if want == nil {
-		t.Fatal("embedded default has no cache-poisoning control")
+		t.Fatal("embedded default has no cache write control")
 	}
 	st := &initWizardState{
 		Providers:          []string{"github"},
 		Categories:         []string{catComposition},
 		CompositionChoices: []string{compCachePoisoning},
 	}
-	got := st.toPlumberConfig().GitHub.Controls.ReleaseWorkflowsMustNotRestoreUntrustedCache
+	got := st.toPlumberConfig().GitHub.Controls.UntrustedTriggersMustNotWriteCache
 	if got == nil {
-		t.Fatal("wizard did not emit the cache-poisoning control")
+		t.Fatal("wizard did not emit the cache write control")
 	}
-	for _, c := range []struct {
-		name      string
-		want, got any
-	}{
-		{"publishActions", want.PublishActions, got.PublishActions},
-		{"cacheActions", want.CacheActions, got.CacheActions},
-		{"publishScriptPatterns", want.PublishScriptPatterns, got.PublishScriptPatterns},
-		{"publishScriptExcludePatterns", want.PublishScriptExcludePatterns, got.PublishScriptExcludePatterns},
-	} {
-		if !reflect.DeepEqual(c.want, c.got) {
-			t.Errorf("%s drift:\n  embedded (.plumber.yaml): %#v\n  wizard   (init.go):       %#v", c.name, c.want, c.got)
-		}
+	if !got.IsEnabled() || !want.IsEnabled() {
+		t.Errorf("enabled: embedded %v, wizard %v, want both true", want.IsEnabled(), got.IsEnabled())
+	}
+	if len(want.ExemptWorkflows)+len(want.ExemptJobs)+len(got.ExemptWorkflows)+len(got.ExemptJobs) != 0 {
+		t.Errorf("exemptions must ship empty: embedded %+v, wizard %+v", want, got)
 	}
 }
 
@@ -63,18 +55,15 @@ func TestWizardDefaultsSourcedFromEmbeddedDefault(t *testing.T) {
 	// fail here rather than silently degrade the wizard (e.g. an enabled control
 	// with an empty pattern list that matches nothing).
 	lists := map[string][]string{
-		"defaultTrustedURLs":                            defaultTrustedURLs(),
-		"defaultTrustedGithubActions":                   defaultTrustedGithubActions(),
-		"defaultSecurityJobPatterns":                    defaultSecurityJobPatterns(),
-		"defaultGitHubSecurityJobPatterns":              defaultGitHubSecurityJobPatterns(),
-		"defaultDangerousVariables":                     defaultDangerousVariables(),
-		"defaultJobOverrideVariables":                   defaultJobOverrideVariables(),
-		"defaultForbiddenVersions":                      defaultForbiddenVersions(),
-		"defaultGitHubDebugTraceVariables":              defaultGitHubDebugTraceVariables(),
-		"defaultGitHubTrustedActionOwners":              defaultGitHubTrustedActionOwners(),
-		"defaultCachePoisoningPublishActions":           defaultCachePoisoningPublishActions(),
-		"defaultCachePoisoningPublishScriptPatterns":    defaultCachePoisoningPublishScriptPatterns(),
-		"defaultCachePoisoningPublishScriptExcludePats": defaultCachePoisoningPublishScriptExcludePatterns(),
+		"defaultTrustedURLs":               defaultTrustedURLs(),
+		"defaultTrustedGithubActions":      defaultTrustedGithubActions(),
+		"defaultSecurityJobPatterns":       defaultSecurityJobPatterns(),
+		"defaultGitHubSecurityJobPatterns": defaultGitHubSecurityJobPatterns(),
+		"defaultDangerousVariables":        defaultDangerousVariables(),
+		"defaultJobOverrideVariables":      defaultJobOverrideVariables(),
+		"defaultForbiddenVersions":         defaultForbiddenVersions(),
+		"defaultGitHubDebugTraceVariables": defaultGitHubDebugTraceVariables(),
+		"defaultGitHubTrustedActionOwners": defaultGitHubTrustedActionOwners(),
 	}
 	for name, got := range lists {
 		if len(got) == 0 {
@@ -89,9 +78,6 @@ func TestWizardDefaultsSourcedFromEmbeddedDefault(t *testing.T) {
 		if got == "" {
 			t.Errorf("%s() is empty — its block is missing from the embedded default", name)
 		}
-	}
-	if len(defaultCachePoisoningCacheActions()) == 0 {
-		t.Error("defaultCachePoisoningCacheActions() is empty — its block is missing from the embedded default")
 	}
 	// The authorized-sources toggles all ship true; a helper that drifts
 	// from the embedded default (or reads the wrong field) fails here.

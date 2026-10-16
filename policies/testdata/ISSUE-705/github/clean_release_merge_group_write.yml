@@ -1,0 +1,13 @@
+on:
+  release:
+    types: [published]
+  merge_group:
+jobs:
+  ship:
+    runs-on: ubuntu-latest
+    cache-mode: write
+    steps:
+      - uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ hashFiles('package-lock.json') }}

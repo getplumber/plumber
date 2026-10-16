@@ -41,27 +41,14 @@ func TestEntryRulesNameTheirSubject(t *testing.T) {
 		{"forbidden include version", "ISSUE-404", "group/ci@main",
 			&ir.NormalizedPipeline{Provider: ir.ProviderGitLab, Includes: []ir.Include{{Kind: "project", Source: "group/ci", Ref: "main"}}},
 			map[string]any{"includesForbiddenVersions": map[string]any{"forbiddenVersions": []string{"main"}}}},
-		{"cache key nobody saves", "ISSUE-705", "125-cargo-home-linux-x86_64-bench-",
-			github(ir.Job{Name: "ci/bench", Triggers: []string{"push"}, Scripts: []string{"cargo publish"},
-				Uses: []ir.Action{{Uses: "actions/cache/restore@v4", With: map[string]any{"key": "never_saved", "restore-keys": "125-cargo-home-linux-x86_64-bench-"}}}}),
-			cachePoisoningConfig},
-		{"cache key another job saves", "ISSUE-705", "deps-linux",
-			&ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{
-				{Name: "ci/bench", Triggers: []string{"push"}, Scripts: []string{"cargo publish"},
-					Uses: []ir.Action{{Uses: "actions/cache/restore@v4", With: map[string]any{"key": "deps-linux", "restore-keys": "deps-"}}}},
-				{Name: "ci/warm", Triggers: []string{"push"}, Uses: []ir.Action{{Uses: "actions/cache/save@v4", With: map[string]any{"key": "deps-linux"}}}},
-			}},
-			cachePoisoningConfig},
-		// A key scoped to the release ref names no cache a run that is not
-		// trusted can write, nor does a restore-keys prefix scoped the same
-		// way: the subject is the first prefix that is not.
-		{"release-scoped key, unscoped restore-keys prefix", "ISSUE-705", "deps-",
-			github(ir.Job{Name: "ci/bench", Triggers: []string{"push"}, Scripts: []string{"cargo publish"},
-				Uses: []ir.Action{{Uses: "actions/cache@v4", With: map[string]any{
-					"key":          "release-${{ github.ref_name }}-${{ hashFiles('Cargo.lock') }}",
-					"restore-keys": "release-${{ github.ref_name }}-\ndeps-",
-				}}}}),
-			cachePoisoningConfig},
+		// A job's own cache-mode is the job's to fix; one set on the
+		// workflow is the workflow's, whichever job it reaches.
+		{"cache write, job level", "ISSUE-705", "triage/label",
+			github(ir.Job{Name: "triage/label", OriginFile: ".github/workflows/triage.yml", Triggers: []string{"issue_comment"},
+				CacheMode: &ir.CacheModeDecl{Value: "write", Effective: "write", Line: 6, Level: "job"}}), nil},
+		{"cache write, workflow level", "ISSUE-705", "triage.yml",
+			github(ir.Job{Name: "triage/label", OriginFile: ".github/workflows/triage.yml", Triggers: []string{"issue_comment"},
+				CacheMode: &ir.CacheModeDecl{Value: "write", Effective: "write", Line: 2, Level: "workflow"}}), nil},
 		{"ambiguous include ref", "ISSUE-402", "group/ci@v1",
 			&ir.NormalizedPipeline{Provider: ir.ProviderGitLab, Includes: []ir.Include{{Kind: "project", Source: "group/ci", Ref: "v1", RefIsAmbiguous: true}}}, nil},
 	}
@@ -89,14 +76,3 @@ func TestEntryRulesNameTheirSubject(t *testing.T) {
 		})
 	}
 }
-
-// cachePoisoningConfig is the slice of the shipped cache poisoning
-// configuration the ISSUE-705 cases read: the restoring actions and a
-// publish command.
-var cachePoisoningConfig = map[string]any{"cachePoisoning": map[string]any{
-	"cacheActions": []any{
-		map[string]any{"action": "actions/cache", "mode": "always"},
-		map[string]any{"action": "actions/cache/restore", "mode": "always"},
-	},
-	"publishScriptPatterns": []any{`(?i)cargo\s+publish`},
-}}

@@ -17,7 +17,6 @@ reading the upstream docs.
 | [ISSUE-713](#issue-713--action-authorized-sources) | `action-authorized-sources` | high |
 | [ISSUE-704](#issue-704--container-hardcoded-credentials) | `container-hardcoded-credentials` | **critical** |
 | [ISSUE-705](#issue-705--cache-poisoning) | `cache-poisoning` | high |
-| [ISSUE-717](#issue-717---cache-poisoning-unresolved) | `cache-poisoning-unresolved` | medium |
 | [ISSUE-706](#issue-706--dockerfile-unpinned-base) | `dockerfile-unpinned-base` | medium |
 | [ISSUE-702](#issue-702--action-archived-repo) | `action-archived-repo` | high _(API)_ |
 | [ISSUE-707](#issue-707--impostor-commit) | `impostor-commit` | **critical** _(API)_ |
@@ -245,137 +244,87 @@ jobs:
 
 ## ISSUE-705 — `cache-poisoning`
 
-**Severity:** `high` • **Control:** `releaseWorkflowsMustNotRestoreUntrustedCache`
+**Severity:** `high` • **Control:** `untrustedTriggersMustNotWriteCache`
 
-A release or publish job restores a build cache whose key is not scoped
-to the release ref. GitHub caches are shared across branches: a PR on
-any feature branch can populate the same key that the release run later
-restores, silently injecting compiled artefacts into the published
-package. Real attacks have abused this path against PyPI and npm.
+A job runs on an event GitHub restricts to read-only cache access, and its
+`cache-mode` grants write. GitHub isolates caches by ref: a run restores
+caches saved for its own ref and for the default branch. Only `push`,
+`workflow_dispatch`, `repository_dispatch`, `delete`, `registry_package`,
+`page_build` and `schedule` runs can create or overwrite caches in the
+default branch's scope. Any other event that runs on the default branch
+(`pull_request_target`, `issue_comment`, `workflow_run`, `discussion`, ...)
+gets read-only cache access by default
+([GitHub docs](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching#cache-access-for-low-trust-workflow-triggers)).
+
+Declaring `cache-mode: write` or `cache-mode: write-only`, on the job or on
+the workflow,
+[lifts that restriction](https://docs.github.com/en/actions/reference/workflows-and-actions/dependency-caching#bypassing-the-default-untrusted-trigger-cache-restriction).
+Code running in such a run (a comment body, a pull request's head, an
+upstream run's artifact) can then write caches that every default-branch run
+restores, release and publish jobs included.
 
 ```yaml
-# ❌ before — cache key shared with every branch
-on: [release]
+# ❌ before — an issue_comment job allowed to write the default branch's caches
+on:
+  issue_comment:
 jobs:
-  publish:
+  triage:
+    cache-mode: write
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/cache@v4
+      - uses: actions/setup-node@v4
         with:
-          key: deps-${{ hashFiles('**/package-lock.json') }}
-          path: ~/.npm
-      - uses: JS-DevTools/npm-publish@v3
+          cache: npm
 ```
 
 ```yaml
-# ✅ after — key weaves github.ref_name so PR caches cannot win
-on: [release]
+# ✅ after — read-only, GitHub's default for this trigger
+on:
+  issue_comment:
 jobs:
-  publish:
+  triage:
+    cache-mode: read
+    runs-on: ubuntu-latest
     steps:
-      - uses: actions/cache@v4
+      - uses: actions/setup-node@v4
         with:
-          key: release-${{ github.ref_name }}-${{ hashFiles('**/package-lock.json') }}
-          path: ~/.npm
-      - uses: JS-DevTools/npm-publish@v3
+          cache: npm
 ```
 
-A scoped `key` with an **unscoped `restore-keys`** prefix fallback is still
-flagged — the fallback can restore a PR-populated cache. Weave the ref into
-every `restore-keys` entry too, or drop them.
+Keep the cache maintained by a trusted workflow instead, for example one
+triggered by `push` on the default branch.
 
-**Config.** The action / script inventory is fully data-driven (the rego
-hardcodes nothing); only the `github.ref*` scope tokens stay in code.
+- **Safe triggers.** GitHub's seven trusted triggers, plus `pull_request`,
+  `pull_request_review`, `pull_request_review_comment`, `release` and
+  `merge_group`: those never run on the default branch and write only their
+  own ref's scope, which no default-branch run reads.
+- **Effective `cache-mode`.** The job's own value, else its workflow's. A
+  job in a reusable workflow (`workflow_call`) runs under its callers'
+  events.
+- **Expressions.** GitHub accepts an expression in `cache-mode` only when it
+  reads no context (`${{ 'write' }}` runs; `${{ github.event_name == ... }}`,
+  `vars.*` or `inputs.*` make the workflow file invalid), so the value is the
+  same on every run. An expression quoting `write` or `write-only` counts as
+  a write grant.
+- No `cache-mode` at all is silent: GitHub's default for a low-trust event
+  is read.
+
+**Config.** A workflow or a job you have reviewed (for example one that runs
+no untrusted code) can be exempted to accept the risk. An exempted job is
+skipped by the check but listed in the output as accepted risk, under
+`Exempted by configuration`, so the exemption never hides it.
 
 ```yaml
-releaseWorkflowsMustNotRestoreUntrustedCache:
+untrustedTriggersMustNotWriteCache:
   enabled: true
-  publishActions:                 # actions that mark a job as a release
-    - JS-DevTools/npm-publish
-    - pypa/gh-action-pypi-publish
-  publishScriptPatterns:          # publish commands in run: scripts
-    - '(?i)(npm|pnpm|yarn)\s+publish'
-    - '(?i)cargo\s+publish'
-  cacheActions:                   # which actions restore a cache, and how
-    - {action: actions/cache, mode: always}
-    - {action: actions/setup-go, mode: default, disableInput: cache, disableValue: false}
-    - {action: gradle/actions/setup-gradle, mode: default, disableInput: cache-disabled, disableValue: true}
-    - {action: actions/setup-node, mode: opt-in, enableInput: cache}
-  allowedJobs:                    # jobs to exempt (glob on <workflow-file>/<job-id>)
-    - '*/lint'
+  exemptWorkflows:      # workflow file names (globs)
+    - triage.yml
+  exemptJobs:           # '<workflow>/<job>' (globs)
+    - 'bot/warm-cache'
 ```
 
-- **Release context** = a `release` trigger, a `publishActions` action, or a
-  `publishScriptPatterns` match in a `run:` script.
-- **Per-trigger resolution.** The rule reasons about the events on which each
-  step actually runs: the job-level and step-level `if:` conditions and the
-  cache inputs are resolved when they are `github.event_name ==/!= '<event>'`
-  comparisons, and the finding fires only when a restore and a publish can
-  share an event. So `cache: ${{ github.event_name != 'workflow_dispatch' && 'maven' || '' }}`
-  on a job that publishes only on `workflow_dispatch`, a caching step whose
-  `if:` excludes the publish trigger, or a job whose `if:` excludes the release
-  event are all silent. In a reusable workflow (`workflow_call`)
-  `github.event_name` is the caller's event and the comparisons are resolved
-  against it. Any other whole-value expression is unresolvable and reports
-  [ISSUE-717](#issue-717---cache-poisoning-unresolved) instead of this High.
-- **`cacheActions` `mode`:** `always` (restores whenever present), `default`
-  (restores unless `disableInput` holds `disableValue`, literally or through a
-  `${{ github.event_name ==/!= '<event>' }}` comparison), or `opt-in` (restores
-  only when `enableInput` names a package manager, literally or through the
-  conditional form above). Add your org's own cache actions with the matching
-  mode.
-- **`allowedJobs`** is the escape hatch: a glob whitelist for release jobs you
-  have reviewed and accept (e.g. a lint job that caches but ships nothing).
-
----
-
-## ISSUE-717 - `cache-poisoning-unresolved`
-
-**Severity:** `medium` • **Control:** `releaseWorkflowsMustNotRestoreUntrustedCache`
-
-A release or publish job enables or disables a build cache through a GitHub
-expression the analyzer cannot resolve per trigger: an opt-in `enableInput`
-or a default-mode `disableInput` holding a whole-value `${{ }}` expression
-outside the `github.event_name ==/!= '<event>'` shapes (a `vars.*`, an
-`inputs.*`, a compound condition). The cache may be off exactly on the runs
-that publish, or on for them; the expression does not say which statically,
-so asserting the ISSUE-705 High would be a guess. The finding fires only when
-the step itself can still share an event with a publish.
-
-```yaml
-# ❌ cache enablement Plumber cannot resolve
-on:
-  workflow_dispatch:
-  pull_request:
-jobs:
-  publish:
-    steps:
-      - uses: actions/setup-java@v4
-        with:
-          cache: ${{ vars.CACHE_MANAGER }}   # on? off? depends on a repo variable
-      - run: npm publish
-```
-
-```yaml
-# ✅ provably off on the publish trigger, resolved per trigger
-on:
-  workflow_dispatch:
-  pull_request:
-jobs:
-  publish:
-    steps:
-      - uses: actions/setup-java@v4
-        with:
-          cache: ${{ github.event_name != 'workflow_dispatch' && 'maven' || '' }}
-      - name: Publish
-        if: github.event_name == 'workflow_dispatch'
-        run: npm publish
-```
-
-Make the condition statically checkable (the `github.event_name != '<publish
-trigger>' && '<manager>' || ''` form or its `==` inverse, or a step whose `if:`
-excludes the publish trigger), or scope the cache key and every `restore-keys`
-entry to the release ref. Same control, same `.plumber.yaml` block and
-`allowedJobs` escape hatch as ISSUE-705.
+`releaseWorkflowsMustNotRestoreUntrustedCache`, the previous name of this
+control, is ignored with a warning. Run `plumber config migrate` to rename it.
 
 ---
 
@@ -2110,7 +2059,7 @@ and in `.plumber.yaml`) is declared in
 | ISSUE-102 / 103 | `containerImageMustNotUseForbiddenTags` |
 | ISSUE-701 | `actionsMustBePinnedByCommitSha` |
 | ISSUE-713 | `githubActionMustComeFromAuthorizedSources` _(`minimumStars` requires the GitHub API)_ |
-| ISSUE-705 / 717 | `releaseWorkflowsMustNotRestoreUntrustedCache` |
+| ISSUE-705 | `untrustedTriggersMustNotWriteCache` |
 | ISSUE-706 | `dockerfilesMustPinBaseImageByDigest` |
 | ISSUE-712 | `releaseWorkflowsMustSignArtefacts` |
 | ISSUE-402 | `externalRefsMustNotCollide` |

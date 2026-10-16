@@ -7,23 +7,11 @@ import (
 	"github.com/getplumber/plumber/internal/ir"
 )
 
-// shippedPublishConfig is the publish inventory of the shipped default
-// configuration (defaultConfig/.plumber.yaml), the one a real run hands the
-// facts policy: it names no docker action and lists the release actions as
-// publish actions.
-var shippedPublishConfig = map[string]any{"cachePoisoning": map[string]any{
-	"publishActions": []any{
-		"pypa/gh-action-pypi-publish", "JS-DevTools/npm-publish", "gradle/publish-plugin",
-		"softprops/action-gh-release", "ncipollo/release-action", "goreleaser/goreleaser-action",
-		"crazy-max/ghaction-docker-buildx", "changesets/action",
-	},
-	"publishScriptPatterns": []any{
-		`(?i)(npm|pnpm|yarn|bun)\s+publish`, `(?i)cargo\s+publish`, `(?i)twine\s+upload`,
-		`(?i)poetry\s+publish`, `(?i)gh\s+release\s+create`, `(?i)goreleaser\s+release`,
-		`(?i)semantic-release`, `(?i)gradlew?\b[^\n]*\bpublish`, `(?i)\bmvnw?\b[^\n]*\bdeploy\b`,
-		`(?i)dotnet\s+nuget\s+push`, `(?i)gem\s+push`, `(?i)docker\s+push`,
-	},
-}}
+// shippedPublishConfig is the configuration a real run hands the facts
+// policy for its publish inventory: none, the inventory is built in (it
+// names no docker action and lists the release actions as publish
+// actions).
+var shippedPublishConfig map[string]any
 
 // impactsWithConfig runs the facts policy on one GitHub job under cfg and
 // returns its impacts as kind to state, every kind once.

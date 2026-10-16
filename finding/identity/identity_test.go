@@ -375,7 +375,7 @@ func TestDeclarations_EveryCodeFingerprintIsPinned(t *testing.T) {
 		"ISSUE-702": "875ec32b1513e8a8",
 		"ISSUE-703": "cf522b35974397b7",
 		"ISSUE-704": "5d5da28eff4463bc",
-		"ISSUE-705": "f9a219129fa88eef",
+		"ISSUE-705": "443550083abbf9a4",
 		"ISSUE-706": "96136288dee3d9d0",
 		"ISSUE-707": "9fa2d7e4325d1945",
 		"ISSUE-708": "02b9293b41fd49ea",
@@ -386,7 +386,6 @@ func TestDeclarations_EveryCodeFingerprintIsPinned(t *testing.T) {
 		"ISSUE-714": "4962cbb919d4ba0a",
 		"ISSUE-715": "2eb0f41ca9a31bd8",
 		"ISSUE-716": "c0112771c48f6ab5",
-		"ISSUE-717": "656e4d2dadbe9825",
 		"ISSUE-801": "1cf1a105d1a87734",
 		"ISSUE-802": "d3d7331043f5614c",
 		"ISSUE-803": "46e3e735b1ceec41",
@@ -567,7 +566,7 @@ func TestIdentity_Row85_OverrideFingerprintKeysTheOverrideCodes(t *testing.T) {
 			t.Fatalf("%s: a different override content must be a different identity", code)
 		}
 	}
-	if identity.RecipeVersion != 6 {
-		t.Fatalf("row 107 is a deliberate re-key: RecipeVersion must be 6, got %d", identity.RecipeVersion)
+	if identity.RecipeVersion != 7 {
+		t.Fatalf("issue #533 (ISSUE-705 re-keyed on {file, job}) is the latest deliberate re-key: RecipeVersion must be 7, got %d", identity.RecipeVersion)
 	}
 }

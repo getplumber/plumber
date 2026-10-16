@@ -199,16 +199,16 @@ func TestPathBlockRenderingUnverified(t *testing.T) {
 	}
 }
 
-// A poisoned cache names, in a note, the job whose run can write it.
-func TestPathBlockNamesTheJobThatCanWriteTheCache(t *testing.T) {
+// What could not be checked about the entry is a note under the block.
+func TestPathBlockPrintsTheEntryNote(t *testing.T) {
 	b := control.PathBlock{
-		Tier: control.TierCritical, Entry: "cache writable by an untrusted run: npm-key",
-		Branches:    []control.PathBlockBranch{{Job: "release/publish", Reach: "1 secret; publishing"}},
-		EntryWriter: "a run of job pr-preview/preview can write the cache", So: "a compromise here ships a malicious release to your users or into production",
+		Tier: control.TierHigh, Entry: "owner/repo@v3 (action source could not be verified)",
+		Branches:        []control.PathBlockBranch{{Job: "release/publish", Reach: "1 secret; publishing"}},
+		EntryUnverified: "Plumber could not check what it runs", So: "a compromise here ships a malicious release to your users or into production",
 	}
 	var out bytes.Buffer
 	renderPathBlock(&out, 1, b, termCaps{Color: colorOff}, reportBlock)
-	want := "       Note   a run of job pr-preview/preview can write the cache\n"
+	want := "       Note   Plumber could not check what it runs\n"
 	if got := out.String(); !strings.Contains(got, want) {
 		t.Errorf("block lacks %q:\n%s", want, got)
 	}

@@ -93,7 +93,9 @@ import (
 //	   on; every 406/409 finding re-keys.
 //	6  (2026-09-18, row 107): ISSUE-405, ISSUE-408 and ISSUE-417 became
 //	   singletons (one finding per rule evaluation).
-const RecipeVersion = 6
+//	7  (2026-10-16, issue #533): ISSUE-705 flags a job granted cache write on
+//	   an untrusted trigger and keys on {file, job}; ISSUE-717 is retired.
+const RecipeVersion = 7
 
 // fingerprintLength is how many hex characters of the digest the short
 // fingerprint keeps. 16 hex chars (64 bits) is short enough to read in a CSV

@@ -2,6 +2,7 @@ package control
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 
 	"github.com/getplumber/plumber/configuration"
@@ -111,6 +112,8 @@ func AggregateGitHubStats(pipeline *ir.NormalizedPipeline, pc *configuration.Plu
 		for j := range job.Services {
 			countJobImage(stats, job.Services[j], forbiddenTags, exempt)
 		}
+
+		countCacheWriteExemption(stats, job, gh.UntrustedTriggersMustNotWriteCache)
 
 		// Docker-in-Docker services.
 		if jobHasDinD(job) {
@@ -339,6 +342,41 @@ func isTrustedOwner(ref string, trustedOwners []string) bool {
 
 func isShaPinned(ref string) bool {
 	return shaRefRegex.MatchString(ref)
+}
+
+// countCacheWriteExemption lists a job ISSUE-705 would flag (cache write
+// granted on an untrusted trigger) that the control's exemptWorkflows or
+// exemptJobs skip, so the accepted risk shows in the output instead of
+// hiding the job.
+func countCacheWriteExemption(stats *GitHubAnalysisStats, job *ir.Job, c *configuration.CacheWriteControlConfig) {
+	if c == nil || job.CacheMode == nil {
+		return
+	}
+	if len(utils.CacheWriteRiskyTriggers(job.CacheMode.Effective, effectiveTriggers(job))) == 0 {
+		return
+	}
+	if utils.CacheWriteExempt(c.ExemptWorkflows, c.ExemptJobs, job.Name, job.OriginFile) {
+		stats.CacheWriteExempted = append(stats.CacheWriteExempted, job.Name)
+		slices.Sort(stats.CacheWriteExempted)
+	}
+}
+
+// effectiveTriggers is the events a job runs on: its own, and for a
+// reusable workflow (workflow_call) each caller's instead. Mirrors
+// _effective_triggers in policies/cache_poisoning.rego.
+func effectiveTriggers(job *ir.Job) []string {
+	var out []string
+	for _, t := range job.Triggers {
+		if t != "workflow_call" {
+			out = append(out, t)
+		}
+	}
+	if slices.Contains(job.Triggers, "workflow_call") {
+		for _, c := range job.Callers {
+			out = append(out, c.Triggers...)
+		}
+	}
+	return out
 }
 
 // imageExemption is the exemptImages list with the configured forbidden

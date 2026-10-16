@@ -1,0 +1,21 @@
+{
+  "source": "reconstruction of the cache-mode bypass GitHub documents for low-trust triggers (issue #533)",
+  "commit": "",
+  "captured": "2026-10-16",
+  "group": "incident",
+  "visibility": "public",
+  "defaultBranch": "main",
+  "branches": [{"name": "main", "protected": true}],
+  "note": "The shape GitHub warns about when it documents cache-mode: an issue_comment job, which runs on the default branch and would only read its caches, declares cache-mode: write and pastes the comment body into a shell. Anyone who can comment runs code there. With the grant, the triage job saves its setup-go cache in the default branch's scope, the very key the push-triggered release job restores before running npm publish with NPM_TOKEN, so the comment body walks one hop along that cache edge into the release job: an untrusted expression reaching a secret and a publish, Critical. The grant itself (ISSUE-705) is the entry of a second path from the triage job into every job restoring a cache, whatever key it saves (the run's cache token can save any), entered by the comment body (anyone who can comment, nothing caps it): Critical too. Every action is pinned by SHA from GitHub's own owners, so no dependency path joins. Hand count: two Critical paths 2 x 35 = 70, no other finding, so 100 - 70 = 30: E.",
+  "expect": {
+    "maxTier": "critical",
+    "paths": [
+      {"entryKind": "untrusted_expression", "tier": "critical", "job": "triage/label", "subjectContains": "github.event.comment.body", "reachKind": "impact:publishes", "state": "proven",
+       "sentenceContains": ["`github.event.comment.body`", "`triage/label`", "`NPM_TOKEN`"]},
+      {"entryKind": "poisoned_cache", "tier": "critical", "job": "triage/label", "subjectContains": "triage/label", "reachKind": "impact:publishes", "state": "proven",
+       "sentenceContains": ["Code running in `triage/label` can write caches that `release/publish` restores", "`cache-mode: write`", "`NPM_TOKEN`", "publishes the package"],
+       "sentenceOmits": ["shared across branches"]}
+    ],
+    "letter": "E"
+  }
+}

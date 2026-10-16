@@ -251,9 +251,7 @@ type Job struct {
 	// (GitHub Actions), in the same order as Scripts, "" for a step that
 	// declared none. Set only when at least one run step in the job is
 	// conditional, so the field stays absent in the common unconditional
-	// case. Read by the cache-poisoning release-path resolution
-	// (ISSUE-705/717) to keep a publish script that cannot run on a
-	// given trigger off that trigger's release path.
+	// case. Read by the situation facts alongside the job's texts.
 	ScriptIfs    []string          `json:"scriptIfs,omitempty"`
 	AllowFailure bool              `json:"allowFailure,omitempty"`
 	When         string            `json:"when,omitempty"`
@@ -389,9 +387,9 @@ type Job struct {
 	// If is the JOB-level `if:` expression (GitHub Actions), verbatim,
 	// "" when the job is unconditional. Distinct from Conditions, which
 	// flattens the job's and its steps' conditions together for
-	// pattern-matching policies; per-trigger resolution (ISSUE-705/717)
-	// needs the job gate alone, because it excludes every step from the
-	// events it rules out.
+	// pattern-matching policies; per-trigger resolution (the situation's
+	// gated_triggers) needs the job gate alone, because it excludes every
+	// step from the events it rules out.
 	If string `json:"if,omitempty"`
 	// Dead is true when the job-level `if:` is the constant false (`if:
 	// false`, `if: ${{ false }}`, `if: 'false'`): the job never runs, so
@@ -417,6 +415,12 @@ type Job struct {
 	// JobHasConcurrency is true when the job has its own
 	// `concurrency:` block, independent of the workflow-level one.
 	JobHasConcurrency bool `json:"jobHasConcurrency,omitempty"`
+
+	// CacheMode is the GitHub `cache-mode:` in effect for the job: its
+	// own, else its workflow's. Nil when neither declares one, which
+	// leaves GitHub's trigger-based default (write on trusted triggers,
+	// read on low-trust ones).
+	CacheMode *CacheModeDecl `json:"cacheMode,omitempty"`
 
 	// Environment is the `environment:` field declared on the job
 	// (GitHub Actions deployment environment gate). Accepts both the
@@ -490,9 +494,8 @@ type Action struct {
 	Line int `json:"line,omitempty"`
 	// If is the step-level `if:` expression guarding this action step
 	// (GitHub Actions), verbatim from the workflow YAML, "" when the
-	// step is unconditional. Policies that reason per trigger
-	// (ISSUE-705/717) use it to exclude the step from events its
-	// condition rules out.
+	// step is unconditional. Policies that reason per trigger can use
+	// it to exclude the step from events its condition rules out.
 	If       string          `json:"if,omitempty"`
 	Metadata *ActionMetadata `json:"metadata,omitempty"`
 	Comment  string          `json:"comment,omitempty"`
@@ -829,6 +832,20 @@ func NormalizeVisibility(raw string) string {
 		return VisibilityPrivate
 	}
 	return VisibilityUnknown
+}
+
+// CacheModeDecl is a GitHub `cache-mode:` declaration. Value is the text as
+// written. Effective is the access it grants (read, write, write-only or
+// none), the same on every run: GitHub accepts an expression there only
+// when it reads no context. Effective is empty when the value grants
+// nothing GitHub would run (an unknown word, or an expression reading a
+// context, which makes the workflow file invalid). Level says whether the
+// job declares it or inherits its workflow's; Line is the declaration's.
+type CacheModeDecl struct {
+	Value     string `json:"value"`
+	Effective string `json:"effective,omitempty"`
+	Line      int    `json:"line"`
+	Level     string `json:"level"`
 }
 
 // CacheRef is one cache a job restores, saves or both. A Prefix entry is a

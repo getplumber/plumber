@@ -66,32 +66,28 @@ func entryClause(p AttackPath) string {
 	case EntryUnprotectedPush:
 		return fmt.Sprintf("Anyone with write access to %s runs %s", code(p.Entry.Subject), job)
 	case EntryPoisonedCache:
-		return fmt.Sprintf("A run that is not trusted can write %s that %s restores", cacheWords(p.Entry.Subject), job)
+		return fmt.Sprintf("Code running in %s can write caches that %s restore%s, since %s lifts GitHub's read-only cache access for its untrusted triggers",
+			job, joinAnd(codeSpans(p.Jobs[1:])), pluralS(len(p.Jobs[1:]) == 1), code("cache-mode: write"))
 	}
 	return "An attacker can reach " + job
 }
 
-// namedCache is a cache name cacheEntrySubject gives a caching action's
-// own cache ("npm cache of setup-node", "cache of setup-go"), read as words.
-var namedCache = regexp.MustCompile(`^(.+ )?cache of [^ ]+$`)
-
-// cacheWords is how a sentence names the cache of a poisoned_cache entry:
-// a rust-cache key family by its prefix, in code; a name Plumber gave a
-// caching action's cache, as words; a literal key, in code.
-func cacheWords(subject string) string {
-	if prefix, ok := strings.CutPrefix(subject, rustCacheSubject); ok {
-		return "the Rust build cache under the key prefix " + code(prefix)
+// codeSpans renders each name as its own code span.
+func codeSpans(items []string) []string {
+	out := make([]string, len(items))
+	for i, s := range items {
+		out[i] = code(s)
 	}
-	if namedCacheSubject(subject) {
-		return "the " + subject
-	}
-	return "the cache " + code(subject)
+	return out
 }
 
-// namedCacheSubject reports whether a poisoned_cache entry's subject is a
-// name cacheEntrySubject gave the cache rather than a literal key.
-func namedCacheSubject(subject string) bool {
-	return strings.HasPrefix(subject, rustCacheSubject) || namedCache.MatchString(subject)
+// pluralS is the verb ending of a third-person present: "s" for one
+// subject, "" for several.
+func pluralS(one bool) string {
+	if one {
+		return "s"
+	}
+	return ""
 }
 
 // expressionControllers maps the event payload an untrusted expression
@@ -461,8 +457,6 @@ func entryComputedAtRunTime(p AttackPath) bool {
 // assumed. Secrets Plumber could not list need no line: Reaches says so.
 func unverifiedLines(p AttackPath) (entry, reach string) {
 	switch {
-	case p.Entry.State == "unresolvable" && p.EntryKind == EntryPoisonedCache:
-		return "Plumber could not check that the cache is on when the job publishes", ""
 	case entryComputedAtRunTime(p):
 		return "the reference is computed at run time, so Plumber cannot know what runs", ""
 	case p.Entry.State == "unresolvable":
@@ -635,7 +629,7 @@ func soActor(p AttackPath, kind string) string {
 	case actorForkPR:
 		return "as anyone who opens a pull request from a fork"
 	case actorCache:
-		return "as anyone who can write that cache"
+		return "as anyone who can run code in that job"
 	case actorPush:
 		return "as anyone with write access to " + code(p.Entry.Subject)
 	}

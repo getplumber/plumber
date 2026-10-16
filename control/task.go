@@ -510,42 +510,16 @@ func buildEngineConfig(controls *configuration.ControlsConfig, gitlabURL string)
 		}
 	}
 
-	if c := controls.ReleaseWorkflowsMustNotRestoreUntrustedCache; c != nil {
-		entry := map[string]any{}
-		if len(c.PublishActions) > 0 {
-			entry["publishActions"] = c.PublishActions
+	if c := controls.UntrustedTriggersMustNotWriteCache; c != nil {
+		block := map[string]any{}
+		if len(c.ExemptWorkflows) > 0 {
+			block["exemptWorkflows"] = c.ExemptWorkflows
 		}
-		if len(c.CacheActions) > 0 {
-			specs := make([]map[string]any, 0, len(c.CacheActions))
-			for _, s := range c.CacheActions {
-				m := map[string]any{"action": s.Action, "mode": s.Mode}
-				if s.DisableInput != "" {
-					m["disableInput"] = s.DisableInput
-				}
-				if s.DisableValue != nil {
-					m["disableValue"] = *s.DisableValue
-				}
-				if s.EnableInput != "" {
-					m["enableInput"] = s.EnableInput
-				}
-				if s.EnableContains != "" {
-					m["enableContains"] = s.EnableContains
-				}
-				specs = append(specs, m)
-			}
-			entry["cacheActions"] = specs
+		if len(c.ExemptJobs) > 0 {
+			block["exemptJobs"] = c.ExemptJobs
 		}
-		if len(c.PublishScriptPatterns) > 0 {
-			entry["publishScriptPatterns"] = c.PublishScriptPatterns
-		}
-		if len(c.PublishScriptExcludePatterns) > 0 {
-			entry["publishScriptExcludePatterns"] = c.PublishScriptExcludePatterns
-		}
-		if len(c.AllowedJobs) > 0 {
-			entry["allowedJobs"] = c.AllowedJobs
-		}
-		if len(entry) > 0 {
-			cfg["cachePoisoning"] = entry
+		if len(block) > 0 {
+			cfg["untrustedTriggersMustNotWriteCache"] = block
 		}
 	}
 

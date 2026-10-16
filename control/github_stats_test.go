@@ -247,3 +247,34 @@ func TestAggregate_ExemptImagesNeedConfiguredTags(t *testing.T) {
 		t.Errorf("exempted %v (%d unpinned), want nothing", s.ImagesExempted, s.ImagesExemptUnpinned)
 	}
 }
+
+// TestAggregate_CacheWriteExemptionsListTheAcceptedRisk pins
+// CacheWriteExempted to the rule: an exempted job (its workflow file on
+// exemptWorkflows, or itself on exemptJobs) is listed only when ISSUE-705
+// would have flagged it, granted cache write on an untrusted trigger, its
+// own or a caller's for a reusable workflow. An exempted job that grants
+// nothing, or runs only on safe triggers, has no risk to accept.
+func TestAggregate_CacheWriteExemptionsListTheAcceptedRisk(t *testing.T) {
+	write := &ir.CacheModeDecl{Value: "write", Effective: "write", Line: 5, Level: "job"}
+	read := &ir.CacheModeDecl{Value: "read", Effective: "read", Line: 5, Level: "job"}
+	pipeline := &ir.NormalizedPipeline{Jobs: []ir.Job{
+		{Name: "triage/label", OriginFile: ".github/workflows/triage.yml", Triggers: []string{"issue_comment"}, CacheMode: write},
+		{Name: "triage/greet", OriginFile: ".github/workflows/triage.yml", Triggers: []string{"issue_comment"}, CacheMode: read},
+		{Name: "ci/warm", OriginFile: ".github/workflows/ci.yml", Triggers: []string{"pull_request_target"}, CacheMode: write},
+		{Name: "ci/build", OriginFile: ".github/workflows/ci.yml", Triggers: []string{"pull_request_target"}, CacheMode: write},
+		{Name: "bot/push", OriginFile: ".github/workflows/bot.yml", Triggers: []string{"push"}, CacheMode: write},
+		{Name: "warm/warm", OriginFile: ".github/workflows/warm.yml", Triggers: []string{"workflow_call"}, CacheMode: write,
+			Callers: []ir.ReusableCaller{{Job: "caller/call", Triggers: []string{"workflow_run"}}}},
+	}}
+	pc := &configuration.PlumberConfig{GitHub: &configuration.ProviderConfig{Controls: configuration.ControlsConfig{
+		UntrustedTriggersMustNotWriteCache: &configuration.CacheWriteControlConfig{
+			ExemptWorkflows: []string{"triage.yml", "warm.yml"},
+			ExemptJobs:      []string{"ci/warm", "bot/*"},
+		},
+	}}}
+	s := AggregateGitHubStats(pipeline, pc)
+	want := []string{"ci/warm", "triage/label", "warm/warm"}
+	if strings.Join(s.CacheWriteExempted, ",") != strings.Join(want, ",") {
+		t.Errorf("CacheWriteExempted = %v, want %v", s.CacheWriteExempted, want)
+	}
+}

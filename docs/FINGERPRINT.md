@@ -35,7 +35,7 @@ The two sides never have to agree on a hash, only on the selection.
 
 ### The recipe version
 
-`identity.RecipeVersion` is currently **6**. Store it next to anything you key
+`identity.RecipeVersion` is currently **7**. Store it next to anything you key
 off the selection.
 
 It tracks identity **outcomes**, not just the code in the package, so it moves
@@ -65,6 +65,7 @@ signal.
 | 4 | Per-code declarations (`finding/identity/declarations.go`) replace the global subject-key priority list: every registered code now names its own ordered identity fields instead of the recipe picking one field by priority at hash time. The canonical form is uniformly `key=value` per declared field, where v3 rendered `code` / `file` / `job` / `step` bare and only the subject as `key=value`; every fingerprint value changed at this bump, even for the codes whose selected fields did not change. No registered code keys on its prose: the 29 GitHub controls that measured onto `message` were moved onto the subject their rule emits (`uses`, `variableName`, `condition`, `ecosystem`) or onto canonical coordinates alone (`{file, job}`, `{file}`, or the `{}` per-repository singleton) where the finding is inherently one per job, per file, or per repository. The `message` fallback remains only as the backstop for an undeclared code, which the parity test makes unreachable. |
 | 5 | ISSUE-406 and ISSUE-409 (the forbidden override of a required template / component) gain `overrideFingerprint`, the digest the collector computes over the override content. Their identity was the required path alone, so every override of one template was the same issue forever and a decision taken on one override silently carried over to whatever the override became next. With the fingerprint in the key, the identity moves exactly when the overriding content moves, and only then: a dismissal covers only the override content it was made on. Every ISSUE-406 and ISSUE-409 finding re-keys once at this bump. |
 | 6 | ISSUE-405, ISSUE-408 and ISSUE-417 (missing required template / component / action) become singletons (`{}`): one finding per rule evaluation, the code alone is the identity. The missing entries now travel as data (`missingGroups`, one list per alternative) instead of shaping the identity, so a dismissal survives changes to the missing set. Every ISSUE-405, ISSUE-408 and ISSUE-417 finding re-keys once at this bump. |
+| 7 | ISSUE-705 flags a job granted cache write (`cache-mode: write`) on an untrusted trigger instead of a release job's cache restore, and keys on `{file, job}`: one cache-mode in effect per job. ISSUE-717 is retired. Every ISSUE-705 finding re-keys once at this bump (issue #533). |
 
 The SARIF `partialFingerprints["plumber/v1"]` key is the name of that SARIF
 entry, not the recipe version. It stays at `v1` across bumps, because renaming

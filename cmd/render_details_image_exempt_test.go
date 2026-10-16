@@ -54,7 +54,7 @@ func TestBuildGitLabControlStats_ExemptImages(t *testing.T) {
 		{Label: "Not Pinned By Digest", Value: "1"},
 		{Label: "Using Forbidden Tags", Value: "1"},
 		{Label: statUnresolvedImageRefs, Value: "1"},
-		{Label: statExemptedImages, Value: "docker.io/debian:latest@sha256:913f6706df59, ghcr.io/my-org/report-tool:latest"},
+		{Label: statExempted, Value: "docker.io/debian:latest@sha256:913f6706df59, ghcr.io/my-org/report-tool:latest"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("stats = %+v, want %+v", got, want)
@@ -102,7 +102,7 @@ func TestBuildGitHubControlStats_ExemptImages(t *testing.T) {
 		{Label: "Pinned By Digest", Value: "1"},
 		{Label: "Not Pinned By Digest", Value: "1"},
 		{Label: "Using Forbidden Tags", Value: "1"},
-		{Label: statExemptedImages, Value: "debian:latest, ghcr.io/my-org/report-tool:latest"},
+		{Label: statExempted, Value: "debian:latest, ghcr.io/my-org/report-tool:latest"},
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("stats = %+v, want %+v", got, want)
@@ -118,7 +118,7 @@ func TestRenderFindingGroupsV4_ExemptedImagesNote(t *testing.T) {
 		Title: "Container images must not use forbidden tags",
 		Stats: []statLine{
 			{Label: statTotalImages, Value: "3"},
-			{Label: statExemptedImages, Value: "debian:latest, ghcr.io/my-org/report-tool:latest"},
+			{Label: statExempted, Value: "debian:latest, ghcr.io/my-org/report-tool:latest"},
 		},
 		Findings: []detailedFinding{{Code: "ISSUE-102", Message: "alpine:latest", ContextualSeverity: "medium"}},
 	}}
@@ -139,7 +139,7 @@ func TestRenderPassedControlsSummary_ExemptedImages(t *testing.T) {
 		Title: "Container images must not use forbidden tags",
 		Stats: []statLine{
 			{Label: statTotalImages, Value: "1"},
-			{Label: statExemptedImages, Value: "debian:latest"},
+			{Label: statExempted, Value: "debian:latest"},
 		},
 	}}
 	out := captureStdoutAll(t, func() { renderPassedControlsSummary(groups) })

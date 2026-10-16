@@ -1,0 +1,10 @@
+on: issue_comment
+jobs:
+  label:
+    runs-on: ubuntu-latest
+    cache-mode: "${{ github.event_name == 'issue_comment' && 'write' || 'read' }}"
+    steps:
+      - uses: actions/cache@v4
+        with:
+          path: ~/.npm
+          key: npm-${{ hashFiles('package-lock.json') }}

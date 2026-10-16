@@ -84,7 +84,6 @@ func TestEntryKindsPinned(t *testing.T) {
 		"ISSUE-715": EntryMutableDependency,
 		"ISSUE-716": EntryMutableDependency,
 		"ISSUE-705": EntryPoisonedCache,
-		"ISSUE-717": EntryPoisonedCache,
 		"ISSUE-802": EntryPRTarget,
 		"ISSUE-804": EntryPRTarget,
 	}

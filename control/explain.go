@@ -222,10 +222,6 @@ type PathBlock struct {
 	EntrySubject string // the part of Entry read off the workflow: "docker.io/alpine:latest"
 	// Branches is one per entry job of the path, in the path's job order.
 	Branches []PathBlockBranch
-	// EntryWriter names, for a poisoned cache, the one job whose run can
-	// write the cache ("a run of job pr-preview/preview can write the
-	// cache"); empty when several can, or for any other entry.
-	EntryWriter string
 	// EntryUnverified and ReachUnverified say what could not be checked:
 	// about the entry, or about what it reaches. Empty when there is
 	// nothing to say.
@@ -282,17 +278,13 @@ func NewPathBlock(p AttackPath, findings []opaengine.Finding) PathBlock {
 			}
 		}
 	}
-	if p.EntryKind == EntryPoisonedCache {
-		files := jobFiles(p, findings)
-		b.EntryWriter = cacheWriterLine(p.cacheWriters, files, onGitHub(files, slices.Concat(p.Jobs, p.cacheWriters)))
-	}
 	switch {
 	case slices.Contains(p.Modifiers, "cache_writer_cap"):
 		need := "a dependency compromise"
 		if slices.Contains(p.Modifiers, "push_entry_cap") {
 			need = "write access"
 		}
-		b.Cap = "Capped at " + tierTitle(p.Tier) + ": the jobs that can write the cache need " + need + " first"
+		b.Cap = "Capped at " + tierTitle(p.Tier) + ": the job that writes the cache needs " + need + " first"
 	case slices.Contains(p.Modifiers, "push_entry_cap"):
 		b.Cap = "Capped at High: it needs write access first"
 	case slices.Contains(p.Modifiers, "source_cap"):
@@ -314,44 +306,6 @@ func NewPathBlock(p AttackPath, findings []opaengine.Finding) PathBlock {
 		b.ReachUnverified = secretsUnlisted
 	}
 	return b
-}
-
-// cacheWriterLine names the jobs whose run can write a poisoned cache the
-// way a branch names its job (jobPhrase), the first three, grouped by the
-// workflow they are in, then a count of the rest; "" with none.
-func cacheWriterLine(writers []string, files map[string]string, github bool) string {
-	if len(writers) == 0 {
-		return ""
-	}
-	if len(writers) == 1 {
-		return "a run of " + jobPhrase(writers[0], files, github) + " can write the cache"
-	}
-	shown := writers[:min(len(writers), 3)]
-	type group struct {
-		workflow string
-		jobs     []string
-	}
-	var groups []*group
-	for _, w := range shown {
-		id, workflow := jobAndWorkflow(w, files, github)
-		if len(groups) == 0 || groups[len(groups)-1].workflow != workflow {
-			groups = append(groups, &group{workflow: workflow})
-		}
-		g := groups[len(groups)-1]
-		g.jobs = append(g.jobs, code(id))
-	}
-	parts := make([]string, len(groups))
-	for i, g := range groups {
-		parts[i] = joinAnd(g.jobs)
-		if g.workflow != "" {
-			parts[i] += " from workflow " + code(g.workflow)
-		}
-	}
-	list := joinAnd(parts)
-	if rest := len(writers) - len(shown); rest > 0 {
-		list = fmt.Sprintf("%s and %d more", strings.Join(parts, ", "), rest)
-	}
-	return "runs of jobs " + list + " can write the cache"
 }
 
 // assumedTokenOnProvenPath reports whether a proven path holds a default

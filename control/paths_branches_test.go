@@ -255,22 +255,19 @@ func TestAttackPathJSONCarriesItsBranches(t *testing.T) {
 }
 
 // Every entry job of a path can write the cache, not only the strongest:
-// a dependency entering a job that holds a secret and a job that runs on
-// push makes the push job a writer.
+// a dependency entering a job that holds a secret and the job granted
+// cache write makes the latter a writer.
 func TestAnyEntryJobOfAPathCanWriteTheCache(t *testing.T) {
 	holder := JobSituation{}
 	holder.Privilege.Secrets = []string{"AWS_KEY"}
 	holder.Privilege.SecretsState = "proven"
-	sit := cacheSituation(map[string]JobSituation{"ci/a-holder": holder, "ci/build": {RefTriggers: []string{"push"}, CacheScopes: defaultScope}})
+	sit := cacheSituation(map[string]JobSituation{"ci/a-holder": holder})
 	uses := map[string]any{"uses": "some/action@v1"}
-	findings := []opaengine.Finding{cacheFinding(), finding("ISSUE-701", "ci/a-holder", uses), finding("ISSUE-701", "ci/build", uses)}
+	findings := []opaengine.Finding{cacheFinding(), finding("ISSUE-701", "ci/a-holder", uses), finding("ISSUE-701", "triage/label", uses)}
 	paths := assemblePaths(findings, sit)
 	cache := cachePaths(paths)
-	if len(cache) != 1 {
-		t.Fatalf("want the cache path, the push job writing it, got %+v", paths)
-	}
-	if b := NewPathBlock(cache[0], nil); b.EntryWriter != "a run of job `build` from workflow `ci` can write the cache" {
-		t.Errorf("writer = %q", b.EntryWriter)
+	if len(cache) != 1 || cache[0].Jobs[0] != "triage/label" {
+		t.Fatalf("want the cache path, the writer entered by the weaker branch, got %+v", paths)
 	}
 }
 

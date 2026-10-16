@@ -36,13 +36,11 @@ const (
 	CodeActionUnpinned ErrorCode = "ISSUE-701"
 	// ISSUE-704: Container registry password is hard-coded in the workflow
 	CodeContainerHardcodedCredentials ErrorCode = "ISSUE-704"
-	// ISSUE-705: Release/publish workflow primes a build cache from attacker-controlled artifacts
+	// ISSUE-705: Job granted cache write (cache-mode: write) on an untrusted trigger
 	CodeCachePoisoning ErrorCode = "ISSUE-705"
-	// ISSUE-717: Cache enablement on a release/publish path hinges on an
-	// expression the analyzer cannot resolve per trigger. The unproven
-	// variant of ISSUE-705 (one control, two codes graded by certainty,
-	// the ISSUE-307/310 pattern).
-	CodeCachePoisoningUnresolved ErrorCode = "ISSUE-717"
+	// ISSUE-717 is RETIRED, do not reuse. It carried the unresolvable
+	// conditional-cache variant of the old release cache check, removed
+	// with it in issue #533.
 	// ISSUE-702: Action is hosted in an archived GitHub repository
 	CodeActionArchivedRepo ErrorCode = "ISSUE-702"
 	// ISSUE-707: Pinned commit SHA does not exist in the action's upstream repository
@@ -328,24 +326,12 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 	CodeCachePoisoning: {
 		Code:        CodeCachePoisoning,
 		Severity:    SeverityHigh,
-		Title:       "Release/publish workflow may consume a poisoned build cache",
-		Description: "A release, tag or publish workflow uses `actions/cache@*` (or an equivalent cache action) without scoping the cache key to the ref being released. Caches on GitHub Actions are shared across branches according to the fallback rules: a malicious PR run on a feature branch can populate the same cache key that the release job later restores, silently injecting compiled artefacts, dependencies, or build scripts into the published output. Past supply-chain incidents have abused exactly this fallback to publish compromised packages to PyPI and npm.",
-		Remediation: "Either disable the cache entirely on release/publish jobs, or scope the `key:` to the ref being released (e.g. `key: release-${{ github.ref_name }}-${{ hashFiles('**/go.sum') }}`) without a `restore-keys:` fallback that reaches into PR-populated entries. Verify artefacts against a checksum after restoring.",
+		Title:       "Untrusted trigger granted cache write",
+		Description: "A job runs on an event GitHub restricts to read-only cache access (pull_request_target, issue_comment, workflow_run and every other event that runs on the default branch, apart from push, workflow_dispatch, repository_dispatch, delete, registry_package, page_build and schedule), and its `cache-mode:` (on the job or its workflow) is `write` or `write-only`. GitHub isolates caches by ref, and a run restores caches from its own ref and from the default branch. The explicit grant lifts GitHub's read-only default, so code running in that job (a comment body, a pull request's head, an upstream run's artifact) can create or overwrite caches that every default-branch run restores, including release and publish jobs.",
+		Remediation: "Set `cache-mode: read` on the job (or the workflow) for these events, and keep the cache maintained by a trusted workflow, for example one triggered by `push` on the default branch. If the job must write the cache and runs no untrusted code, list it under `exemptJobs` or its workflow under `exemptWorkflows` to accept the risk.",
 		DocURL:      docsBaseURL + string(CodeCachePoisoning),
-		ControlName: "releaseWorkflowsMustNotRestoreUntrustedCache",
-		// Role: entry: the cache a run that is not trusted can write is how its content gets into the release job.
-		Role:      RoleEntry,
-		EntryKind: EntryPoisonedCache,
-	},
-	CodeCachePoisoningUnresolved: {
-		Code:        CodeCachePoisoningUnresolved,
-		Severity:    SeverityMedium,
-		Title:       "Conditional cache on a release path could not be resolved",
-		Description: "A release or publish job enables or disables a build cache through a GitHub expression the analyzer cannot resolve per trigger (an opt-in enable input or a default-mode disable input outside the github.event_name ==/!= '<event>' shapes). If the cache is on for the trigger that publishes, the job restores a cache that runs on other branches can poison; if it is off there, the job is safe. Reported at medium severity because the restore is conditional, not proven (the proven case is ISSUE-705).",
-		Remediation: "Make the condition statically checkable: use the `${{ github.event_name != '<publish trigger>' && '<manager>' || '' }}` form (or its == inverse) so the cache is provably off on the publish trigger, split caching into a step whose `if:` excludes the publish trigger, or scope the cache key (and any restore-keys) to the release ref.",
-		DocURL:      docsBaseURL + string(CodeCachePoisoningUnresolved),
-		ControlName: "releaseWorkflowsMustNotRestoreUntrustedCache",
-		// Role: entry, as ISSUE-705; the restore is conditional, so the entry is unresolvable.
+		ControlName: "untrustedTriggersMustNotWriteCache",
+		// Role: entry: the cache a job running on an untrusted trigger can write is how its content gets into the jobs restoring it.
 		Role:      RoleEntry,
 		EntryKind: EntryPoisonedCache,
 	},

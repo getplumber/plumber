@@ -146,31 +146,3 @@ func TestADependencyOfYourOrganizationIsTrusted(t *testing.T) {
 		})
 	}
 }
-
-// The cache Note names the jobs that can write the cache the way a branch
-// names its job, grouped by workflow: the first three, then how many more.
-func TestCacheWriterLineGroupsTheJobsByWorkflow(t *testing.T) {
-	files := map[string]string{
-		"build/": ".github/workflows/build.yml", "ci/": ".github/workflows/ci.yml",
-	}
-	cases := []struct {
-		writers []string
-		want    string
-	}{
-		{[]string{"build/release-notes", "build/security-scan", "ci/auto-approve", "ci/build", "ci/lint", "dangerous/comment", "plumber/scan", "pr-preview/preview"},
-			"runs of jobs `release-notes` and `security-scan` from workflow `build.yml`, `auto-approve` from workflow `ci.yml` and 5 more can write the cache"},
-		{[]string{"build/release-notes", "ci/auto-approve"},
-			"runs of jobs `release-notes` from workflow `build.yml` and `auto-approve` from workflow `ci.yml` can write the cache"},
-		{[]string{"ci/build", "ci/lint"}, "runs of jobs `build` and `lint` from workflow `ci.yml` can write the cache"},
-		{[]string{"pr-preview/preview"}, "a run of job `preview` from workflow `pr-preview` can write the cache"},
-		{nil, ""},
-	}
-	for _, c := range cases {
-		if got := cacheWriterLine(c.writers, files, true); got != c.want {
-			t.Errorf("cacheWriterLine(%v) =\n%q\nwant\n%q", c.writers, got, c.want)
-		}
-	}
-	if got := cacheWriterLine([]string{"build", "lint"}, nil, false); got != "runs of jobs `build` and `lint` can write the cache" {
-		t.Errorf("gitlab = %q", got)
-	}
-}

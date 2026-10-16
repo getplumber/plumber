@@ -152,8 +152,8 @@ var validControlSchema = map[string][]string{
 	"actionsMustNotExecuteMutableRemoteCode": {
 		"enabled",
 	},
-	"releaseWorkflowsMustNotRestoreUntrustedCache": {
-		"enabled", "publishActions", "cacheActions", "publishScriptPatterns", "publishScriptExcludePatterns", "allowedJobs",
+	"untrustedTriggersMustNotWriteCache": {
+		"enabled", "exemptWorkflows", "exemptJobs",
 	},
 	"workflowMustIncludeRequiredActions": {
 		"enabled", "required", "requiredGroups",
@@ -470,11 +470,10 @@ type ControlsConfig struct {
 	// `enabled`.
 	ActionsMustNotExecuteMutableRemoteCode *EnabledOnlyControlConfig `yaml:"actionsMustNotExecuteMutableRemoteCode,omitempty"`
 
-	// ReleaseWorkflowsMustNotRestoreUntrustedCache control configuration (GitHub
-	// Actions only). Flags a release/publish job that restores a build cache
-	// whose key is not scoped to the release ref, so a PR-populated cache can be
-	// injected into the published output. Config-free; toggle via `enabled`.
-	ReleaseWorkflowsMustNotRestoreUntrustedCache *CachePoisoningControlConfig `yaml:"releaseWorkflowsMustNotRestoreUntrustedCache,omitempty"`
+	// UntrustedTriggersMustNotWriteCache control configuration (GitHub
+	// Actions only). Flags a job granted cache write (cache-mode: write or
+	// write-only) on an event GitHub restricts to read-only cache access.
+	UntrustedTriggersMustNotWriteCache *CacheWriteControlConfig `yaml:"untrustedTriggersMustNotWriteCache,omitempty"`
 
 	// WorkflowMustIncludeRequiredActions control configuration (GitHub
 	// Actions only). The GitHub counterpart of
@@ -559,72 +558,24 @@ func (c *ActionsPinnedByShaControlConfig) IsEnabled() bool {
 	return *c.Enabled
 }
 
-// CachePoisoningControlConfig configures the release cache-poisoning
-// check (ISSUE-705, and ISSUE-717 for a cache condition it cannot resolve
-// per trigger). The action and script INVENTORIES are configurable
-// so an org can add its own publish actions, cache actions, or publish
-// commands without a plumber release. The built-in cache SEMANTICS
-// (which setup-* actions cache by default vs on opt-in, and the
-// github.ref* scope tokens) stay in code — that is GitHub behaviour, not
-// org policy.
-type CachePoisoningControlConfig struct {
+// CacheWriteControlConfig configures the untrusted-trigger cache write
+// check (ISSUE-705). An exempted workflow or job is accepted risk: the
+// check skips it and the output lists it.
+type CacheWriteControlConfig struct {
 	// Enabled controls whether this check runs.
 	Enabled *bool `yaml:"enabled,omitempty"`
 
-	// PublishActions are `uses:` owner/repo prefixes that mark a job as
-	// release intent (running one restores into a published build).
-	PublishActions []string `yaml:"publishActions,omitempty"`
+	// ExemptWorkflows are glob patterns matched against the workflow file
+	// name (e.g. `triage.yml`); every job of a matching workflow is exempt.
+	ExemptWorkflows []string `yaml:"exemptWorkflows,omitempty"`
 
-	// CacheActions is the full inventory of cache-restoring actions with
-	// their per-action semantics. The rego is a pure engine over this
-	// list — nothing about which actions cache (or how) is hardcoded.
-	CacheActions []CacheActionSpec `yaml:"cacheActions,omitempty"`
-
-	// PublishScriptPatterns are regexes matched against `run:` scripts to
-	// mark a job as release intent (e.g. `cargo publish`).
-	PublishScriptPatterns []string `yaml:"publishScriptPatterns,omitempty"`
-
-	// PublishScriptExcludePatterns are regexes that veto a
-	// PublishScriptPatterns match on the same `run:` block —
-	// verification-only forms that never publish (e.g.
-	// `npm publish --dry-run`, gradle `publishToMavenLocal`).
-	PublishScriptExcludePatterns []string `yaml:"publishScriptExcludePatterns,omitempty"`
-
-	// AllowedJobs are glob patterns matched against the namespaced job
-	// name (`<workflow>/<job>`). A job that matches is exempt from this
-	// control — the escape hatch for reviewed/accepted release jobs.
-	AllowedJobs []string `yaml:"allowedJobs,omitempty"`
-}
-
-// CacheActionSpec describes one cache-restoring action and when it
-// actually restores a cache. Mode is "always" (restores whenever
-// present), "default" (restores unless DisableInput holds DisableValue),
-// or "opt-in" (restores only when EnableInput names a manager). A
-// `${{ github.event_name ==/!= '<event>' }}` value in either input is
-// resolved per trigger by the rego; any other whole-value expression is
-// reported as ISSUE-717 instead of asserting a restore.
-type CacheActionSpec struct {
-	// Action is the `uses:` owner/repo prefix (e.g. "actions/setup-go").
-	Action string `yaml:"action"`
-	// Mode is "always", "default", or "opt-in".
-	Mode string `yaml:"mode"`
-	// DisableInput / DisableValue apply to mode "default": the action's
-	// `with:` input whose value turns caching off (e.g. cache=false for
-	// setup-go, cache-disabled=true for setup-gradle).
-	DisableInput string `yaml:"disableInput,omitempty"`
-	DisableValue *bool  `yaml:"disableValue,omitempty"`
-	// EnableInput applies to mode "opt-in": the `with:` input that, when
-	// set to a package manager, turns caching on (e.g. cache=npm).
-	EnableInput string `yaml:"enableInput,omitempty"`
-	// EnableContains additionally requires EnableInput's value to contain
-	// this substring (case-insensitive) for the cache to count as active —
-	// e.g. build-push-action restores a GitHub Actions cache only when
-	// cache-from contains "type=gha".
-	EnableContains string `yaml:"enableContains,omitempty"`
+	// ExemptJobs are glob patterns matched against the namespaced job name
+	// (`<workflow>/<job>`, e.g. `triage/label`).
+	ExemptJobs []string `yaml:"exemptJobs,omitempty"`
 }
 
 // IsEnabled reports whether the control is enabled.
-func (c *CachePoisoningControlConfig) IsEnabled() bool {
+func (c *CacheWriteControlConfig) IsEnabled() bool {
 	if c == nil || c.Enabled == nil {
 		return false
 	}
@@ -1992,6 +1943,12 @@ func validateControlsBlock(controlsRaw interface{}, pathPrefix string) []string 
 		if msg, removed := removedControls[controlName]; removed {
 			warnings = append(warnings,
 				fmt.Sprintf("Control %q in %s was removed and is now ignored: %s", controlName, pathPrefix, msg))
+			continue
+		}
+
+		if newName, renamed := RenamedControls[controlName]; renamed {
+			warnings = append(warnings,
+				fmt.Sprintf("Control %q in %s was renamed to %q and is ignored; run \"plumber config migrate\" to rewrite it", controlName, pathPrefix, newName))
 			continue
 		}
 

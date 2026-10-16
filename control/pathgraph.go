@@ -247,7 +247,7 @@ func foldBranches(branches []PathBlockBranch) (kept []PathBlockBranch, folded []
 // renderer strips what its output must never carry (an escape sequence on
 // a terminal) before laying the block out.
 func (b PathBlock) Clean(clean func(string) string) PathBlock {
-	for _, s := range []*string{&b.Entry, &b.EntrySubject, &b.EntryWriter, &b.EntryUnverified, &b.RunsIn, &b.ReachesShort, &b.ReachUnverified, &b.So, &b.Cap, &b.Fix} {
+	for _, s := range []*string{&b.Entry, &b.EntrySubject, &b.EntryUnverified, &b.RunsIn, &b.ReachesShort, &b.ReachUnverified, &b.So, &b.Cap, &b.Fix} {
 		*s = clean(*s)
 	}
 	env := make([]string, len(b.Environment))
@@ -277,12 +277,11 @@ func (b PathBlock) Clean(clean func(string) string) PathBlock {
 }
 
 // Notes is what the block says under its consequence: what could not be
-// checked about the entry, the job that can write a cache, what could not
-// be checked about the reach, the environment the job runs in, then, only
-// when ShowCap is set (the points are printed), why the path stops at its
-// cap.
+// checked about the entry, what could not be checked about the reach, the
+// environment the job runs in, then, only when ShowCap is set (the points
+// are printed), why the path stops at its cap.
 func (b PathBlock) Notes() []string {
-	notes := append([]string{b.EntryUnverified, b.EntryWriter, b.ReachUnverified}, b.Environment...)
+	notes := append([]string{b.EntryUnverified, b.ReachUnverified}, b.Environment...)
 	if b.ShowCap {
 		notes = append(notes, b.Cap)
 	}

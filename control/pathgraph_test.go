@@ -242,8 +242,7 @@ func TestPathBlockEntryNamesTheSubjectAndItsNature(t *testing.T) {
 		{"804", wordingPath(EntryPRTarget, "github.event.pull_request.head.sha", CodePullRequestTargetWithHeadCheckout), "github.event.pull_request.head.sha (pull request code checked out in a privileged workflow)"},
 		{"802 workflow_run", wordingPath(EntryPRTarget, "github.event.workflow_run.head_sha", CodeDangerousTriggers), "github.event.workflow_run.head_sha (code of another workflow's run checked out)"},
 		{"802 pull request", wordingPath(EntryPRTarget, "github.event.pull_request.head.ref", CodeDangerousTriggers), "github.event.pull_request.head.ref (pull request code checked out in a privileged workflow)"},
-		{"705", wordingPath(EntryPoisonedCache, "npm-${{ hashFiles('**/package-lock.json') }}", CodeCachePoisoning), "npm-${{ hashFiles('**/package-lock.json') }} (cache an untrusted run can write)"},
-		{"717", wordingPath(EntryPoisonedCache, "npm-key", CodeCachePoisoningUnresolved), "npm-key (cache an untrusted run can write)"},
+		{"705", wordingPath(EntryPoisonedCache, "triage/label", CodeCachePoisoning), "triage/label (cache write granted to an untrusted trigger)"},
 		{"501", wordingPath(EntryUnprotectedPush, "main", CodeBranchUnprotected), "main (branch anyone with write access can push to, not protected)"},
 		{"505", wordingPath(EntryUnprotectedPush, "main", CodeBranchNonCompliant), "main (branch anyone with write access can push to, protection not compliant)"},
 	}
@@ -354,8 +353,8 @@ func TestSoLineNamesTheActorAndTheCapability(t *testing.T) {
 			"as anyone who opens a pull request, an attacker can execute code to write to pull requests"},
 		{"workflow run checkout", wordingPath(EntryPRTarget, "github.event.workflow_run.head_sha", CodeDangerousTriggers),
 			"as anyone who opens a pull request, an attacker can execute code on the runner and poison what it caches or uploads"},
-		{"cache, release step", with(wordingPath(EntryPoisonedCache, "npm-key", CodeCachePoisoning), Reach{Secrets: []string{"NPM_TOKEN"}, TokenWrite: writeAllScopes, Impacts: []ImpactFact{stepPublishes, writeAllImpact[0], writeAllImpact[2]}}),
-			"as anyone who can write that cache, an attacker can read 1 secret of the repository, push in your repository, deploy and ship a malicious release"},
+		{"cache, release step", with(wordingPath(EntryPoisonedCache, "triage/label", CodeCachePoisoning), Reach{Secrets: []string{"NPM_TOKEN"}, TokenWrite: writeAllScopes, Impacts: []ImpactFact{stepPublishes, writeAllImpact[0], writeAllImpact[2]}}),
+			"as anyone who can run code in that job, an attacker can read 1 secret of the repository, push in your repository, deploy and ship a malicious release"},
 		{"push, every secret, write-all", with(wordingPath(EntryUnprotectedPush, "main", CodeBranchUnprotected), Reach{AllSecrets: true, TokenWrite: writeAllScopes, Impacts: writeAllImpact}),
 			"as anyone with write access to `main`, an attacker can read every secret of the repository, push in your repository, publish packages and deploy"},
 		{"step deploys", with(wordingPath(EntryMutableDependency, "o/a@v1", CodeActionUnpinned), Reach{Impacts: []ImpactFact{{Kind: "deploys", State: "proven", Evidence: "environment: prod"}}}),
@@ -401,8 +400,7 @@ func TestPathFixIsOneActionPerCodeFamily(t *testing.T) {
 		{"209", wordingPath(EntryUntrustedExpression, "github.event.issue.title", CodeGitHubEnvInjection), "pass the input through an environment variable"},
 		{"804", wordingPath(EntryPRTarget, "github.event.pull_request.head.sha", CodePullRequestTargetWithHeadCheckout), "never check out the pull request head in a privileged workflow"},
 		{"802", wordingPath(EntryPRTarget, "github.event.workflow_run.head_sha", CodeDangerousTriggers), "never check out the pull request head in a privileged workflow"},
-		{"705", wordingPath(EntryPoisonedCache, "k", CodeCachePoisoning), "do not restore a cache that untrusted runs can write in a release job"},
-		{"717", wordingPath(EntryPoisonedCache, "k", CodeCachePoisoningUnresolved), "do not restore a cache that untrusted runs can write in a release job"},
+		{"705", wordingPath(EntryPoisonedCache, "k", CodeCachePoisoning), "set cache-mode: read on jobs untrusted triggers run"},
 		{"501", wordingPath(EntryUnprotectedPush, "main", CodeBranchUnprotected), "protect the default branch"},
 	}
 	for _, c := range cases {

@@ -48,7 +48,7 @@ CTRL-701 actionsMustBePinnedByCommitSha
 CTRL-702 actionsMustNotBeArchived
 CTRL-703 actionsMustNotCarryKnownCVEs
 CTRL-704 containerCredentialsMustComeFromSecrets
-CTRL-705 releaseWorkflowsMustNotRestoreUntrustedCache
+CTRL-705 untrustedTriggersMustNotWriteCache
 CTRL-706 dockerfilesMustPinBaseImageByDigest
 CTRL-707 actionRefsMustExistUpstream
 CTRL-708 actionPinCommentsMustMatchSha

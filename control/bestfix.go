@@ -25,11 +25,7 @@ func BestFixSummary(score *PlumberScoreResult) string {
 	}
 	for _, p := range score.Paths {
 		if fix.PathID != "" && p.ID == fix.PathID {
-			label := entryFamily(p) + " " + ShortenCommitSHA(p.Entry.Subject)
-			if p.EntryKind == EntryPoisonedCache && namedCacheSubject(p.Entry.Subject) {
-				label = p.Entry.Subject // the name already says it is a cache
-			}
-			named = pathFixOf(p) + " (" + label + ")"
+			named = pathFixOf(p) + " (" + entryFamily(p) + " " + ShortenCommitSHA(p.Entry.Subject) + ")"
 		}
 	}
 	if fix.Stays != "" {

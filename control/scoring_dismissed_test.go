@@ -165,16 +165,16 @@ func TestReEvaluateForConfig_DismissedFindingExcludedFromScore(t *testing.T) {
 	relOriginFile := filepath.Join(".github", "workflows", "release.yml")
 	absOriginFile := filepath.Join(repoRoot, relOriginFile)
 
-	// actions/cache on a release-triggered job with an unscoped key: fires
-	// releaseWorkflowsMustNotRestoreUntrustedCache (ISSUE-705), pinned by
-	// TestCachePoisoningConfigContract as a real rego violation through the
-	// same embedded default config. OriginFile is what enrichFindingsWithJobLocation
-	// copies onto the finding's own File field when the rule itself sets none,
-	// which cache_poisoning.rego does not.
+	// An issue_comment job granted cache-mode: write: fires
+	// untrustedTriggersMustNotWriteCache (ISSUE-705) through the embedded
+	// default config. OriginFile is what enrichFindingsWithJobLocation
+	// copies onto the finding's own File field when the rule itself sets
+	// none, which cache_poisoning.rego does not.
 	pipeline := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{{
 		Name:       "publish",
-		Triggers:   []string{"release"},
+		Triggers:   []string{"issue_comment"},
 		OriginFile: absOriginFile,
+		CacheMode:  &ir.CacheModeDecl{Value: "write", Effective: "write", Line: 5, Level: "job"},
 		Uses:       []ir.Action{{Uses: "actions/cache@v4", With: map[string]any{"key": "deps-abc", "path": "~/.npm"}}},
 	}}}
 
@@ -244,7 +244,7 @@ func TestReEvaluateForConfig_DismissedFindingExcludedFromScore(t *testing.T) {
 				DismissedIssues: []platform.DismissedIssue{{
 					IdentityHash:  hash,
 					RecipeVersion: identity.RecipeVersion,
-					ControlType:   "releaseWorkflowsMustNotRestoreUntrustedCache",
+					ControlType:   "untrustedTriggersMustNotWriteCache",
 				}},
 			},
 		},

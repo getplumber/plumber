@@ -339,42 +339,14 @@ var controlFieldDocs = map[string]FieldDoc{
 	"actionsMustNotExecuteMutableRemoteCode.enabled": {
 		Description: "Turns the control on; when false or absent the control is skipped.",
 	},
-	"releaseWorkflowsMustNotRestoreUntrustedCache.enabled": {
+	"untrustedTriggersMustNotWriteCache.enabled": {
 		Description: "Turns the control on; when false or absent the control is skipped.",
 	},
-	"releaseWorkflowsMustNotRestoreUntrustedCache.publishActions": {
-		Description: "List of uses: owner/repo prefixes that mark a job as release intent.",
+	"untrustedTriggersMustNotWriteCache.exemptWorkflows": {
+		Description: "List of glob patterns matched against the workflow file name, such as triage.yml; every job of a matching workflow is accepted risk: skipped by the check and listed in the output.",
 	},
-	"releaseWorkflowsMustNotRestoreUntrustedCache.cacheActions": {
-		Description: "Full inventory of cache-restoring actions with their per-action caching semantics; nothing about which actions cache is hardcoded.",
-	},
-	"releaseWorkflowsMustNotRestoreUntrustedCache.cacheActions[].action": {
-		Description: "The uses: owner/repo prefix, such as actions/setup-go.",
-	},
-	"releaseWorkflowsMustNotRestoreUntrustedCache.cacheActions[].mode": {
-		Description: "Caching mode for this action.",
-		Enum:        []string{"always", "default", "opt-in"},
-	},
-	"releaseWorkflowsMustNotRestoreUntrustedCache.cacheActions[].disableInput": {
-		Description: "For mode default, the action's with: input whose value turns caching off; a ${{ github.event_name ==/!= '<event>' }} value is resolved per trigger.",
-	},
-	"releaseWorkflowsMustNotRestoreUntrustedCache.cacheActions[].disableValue": {
-		Description: "For mode default, the value of disableInput that turns caching off.",
-	},
-	"releaseWorkflowsMustNotRestoreUntrustedCache.cacheActions[].enableInput": {
-		Description: "For mode opt-in, the with: input that turns caching on when set to a package manager, literally or through the ${{ github.event_name ==/!= '<event>' && '<manager>' || '' }} form resolved per trigger.",
-	},
-	"releaseWorkflowsMustNotRestoreUntrustedCache.cacheActions[].enableContains": {
-		Description: "Additionally requires enableInput's value to contain this substring, case-insensitive, for the cache to count as active.",
-	},
-	"releaseWorkflowsMustNotRestoreUntrustedCache.publishScriptPatterns": {
-		Description: "List of regexes matched against run: scripts to mark a job as release intent.",
-	},
-	"releaseWorkflowsMustNotRestoreUntrustedCache.publishScriptExcludePatterns": {
-		Description: "List of regexes that veto a publishScriptPatterns match on the same run: block, for verification-only forms that never publish.",
-	},
-	"releaseWorkflowsMustNotRestoreUntrustedCache.allowedJobs": {
-		Description: "List of glob patterns matched against the namespaced job name; a matching job is exempt from this control.",
+	"untrustedTriggersMustNotWriteCache.exemptJobs": {
+		Description: "List of glob patterns matched against the namespaced job name (<workflow>/<job>), such as triage/label; a matching job is accepted risk: skipped by the check and listed in the output.",
 	},
 	"workflowMustIncludeRequiredActions.enabled": {
 		Description: "Turns the control on; when false or absent the control is skipped.",

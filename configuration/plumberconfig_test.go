@@ -237,6 +237,36 @@ gitlab:
 			wantContains:   "was removed and is now ignored",
 		},
 		{
+			// releaseWorkflowsMustNotRestoreUntrustedCache became
+			// untrustedTriggersMustNotWriteCache (issue #533): the old key
+			// is ignored with a pointer to the new one and to the migrate
+			// command, not the unknown-key suggestion path.
+			name: "renamed control key - rename warning",
+			yamlContent: `
+version: "2.0"
+github:
+  controls:
+    releaseWorkflowsMustNotRestoreUntrustedCache:
+      enabled: true
+      allowedJobs: ['*/lint']
+`,
+			expectWarnings: 1,
+			wantContains:   `was renamed to "untrustedTriggersMustNotWriteCache" and is ignored; run "plumber config migrate"`,
+		},
+		{
+			name: "cache write exemptions - no warnings",
+			yamlContent: `
+version: "2.0"
+github:
+  controls:
+    untrustedTriggersMustNotWriteCache:
+      enabled: true
+      exemptWorkflows: [triage.yml]
+      exemptJobs: ['triage/*']
+`,
+			expectWarnings: 0,
+		},
+		{
 			name: "unknown sub-key - tags typo",
 			yamlContent: `
 version: "1"
@@ -402,9 +432,9 @@ func TestValidControlNames(t *testing.T) {
 		"pipelineMustNotUseUnsafeVariableExpansion",
 		"projectMustHaveSecurityPolicySource",
 		"pullRequestTargetMustNotCheckoutHead",
-		"releaseWorkflowsMustNotRestoreUntrustedCache",
 		"reusableWorkflowsMustNotInheritSecrets",
 		"securityJobsMustNotBeWeakened",
+		"untrustedTriggersMustNotWriteCache",
 		"workflowMustIncludeRequiredActions",
 		"workflowMustNotExportEntireSecretsContext",
 		"workflowMustNotGrantPermissionsWriteAll",
@@ -551,6 +581,34 @@ func TestIncludePlumberDefaultsIsAKnownSubKey(t *testing.T) {
 
 // exemptImages loads on both providers as written: a plain user list,
 // with no curated base to union it with.
+func TestLoadPlumberConfigFromBytes_CacheWriteExemptions(t *testing.T) {
+	data := []byte(`version: "2.0"
+github:
+  controls:
+    untrustedTriggersMustNotWriteCache:
+      enabled: true
+      exemptWorkflows: [triage.yml, 'deploy-*.yml']
+      exemptJobs: [ci/warm]
+`)
+	cfg, _, warnings, err := LoadPlumberConfigFromBytes(data, "cache-write")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", warnings)
+	}
+	c := cfg.ControlsFor("github").UntrustedTriggersMustNotWriteCache
+	if c == nil || !c.IsEnabled() {
+		t.Fatalf("control = %+v, want enabled", c)
+	}
+	if got := strings.Join(c.ExemptWorkflows, ","); got != "triage.yml,deploy-*.yml" {
+		t.Errorf("exemptWorkflows = %v", got)
+	}
+	if got := strings.Join(c.ExemptJobs, ","); got != "ci/warm" {
+		t.Errorf("exemptJobs = %v", got)
+	}
+}
+
 func TestLoadPlumberConfigFromBytes_ExemptImages(t *testing.T) {
 	data := []byte(`version: "2.0"
 gitlab:

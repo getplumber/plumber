@@ -1,0 +1,4 @@
+on: push
+jobs:
+  call:
+    uses: ./.github/workflows/warm.yml

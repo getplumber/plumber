@@ -101,7 +101,7 @@ const (
 	untrustedImageFix   = "use an image from a trusted registry and pin it by digest"
 	remoteCodeFix       = "pin what the action downloads, or vendor it"
 	untrustedRemoteFix  = "use an action from a trusted source and pin what it downloads, or vendor it"
-	cacheFix            = "do not restore a cache that untrusted runs can write in a release job"
+	cacheFix            = "set cache-mode: read on jobs untrusted triggers run"
 	injectionFix        = "pass the input through an environment variable"
 	checkoutFix         = "never check out the pull request head in a privileged workflow"
 	pullRequestCheckout = "pull request code checked out in a privileged workflow"
@@ -119,7 +119,7 @@ var (
 	injectedInputNature = entryNatureWords{
 		base: "user-controlled input injected in a script", insider: "input an insider controls, injected in a script",
 	}
-	cacheNature = entryNatureWords{base: "cache an untrusted run can write"}
+	cacheNature = entryNatureWords{base: "cache write granted to an untrusted trigger"}
 )
 
 // entryCodes is the row of every code that anchors a path: each entry-role
@@ -259,12 +259,7 @@ var entryCodes = map[ErrorCode]entryCode{
 		fix: "protect the default branch",
 	},
 	CodeCachePoisoning: {
-		dependency: depNotADependency, family: "cache",
-		nature: cacheNature, actor: actorCache,
-		fix: cacheFix,
-	},
-	CodeCachePoisoningUnresolved: {
-		dependency: depNotADependency, family: "cache",
+		dependency: depNotADependency, family: "cache-mode: write in",
 		nature: cacheNature, actor: actorCache,
 		fix: cacheFix,
 	},

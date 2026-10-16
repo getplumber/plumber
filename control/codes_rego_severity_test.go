@@ -14,7 +14,7 @@ import (
 // per-file floor would not notice one of them rewritten to build its
 // finding through a helper. Any rule dropping out of this test makes the
 // floor fail instead of passing silently.
-const minLiteralPairs = 88
+const minLiteralPairs = 87
 
 var findingLiteral = regexp.MustCompile(`"code":\s*"(ISSUE-\d+)"[^}]*?"severity":\s*"(\w+)"|"severity":\s*"(\w+)"[^}]*?"code":\s*"(ISSUE-\d+)"`)
 

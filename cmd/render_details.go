@@ -29,10 +29,12 @@ const (
 	statSatisfiedGroups     = "Satisfied Groups"
 	statActionRefsChecked   = "Action Refs Checked"
 	statVariablesChecked    = "Variables Checked"
-	// statExemptedImages names the images exemptImages let through the
-	// forbidden-tag check, so an exemption stays visible in review instead
-	// of silently hiding the image.
-	statExemptedImages = "Exempted By Configuration"
+	// statExempted names what a control's configuration exempted from its
+	// check (the images exemptImages let through the forbidden-tag check,
+	// the jobs exemptWorkflows / exemptJobs accept the cache write risk
+	// of), so an exemption stays visible in review instead of silently
+	// hiding what it covers.
+	statExempted = "Exempted By Configuration"
 )
 
 // statLine is an alias for control.StatLine used within the cmd package.
@@ -280,19 +282,19 @@ func renderFindingGroupsV4(groups []findingGroup, score *control.PlumberScoreRes
 	caps := detectTermCaps()
 	renderIndividualFindings(os.Stdout, removeFindingsShownUnderAPath(failed), distinct, caps)
 	renderPathBlocks(os.Stdout, paths, findings, caps, opts)
-	renderExemptedImagesNote(failed)
+	renderExemptedNote(failed)
 }
 
-// renderExemptedImagesNote names, for each failing control, the images its
-// configuration exempted. The contextual report prints no stat block, and an
-// exempted image raises no finding, so without this note an exemption would
-// leave no trace in the default report. A passing control carries the same
+// renderExemptedNote names, for each failing control, what its
+// configuration exempted (images, accepted-risk jobs). The contextual report
+// prints no stat block, and an exemption raises no finding, so without this
+// note it would leave no trace in the default report. A passing control carries the same
 // line under its ✓ (renderPassedControlsSummary).
-func renderExemptedImagesNote(groups []findingGroup) {
+func renderExemptedNote(groups []findingGroup) {
 	var lines []string
 	for _, g := range groups {
 		for _, s := range g.Stats {
-			if s.Label == statExemptedImages {
+			if s.Label == statExempted {
 				lines = append(lines, fmt.Sprintf("    %s•%s %s: %s", colorDim, colorReset, g.Title, s.Value))
 			}
 		}
@@ -385,9 +387,10 @@ func renderPassedControlsSummary(groups []findingGroup) {
 			fmt.Printf("      %s%s: %s%s\n", colorYellow, s.Label, s.Value, colorReset)
 		}
 		// An exemption is a deliberate decision rather than a caveat, but
-		// it hides images from the check all the same, so it stays visible.
+		// it hides what it covers from the check all the same, so it stays
+		// visible.
 		for _, s := range g.Stats {
-			if s.Label == statExemptedImages {
+			if s.Label == statExempted {
 				fmt.Printf("      %s%s: %s%s\n", colorDim, s.Label, s.Value, colorReset)
 			}
 		}
@@ -736,15 +739,16 @@ func sortBranchProtectionFindingsForDisplay(findings []opaengine.Finding) {
 	})
 }
 
-// appendExemptedImages adds the statExemptedImages line naming each exempt
-// image on a forbidden tag once, sorted, when there is one.
-func appendExemptedImages(lines []statLine, refs []string) []statLine {
+// appendExempted adds the statExempted line naming each exempted item
+// (an exempt image on a forbidden tag, an accepted-risk job) once, sorted,
+// when there is one.
+func appendExempted(lines []statLine, refs []string) []statLine {
 	if len(refs) == 0 {
 		return lines
 	}
 	refs = slices.Clone(refs)
 	slices.Sort(refs)
-	return append(lines, statLine{Label: statExemptedImages, Value: strings.Join(slices.Compact(refs), ", ")})
+	return append(lines, statLine{Label: statExempted, Value: strings.Join(slices.Compact(refs), ", ")})
 }
 
 // buildGitLabControlStats returns the legacy aggregated metrics that
@@ -771,7 +775,7 @@ func buildGitHubControlStats(controlName string, stats *control.GitHubAnalysisSt
 		if notPinned < 0 {
 			notPinned = 0
 		}
-		return appendExemptedImages([]statLine{
+		return appendExempted([]statLine{
 			{Label: statTotalImages, Value: fmt.Sprintf("%d", stats.ImagesTotal)},
 			{Label: "Pinned By Digest", Value: fmt.Sprintf("%d", stats.ImagesPinnedByDigest)},
 			{Label: "Not Pinned By Digest", Value: fmt.Sprintf("%d", notPinned)},
@@ -888,10 +892,17 @@ func buildGitHubControlStats(controlName string, stats *control.GitHubAnalysisSt
 			{Label: statActionRefsChecked, Value: fmt.Sprintf("%d", stats.ActionRefsTotal)},
 			{Label: "Mutable Remote Exec Found", Value: fmt.Sprintf("%d", len(findings))},
 		}
-	case "releaseWorkflowsMustNotRestoreUntrustedCache":
-		return []statLine{
+	case "untrustedTriggersMustNotWriteCache":
+		lines := []statLine{
 			{Label: "Workflows Scanned", Value: fmt.Sprintf("%d", stats.WorkflowsTotal)},
+			{Label: "Jobs Granted Cache Write On Untrusted Triggers", Value: fmt.Sprintf("%d", len(findings))},
 		}
+		if len(stats.CacheWriteExempted) == 0 {
+			return lines
+		}
+		lines = appendExempted(lines, stats.CacheWriteExempted)
+		lines[len(lines)-1].Value += " (accepted risk: cache write granted on an untrusted trigger)"
+		return lines
 	case "pipelineMustNotEnableDebugTrace":
 		return []statLine{
 			{Label: statVariablesChecked, Value: fmt.Sprintf("%d", stats.VariableBindingsTotal)},
@@ -1003,7 +1014,7 @@ func buildGitLabControlStats(controlName string, result *control.AnalysisResult,
 		if unresolved > 0 {
 			lines = append(lines, statLine{Label: statUnresolvedImageRefs, Value: fmt.Sprintf("%d", unresolved)})
 		}
-		return appendExemptedImages(lines, exempted)
+		return appendExempted(lines, exempted)
 	case "containerImageMustComeFromAuthorizedSources":
 		// authorized is derived by subtraction, so anything the rule
 		// abstained on lands in it by default. An image whose reference

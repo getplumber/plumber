@@ -282,25 +282,22 @@ func TestMutableRemoteExecJSONBlock(t *testing.T) {
 	}
 }
 
-// TestCachePoisoningJSONBlock pins the ISSUE-705/717 split introduced with
-// the issue #497 fix: the cachePoisoningResult metrics count the proven
-// unscoped restores and the unresolved conditional enablements separately,
-// so a consumer triaging on the counts knows which of the two it has. An
-// inverted classification (or swapped keys) on a mixed result set fails
-// here.
+// TestCachePoisoningJSONBlock pins the cachePoisoningResult block of
+// ISSUE-705: every finding surfaced, the jobs granted cache write on an
+// untrusted trigger counted, and the exempted jobs that would have fired
+// counted apart (accepted risk the consumer still sees).
 func TestCachePoisoningJSONBlock(t *testing.T) {
 	entry := control.ControlEntry{
-		DisplayName: "Release workflows must not restore an untrusted cache",
-		ControlName: "releaseWorkflowsMustNotRestoreUntrustedCache",
+		DisplayName: "Untrusted triggers must not write the cache",
+		ControlName: "untrustedTriggersMustNotWriteCache",
 	}
 	findings := []opaengine.Finding{
-		{Code: string(control.CodeCachePoisoning), Job: "release/publish"},
-		{Code: string(control.CodeCachePoisoning), Job: "release/build"},
-		{Code: string(control.CodeCachePoisoningUnresolved), Job: "plugin/publish"},
+		{Code: string(control.CodeCachePoisoning), Job: "triage/label"},
+		{Code: string(control.CodeCachePoisoning), Job: "preview/build"},
 	}
 	result := &control.AnalysisResult{
 		CiValid:     true,
-		GitHubStats: &control.GitHubAnalysisStats{WorkflowsTotal: 4},
+		GitHubStats: &control.GitHubAnalysisStats{WorkflowsTotal: 4, CacheWriteExempted: []string{"bot/warm"}},
 	}
 
 	name, block := buildLegacyResultGitHub(entry, result, nil, findings)
@@ -311,27 +308,22 @@ func TestCachePoisoningJSONBlock(t *testing.T) {
 	if !ok {
 		t.Fatalf("block is %T, want map[string]any", block)
 	}
-	if issues, _ := m["issues"].([]map[string]any); len(issues) != 3 {
-		t.Fatalf("issues = %v, want all 3 findings surfaced", m["issues"])
+	if issues, _ := m["issues"].([]map[string]any); len(issues) != 2 {
+		t.Fatalf("issues = %v, want both findings surfaced", m["issues"])
 	}
 	metrics := m["metrics"].(map[string]any)
-	if metrics["unscopedCacheRestoreFound"] != 2 {
-		t.Errorf("unscopedCacheRestoreFound = %v, want 2 (the ISSUE-705 count)", metrics["unscopedCacheRestoreFound"])
+	if metrics["untrustedCacheWriteFound"] != 2 {
+		t.Errorf("untrustedCacheWriteFound = %v, want 2", metrics["untrustedCacheWriteFound"])
 	}
-	if metrics["unresolvedConditionalCacheFound"] != 1 {
-		t.Errorf("unresolvedConditionalCacheFound = %v, want 1 (the ISSUE-717 count)", metrics["unresolvedConditionalCacheFound"])
+	if metrics["exemptedJobs"] != 1 {
+		t.Errorf("exemptedJobs = %v, want 1", metrics["exemptedJobs"])
 	}
 	if metrics["workflowsScanned"] != 4 {
 		t.Errorf("workflowsScanned = %v, want the GitHubStats total", metrics["workflowsScanned"])
 	}
-
-	// Clean run: no findings, both counters zero.
-	cleanName, cleanBlock := buildLegacyResultGitHub(entry, result, nil, nil)
-	if cleanName != "cachePoisoningResult" {
-		t.Fatalf("clean block name = %q", cleanName)
-	}
-	cmm := cleanBlock.(map[string]any)["metrics"].(map[string]any)
-	if cmm["unscopedCacheRestoreFound"] != 0 || cmm["unresolvedConditionalCacheFound"] != 0 {
-		t.Errorf("clean metrics = %v, want both counters 0", cmm)
+	for _, old := range []string{"unscopedCacheRestoreFound", "unresolvedConditionalCacheFound"} {
+		if _, ok := metrics[old]; ok {
+			t.Errorf("metric %s belongs to the retired release cache check", old)
+		}
 	}
 }

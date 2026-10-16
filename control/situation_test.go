@@ -205,50 +205,6 @@ func TestAttachSituationSuccessAppendsNoWarning(t *testing.T) {
 	}
 }
 
-// TestAttachSituationThreadsTheControlsConfig pins that attachSituation
-// feeds the situation module the SAME controls config the Go controls
-// see, via buildEngineConfig: a GitHub
-// ReleaseWorkflowsMustNotRestoreUntrustedCache.PublishScriptPatterns of
-// [my-release] must replace the module's own default list, not merge
-// with it. A job whose script runs my-release gets the publishes impact;
-// a job whose script runs npm publish (on the module's default list, but
-// absent from the configured one) gets none.
-func TestAttachSituationThreadsTheControlsConfig(t *testing.T) {
-	conf := defaultConf(t)
-	cache := conf.PlumberConfig.ControlsFor("github").ReleaseWorkflowsMustNotRestoreUntrustedCache
-	if cache == nil {
-		t.Fatal("fixture drifted: the default config carries no cache poisoning control")
-	}
-	cache.PublishScriptPatterns = []string{"my-release"}
-	pipeline := &ir.NormalizedPipeline{
-		Provider: ir.ProviderGitHub,
-		Jobs: []ir.Job{
-			// Read-only tokens, so a publish can only come from the script.
-			{Name: "configured-pattern", Permissions: "read-all", Scripts: []string{"my-release --all"}},
-			{Name: "default-pattern", Permissions: "read-all", Scripts: []string{"npm publish"}},
-		},
-	}
-	result := &AnalysisResult{}
-	attachSituation(logrus.NewEntry(logrus.New()), conf, "github", pipeline, result)
-	if result.Situation == nil {
-		t.Fatal("result.Situation is nil")
-	}
-	publishes := func(job string) bool {
-		for _, i := range result.Situation.Jobs[job].Impact {
-			if i.Kind == "publishes" {
-				return true
-			}
-		}
-		return false
-	}
-	if !publishes("configured-pattern") {
-		t.Errorf("configured-pattern impact = %+v, want publishes for my-release", result.Situation.Jobs["configured-pattern"].Impact)
-	}
-	if publishes("default-pattern") {
-		t.Errorf("default-pattern impact = %+v, want no publishes: the configured list replaced the module's default, npm publish is no longer in it", result.Situation.Jobs["default-pattern"].Impact)
-	}
-}
-
 // TestDecodeSituationCarriesTheStructuralFacts pins the Go mirror of the
 // structural facts: the provider, the includes and their jobs, and each
 // job's fork pull request and push facts.

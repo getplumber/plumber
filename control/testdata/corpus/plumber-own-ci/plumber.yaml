@@ -1108,86 +1108,24 @@ github:
       enabled: true
 
     # ===========================================
-    # Release workflows must not restore an untrusted cache
+    # Untrusted triggers must not write the cache
     # ===========================================
-    # Flags a release/publish job that restores a build cache whose key
-    # is not scoped to the release ref. GitHub Actions caches are shared
-    # across branches with a permissive fallback, so a PR run on any
-    # feature branch can populate the same key a release job later
-    # restores, injecting compromised artefacts into the published
-    # output (the May 2026 TanStack vector). Weave github.ref_name /
-    # github.sha into the cache key, or disable caching on publish paths.
-    #
-    # The action / script inventories below are configurable: the built-in
-    # cache semantics (which setup-* actions cache by default vs on opt-in)
-    # stay in code, but WHICH actions publish, WHICH extra actions restore a
-    # cache, and WHICH shell commands mean "publish" are org-specific. Extend
-    # them for your own tooling instead of waiting for a plumber release.
-    releaseWorkflowsMustNotRestoreUntrustedCache:
+    # Flags a job granted cache write (cache-mode: write or write-only) on an
+    # event GitHub restricts to read-only cache access. GitHub isolates caches
+    # by ref, and only push, workflow_dispatch, repository_dispatch, delete,
+    # registry_package, page_build and schedule runs can write the default
+    # branch's caches; other events on the default branch (pull_request_target,
+    # issue_comment, workflow_run...) only read them. An explicit cache-mode:
+    # write lifts that: code in such a run can poison the caches every
+    # default-branch run restores. Set cache-mode: read on those jobs.
+    untrustedTriggersMustNotWriteCache:
       enabled: true
-      # Actions that publish/release artifacts (a job running one restores
-      # into a published build). Add your org's own publish actions.
-      publishActions:
-        - pypa/gh-action-pypi-publish
-        - JS-DevTools/npm-publish
-        - gradle/publish-plugin
-        - softprops/action-gh-release
-        - ncipollo/release-action
-        - goreleaser/goreleaser-action
-        - crazy-max/ghaction-docker-buildx
-        - changesets/action
-      # Full inventory of cache-restoring actions AND their per-action
-      # semantics (the rego hardcodes none of this). mode:
-      #   always  — restores whenever present (actions/cache, rust-cache)
-      #   default — restores unless disableInput holds disableValue
-      #   opt-in  — restores only when enableInput names a package manager
-      #             (enableContains further requires that substring in the
-      #             value, e.g. build-push-action only caches via GHA when
-      #             cache-from mentions type=gha)
-      # Conditions are resolved per trigger: job and step if: conditions and
-      # inputs of the form ${{ github.event_name ==/!= '<event>' }} (or the
-      # enable form ... && '<manager>' || '') restrict a step to the events
-      # they admit, and ISSUE-705 fires only when a restore and a publish can
-      # share one. Any other whole-value expression reports ISSUE-717
-      # (medium, verify manually) instead.
-      # Add your org's own cache actions with the matching mode.
-      cacheActions:
-        - {action: actions/cache, mode: always}
-        - {action: actions/cache/restore, mode: always}
-        - {action: Swatinem/rust-cache, mode: always}
-        - {action: actions/setup-go, mode: default, disableInput: cache, disableValue: false}
-        - {action: gradle/actions/setup-gradle, mode: default, disableInput: cache-disabled, disableValue: true}
-        - {action: actions/setup-node, mode: opt-in, enableInput: cache}
-        - {action: actions/setup-python, mode: opt-in, enableInput: cache}
-        - {action: actions/setup-java, mode: opt-in, enableInput: cache}
-        - {action: pnpm/action-setup, mode: opt-in, enableInput: cache}
-        - {action: docker/build-push-action, mode: opt-in, enableInput: cache-from, enableContains: type=gha}
-      # Shell commands (regex) that mark a job as release intent even under a
-      # plain push/tag trigger with no publish action.
-      publishScriptPatterns:
-        - '(?i)(npm|pnpm|yarn|bun)\s+publish'
-        - '(?i)cargo\s+publish'
-        - '(?i)twine\s+upload'
-        - '(?i)poetry\s+publish'
-        - '(?i)gh\s+release\s+create'
-        - '(?i)goreleaser\s+release'
-        - '(?i)semantic-release'
-        - '(?i)gradlew?\b[^\n]*\bpublish'
-        - '(?i)\bmvnw?\b[^\n]*\bdeploy\b'
-        - '(?i)dotnet\s+nuget\s+push'
-        - '(?i)gem\s+push'
-        - '(?i)docker\s+push'
-      # Verification-only forms that veto a publish-script match on the same
-      # run block — they never publish anything.
-      publishScriptExcludePatterns:
-        - '(?i)--dry-run'
-        - '(?i)publishToMavenLocal'
-      # Jobs to exempt from this control (glob on `<workflow-file>/<job-id>`).
-      # The escape hatch for release jobs you have reviewed and accepted —
-      # e.g. a lint job that caches but ships nothing.
-      allowedJobs: []
-        # - '*/lint'
-        # - 'release-docs/*'
+      # Accepted risk: exempted workflows and jobs are skipped by the check
+      # and listed in the output.
+      # Workflow file names (globs), e.g. 'triage.yml'.
+      exemptWorkflows: []
+      # Jobs as '<workflow>/<job>' (globs), e.g. 'triage/label'.
+      exemptJobs: []
 
     # ===========================================
     # Pipeline must not enable debug trace

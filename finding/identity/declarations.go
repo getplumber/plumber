@@ -202,8 +202,8 @@ var declarations = map[string][]string{
 	"ISSUE-703": {"file", "job", "uses", "step"},
 	// Container registry password hard-coded: one container per job, keyed on the job (benched, not yet live: declaration provisional, revisit on unbench).
 	"ISSUE-704": {"file", "job"},
-	// Publish workflow may consume a poisoned cache: keyed on the action ref (uses); step separates a reused action.
-	"ISSUE-705": {"file", "job", "uses", "step"},
+	// Job granted cache write on an untrusted trigger: one cache-mode in effect per job, keyed on the job.
+	"ISSUE-705": {"file", "job"},
 	// Dockerfile FROM not pinned by digest: keyed on the base image (benched, not yet live: declaration provisional, revisit on unbench).
 	"ISSUE-706": {"file", "job", "image"},
 	// Pinned SHA not in the action's repo: keyed on the action ref (uses); step separates a reused action.
@@ -224,11 +224,6 @@ var declarations = map[string][]string{
 	"ISSUE-715": {"file", "job", "uses", "step"},
 	// Action source could not be verified: keyed on the action ref (uses); step separates a reused action.
 	"ISSUE-716": {"file", "job", "uses", "step"},
-	// Conditional cache enablement unresolved on a release path: same key
-	// as ISSUE-705, the proven variant it downgrades from. A resolved and
-	// an unresolved finding on the same step are different codes, so they
-	// never collide.
-	"ISSUE-717": {"file", "job", "uses", "step"},
 	// Workflow has no `permissions:` block: one per job, keyed on the job.
 	"ISSUE-801": {"file", "job"},
 	// Dangerous workflow trigger: one per job, keyed on the job.

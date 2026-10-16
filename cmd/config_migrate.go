@@ -2,8 +2,12 @@ package cmd
 
 import (
 	"fmt"
+	"maps"
 	"os"
+	"slices"
+	"strings"
 
+	"github.com/getplumber/plumber/configuration"
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
 )
@@ -16,10 +20,11 @@ var (
 
 var configMigrateCmd = &cobra.Command{
 	Use:   "migrate",
-	Short: "Upgrade .plumber.yaml from the legacy v1 schema to v2.0 (per-provider)",
+	Short: "Upgrade .plumber.yaml to the current schema (v2.0, per-provider, current control names)",
 	Long: `Rewrite a legacy .plumber.yaml that uses the top-level controls: block
 (schema v1) into the per-provider v2.0 schema, where controls live under
-gitlab.controls: or github.controls:. Comments and ordering are preserved.
+gitlab.controls: or github.controls:, and rename controls that were
+renamed since. Comments and ordering are preserved.
 
 By default the migrated file is written to <input>.v2 so you can review
 before replacing the original. Use --in-place to overwrite directly; the
@@ -31,9 +36,12 @@ The migration:
     the only engine and runs unconditionally).
   - Sets 'version: "2.0"' at the top (or upgrades an existing 'version: "1.0"').
   - Leaves any pre-existing 'gitlab:' or 'github:' blocks alone.
+  - Renames github.controls.releaseWorkflowsMustNotRestoreUntrustedCache to
+    untrustedTriggersMustNotWriteCache, keeping 'enabled' and dropping the
+    fields the new control does not carry (each one is listed).
 
-If the file is already on v2.0 (no legacy keys present and version is "2.0"),
-the command is a no-op and exits with a friendly message.
+If the file is already on v2.0 (no legacy keys, no renamed control, version
+is "2.0"), the command is a no-op and exits with a friendly message.
 
 Examples:
   plumber config migrate                          # writes .plumber.yaml.v2 alongside the original
@@ -65,7 +73,7 @@ func runConfigMigrate(cmd *cobra.Command, args []string) error {
 	}
 
 	if !migrated {
-		fmt.Fprintf(os.Stderr, "%s is already on schema v2.0 (no legacy keys and version: \"2.0\"). Nothing to do.\n", in)
+		fmt.Fprintf(os.Stderr, "%s is already on schema v2.0 (no legacy keys, no renamed control, and version: \"2.0\"). Nothing to do.\n", in)
 		return nil
 	}
 
@@ -172,7 +180,82 @@ func migrateYAMLDocument(doc *yaml.Node) (bool, []string, error) {
 		migrated = true
 	}
 
+	if renames := migrateRenamedControls(findMappingValue(findMappingValue(root, "github"), "controls")); len(renames) > 0 {
+		changes = append(changes, renames...)
+		migrated = true
+	}
+
 	return migrated, changes, nil
+}
+
+// renamedControlFields is, per renamed control, the fields its new
+// control keeps; every other field of the old block is dropped.
+var renamedControlFields = map[string][]string{
+	"untrustedTriggersMustNotWriteCache": {"enabled", "exemptWorkflows", "exemptJobs"},
+}
+
+// migrateRenamedControls rewrites every renamed control key of a
+// github.controls mapping (configuration.RenamedControls) to its new name
+// in place, keeping its comments and position, and drops the fields the
+// new control does not carry. An old key beside its new one is dropped
+// whole, never merged. It returns the changes it made.
+func migrateRenamedControls(controls *yaml.Node) []string {
+	if controls == nil || controls.Kind != yaml.MappingNode {
+		return nil
+	}
+	var changes []string
+	for _, oldName := range slices.Sorted(maps.Keys(configuration.RenamedControls)) {
+		newName := configuration.RenamedControls[oldName]
+		if findMappingValue(controls, oldName) == nil {
+			continue
+		}
+		if findMappingValue(controls, newName) != nil {
+			pluckMappingKey(controls, oldName)
+			changes = append(changes, fmt.Sprintf("dropped github.controls.%s: %s is already set", oldName, newName))
+			continue
+		}
+		for i := 0; i+1 < len(controls.Content); i += 2 {
+			if controls.Content[i].Value == oldName {
+				controls.Content[i].Value = newName
+				changes = append(changes, fmt.Sprintf("renamed github.controls.%s to %s", oldName, newName))
+				changes = append(changes, dropRemovedFields(controls.Content[i+1], renamedControlFields[newName])...)
+			}
+		}
+	}
+	return changes
+}
+
+// dropRemovedFields removes from a control block every field not in keep,
+// and says what it dropped. allowedJobs is named on its own: it exempted
+// jobs restoring a cache, the new control exempts jobs writing one.
+func dropRemovedFields(block *yaml.Node, keep []string) []string {
+	if block == nil || block.Kind != yaml.MappingNode {
+		return nil
+	}
+	var dropped []string
+	var changes []string
+	for i := 0; i+1 < len(block.Content); {
+		key := block.Content[i].Value
+		if slices.Contains(keep, key) {
+			i += 2
+			continue
+		}
+		val := block.Content[i+1]
+		block.Content = append(block.Content[:i], block.Content[i+2:]...)
+		if key == "allowedJobs" && len(val.Content) > 0 {
+			var jobs []string
+			for _, n := range val.Content {
+				jobs = append(jobs, n.Value)
+			}
+			changes = append(changes, fmt.Sprintf("dropped allowedJobs [%s]: it exempted jobs restoring a cache, the control now flags jobs granted cache write; list those you accept under exemptJobs", strings.Join(jobs, ", ")))
+			continue
+		}
+		dropped = append(dropped, key)
+	}
+	if len(dropped) > 0 {
+		changes = append(changes, fmt.Sprintf("dropped %s (the control no longer detects release jobs)", strings.Join(dropped, ", ")))
+	}
+	return changes
 }
 
 // findMappingValue returns the value node associated with the given key

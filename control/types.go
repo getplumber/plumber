@@ -289,6 +289,11 @@ type GitHubAnalysisStats struct {
 	// Unverified script execution (ISSUE-411).
 	UnverifiedScriptsFound int
 
+	// CacheWriteExempted lists the exempted jobs (exemptWorkflows,
+	// exemptJobs) that ISSUE-705 would have flagged: granted cache write on
+	// an untrusted trigger, accepted as a risk (ISSUE-705).
+	CacheWriteExempted []string
+
 	// Workflows + properties (ISSUE-802, ISSUE-801).
 	WorkflowsTotal                int
 	WorkflowsWithDangerousTrigger int

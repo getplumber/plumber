@@ -62,7 +62,7 @@ const (
 	compKnownCVEs          = "Flag third-party actions with known CVEs (GitHub Advisory DB)"
 	compImpostorCommit     = "Flag third-party actions pinned to a commit SHA absent upstream (impostor commit)"
 	compMutableRemoteExec  = "Flag actions that fetch+execute mutable remote code (SHA pin bypassed)"
-	compCachePoisoning     = "Flag release/publish jobs restoring an unscoped build cache (or an unresolvable conditional cache)"
+	compCachePoisoning     = "Flag jobs granted cache write on untrusted triggers (cache-mode: write on pull_request_target, issue_comment...)"
 	compDebugTraceGitHub   = "Flag Actions debug logging (ACTIONS_STEP_DEBUG / ACTIONS_RUNNER_DEBUG)"
 )
 
@@ -1070,37 +1070,6 @@ func defaultGitHubDebugTraceVariables() []string {
 	return nil
 }
 
-// defaultCachePoisoning* mirror the shipped .plumber.yaml inventories for
-// releaseWorkflowsMustNotRestoreUntrustedCache. Kept in sync with the
-// embedded default by TestStarterGitHubControlsMatchEmbeddedDefault.
-func defaultCachePoisoningPublishActions() []string {
-	if c := defaultGitHubControls().ReleaseWorkflowsMustNotRestoreUntrustedCache; c != nil {
-		return c.PublishActions
-	}
-	return nil
-}
-
-func defaultCachePoisoningCacheActions() []configuration.CacheActionSpec {
-	if c := defaultGitHubControls().ReleaseWorkflowsMustNotRestoreUntrustedCache; c != nil {
-		return c.CacheActions
-	}
-	return nil
-}
-
-func defaultCachePoisoningPublishScriptPatterns() []string {
-	if c := defaultGitHubControls().ReleaseWorkflowsMustNotRestoreUntrustedCache; c != nil {
-		return c.PublishScriptPatterns
-	}
-	return nil
-}
-
-func defaultCachePoisoningPublishScriptExcludePatterns() []string {
-	if c := defaultGitHubControls().ReleaseWorkflowsMustNotRestoreUntrustedCache; c != nil {
-		return c.PublishScriptExcludePatterns
-	}
-	return nil
-}
-
 // defaultGitHubSecurityJobPatterns mirrors the GitHub-side defaults
 // shipped in .plumber.yaml's github.controls.securityJobsMustNotBeWeakened
 // block. GitHub job identifiers are namespaced as `workflow/job`, so
@@ -1631,13 +1600,7 @@ func (st *initWizardState) toPlumberConfig() *configuration.PlumberConfig {
 				gh.Controls.ActionsMustNotExecuteMutableRemoteCode = &configuration.EnabledOnlyControlConfig{Enabled: boolPtrInit(true)}
 			}
 			if compSelected(st, compCachePoisoning) {
-				gh.Controls.ReleaseWorkflowsMustNotRestoreUntrustedCache = &configuration.CachePoisoningControlConfig{
-					Enabled:                      boolPtrInit(true),
-					PublishActions:               defaultCachePoisoningPublishActions(),
-					CacheActions:                 defaultCachePoisoningCacheActions(),
-					PublishScriptPatterns:        defaultCachePoisoningPublishScriptPatterns(),
-					PublishScriptExcludePatterns: defaultCachePoisoningPublishScriptExcludePatterns(),
-				}
+				gh.Controls.UntrustedTriggersMustNotWriteCache = &configuration.CacheWriteControlConfig{Enabled: boolPtrInit(true)}
 			}
 			if compSelected(st, compDebugTraceGitHub) {
 				fb := parseLinesInit(st.DebugForbiddenVariablesGitHubMultiline)

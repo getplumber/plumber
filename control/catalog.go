@@ -292,9 +292,9 @@ func GitHubControls(pc *configuration.PlumberConfig) []ControlEntry {
 		Skipped:     c.ActionsMustNotExecuteMutableRemoteCode == nil || !c.ActionsMustNotExecuteMutableRemoteCode.IsEnabled(),
 	})
 	entries = append(entries, ControlEntry{
-		DisplayName: "Release workflows must not restore an untrusted cache",
-		ControlName: "releaseWorkflowsMustNotRestoreUntrustedCache",
-		Skipped:     c.ReleaseWorkflowsMustNotRestoreUntrustedCache == nil || !c.ReleaseWorkflowsMustNotRestoreUntrustedCache.IsEnabled(),
+		DisplayName: "Untrusted triggers must not write the cache",
+		ControlName: "untrustedTriggersMustNotWriteCache",
+		Skipped:     c.UntrustedTriggersMustNotWriteCache == nil || !c.UntrustedTriggersMustNotWriteCache.IsEnabled(),
 	})
 	entries = append(entries, ControlEntry{
 		DisplayName: "Pipeline must not enable debug trace",

@@ -153,11 +153,6 @@ type AttackPath struct {
 	// package.
 	gateBranches map[string]string
 
-	// cacheWriters is, on a poisoned_cache path, the jobs whose run can
-	// write the cache (keepCachePathsSomeoneCanWrite), so explain.go can
-	// name one. Never serialized, never read outside this package.
-	cacheWriters []string
-
 	// ownRepo is the analysed repository's "owner/repo", lower case, empty
 	// when unknown: an action of its owner is never read out as a third
 	// party's. Never serialized.
@@ -557,7 +552,14 @@ func AssemblePaths(findings []opaengine.Finding, sit *Situation, projectPath str
 				// entry; every later anchor on the key names the same
 				// subject.
 				jobs := walkedJobs(a.entryJob, a.kind, sit)
-				reach, unresolvable, cause, surviving := reachOver(sit, jobs, a.kind)
+				reached := jobs
+				if a.kind == EntryPoisonedCache && len(jobs) > 1 {
+					// A poisoned cache reaches what its restorers hold: the
+					// writer's own privileges are the path entering it's.
+					// With no restorer the branch is dropped below.
+					reached = jobs[1:]
+				}
+				reach, unresolvable, cause, surviving := reachOver(sit, reached, a.kind)
 				g = &pathGroup{anchor: a, jobs: jobs, reach: reach, unresolvable: unresolvable, cause: cause, surviving: surviving, hashes: map[string]bool{}, codes: map[ErrorCode]bool{},
 					contributor: contributorEntry(a.kind, sit.Jobs[a.entryJob]), alternatives: map[string]bool{a.fact.Subject: true}}
 				pg.branches[a.entryJob] = g
@@ -616,34 +618,26 @@ func AssemblePaths(findings []opaengine.Finding, sit *Situation, projectPath str
 	writers := cacheWriters(out, sit)
 	for _, key := range cacheKeys {
 		pg := paths[key]
-		all := map[string]bool{}
 		for job, g := range pg.branches {
-			// The restoring job is never its own cache's writer: entered by
-			// another path, it already holds what the cache would give.
-			for _, w := range sortedKeys(writerJobs(writers)) {
-				if w == job {
-					continue
-				}
-				g.writers = append(g.writers, w)
-				if TierRank(writers[w].ceiling) > TierRank(g.writer.ceiling) {
-					g.writer = writers[w]
-				}
-				all[w] = true
-			}
-			if len(g.writers) == 0 {
+			// The writer's grant is only a way in when another path already
+			// runs code from outside the team in it, and only reaches
+			// something when a job restores a cache.
+			w, entered := writers[job]
+			if !entered || len(g.jobs) < 2 {
 				delete(pg.branches, job)
+				continue
 			}
+			g.writer = w
 		}
 		if len(pg.branches) == 0 {
-			// No run that can write this cache runs code from outside the
-			// team: the cache findings anchor nothing and are priced as
-			// individual findings.
+			// No job granted cache write runs code from outside the team,
+			// or none restores a cache: the cache findings anchor nothing
+			// and are priced as individual findings.
 			continue
 		}
 		p := pg.path(key, exposure, gates, sit)
 		p.ownRepo = own
 		p.situation = sit
-		p.cacheWriters = sortedKeys(all)
 		out = append(out, p)
 	}
 	sort.Slice(out, func(i, j int) bool { return worseFirst(out[i], out[j]) })
@@ -828,12 +822,10 @@ type pathGroup struct {
 	// request controls (contributorEntry): a privilege alone makes it
 	// Critical.
 	contributor bool
-	// writers is, on a poisoned_cache branch, the jobs whose run can write
-	// the cache, never the restoring job itself; writer is the strongest
-	// ceiling among the paths entering them (cacheWriter), which holds the
-	// branch.
-	writers []string
-	writer  cacheWriter
+	// writer is, on a poisoned_cache branch, what entering the job granted
+	// cache write takes: the strongest ceiling among the paths entering it
+	// (cacheWriter), which holds the branch.
+	writer cacheWriter
 	// alternatives is every subject the branch's findings name, the
 	// values of a matrix one finding identity stands for.
 	alternatives map[string]bool
@@ -904,7 +896,7 @@ func (g *pathGroup) path(exposure string, gates []opaengine.Finding, sit *Situat
 		p.Modifiers = append(p.Modifiers, p.ceilingModifiers...)
 	}
 	// A poisoned cache holds at the strongest ceiling of the paths
-	// entering its writers: poisoning it takes what entering them takes.
+	// entering its writer: poisoning it takes what entering it takes.
 	if a.kind == EntryPoisonedCache && g.writer.ceiling != "" && TierRank(p.Tier) > TierRank(g.writer.ceiling) {
 		p.Tier = g.writer.ceiling
 		p.Modifiers = append(append(p.Modifiers, g.writer.modifiers...), "cache_writer_cap")
@@ -954,15 +946,14 @@ type cacheWriter struct {
 
 // cacheWriters is the jobs that can write a poisoned cache: the entry jobs,
 // of every branch of the paths given (none a poisoned_cache path), that run
-// code from outside the team in a run whose cache a release run reads.
-// Their privilege was not pruned as a fork pull request run's, they run,
-// and their runs save in the default branch's scope (savesForDefaultBranch).
-// Whatever caches such a job
-// declares, code running in it holds the run's cache token and can save any
-// key, the one a release job restores included. Each writer keeps the
-// strongest ceiling of the branches entering it, the first in the paths'
-// order on a tie; it reads the assembled paths, so the order of the
-// findings does not matter.
+// code from outside the team in a run whose cache other runs read. Their
+// privilege was not pruned as a fork pull request run's, they run, and
+// their runs save in the default branch's scope (savesForDefaultBranch).
+// Whatever caches such a job declares, code running in it holds the run's
+// cache token and can save any key. Each writer keeps the strongest
+// ceiling of the branches entering it, the first in the paths' order on a
+// tie; it reads the assembled paths, so the order of the findings does not
+// matter.
 func cacheWriters(paths []AttackPath, sit *Situation) map[string]cacheWriter {
 	out := map[string]cacheWriter{}
 	ordered := append([]AttackPath(nil), paths...)
@@ -996,64 +987,18 @@ func savesForDefaultBranch(js JobSituation) bool {
 	return !js.Dead && (slices.Contains(js.CacheScopes, "default") || slices.Contains(js.CacheScopes, "any"))
 }
 
-// writerJobs is the set of jobs of writers.
-func writerJobs(writers map[string]cacheWriter) map[string]bool {
-	out := make(map[string]bool, len(writers))
-	for w := range writers {
-		out[w] = true
-	}
-	return out
-}
-
-// stepCaches is the caches of js declared by the step a cache finding is
-// about: the action it names, at its line when both carry one.
-func stepCaches(js JobSituation, f opaengine.Finding) []CacheFact {
-	uses, _ := f.Data["uses"].(string)
-	var out []CacheFact
-	for _, c := range js.Caches {
-		if c.Uses == uses && (c.Line == 0 || f.Line == 0 || c.Line == f.Line) {
-			out = append(out, c)
+// cacheRestorers is every job, but the writer, that runs and restores a
+// cache, sorted: a job granted cache write can save any key, so whatever a
+// restorer reads it may have written.
+func cacheRestorers(writer string, sit *Situation) []string {
+	var out []string
+	for name, js := range sit.Jobs {
+		if name != writer && !js.Dead && js.RestoresCache {
+			out = append(out, name)
 		}
 	}
+	sort.Strings(out)
 	return out
-}
-
-// rustCacheSubject opens the entry subject of a rust-cache key family.
-const rustCacheSubject = "Rust build cache, key prefix "
-
-// cacheEntrySubject names the cache a poisoned_cache entry is about, the
-// identity of its path: the literal key of actions/cache (the finding's
-// own subject), else the cache the step's action keys itself
-// (builtinCacheRefs in the GitHub collector), by its family
-// (CacheFact.Family, the key without the discriminators the edges match
-// on; the key when the facts give none): a rust-cache key family, a
-// setup action's cache of a manager, the Gradle cache. The finding's
-// subject stands when the step declares no cache Plumber knows.
-func cacheEntrySubject(f opaengine.Finding, caches []CacheFact) string {
-	if len(caches) == 0 {
-		return entrySubject(f)
-	}
-	c := caches[0]
-	family := c.Family
-	if family == "" {
-		family = c.Key
-	}
-	name, _, _ := strings.Cut(strings.ToLower(c.Uses), "@")
-	short := name[strings.LastIndex(name, "/")+1:]
-	switch name {
-	case "actions/cache", "actions/cache/restore", "actions/cache/save":
-		return entrySubject(f)
-	case "swatinem/rust-cache":
-		return rustCacheSubject + family
-	case "actions/setup-node", "actions/setup-python", "actions/setup-java", "actions/setup-dotnet", "actions/setup-go":
-		if manager, ok := strings.CutPrefix(family, short+"-"); ok {
-			return manager + " cache of " + short
-		}
-		return "cache of " + short
-	case "gradle/actions/setup-gradle", "gradle/gradle-build-action":
-		return "Gradle cache of " + short
-	}
-	return "cache of " + name
 }
 
 // AllAnchorHashes is every finding anchoring p: AnchorHashes, or AnchorHash
@@ -1202,11 +1147,7 @@ func anchorsFor(f opaengine.Finding, sit *Situation, own string) []pathAnchor {
 			if kind == EntryMutableDependency && localReference(fact.Subject, own) {
 				return nil
 			}
-			a := pathAnchor{kind: kind, fact: fact, entryJob: f.Job}
-			if kind == EntryPoisonedCache {
-				a.fact.Subject = cacheEntrySubject(f, stepCaches(sit.Jobs[f.Job], f))
-			}
-			return []pathAnchor{a}
+			return []pathAnchor{{kind: kind, fact: fact, entryJob: f.Job}}
 		}
 		if kind != EntryMutableDependency {
 			return nil
@@ -1323,13 +1264,10 @@ func computedAtRunTime(code ErrorCode, subject string) bool {
 // unresolvableEntryCodes are the entry codes whose finding says the entry
 // itself could not be checked: the action's source could not be fetched
 // (ISSUE-716), or its pinned commit is absent upstream (ISSUE-707), so who
-// controls what runs is unknown; or the cache is on or off per trigger
-// through an expression (ISSUE-717), so whether the job restores it when it
-// publishes is unknown.
+// controls what runs is unknown.
 var unresolvableEntryCodes = map[ErrorCode]bool{
 	CodeActionRemoteExecUnverified: true,
 	CodeImpostorCommit:             true,
-	CodeCachePoisoningUnresolved:   true,
 }
 
 // entryState is the state an entry code reports its entry with.
@@ -1407,8 +1345,13 @@ func sortAnchorsByJob(anchors []pathAnchor) {
 // received, so a deeper chain is deliberately left unwalked and unpriced.
 // An entry that holds only in a GitHub fork pull request run (forkRunOnly)
 // reaches no job through a cache alone: such a run saves only in its merge
-// ref's scope, which no other ref's run restores.
+// ref's scope, which no other ref's run restores. A poisoned cache entry
+// walks instead to every job restoring a cache (cacheRestorers).
 func walkedJobs(entryJob string, kind EntryKind, sit *Situation) []string {
+	if kind == EntryPoisonedCache {
+		// The writer, then every job restoring a cache it can write.
+		return append([]string{entryJob}, cacheRestorers(entryJob, sit)...)
+	}
 	seen := map[string]bool{entryJob: true}
 	jobs := []string{entryJob}
 	forkOnly := forkRunOnly(sit, entryJob, kind)

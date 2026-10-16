@@ -1,0 +1,4 @@
+on: issue_comment
+jobs:
+  call:
+    uses: ./.github/workflows/warm.yml

@@ -176,19 +176,20 @@ func TestGenerateMRComment_NotEvaluableRow(t *testing.T) {
 	}
 }
 
-// A poisoned cache's entry line names the job whose run can write it.
+// A poisoned cache's entry line names the job granted cache write, and its
+// fix says to take the grant back.
 func TestGenerateMRComment_CacheEntryNamesTheJobThatCanWriteIt(t *testing.T) {
-	preview, entry := privilegedPreview()
-	sit := cacheSituation(map[string]JobSituation{"pr-preview/preview": preview})
-	findings := []opaengine.Finding{cacheFinding(), entry}
+	sit := cacheSituation(nil)
+	findings := []opaengine.Finding{cacheFinding(), commentInjection()}
 	paths := assemblePaths(findings, sit)
 	result := &AnalysisResult{ProjectPath: "o/r", Findings: findings, Paths: paths, Situation: sit,
-		Pipeline: &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, DefaultBranch: "main", Jobs: []ir.Job{{Name: "release"}, {Name: "pr-preview/preview"}}}}
+		Pipeline: &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, DefaultBranch: "main", Jobs: []ir.Job{{Name: "release"}, {Name: "triage/label"}}}}
 	score := ScoreV4WithExplanations(result)
 	body := generateMRComment(result, nil, false, "", &score, true, false, nil, nil, nil)
-	want := "       Note   a run of job `preview` from workflow `pr-preview` can write the cache\n"
-	if !strings.Contains(body, want) {
-		t.Errorf("comment lacks %q:\n%s", want, body)
+	for _, want := range []string{"triage/label (cache write granted to an untrusted trigger)", "set cache-mode: read on jobs untrusted triggers run"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("comment lacks %q:\n%s", want, body)
+		}
 	}
 }
 

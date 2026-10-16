@@ -37,7 +37,7 @@ func TestCacheScopeFollowsTheRunsRef(t *testing.T) {
 		{Name: "release", Triggers: []string{"release"}},
 		{Name: "pr", Triggers: []string{"pull_request"}},
 		{Name: "nightly", Triggers: []string{"schedule", "workflow_dispatch"}},
-		{Name: "privileged", Triggers: []string{"pull_request_target", "workflow_run"}},
+		{Name: "privileged", Triggers: []string{"pull_request_target", "workflow_run"}, CacheMode: &ir.CacheModeDecl{Value: "write", Effective: "write", Line: 3, Level: "job"}},
 		{Name: "pr-only-step", Triggers: []string{"pull_request", "push"}, PushBranches: []string{"main"}, If: "github.event_name == 'pull_request'"},
 		{Name: "unknown"},
 	}}
@@ -87,6 +87,118 @@ func TestCacheEdgesFollowTheScope(t *testing.T) {
 		sort.Strings(f)
 		if !reflect.DeepEqual(f, w) {
 			t.Errorf("%s.feeds = %v, want %v", name, f, w)
+		}
+	}
+}
+
+// TestCacheScopeHonoursCacheMode pins that cacheScopes names only the
+// scopes a job's runs can save under. A low-trust event on the default
+// branch (pull_request_target, issue_comment, workflow_run...) gets
+// read-only cache access unless the job, or its workflow, declares
+// cache-mode: write or write-only; read and none save nothing on any
+// trigger. A trusted trigger saves by default.
+func TestCacheScopeHonoursCacheMode(t *testing.T) {
+	mode := func(effective string) *ir.CacheModeDecl {
+		return &ir.CacheModeDecl{Value: effective, Effective: effective, Line: 3, Level: "job"}
+	}
+	p := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, DefaultBranch: "main", Jobs: []ir.Job{
+		{Name: "pr-target-default", Triggers: []string{"pull_request_target"}},
+		{Name: "pr-target-write", Triggers: []string{"pull_request_target"}, CacheMode: mode("write")},
+		{Name: "comment-write-only", Triggers: []string{"issue_comment"}, CacheMode: mode("write-only")},
+		{Name: "push-read", Triggers: []string{"push"}, PushBranches: []string{"main"}, CacheMode: mode("read")},
+		{Name: "schedule-none", Triggers: []string{"schedule"}, CacheMode: mode("none")},
+		{Name: "schedule-default", Triggers: []string{"schedule"}},
+		{Name: "mixed-default", Triggers: []string{"push", "issue_comment"}, PushBranches: []string{"main"}},
+		{Name: "unresolved", Triggers: []string{"issue_comment"}, CacheMode: mode("")},
+		// A pull request review runs on the pull request's merge ref, as
+		// pull_request does: its own scope, saved by default.
+		{Name: "review-default", Triggers: []string{"pull_request_review", "pull_request_review_comment"}},
+		{Name: "review-write", Triggers: []string{"pull_request_review"}, CacheMode: mode("write")},
+	}}
+	want := map[string][]string{
+		"pr-target-default":  nil,
+		"pr-target-write":    {"default"},
+		"comment-write-only": {"default"},
+		"push-read":          nil,
+		"schedule-none":      nil,
+		"schedule-default":   {"default"},
+		"mixed-default":      {"default"},
+		"unresolved":         nil,
+		"review-default":     {"pull_request"},
+		"review-write":       {"pull_request"},
+	}
+	got := scopesOf(t, p)
+	for name, w := range want {
+		g := got[name].CacheScopes
+		if len(g) == 0 {
+			g = nil
+		}
+		if !reflect.DeepEqual(g, w) {
+			t.Errorf("%s: cacheScopes = %v, want %v", name, g, w)
+		}
+	}
+}
+
+// TestCacheEdgesHonourCacheMode pins that a cache edge needs a saver whose
+// cache-mode lets it save and a restorer whose cache-mode lets it restore:
+// a pull_request_target job saving a key feeds nothing by default, and
+// feeds a push job once it declares write; a restorer on write-only or
+// none restores nothing.
+func TestCacheEdgesHonourCacheMode(t *testing.T) {
+	save := []ir.CacheRef{{Key: "deps", Mode: "save"}}
+	restore := []ir.CacheRef{{Key: "deps", Mode: "restore"}}
+	mode := func(effective string) *ir.CacheModeDecl {
+		return &ir.CacheModeDecl{Value: effective, Effective: effective, Line: 3, Level: "job"}
+	}
+	p := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, DefaultBranch: "main", Jobs: []ir.Job{
+		{Name: "pr-target-default", Triggers: []string{"pull_request_target"}, Caches: save},
+		{Name: "pr-target-write", Triggers: []string{"pull_request_target"}, Caches: save, CacheMode: mode("write")},
+		{Name: "build", Triggers: []string{"push"}, PushBranches: []string{"main"}, Caches: restore},
+		{Name: "build-write-only", Triggers: []string{"push"}, PushBranches: []string{"main"}, Caches: restore, CacheMode: mode("write-only")},
+		{Name: "build-none", Triggers: []string{"push"}, PushBranches: []string{"main"}, Caches: restore, CacheMode: mode("none")},
+	}}
+	got := scopesOf(t, p)
+	want := map[string][]string{
+		"pr-target-default": nil,
+		"pr-target-write":   {"build"},
+	}
+	for name, w := range want {
+		f := append([]string(nil), got[name].Feeds...)
+		sort.Strings(f)
+		if len(f) == 0 {
+			f = nil
+		}
+		if !reflect.DeepEqual(f, w) {
+			t.Errorf("%s.feeds = %v, want %v", name, f, w)
+		}
+	}
+}
+
+// TestRestoresCacheFollowsCacheMode pins the restoresCache fact: the job
+// declares a cache it restores (restore or both) and its cache-mode does
+// not take restoring away (write-only, none).
+func TestRestoresCacheFollowsCacheMode(t *testing.T) {
+	mode := func(effective string) *ir.CacheModeDecl {
+		return &ir.CacheModeDecl{Value: effective, Effective: effective, Line: 3, Level: "job"}
+	}
+	p := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, DefaultBranch: "main", Jobs: []ir.Job{
+		{Name: "restores", Triggers: []string{"push"}, Caches: []ir.CacheRef{{Key: "deps", Mode: "restore"}}},
+		{Name: "both-read", Triggers: []string{"push"}, Caches: []ir.CacheRef{{Key: "deps", Mode: "both"}}, CacheMode: mode("read")},
+		{Name: "saves-only", Triggers: []string{"push"}, Caches: []ir.CacheRef{{Key: "deps", Mode: "save"}}},
+		{Name: "write-only", Triggers: []string{"push"}, Caches: []ir.CacheRef{{Key: "deps", Mode: "both"}}, CacheMode: mode("write-only")},
+		{Name: "none", Triggers: []string{"push"}, Caches: []ir.CacheRef{{Key: "deps", Mode: "restore"}}, CacheMode: mode("none")},
+		{Name: "no-cache", Triggers: []string{"push"}},
+	}}
+	var r struct {
+		Jobs map[string]struct {
+			RestoresCache bool `json:"restoresCache"`
+		} `json:"jobs"`
+	}
+	evaluateInto(t, p, nil, &r)
+	want := map[string]bool{"restores": true, "both-read": true, "saves-only": false, "write-only": false, "none": false, "no-cache": false}
+	for name, w := range want {
+		if r.Jobs[name].RestoresCache != w {
+			t.Errorf("%s: restoresCache = %v, want %v", name, r.Jobs[name].RestoresCache, w)
 		}
 	}
 }
