@@ -55,13 +55,6 @@ func cacheSituation(jobs map[string]JobSituation) *Situation {
 	return s
 }
 
-// privilegedPreview is a pull_request_target job checking out the pull
-// request head: code from anyone runs in the base repository's context.
-func privilegedPreview() (JobSituation, opaengine.Finding) {
-	return JobSituation{PrivilegedTriggers: []string{"pull_request_target"}, CacheScopes: defaultScope},
-		entryFinding("ISSUE-804", "pr-preview/preview", "github.event.pull_request.head.sha")
-}
-
 func cachePaths(paths []AttackPath) []AttackPath {
 	var out []AttackPath
 	for _, p := range paths {

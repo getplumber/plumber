@@ -83,6 +83,17 @@ func TestCacheModeExpressionResolves(t *testing.T) {
 		{`${{ github.event_name == 'issue_comment' && 'write' || 'read' }}`, ""},
 		{`${{ vars.CACHE_MODE || 'write' }}`, ""},
 		{`${{ inputs.mode || 'write' }}`, ""},
+		// Every context the parser knows, beside a quoted write: the
+		// context still makes the file invalid, the literal grants nothing.
+		{`${{ env.C && 'write' || 'read' }}`, ""},
+		{`${{ job.status && 'write' || 'read' }}`, ""},
+		{`${{ jobs.x.result && 'write' }}`, ""},
+		{`${{ steps.s.outputs.m || 'write' }}`, ""},
+		{`${{ runner.debug && 'write' || 'read' }}`, ""},
+		{`${{ secrets.USE_CACHE && 'write' || 'read' }}`, ""},
+		{`${{ strategy.fail-fast && 'write' }}`, ""},
+		{`${{ matrix.rw && 'write-only' || 'read' }}`, ""},
+		{`${{ needs.setup.outputs.mode || 'write' }}`, ""},
 		{`${{ format('wr{0}', 'ite') }}`, ""},
 	}
 	for _, c := range cases {
