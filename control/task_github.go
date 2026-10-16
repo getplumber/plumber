@@ -26,6 +26,41 @@ var fetchGitHubDefaultBranch = func(host, owner, repo string) (string, error) {
 // which otherwise needs network and auth.
 var scanGitHubWorkflowsRemote = githubpkg.ScanGitHubWorkflowsRemote
 
+// fetchGitHubEnvironments is a test seam over the environments lookup.
+// The default honors PLUMBER_DISABLE_GITHUB_API (same contract as
+// fetchGitHubDefaultBranch above) so offline test suites never hit the
+// network.
+var fetchGitHubEnvironments = func(host, owner, repo string) ([]ir.Environment, bool, error) {
+	if v := os.Getenv(githubpkg.EnvDisableGitHubAPI); v == "1" || v == "true" {
+		return nil, false, nil
+	}
+	return githubpkg.FetchGitHubEnvironments(host, owner, repo)
+}
+
+// fetchGitHubWorkflowStates is a test seam over the workflow-states
+// lookup. The default honors PLUMBER_DISABLE_GITHUB_API (same contract
+// as fetchGitHubDefaultBranch above) so offline test suites never hit
+// the network.
+var fetchGitHubWorkflowStates = func(host, owner, repo string) (map[string]string, bool, error) {
+	if v := os.Getenv(githubpkg.EnvDisableGitHubAPI); v == "1" || v == "true" {
+		return nil, false, nil
+	}
+	return githubpkg.FetchGitHubWorkflowStates(host, owner, repo)
+}
+
+// fetchGitHubDefaultTokenWrite is a test seam over the repository
+// default-token lookup. The default honors PLUMBER_DISABLE_GITHUB_API
+// (same contract as fetchGitHubDefaultBranch above) so offline test
+// suites never hit the network; disabled and unreachable both
+// degrade to "unknown"/"unknown", FetchGitHubDefaultTokenWrite's own
+// contract.
+var fetchGitHubDefaultTokenWrite = func(host, owner, repo, defaultBranch string, declaresContentsWrite bool, eligible func(string) bool) (write, source string) {
+	if v := os.Getenv(githubpkg.EnvDisableGitHubAPI); v == "1" || v == "true" {
+		return "unknown", "unknown"
+	}
+	return githubpkg.FetchGitHubDefaultTokenWrite(host, owner, repo, defaultBranch, declaresContentsWrite, eligible)
+}
+
 // fetchGitHubVisibility is a test seam over the repo-visibility lookup.
 // The default honors PLUMBER_DISABLE_GITHUB_API (same contract as
 // fetchGitHubDefaultBranch above) so offline test suites never hit the
@@ -87,6 +122,191 @@ func applyGitHubVisibility(pipeline *ir.NormalizedPipeline, host, projectPath st
 	if fullName != "" {
 		pipeline.ProjectPath = fullName
 	}
+}
+
+// enrichGitHubEnvironments populates pipeline.Environments and
+// pipeline.EnvironmentsKnown via the GitHub REST API. Unlike
+// enrichGitHubBranches this has no control toggle and always runs for
+// GitHub: the situation facts read it for every job carrying an
+// `environment:`, whatever controls are configured. A 401/403/404 or
+// network failure degrades to EnvironmentsKnown=false silently (the
+// situation fact then stays "unknown" and a claim resting on it is
+// capped, never a reason to flag the run degraded, same contract as
+// an optional fact elsewhere). Any other failure is logged at Warn,
+// still without flagging the run degraded.
+func enrichGitHubEnvironments(l *logrus.Entry, pipeline *ir.NormalizedPipeline, host, owner, repo string) {
+	if pipeline == nil || owner == "" || repo == "" {
+		return
+	}
+	envs, known, err := fetchGitHubEnvironments(host, owner, repo)
+	if !known && err != nil {
+		l.WithError(err).Warn("GitHub environments fetch failed; environment reviewer facts stay unknown")
+	}
+	pipeline.Environments = envs
+	pipeline.EnvironmentsKnown = known
+}
+
+// enrichGitHubWorkflowStates populates pipeline.WorkflowStates,
+// pipeline.WorkflowStatesKnown and the derived pipeline.ActionsDisabled
+// via the GitHub REST API. Same contract as enrichGitHubEnvironments: no
+// control toggle, always runs for GitHub (MarkInert reads it for every
+// job, whatever controls are configured). A 401/403/404 or network
+// failure degrades to WorkflowStatesKnown=false silently: MarkInert then
+// has nothing to mark a job inert for from this lane, never a reason to
+// flag the run degraded, same contract as an optional fact elsewhere.
+func enrichGitHubWorkflowStates(l *logrus.Entry, pipeline *ir.NormalizedPipeline, host, owner, repo string) {
+	if pipeline == nil || owner == "" || repo == "" {
+		return
+	}
+	states, known, err := fetchGitHubWorkflowStates(host, owner, repo)
+	if !known && err != nil {
+		l.WithError(err).Warn("GitHub workflow states fetch failed; workflow-disabled facts stay unknown")
+	}
+	pipeline.WorkflowStates = states
+	pipeline.WorkflowStatesKnown = known
+	pipeline.ActionsDisabled = actionsDisabled(states, known)
+}
+
+// actionsDisabled derives pipeline.ActionsDisabled from the workflow
+// states lane: true when the listing is known, names at least one
+// workflow, and every one of them is disabled_manually or
+// disabled_inactivity. A known but empty listing is never disabled on
+// its own, whatever the pipeline parsed off disk: the workflows endpoint
+// only lists what is registered on the default branch, so a workflow
+// added on a feature branch would otherwise misread as Actions being
+// off.
+func actionsDisabled(states map[string]string, known bool) bool {
+	if !known || len(states) == 0 {
+		// The workflows-listing endpoint only lists workflows registered
+		// on the repository's default branch: an empty, known list is
+		// also what a repository answers when its workflow file was
+		// only just added on a feature branch, or has none of its own
+		// yet, neither of which means Actions is disabled. Without a
+		// separate "Actions enabled" signal from the API, an empty list
+		// is never enough evidence on its own, whatever the pipeline
+		// itself parsed off disk.
+		return false
+	}
+	for _, state := range states {
+		if state != "disabled_manually" && state != "disabled_inactivity" {
+			return false
+		}
+	}
+	return true
+}
+
+// enrichGitHubDefaultToken populates pipeline.DefaultTokenWrite and
+// pipeline.DefaultTokenSource via the GitHub REST API: the
+// repository's real default GITHUB_TOKEN write, read from a run's own
+// "GITHUB_TOKEN Permissions" log block or proved from a
+// github-actions[bot]-authored write, never assumed. Same contract as
+// enrichGitHubEnvironments/enrichGitHubWorkflowStates: no control
+// toggle, always runs for GitHub, and FetchGitHubDefaultTokenWrite
+// never errors, so there is nothing to log here either.
+//
+// The lane is skipped (no API call at all) when no job in the
+// pipeline has nil Permissions: a workflow where every job declares
+// its own permissions has nothing for the repository default to
+// govern, and resolving it would answer a question nobody is asking.
+func enrichGitHubDefaultToken(pipeline *ir.NormalizedPipeline, host, owner, repo string) {
+	if pipeline == nil || owner == "" || repo == "" {
+		return
+	}
+	if !hasEligibleDefaultTokenJob(pipeline) {
+		return
+	}
+	eligible := func(workflowPath string) bool {
+		return eligibleDefaultTokenWorkflow(pipeline, workflowPath)
+	}
+	write, source := fetchGitHubDefaultTokenWrite(
+		host, owner, repo, pipeline.DefaultBranch,
+		declaresDefaultTokenContentsWrite(pipeline), eligible,
+	)
+	// "unknown"/"unknown" is FetchGitHubDefaultTokenWrite's own way of
+	// saying neither route decided it; the IR contract is that absent
+	// (omitted) means unknown, so that case is left unset rather than
+	// writing the literal string into the pipeline.
+	if write == "true" || write == "false" {
+		pipeline.DefaultTokenWrite = write
+	}
+	if source == "log" || source == "effect" {
+		pipeline.DefaultTokenSource = source
+	}
+}
+
+// declaresDefaultTokenContentsWrite reports whether some job of the
+// pipeline already declares a contents write (an explicit
+// "contents: write" entry, or the write-all shortcut): when one does,
+// a release the repository's own bot identity authored is no longer
+// safe evidence that the UNDECLARED default token can write too, only
+// that some token in this repository can, so the effect route must be
+// skipped rather than crediting the default with a write it was never
+// shown to hold.
+func declaresDefaultTokenContentsWrite(pipeline *ir.NormalizedPipeline) bool {
+	for _, j := range pipeline.Jobs {
+		switch perms := j.Permissions.(type) {
+		case string:
+			if perms == "write-all" {
+				return true
+			}
+		case map[string]any:
+			if level, _ := perms["contents"].(string); level == "write" {
+				return true
+			}
+		case map[string]string:
+			if perms["contents"] == "write" {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// hasEligibleDefaultTokenJob reports whether at least one job of the
+// pipeline has no declared permissions at all (its own, nor its
+// workflow's, per ir.Job.Permissions' effective-permissions
+// contract): the only jobs the repository's default token write
+// governs. Gates enrichGitHubDefaultToken so a pipeline where every
+// job declares its own permissions never spends an API call on a
+// question nobody is asking.
+func hasEligibleDefaultTokenJob(pipeline *ir.NormalizedPipeline) bool {
+	for _, j := range pipeline.Jobs {
+		if j.Permissions == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// eligibleDefaultTokenWorkflow reports whether workflowPath (a
+// repo-relative ".github/workflows/..." path, the form the runs and
+// workflow-states listings both use) is one where EVERY job it
+// carries has no declared permissions and calls no reusable workflow:
+// ir.WorkflowStateKey normalizes job.OriginFile onto that same form,
+// since the local scan's OriginFile is an absolute filesystem path
+// rather than the repo-relative one the API speaks.
+//
+// Both conditions matter: a workflow is never eligible just because
+// SOME job in it has nil Permissions, because the run the log route
+// fetches is keyed by workflow, not by job, and GitHub always returns
+// the run's first job (per_page=1) whichever one that happens to be.
+// A sibling job that declares its own permissions would have its
+// declaration misread as the repository default; a job that calls a
+// reusable workflow (ReusableWorkflowUses set) runs with the called
+// job's own effective permissions, never the calling workflow's
+// default, so its presence disqualifies the workflow the same way.
+func eligibleDefaultTokenWorkflow(pipeline *ir.NormalizedPipeline, workflowPath string) bool {
+	matched := false
+	for _, j := range pipeline.Jobs {
+		if ir.WorkflowStateKey(j.OriginFile) != workflowPath {
+			continue
+		}
+		matched = true
+		if j.Permissions != nil || j.ReusableWorkflowUses != "" {
+			return false
+		}
+	}
+	return matched
 }
 
 // enrichGitHubBranches populates pipeline.Branches via the GitHub
@@ -272,6 +492,11 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 
 	resolveGitHubDefaultBranch(l, pipeline, conf.GithubAPIHost, conf.ProjectPath)
 	applyGitHubVisibility(pipeline, conf.GithubAPIHost, conf.ProjectPath)
+	if owner, repo, addressable := gitHubOwnerRepo(conf.ProjectPath); addressable {
+		enrichGitHubEnvironments(l, pipeline, conf.GithubAPIHost, owner, repo)
+		enrichGitHubWorkflowStates(l, pipeline, conf.GithubAPIHost, owner, repo)
+		enrichGitHubDefaultToken(pipeline, conf.GithubAPIHost, owner, repo)
+	}
 
 	// The union of every collecting configuration's branchMustBeProtected
 	// scope, so one fetch covers every policy's branches (row 62).
@@ -293,6 +518,12 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 		}
 		branchFetchFailed = enrichGitHubBranches(l, pipeline, conf.GithubAPIHost, branchScope, conf.ProjectPath, onProgress)
 	}
+
+	// After every enrichment lane above (environments, workflow states,
+	// branches) and before the situation facts are evaluated below: a job
+	// MarkInert finds cannot run at all must read as inert everywhere
+	// downstream, policy findings and the attack-path situation alike.
+	ir.MarkInert(pipeline)
 
 	if conf.ProgressFunc != nil {
 		total := githubpkg.TotalProgressStepsForPipeline(pipeline)
@@ -404,6 +635,9 @@ func RunGitHubAnalysisRemote(conf *configuration.Configuration, owner, repo, ref
 	applyGitHubVisibility(pipeline, conf.GithubAPIHost, owner+"/"+repo)
 
 	resolveGitHubDefaultBranch(l, pipeline, conf.GithubAPIHost, owner+"/"+repo)
+	enrichGitHubEnvironments(l, pipeline, conf.GithubAPIHost, owner, repo)
+	enrichGitHubWorkflowStates(l, pipeline, conf.GithubAPIHost, owner, repo)
+	enrichGitHubDefaultToken(pipeline, conf.GithubAPIHost, owner, repo)
 
 	branchScope := collectionBranchProtectionConfig(conf)
 	branchFetchFailed := false
@@ -420,6 +654,10 @@ func RunGitHubAnalysisRemote(conf *configuration.Configuration, owner, repo, ref
 		}
 		branchFetchFailed = enrichGitHubBranches(l, pipeline, conf.GithubAPIHost, branchScope, owner+"/"+repo, onProgress)
 	}
+
+	// Same ordering as the local path: after every enrichment lane, before
+	// the situation facts are evaluated below.
+	ir.MarkInert(pipeline)
 
 	if conf.ProgressFunc != nil {
 		total := githubpkg.TotalProgressStepsForPipeline(pipeline)

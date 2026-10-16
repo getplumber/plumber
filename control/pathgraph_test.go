@@ -291,7 +291,7 @@ func TestReachFragmentReadsAsASentence(t *testing.T) {
 		{"every secret, write-all", Reach{AllSecrets: true, TokenWrite: writeAllScopes, Impacts: writeAllImpact}, "", "every secret of the repository, a token with push, publish and deploy access and write access to actions, pull requests and security events and an OIDC token"},
 		{"secrets and another scope", Reach{Secrets: []string{"A", "B", "C"}, TokenWrite: []string{"pull-requests"}}, "", "3 secrets and a token with write access to pull requests"},
 		{"one secret", Reach{Secrets: []string{"A"}}, "", "1 secret"},
-		{"assumed token", Reach{TokenWrite: []string{"contents", "packages"}, tokenAssumed: true}, unresolvableDefaultToken, "a token with push and publish access (assumed: no permissions block)"},
+		{"assumed token", Reach{TokenWrite: []string{"contents", "packages"}, tokenAssumed: true}, unresolvableDefaultToken, "a token with push and publish access (token scope could not be read)"},
 		{"OIDC only", Reach{TokenWrite: []string{"id-token"}}, "", "an OIDC token"},
 		{"OIDC and another scope", Reach{TokenWrite: []string{"id-token", "security-events"}}, "", "a token with write access to security events and an OIDC token"},
 		{"execution only", Reach{Executes: true}, "", "code execution on the runner, no secret and no write token"},
@@ -463,7 +463,7 @@ func TestBlockBranchesSayWhereTheJobRuns(t *testing.T) {
 func TestPathGraphReadsTheEntryTheBranchAndTheConsequence(t *testing.T) {
 	b := PathBlock{
 		Tier: TierHigh, Entry: "dorny/paths-filter@v3 (untrusted and mutable external action)", EntrySubject: "dorny/paths-filter@v3",
-		Branches:        []PathBlockBranch{{Job: "job `triage` from workflow `labeler.yml`", Reach: "a token with push and publish access (assumed: no permissions block)"}},
+		Branches:        []PathBlockBranch{{Job: "job `triage` from workflow `labeler.yml`", Reach: "a token with push and publish access (token scope could not be read)"}},
 		So:              "if this action is compromised or malicious, an attacker can execute code to push in your repository and publish packages",
 		ReachUnverified: defaultTokenUnchecked,
 		Fix:             "use an action from a trusted source and pin the version on the commit SHA",
@@ -473,11 +473,11 @@ func TestPathGraphReadsTheEntryTheBranchAndTheConsequence(t *testing.T) {
 		"       Entry  dorny/paths-filter@v3 (untrusted and mutable external action)",
 		"       │",
 		"       └──▶ runs in job `triage` from workflow `labeler.yml`",
-		"            └─▶ reaches a token with push and publish access (assumed: no permissions block)",
+		"            └─▶ reaches a token with push and publish access (token scope could not be read)",
 		"",
 		"       So     if this action is compromised or malicious,",
 		"              an attacker can execute code to push in your repository and publish packages",
-		"       Note   Plumber could not check that the token can write (no permissions block)",
+		"       Note   Plumber could not check that the token can write (token scope could not be read)",
 		"       Fix    use an action from a trusted source and pin the version on the commit SHA",
 	}
 	if got := strings.Join(ReportPathGraph(1, b, 100), "\n"); got != strings.Join(want, "\n") {

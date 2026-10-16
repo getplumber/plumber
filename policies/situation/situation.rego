@@ -51,6 +51,7 @@ facts(group) := {
 	},
 	"caches": sort({cache_fact(c) | some job in group; some c in object.get(job, "caches", [])}),
 	"dead": every_dead(group),
+	"inert": inert_reason(group),
 	"ownImage": every_own_image(group),
 	"callers": sort([c | some c in {caller_fact(job, c) | some job in group; some c in object.get(job, "callers", [])}]),
 	"cacheScopes": sort({sc | some job in group; some sc in save_scopes(job)}),
@@ -89,13 +90,37 @@ image_registry_and_name(img) := concat("/", [img.registry, img.name]) if {
 	not object.get(img, "registry", "") in {"", "unknown"}
 } else := object.get(img, "name", "")
 
-# every_dead: every job sharing the name is dead (a constant false if:, the
-# collector's Job.Dead), so none of them ever runs and no path enters it.
+# every_dead: every job sharing the name is dead (a constant false if:,
+# the collector's Job.Dead) or carries a non-empty inert reason
+# (MarkInert, Job.Inert): either way none of them ever runs and no path
+# enters it.
 every_dead(group) if {
 	every job in group {
-		object.get(job, "dead", false) == true
+		job_cannot_run(job)
 	}
 } else := false
+
+job_cannot_run(job) if object.get(job, "dead", false) == true
+
+job_cannot_run(job) if object.get(job, "inert", "") != ""
+
+# inert_reason: the inert reason a path report prints under the job's
+# findings, "" unless every job sharing the name is inert (the same
+# condition every_dead tests): a group with a live member still runs
+# through it, so it must carry no reason at all, never the first one
+# found. Deterministic the same way merged_privilege's environment_job
+# is (smallest originFile, the first such job in input order on a tie),
+# for the rare case of two same-named jobs (e.g. ci.yml and ci.yaml)
+# disagreeing on why they cannot run.
+inert_reason(group) := r if {
+	every job in group {
+		object.get(job, "inert", "") != ""
+	}
+	files := [object.get(job, "originFile", "") | some job in group]
+	first := min(files)
+	i := min({k | files[k] == first})
+	r := object.get(group[i], "inert", "")
+} else := ""
 
 # cache_fact: one cache the job restores, saves or both, with the step that
 # declares it, so a path can match what a release job restores against
@@ -840,11 +865,14 @@ privilege(job) := {
 	"protectedSecrets": protected_secrets(job),
 	"tokenWrite": token_write(job),
 	"tokenWriteSource": token_write_source(job),
+	"tokenWriteState": token_write_state(job),
 	"persistedCredentials": persisted_credentials(job),
 	"environment": {
 		"name": object.get(job, "environment", ""),
 		"protected": environment_protected(job),
-		"reviewers": "unknown",
+		"reviewers": environment_reviewers_state(job),
+		"requiredReviewers": environment_required_reviewers(job),
+		"rules": environment_rules(job),
 	},
 }
 
@@ -852,9 +880,10 @@ privilege(job) := {
 # above), merged so the result never depends on input order: name lists
 # as sorted unions; secretsState unknown if any job's is;
 # secretsInherit true if any; persistedCredentials proven if any;
-# tokenWriteSource the strongest signal present (declared, then default,
-# then none); environment from the job with the smallest originFile, the
-# first such job in input order on a tie. Total: the group is never empty.
+# tokenWriteSource the strongest signal present (declared, then log,
+# then effect, then unknown, then none); environment from the job with
+# the smallest originFile, the first such job in input order on a tie.
+# Total: the group is never empty.
 merged_privilege(group) := {
 	"secrets": sort({s | some job in group; some s in privilege(job).secrets}),
 	"secretsState": merged_secrets_state(group),
@@ -863,6 +892,7 @@ merged_privilege(group) := {
 	"protectedSecrets": sort({s | some job in group; some s in privilege(job).protectedSecrets}),
 	"tokenWrite": sort({s | some job in group; some s in privilege(job).tokenWrite}),
 	"tokenWriteSource": merged_token_write_source(group),
+	"tokenWriteState": merged_token_write_state(group),
 	"persistedCredentials": merged_persisted_credentials(group),
 	"environment": privilege(environment_job(group)).environment,
 }
@@ -885,10 +915,20 @@ any_all_secrets(group) if {
 merged_token_write_source(group) := "declared" if {
 	some job in group
 	privilege(job).tokenWriteSource == "declared"
-} else := "default" if {
+} else := "log" if {
 	some job in group
-	privilege(job).tokenWriteSource == "default"
+	privilege(job).tokenWriteSource == "log"
+} else := "effect" if {
+	some job in group
+	privilege(job).tokenWriteSource == "effect"
+} else := "unknown" if {
+	some job in group
+	privilege(job).tokenWriteSource == "unknown"
 } else := "none"
+
+merged_token_write_state(group) := "proven" if {
+	merged_token_write_source(group) in {"declared", "log", "effect"}
+} else := "unknown"
 
 merged_persisted_credentials(group) := "proven" if {
 	some job in group
@@ -993,6 +1033,12 @@ caller_token_write(c) := all_write_scopes if {
 	level == "write"
 }) if {
 	is_object(object.get(c, "permissions", null))
+} else := default_token_write_scopes if {
+	object.get(c, "permissions", null) == null
+	default_token_write == "true"
+} else := [] if {
+	object.get(c, "permissions", null) == null
+	default_token_write == "false"
 } else := ["contents", "packages"] if {
 	object.get(c, "permissions", null) == null
 } else := []
@@ -1001,7 +1047,7 @@ caller_token_source(c) := "declared" if {
 	object.get(c, "permissions", null) == "write-all"
 } else := "declared" if {
 	is_object(object.get(c, "permissions", null))
-} else := "default" if {
+} else := default_token_source if {
 	object.get(c, "permissions", null) == null
 } else := "none"
 
@@ -1009,14 +1055,27 @@ caller_token_source(c) := "declared" if {
 # with its caller's token: the union of what its calls give.
 callers_token_write(job) := sort({s | some c in job.callers; some s in caller_token_write(c)})
 
-# callers_token_source: assumed ("default") when a call declares nothing,
-# declared when one does, none otherwise (read-all callers).
-callers_token_source(job) := "default" if {
+# callers_token_source: unlike merged_token_write_source (which merges
+# duplicate definitions of the SAME job and reads the strongest
+# evidence found anywhere), a called job can run from ANY of its
+# callers, so its privilege must read the WEAKEST one: one caller with
+# an unresolved repository default (unknown) means this job's own
+# write cannot be called proven either, whichever caller actually ran
+# it. unknown dominates every other signal; short of that, the
+# strongest real signal present wins (declared, then log, then
+# effect); none only when every call gives nothing.
+callers_token_source(job) := "unknown" if {
 	some c in job.callers
-	caller_token_source(c) == "default"
+	caller_token_source(c) == "unknown"
 } else := "declared" if {
 	some c in job.callers
 	caller_token_source(c) == "declared"
+} else := "log" if {
+	some c in job.callers
+	caller_token_source(c) == "log"
+} else := "effect" if {
+	some c in job.callers
+	caller_token_source(c) == "effect"
 } else := "none"
 
 # inherits_caller_token: a called job declaring no permissions of its own
@@ -1171,14 +1230,42 @@ obj_values(obj) := [v | some _, v in obj]
 
 all_write_scopes := ["actions", "contents", "deployments", "id-token", "packages", "pull-requests", "security-events"]
 
+# default_token_write_scopes: every write scope the repository's real
+# default GITHUB_TOKEN can hold, read off a run's own log or proved by
+# a bot-authored write (FetchGitHubDefaultTokenWrite); id-token is left
+# out, since the API never prints it in the GITHUB_TOKEN Permissions
+# block.
+default_token_write_scopes := ["actions", "checks", "contents", "deployments", "issues", "packages", "pull-requests", "security-events", "statuses"]
+
+# default_token_write: input.pipeline.defaultTokenWrite, "unknown" when
+# the lane never ran or never decided it (the field is omitted on the
+# Go side in that case).
+default_token_write := object.get(input.pipeline, "defaultTokenWrite", "unknown")
+
+# default_token_source: the tokenWriteSource a job with no permissions
+# block gets, once the repository's real default token write is
+# known. Both "true" and "false" forward input.pipeline.defaultTokenSource
+# verbatim: the effect route only ever proves "true", so "false" can
+# only ever have come from the log route ("log"), the same read that
+# proved "true" there too, and a read-only default is still a settled,
+# proven answer, never an open question. Anything else (the lane never
+# ran, or neither route resolved it) is "unknown".
+default_token_source := object.get(input.pipeline, "defaultTokenSource", "unknown") if {
+	default_token_write in {"true", "false"}
+} else := "unknown"
+
 # tokenWrite: a single function with clear, mutually exclusive guards
 # (provider, then permissions shape), closed by an unconditional default,
 # so it is total and can never leave privilege undefined. GitHub: the
 # write-all shortcut expands to every scope; an explicit permissions map
-# yields its write-level keys; no permissions block at all is the
-# permissive repository default. GitLab: CI_JOB_TOKEN cannot push, so
-# contents:write requires a positive signal, either a protected
-# CI_PUSH_TOKEN variable in scope or a script that runs git push.
+# yields its write-level keys; no permissions block at all reads the
+# repository's real default token write (default_token_write), proven
+# when a run's log or a bot-authored write settled it, else the old
+# assumed scopes (kept so nothing downstream loses the write
+# assumption while it stays unresolved). GitLab: CI_JOB_TOKEN cannot
+# push, so contents:write requires a positive signal, either a
+# protected CI_PUSH_TOKEN variable in scope or a script that runs git
+# push.
 token_write(job) := callers_token_write(job) if {
 	inherits_caller_token(job)
 } else := all_write_scopes if {
@@ -1193,6 +1280,14 @@ token_write(job) := callers_token_write(job) if {
 }) if {
 	input.pipeline.provider == "github"
 	is_object(object.get(job, "permissions", null))
+} else := default_token_write_scopes if {
+	input.pipeline.provider == "github"
+	object.get(job, "permissions", null) == null
+	default_token_write == "true"
+} else := [] if {
+	input.pipeline.provider == "github"
+	object.get(job, "permissions", null) == null
+	default_token_write == "false"
 } else := ["contents", "packages"] if {
 	input.pipeline.provider == "github"
 	object.get(job, "permissions", null) == null
@@ -1216,13 +1311,16 @@ gitlab_contents_write(job) if {
 
 # tokenWriteSource: whether tokenWrite above is a real declaration
 # ("declared": an explicit permissions object, or the write-all
-# shortcut), a guess ("default": no permissions block at all, the
-# permissive repository-default assumption), or neither ("none": GitLab,
-# or a GitHub string shortcut other than write-all, e.g. read-all). Total
-# by construction, the final else covers everything else. An assumed
-# token write must not read as proven, so impacts that depend
-# on it (writes_repo, and every signing or release step)
-# key their state off this, via token_dependent_state below.
+# shortcut), the repository's real default token write once it is
+# known ("log" or "effect", via default_token_source), a guess that
+# stays open ("unknown": no permissions block at all, and neither
+# route resolved the default), or neither ("none": GitLab, no write
+# scope the default grants, or a GitHub string shortcut other than
+# write-all, e.g. read-all). Total by construction, the final else
+# covers everything else. An unresolved token write must not read as
+# proven, so impacts that depend on it (writes_repo, and every signing
+# or release step) key their state off this, via token_dependent_state
+# below.
 token_write_source(job) := callers_token_source(job) if {
 	inherits_caller_token(job)
 } else := "declared" if {
@@ -1231,19 +1329,26 @@ token_write_source(job) := callers_token_source(job) if {
 } else := "declared" if {
 	input.pipeline.provider == "github"
 	is_object(object.get(job, "permissions", null))
-} else := "default" if {
+} else := default_token_source if {
 	input.pipeline.provider == "github"
 	object.get(job, "permissions", null) == null
 } else := "none"
 
 # token_dependent_state: the state an impact gets when its only evidence
-# that the job holds the write it needs is tokenWrite itself. A guessed
-# (default) token write downgrades the impact to unknown; any real
-# signal (declared, or none at all, which only fires impact rules that
-# never reach here) stays proven.
+# that the job holds the write it needs is tokenWrite itself. An
+# unresolved (unknown) token write downgrades the impact to unknown;
+# any real signal (declared, log, effect, or none at all, which only
+# fires impact rules that never reach here) stays proven.
 token_dependent_state(job) := "unknown" if {
-	token_write_source(job) == "default"
+	token_write_source(job) == "unknown"
 } else := "proven"
+
+# token_write_state: "proven" once tokenWriteSource is a real
+# declaration or a read repository default (declared, log, effect),
+# "unknown" when it is unresolved (unknown) or absent (none).
+token_write_state(job) := "proven" if {
+	token_write_source(job) in {"declared", "log", "effect"}
+} else := "unknown"
 
 persisted_credentials(job) := "proven" if {
 	input.pipeline.provider == "github"
@@ -1277,6 +1382,48 @@ environment_protected_signal(env) if {
 	v.environment == env
 	v.protected == true
 }
+
+# environment_reviewers_state: "proven" once the GitHub environments lane
+# has read the repository's environments (input.pipeline.environmentsKnown),
+# whether or not the job's own environment is among them (one the API
+# does not list protects nothing, which is itself a known answer). "unknown"
+# while that lane never ran (GitLab) or failed (401/403/404/network).
+environment_reviewers_state(job) := "proven" if {
+	object.get(job, "environment", "") != ""
+	input.pipeline.environmentsKnown == true
+} else := "unknown"
+
+# environment_required_reviewers: true when the environment the job names
+# is in the known list and that entry requires reviewers; false otherwise,
+# including when the job has none or the lane never ran.
+environment_required_reviewers(job) if {
+	env := object.get(job, "environment", "")
+	env != ""
+	some e in object.get(input.pipeline, "environments", [])
+	e.name == env
+	e.requiredReviewers == true
+} else := false
+
+# environment_rules: the protection rule names present on the environment
+# the job names, in the fixed order required_reviewers, wait_timer,
+# branch_policy; empty when the job has no environment, the environment is
+# not in the known list, or it carries none of the three.
+environment_rules(job) := rules if {
+	env := object.get(job, "environment", "")
+	env != ""
+	some e in object.get(input.pipeline, "environments", [])
+	e.name == env
+	rules := [name |
+		some name in ["required_reviewers", "wait_timer", "branch_policy"]
+		environment_has_rule(e, name)
+	]
+} else := []
+
+environment_has_rule(e, "required_reviewers") if e.requiredReviewers == true
+
+environment_has_rule(e, "wait_timer") if object.get(e, "waitTimer", 0) > 0
+
+environment_has_rule(e, "branch_policy") if e.branchPolicy == true
 
 # ------------------------------------------------------------------- impact
 
@@ -1691,8 +1838,8 @@ feeds(job) := sort({other.name |
 feeds_via(job) := {name: sort({kind |
 	some other in input.pipeline.jobs
 	other.name == name
-	not object.get(job, "dead", false)
-	not object.get(other, "dead", false)
+	not job_cannot_run(job)
+	not job_cannot_run(other)
 	some kind in feed_kinds
 	feeds_by(job, other, kind)
 }) |
@@ -1701,11 +1848,11 @@ feeds_via(job) := {name: sort({kind |
 
 feed_kinds := {"artifact", "cache", "output"}
 
-# A dead job (Job.Dead) never runs: it hands nothing over and takes
-# nothing in, so it is no edge either way.
+# A dead or inert job (Job.Dead, Job.Inert) never runs: it hands nothing
+# over and takes nothing in, so it is no edge either way.
 feeds_job(job, other) if {
-	not object.get(job, "dead", false)
-	not object.get(other, "dead", false)
+	not job_cannot_run(job)
+	not job_cannot_run(other)
 	some kind in feed_kinds
 	feeds_by(job, other, kind)
 }

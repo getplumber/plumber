@@ -451,9 +451,15 @@ type ghWorkflowHeader struct {
 // job in the workflow. Grouping them avoids passing many parameters to the
 // per-job builder.
 type workflowContext struct {
-	perms                any
-	env                  map[string]string
-	triggers             []string
+	perms    any
+	env      map[string]string
+	triggers []string
+	// hasTriggers is Job.WorkflowHasTriggers: true when the workflow's
+	// `on:` key names at least one event (triggers is then non-empty
+	// too), false when `on:` is absent or empty. Kept distinct from
+	// len(triggers) > 0 at the call site only for the doc comment this
+	// gives the field; the value is the same check.
+	hasTriggers          bool
 	pushBranches         []string
 	pushBranchesIgnore   []string
 	pushTags             []string
@@ -517,6 +523,42 @@ func stringOrList(v any) []string {
 		return out
 	}
 	return nil
+}
+
+// parseGitHubRunsOn reads a job's `runs-on:` value: a literal label, or a
+// list of literal labels, read label by label; expression is true when
+// the value, or any element of it, carries a `${{ ... }}` runtime
+// expression, or the value is the `group:`/`labels:` object form this
+// collector does not model (either way MarkInert can decide nothing
+// about a retired runner from it). A plain absence (no `runs-on:` at
+// all) answers (nil, false): nothing to check, not an expression.
+func parseGitHubRunsOn(v any) (labels []string, expression bool) {
+	switch t := v.(type) {
+	case string:
+		if strings.Contains(t, "${{") {
+			return nil, true
+		}
+		return []string{t}, false
+	case []any:
+		out := make([]string, 0, len(t))
+		for _, item := range t {
+			s, ok := item.(string)
+			if !ok {
+				continue
+			}
+			if strings.Contains(s, "${{") {
+				return nil, true
+			}
+			out = append(out, s)
+		}
+		if len(out) == 0 {
+			return nil, false
+		}
+		return out, false
+	case map[any]any, map[string]any:
+		return nil, true
+	}
+	return nil, false
 }
 
 // cacheAndArtifactRefs derives the structured cache and artifact uses of a job
@@ -767,6 +809,7 @@ func buildJob(jobName string, section map[string]any, wfCtx workflowContext, nam
 		OriginFile:             originFile,
 		OriginLine:             wfCtx.jobLines[jobName],
 		Triggers:               wfCtx.triggers,
+		WorkflowHasTriggers:    wfCtx.hasTriggers,
 		PushBranches:           wfCtx.pushBranches,
 		PushBranchesIgnore:     wfCtx.pushBranchesIgnore,
 		PushTags:               wfCtx.pushTags,
@@ -793,6 +836,11 @@ func buildJob(jobName string, section map[string]any, wfCtx workflowContext, nam
 		job.Image = &img
 		job.ImageRef = containerImageRef(section["container"])
 		job.MatrixImages = matrixImages(containerImageRef(section["container"]), section)
+	}
+	if runsOn, expression := parseGitHubRunsOn(section["runs-on"]); expression {
+		job.RunsOnExpression = true
+	} else if len(runsOn) > 0 {
+		job.RunsOn = runsOn
 	}
 	if jobPerms, present := section["permissions"]; present {
 		job.Permissions = normalizeGitHubPermissions(jobPerms)
@@ -891,12 +939,14 @@ func parseGitHubWorkflowJobs(data []byte, namespace, originFile string) ([]ir.Jo
 
 	pushBranches, pushBranchesIgnore, pushTags, pushTagsIgnore := extractGitHubPushFilters(wf.On)
 	wfCacheModeLine, jobCacheModeLines := scanGitHubCacheModeLines(data)
+	triggers := extractGitHubTriggers(wf.On)
 	wfCtx := workflowContext{
 		cacheMode:            cacheModeDecl(wf.CacheMode, wfCacheModeLine, "workflow"),
 		jobCacheModeLines:    jobCacheModeLines,
 		perms:                wf.Permissions,
 		env:                  normalizeGitHubEnv(wf.Env),
-		triggers:             extractGitHubTriggers(wf.On),
+		triggers:             triggers,
+		hasTriggers:          len(triggers) > 0,
 		pushBranches:         pushBranches,
 		pushBranchesIgnore:   pushBranchesIgnore,
 		pushTags:             pushTags,

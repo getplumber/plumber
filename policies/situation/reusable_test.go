@@ -76,13 +76,13 @@ func TestCalledJobHoldsWhatEachCallerGives(t *testing.T) {
 	got := reusableJobs(t, reusablePipeline())["_upload/upload"]
 	want := []callerFact{
 		{Job: "nightly/upload", TokenWrite: []string{"id-token"}, TokenWriteSource: "declared", Secrets: []string{"R2_KEY"}, Triggers: []string{"push"}},
-		{Job: "other/lint", TokenWrite: []string{"contents", "packages"}, TokenWriteSource: "default", Secrets: []string{"R2_KEY", "github-token"}, AllSecrets: true, Triggers: []string{"pull_request"}},
+		{Job: "other/lint", TokenWrite: []string{"contents", "packages"}, TokenWriteSource: "unknown", Secrets: []string{"R2_KEY", "github-token"}, AllSecrets: true, Triggers: []string{"pull_request"}},
 	}
 	if !reflect.DeepEqual(got.Callers, want) {
 		t.Errorf("callers = %+v\nwant %+v", got.Callers, want)
 	}
-	if !reflect.DeepEqual(got.Privilege.TokenWrite, []string{"contents", "id-token", "packages"}) || got.Privilege.TokenWriteSource != "default" {
-		t.Errorf("token = %v (%s), want the union of the callers', assumed since one declares none", got.Privilege.TokenWrite, got.Privilege.TokenWriteSource)
+	if !reflect.DeepEqual(got.Privilege.TokenWrite, []string{"contents", "id-token", "packages"}) || got.Privilege.TokenWriteSource != "unknown" {
+		t.Errorf("token = %v (%s), want the union of the callers', unresolved since one declares none", got.Privilege.TokenWrite, got.Privilege.TokenWriteSource)
 	}
 	if !reflect.DeepEqual(got.Privilege.Secrets, []string{"R2_KEY", "github-token"}) {
 		t.Errorf("secrets = %v", got.Privilege.Secrets)

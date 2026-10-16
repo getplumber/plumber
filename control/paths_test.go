@@ -776,7 +776,7 @@ func defaultTokenSituation(exposure string) *Situation {
 	s := &Situation{Exposure: exposure, Jobs: map[string]JobSituation{}}
 	j := JobSituation{}
 	j.Privilege.TokenWrite = []string{"contents"}
-	j.Privilege.TokenWriteSource = "default"
+	j.Privilege.TokenWriteSource = "unknown"
 	s.Jobs["release"] = j
 	return s
 }
@@ -795,10 +795,10 @@ func TestDefaultTokenAsOnlyPrivilegeKeepsTheCodeExecutionTier(t *testing.T) {
 		t.Errorf("a default token alone is an assumption the tier does not rest on, want High/proven: %+v", p)
 	}
 	// The path still says the token's write is assumed.
-	if s := PathSentence(p); !strings.HasSuffix(s, " Plumber could not verify that `GITHUB_TOKEN` is really writable (no `permissions` block).") {
+	if s := PathSentence(p); !strings.HasSuffix(s, " Plumber could not verify that `GITHUB_TOKEN` is really writable (token scope could not be read).") {
 		t.Errorf("sentence = %q", s)
 	}
-	if b := NewPathBlock(p, nil); b.Unverified || b.ReachUnverified != "Plumber could not check that the token can write (no permissions block)" {
+	if b := NewPathBlock(p, nil); b.Unverified || b.ReachUnverified != "Plumber could not check that the token can write (token scope could not be read)" {
 		t.Errorf("block = %+v", b)
 	}
 }
@@ -980,7 +980,7 @@ func TestForkPRWithOnlyADefaultTokenIsNotUnresolvable(t *testing.T) {
 	sit := injectionSituation(ir.VisibilityPublic, nil)
 	j := sit.Jobs["build"]
 	j.Privilege.TokenWrite = []string{"contents"}
-	j.Privilege.TokenWriteSource = "default"
+	j.Privilege.TokenWriteSource = "unknown"
 	sit.Jobs["build"] = j
 	paths := assemblePaths([]opaengine.Finding{entryFinding("ISSUE-207", "build", "github.event.pull_request.title")}, sit)
 	if len(paths) != 1 {
@@ -1077,7 +1077,7 @@ func TestForkEntryDeclaredTokenDoesNotMaskAFedJobsDefaultToken(t *testing.T) {
 	sit.Jobs["build"] = build
 	deploy := JobSituation{}
 	deploy.Privilege.TokenWrite = []string{"contents"}
-	deploy.Privilege.TokenWriteSource = "default"
+	deploy.Privilege.TokenWriteSource = "unknown"
 	sit.Jobs["deploy"] = deploy
 
 	paths := assemblePaths([]opaengine.Finding{entryFinding("ISSUE-207", "build", "github.event.pull_request.title")}, sit)
@@ -1898,7 +1898,7 @@ func TestAnUnreadPrivilegeBesideCodeExecutionKeepsItHigh(t *testing.T) {
 	f := finding("ISSUE-714", "build", map[string]any{"uses": "some/action@v1"})
 	for name, sit := range map[string]*Situation{
 		"nothing else":  unlistedSecretsJob("", nil, nil),
-		"default token": unlistedSecretsJob("default", []string{"contents"}, nil),
+		"default token": unlistedSecretsJob("unknown", []string{"contents"}, nil),
 	} {
 		paths := assemblePaths([]opaengine.Finding{f}, sit)
 		if len(paths) != 1 || paths[0].Tier != TierHigh || paths[0].BaseTier != TierHigh || paths[0].State != PathProven || len(paths[0].Modifiers) != 0 {
@@ -2132,5 +2132,31 @@ func TestUnlistedSecretsBesideCodeExecutionStayHigh(t *testing.T) {
 	if len(paths) != 1 || paths[0].Tier != TierHigh || paths[0].State != PathUnverified || len(paths[0].GateHashes) != 1 ||
 		!reflect.DeepEqual(paths[0].Modifiers, []string{"unresolvable", "gate:" + string(CodeSecretsOutsideEnv)}) {
 		t.Errorf("want the raised path lowered back to High and unverified, got %+v", paths)
+	}
+}
+
+// TestEnvironmentOfFallsBackToProtectionWhenReviewersUnknown pins the
+// fallback order environmentOf reads, for the GitLab case where the
+// environments lane never runs at all: with Reviewers unknown, the job's
+// environment reads "required" when the environment is protected,
+// "none" when it is explicitly not, and "unknown" when neither is
+// known.
+func TestEnvironmentOfFallsBackToProtectionWhenReviewersUnknown(t *testing.T) {
+	cases := []struct {
+		protected string
+		want      string
+	}{
+		{"true", "required"},
+		{"false", "none"},
+		{"unknown", "unknown"},
+	}
+	for _, c := range cases {
+		js := JobSituation{}
+		js.Privilege.Environment.Name = "staging"
+		js.Privilege.Environment.Reviewers = FactUnknown
+		js.Privilege.Environment.Protected = c.protected
+		if name, got, ok := environmentOf(js); !ok || name != "staging" || got != c.want {
+			t.Errorf("protected=%q: got %q %q %v, want %q", c.protected, name, got, ok, c.want)
+		}
 	}
 }

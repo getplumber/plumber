@@ -660,7 +660,7 @@ func TestFindingsToItemsPopulatesRoleOnPathPerPathForABranchGate(t *testing.T) {
 		t.Fatalf("fixture drifted: ISSUE-501 must amplify the repository-writing release path, got %+v", releasePath)
 	}
 
-	_, items := findingsToItems(findings, paths, true, "")
+	_, items := findingsToItems(findings, paths, true, "", nil)
 	gate := items[0]
 	if gate.Code != control.CodeBranchUnprotected {
 		t.Fatalf("items[0] = %+v, want the ISSUE-501 finding first", gate)

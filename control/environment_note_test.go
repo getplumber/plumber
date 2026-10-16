@@ -44,14 +44,30 @@ func TestAnEnvironmentIsANoteNeverAnImpact(t *testing.T) {
 	}
 }
 
-// The environment's approval fact, when the facts know it, says whether
-// an approval gates the job, whatever its protection reads.
+// The environment's approval fact, when the environments lane knows it
+// (Reviewers proven), says whether an approval gates the job regardless
+// of its protection reading: required when the matching environment
+// requires reviewers, none when it does not. Reviewers unknown falls
+// back to the protection-based reading, here also unknown.
 func TestEnvironmentOfReadsTheApprovalFactWhenKnown(t *testing.T) {
-	for approval, want := range map[string]string{"required": "required", "none": "none", "unknown": "unknown"} {
+	cases := []struct {
+		name              string
+		reviewers         FactState
+		requiredReviewers bool
+		want              string
+	}{
+		{"proven requiring reviewers", "proven", true, "required"},
+		{"proven requiring none", "proven", false, "none"},
+		{"unknown falls back to protection unknown", FactUnknown, false, "unknown"},
+	}
+	for _, c := range cases {
 		js := JobSituation{}
-		js.Privilege.Environment.Name, js.Privilege.Environment.Protected, js.Privilege.Environment.Reviewers = "prod", "unknown", approval
-		if name, got, ok := environmentOf(js); !ok || name != "prod" || got != want {
-			t.Errorf("%s: got %q %q %v", approval, name, got, ok)
+		js.Privilege.Environment.Name = "prod"
+		js.Privilege.Environment.Protected = "unknown"
+		js.Privilege.Environment.Reviewers = c.reviewers
+		js.Privilege.Environment.RequiredReviewers = c.requiredReviewers
+		if name, got, ok := environmentOf(js); !ok || name != "prod" || got != c.want {
+			t.Errorf("%s: got %q %q %v", c.name, name, got, ok)
 		}
 	}
 	if _, _, ok := environmentOf(JobSituation{}); ok {

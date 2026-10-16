@@ -29,9 +29,11 @@ type privilege struct {
 	TokenWriteSource     string   `json:"tokenWriteSource"`
 	PersistedCredentials string   `json:"persistedCredentials"`
 	Environment          struct {
-		Name      string `json:"name"`
-		Protected string `json:"protected"`
-		Reviewers string `json:"reviewers"`
+		Name              string   `json:"name"`
+		Protected         string   `json:"protected"`
+		Reviewers         string   `json:"reviewers"`
+		RequiredReviewers bool     `json:"requiredReviewers"`
+		Rules             []string `json:"rules"`
 	} `json:"environment"`
 }
 type impact struct {
@@ -701,8 +703,8 @@ func TestDefaultPermissionsWritesRepoIsUnresolvable(t *testing.T) {
 	}
 	r := evaluate(t, p, nil)
 	j := r.Jobs["deploy"]
-	if j.Privilege.TokenWriteSource != "default" {
-		t.Errorf("tokenWriteSource = %q, want default", j.Privilege.TokenWriteSource)
+	if j.Privilege.TokenWriteSource != "unknown" {
+		t.Errorf("tokenWriteSource = %q, want unknown", j.Privilege.TokenWriteSource)
 	}
 	if i, ok := impactKinds(j.Impact)["writes_repo"]; !ok || i.State != "unknown" {
 		t.Errorf("writes_repo: %+v", impactKinds(j.Impact))
@@ -961,7 +963,7 @@ func TestWriteTokenScopesAreImpacts(t *testing.T) {
 	if i := impactKinds(r.Jobs["contents"].Impact)["writes_repo"]; i.Evidence != "permissions: contents: write" {
 		t.Errorf("contents evidence = %q", i.Evidence)
 	}
-	if got := r.Jobs["default"].Privilege; got.TokenWriteSource != "default" || len(got.TokenWrite) == 0 {
+	if got := r.Jobs["default"].Privilege; got.TokenWriteSource != "unknown" || len(got.TokenWrite) == 0 {
 		t.Errorf("the default token stays a privilege: %+v", got)
 	}
 }
@@ -1406,7 +1408,7 @@ func TestGitLabMergeRequestOnlyJobHoldsNoProtectedPushToken(t *testing.T) {
 // branch's other path: a job whose script runs git push is itself proof
 // that the job can push, independent of any CI_PUSH_TOKEN settings
 // variable. tokenWriteSource stays "none" on GitLab (never "declared"
-// or "default"), so the resulting writes_repo impact is proven, not
+// or "unknown"), so the resulting writes_repo impact is proven, not
 // downgraded to unknown by token_dependent_state. A GitLab job
 // with no such script line gets neither.
 func TestGitLabGitPushScriptGrantsContentsWrite(t *testing.T) {
@@ -1456,8 +1458,9 @@ func TestSecretInStepIfIsHeld(t *testing.T) {
 // TestSameNamedJobsPrivilegeIsMerged pins how the privilege of jobs sharing
 // a name is merged: name lists as sorted unions, any inherit or persisted
 // credential wins, the token source keeps the strongest signal (declared,
-// then default, then none), and the environment comes from the job with
-// the smallest origin file, so the result never depends on input order.
+// then log, then effect, then unknown, then none), and the environment
+// comes from the job with the smallest origin file, so the result never
+// depends on input order.
 func TestSameNamedJobsPrivilegeIsMerged(t *testing.T) {
 	jobA := ir.Job{
 		Name:        "ci/build",
@@ -1483,7 +1486,7 @@ func TestSameNamedJobsPrivilegeIsMerged(t *testing.T) {
 		if !got.SecretsInherit || got.PersistedCredentials != "proven" {
 			t.Errorf("inherit / persisted: %+v", got)
 		}
-		if got.TokenWriteSource != "default" || !reflect.DeepEqual(got.TokenWrite, []string{"contents", "packages"}) {
+		if got.TokenWriteSource != "unknown" || !reflect.DeepEqual(got.TokenWrite, []string{"contents", "packages"}) {
 			t.Errorf("token: %v from %q", got.TokenWrite, got.TokenWriteSource)
 		}
 		if got.Environment.Name != "staging" {
@@ -1710,5 +1713,66 @@ func TestIncludesNameTheJobsTheyShape(t *testing.T) {
 	}
 	if got := evaluate(t, p, nil).Includes; !reflect.DeepEqual(got, want) {
 		t.Errorf("includes = %+v, want %+v", got, want)
+	}
+}
+
+// TestEnvironmentReviewersProvenFromKnownEnvironments pins the GitHub
+// environments fact: once the lane has read the repository's
+// environments (EnvironmentsKnown), a job's own environment reads
+// reviewers "proven", carries requiredReviewers from the matching
+// entry, and lists which protection rules that entry carries, in
+// order (required_reviewers, wait_timer, branch_policy).
+func TestEnvironmentReviewersProvenFromKnownEnvironments(t *testing.T) {
+	p := &ir.NormalizedPipeline{
+		Provider:          ir.ProviderGitHub,
+		EnvironmentsKnown: true,
+		Environments: []ir.Environment{
+			{Name: "frogbot", Known: true, RequiredReviewers: true, Reviewers: 2, WaitTimer: 30, BranchPolicy: true},
+		},
+		Jobs: []ir.Job{{Name: "deploy", OriginFile: ".github/workflows/ci.yml", Triggers: []string{"push"}, Environment: "frogbot"}},
+	}
+	env := evaluate(t, p, nil).Jobs["deploy"].Privilege.Environment
+	if env.Name != "frogbot" || env.Reviewers != "proven" || !env.RequiredReviewers {
+		t.Fatalf("environment = %+v", env)
+	}
+	if !reflect.DeepEqual(env.Rules, []string{"required_reviewers", "wait_timer", "branch_policy"}) {
+		t.Fatalf("rules = %v", env.Rules)
+	}
+}
+
+// TestEnvironmentAbsentFromKnownListProtectsNothing pins that an
+// environment the GitHub API does not list, once the lane has run,
+// is a known answer, not an unknown one: it protects nothing, so
+// reviewers reads "proven" with requiredReviewers false and no rules.
+func TestEnvironmentAbsentFromKnownListProtectsNothing(t *testing.T) {
+	p := &ir.NormalizedPipeline{
+		Provider:          ir.ProviderGitHub,
+		EnvironmentsKnown: true,
+		Environments:      []ir.Environment{{Name: "staging", Known: true}},
+		Jobs:              []ir.Job{{Name: "deploy", OriginFile: ".github/workflows/ci.yml", Triggers: []string{"push"}, Environment: "frogbot"}},
+	}
+	env := evaluate(t, p, nil).Jobs["deploy"].Privilege.Environment
+	if env.Name != "frogbot" || env.Reviewers != "proven" || env.RequiredReviewers {
+		t.Fatalf("environment = %+v", env)
+	}
+	if len(env.Rules) != 0 {
+		t.Fatalf("rules = %v, want none", env.Rules)
+	}
+}
+
+// TestEnvironmentReviewersUnknownWithoutCollection pins the degraded
+// side: without EnvironmentsKnown (the lane never ran, or it failed),
+// a job's environment reviewers stay "unknown" whatever its name.
+func TestEnvironmentReviewersUnknownWithoutCollection(t *testing.T) {
+	p := &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitHub,
+		Jobs:     []ir.Job{{Name: "deploy", OriginFile: ".github/workflows/ci.yml", Triggers: []string{"push"}, Environment: "frogbot"}},
+	}
+	env := evaluate(t, p, nil).Jobs["deploy"].Privilege.Environment
+	if env.Name != "frogbot" || env.Reviewers != "unknown" || env.RequiredReviewers {
+		t.Fatalf("environment = %+v", env)
+	}
+	if len(env.Rules) != 0 {
+		t.Fatalf("rules = %v, want none", env.Rules)
 	}
 }

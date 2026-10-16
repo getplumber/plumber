@@ -63,9 +63,11 @@ type Reach struct {
 	// it off) but under the current entry kinds it is always true.
 	Executes bool `json:"executes"`
 
-	// tokenAssumed is set when TokenWrite comes only from jobs with no
-	// permissions block (the repository default, an assumption), none
-	// declaring a write token. Never serialized.
+	// tokenAssumed is set when TokenWrite comes only from jobs whose
+	// repository-default token write could not be read at all (no
+	// permissions block, and neither the run's own log nor a
+	// bot-authored write settled it), none declaring a write token or
+	// proving the default from a log or an effect. Never serialized.
 	tokenAssumed bool
 	// parts is what each walked job adds to the reach, in walk order (the
 	// entry job first), after the platform rules: the job each item comes
@@ -76,8 +78,8 @@ type Reach struct {
 
 // reachPart is what one walked job holds of a reach: its surviving
 // secrets and write scopes, whether its token is the repository default
-// (assumed: no permissions block), and the impacts of its steps and of its
-// surviving token.
+// with its write unread (token scope could not be read), and the
+// impacts of its steps and of its surviving token.
 type reachPart struct {
 	job        string
 	secrets    []string
@@ -1465,9 +1467,9 @@ func reachOver(sit *Situation, jobs []string, kind EntryKind) (r Reach, unresolv
 		}
 		if len(js.Privilege.TokenWrite) > 0 {
 			switch js.Privilege.TokenWriteSource {
-			case "declared":
+			case "declared", "log", "effect":
 				hasDeclaredToken = true
-			case "default":
+			case "unknown":
 				hasDefaultToken = true
 			}
 		}
@@ -1528,7 +1530,7 @@ func reachParts(sit *Situation, jobs, surviving []string, r Reach) []reachPart {
 			}
 			sort.Strings(part.secrets)
 			sort.Strings(part.scopes)
-			part.assumed = len(part.scopes) > 0 && js.Privilege.TokenWriteSource == "default"
+			part.assumed = len(part.scopes) > 0 && js.Privilege.TokenWriteSource == "unknown"
 		}
 		parts = append(parts, part)
 	}
@@ -1551,14 +1553,16 @@ const environmentEvidence = "environment: "
 
 // environmentOf is the environment js runs in and whether it requires a
 // review before the job runs ("required", "none" or "unknown"): the job's
-// privilege's environment (its approval fact when the facts know it, else
-// its protection), else a deploy an older facts layer read off it; ok is
-// false when the job runs in none.
+// privilege's environment (its approval fact when the environments lane
+// proved it, else its protection), else a deploy an older facts layer read
+// off it; ok is false when the job runs in none.
 func environmentOf(js JobSituation) (name, reviewers string, ok bool) {
 	if env := js.Privilege.Environment; env.Name != "" {
 		switch {
-		case env.Reviewers == "required" || env.Reviewers == "none":
-			return env.Name, env.Reviewers, true
+		case env.Reviewers == "proven" && env.RequiredReviewers:
+			return env.Name, "required", true
+		case env.Reviewers == "proven" && !env.RequiredReviewers:
+			return env.Name, "none", true
 		case env.Protected == "true":
 			return env.Name, "required", true
 		case env.Protected == "false":
@@ -1666,9 +1670,16 @@ func applyPlatformReachRules(sit *Situation, jobs []string, kind EntryKind, r Re
 	return r
 }
 
-// liveSituation is sit without the jobs that never run (JobSituation.Dead,
-// a job under a constant false condition): they are no branch, no walked
-// job and no cache writer. sit itself is never changed.
+// liveSituation is sit without the jobs that never run (JobSituation.Dead):
+// a constant false condition, or, since the situation module's every_dead
+// also reads Job.Inert, every job sharing the name carrying a MarkInert
+// reason. They are no branch, no walked job and no cache writer. Dead
+// alone decides: it is already true whenever Inert is non-empty (the
+// situation module only ever fills Inert when the whole group is inert,
+// the same condition every_dead tests), so checking Inert here too would
+// only risk dropping a job a mixed group's one live member still runs
+// through, on a merged Inert that leaked from its inert sibling. sit
+// itself is never changed.
 func liveSituation(sit *Situation) *Situation {
 	jobs := make(map[string]JobSituation, len(sit.Jobs))
 	for name, js := range sit.Jobs {

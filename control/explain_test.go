@@ -452,7 +452,7 @@ func TestUnresolvableSentencePicksTheRealCause(t *testing.T) {
 
 	tokenPath := AttackPath{}
 	tokenPath.cause = unresolvableDefaultToken
-	want := "Plumber could not verify that `GITHUB_TOKEN` is really writable (no `permissions` block), so this path is unverified."
+	want := "Plumber could not verify that `GITHUB_TOKEN` is really writable (token scope could not be read), so this path is unverified."
 	if got := unresolvableSentence(tokenPath); got != want {
 		t.Errorf("default-token cause: got %q, want %q", got, want)
 	}
@@ -473,7 +473,7 @@ func TestDefaultTokenPathRendersTheGithubTokenSentence(t *testing.T) {
 	if len(paths) != 1 {
 		t.Fatalf("want one path, got %+v", paths)
 	}
-	want := "Plumber could not verify that `GITHUB_TOKEN` is really writable (no `permissions` block), so this path is unverified."
+	want := "Plumber could not verify that `GITHUB_TOKEN` is really writable (token scope could not be read), so this path is unverified."
 	if got := PathSentence(paths[0]); !strings.Contains(got, want) {
 		t.Errorf("sentence = %q, want it to contain %q", got, want)
 	}
@@ -1340,7 +1340,7 @@ func TestPathBlockSaysWhatCouldNotBeVerified(t *testing.T) {
 	}
 	token := AttackPath{State: PathUnverified, EntryKind: EntryMutableDependency, AnchorCode: "ISSUE-701", Jobs: []string{"j"},
 		Entry: EntryFact{Subject: "o/a@v1"}, Reach: Reach{TokenWrite: []string{"contents"}}, cause: unresolvableDefaultToken}
-	if b := NewPathBlock(token, nil); b.ReachUnverified != "Plumber could not check that the token can write (no permissions block)" || b.EntryUnverified != "" {
+	if b := NewPathBlock(token, nil); b.ReachUnverified != "Plumber could not check that the token can write (token scope could not be read)" || b.EntryUnverified != "" {
 		t.Errorf("token: %+v", b)
 	}
 	secrets := AttackPath{State: PathUnverified, EntryKind: EntryMutableDependency, AnchorCode: "ISSUE-701", Jobs: []string{"j"},

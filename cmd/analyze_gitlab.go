@@ -1843,7 +1843,12 @@ func printNoControlsWarning(result *control.AnalysisResult) {
 // control.RoleOnPath). Under v3 (v4 false) these
 // fields stay at their zero value and the rest of this function is
 // unchanged, so a v3 run renders byte-identical to before this.
-func findingsToItems(findings []opaengine.Finding, paths []control.AttackPath, v4 bool, defaultBranch string) ([]control.ErrorCode, []detailedFinding) {
+//
+// sit is the run's situation (result.Situation), read only for its job
+// facts' Inert reason (control.JobSituation.Inert, MarkInert): a finding
+// naming a job that cannot run at all carries why right onto the item.
+// nil (no situation, or a job-less finding) leaves Inert empty.
+func findingsToItems(findings []opaengine.Finding, paths []control.AttackPath, v4 bool, defaultBranch string, sit *control.Situation) ([]control.ErrorCode, []detailedFinding) {
 	codes := make([]control.ErrorCode, 0, len(findings))
 	items := make([]detailedFinding, 0, len(findings))
 	for _, f := range findings {
@@ -1858,6 +1863,7 @@ func findingsToItems(findings []opaengine.Finding, paths []control.AttackPath, v
 			File:        f.File,
 			DetailLines: detailLinesFromFinding(f),
 			Dismissed:   f.Dismissed,
+			Inert:       inertReasonFor(sit, f.Job),
 		}
 		if v4 {
 			item.ContextualSeverity = string(control.ContextualSeverity(f, paths, defaultBranch))
@@ -1876,6 +1882,16 @@ func findingsToItems(findings []opaengine.Finding, paths []control.AttackPath, v
 		items = append(items, item)
 	}
 	return codes, items
+}
+
+// inertReasonFor looks up job's Inert reason in sit, "" when sit is nil,
+// job is empty (a job-less finding) or the job carries no reason (it can
+// run, or the situation never heard of it).
+func inertReasonFor(sit *control.Situation, job string) string {
+	if sit == nil || job == "" {
+		return ""
+	}
+	return sit.Jobs[job].Inert
 }
 
 // scoreBreakdownWidths are inner text widths (padding applied after; borders use w+2 dashes per column).

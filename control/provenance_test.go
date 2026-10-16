@@ -33,7 +33,7 @@ func autogptLikeSituation() *Situation {
 	test.Privilege.Secrets, test.Privilege.SecretsState, test.Privilege.TokenWriteSource = []string{"A", "B"}, "proven", "declared"
 	bench := JobSituation{RefTriggers: []string{"push"}, CacheScopes: defaultScope}
 	bench.Privilege.Secrets, bench.Privilege.SecretsState = []string{"C"}, "proven"
-	bench.Privilege.TokenWrite, bench.Privilege.TokenWriteSource = []string{"contents", "packages"}, "default"
+	bench.Privilege.TokenWrite, bench.Privilege.TokenWriteSource = []string{"contents", "packages"}, "unknown"
 	return &Situation{Exposure: ir.VisibilityPublic, Provider: "github", Jobs: map[string]JobSituation{
 		"classic-autogpt-ci/test": test, "classic-benchmark-ci/benchmark-tests": bench,
 	}}
@@ -79,7 +79,7 @@ func TestTheAssumedMarkerStaysOnAHopAcquiredToken(t *testing.T) {
 		t.Fatalf("want one path, got %+v", paths)
 	}
 	b := NewPathBlock(paths[0], nil)
-	if got, want := b.Branches[0].Reach, "2 secrets and, through job `benchmark-tests` from workflow `classic-benchmark-ci`, 1 secret and a token with push and publish access (assumed: no permissions block)"; got != want {
+	if got, want := b.Branches[0].Reach, "2 secrets and, through job `benchmark-tests` from workflow `classic-benchmark-ci`, 1 secret and a token with push and publish access (token scope could not be read)"; got != want {
 		t.Errorf("reach %q, want %q", got, want)
 	}
 	if !slices.Contains(b.Notes(), defaultTokenUnchecked) {
@@ -94,7 +94,7 @@ func TestTheAssumedMarkerStaysOnAHopAcquiredToken(t *testing.T) {
 func TestACapabilityOnAnAssumedTokenAloneReadsMay(t *testing.T) {
 	js := JobSituation{}
 	js.Privilege.SecretsState = "proven"
-	js.Privilege.TokenWrite, js.Privilege.TokenWriteSource = []string{"contents"}, "default"
+	js.Privilege.TokenWrite, js.Privilege.TokenWriteSource = []string{"contents"}, "unknown"
 	sit := &Situation{Exposure: ir.VisibilityPublic, Provider: "github", Jobs: map[string]JobSituation{"ci/build": js}}
 	paths := assemblePaths([]opaengine.Finding{finding("ISSUE-714", "ci/build", map[string]any{"uses": "o/a@v1"})}, sit)
 	if so := NewPathBlock(paths[0], nil).So; !strings.HasSuffix(so, "an attacker may execute code to push in your repository") {

@@ -55,6 +55,12 @@ type detailedFinding struct {
 	// names them: the Individual findings section says where it runs.
 	Job  string
 	File string
+	// Inert is the reason Job can never run at all (control.JobSituation.Inert,
+	// looked up by job name when findingsToItems is given the run's
+	// situation): printed right after the location line so a reader sees
+	// the finding's path is theoretical, not live. Empty for a job that
+	// can run, or when no situation was available to look it up.
+	Inert string
 	// DetailLines is optional (e.g. ISSUE-505: one headline, several sub-reasons).
 	DetailLines []string
 	// Dismissed mirrors opaengine.Finding.Dismissed (#447): the platform
@@ -559,6 +565,11 @@ func renderFindingBlock(out io.Writer, f detailedFinding, indent, role string) {
 		// and similar tools detect it as a clickable
 		// file:line reference and jump straight to the job.
 		_, _ = fmt.Fprintf(out, "%s %s↳ at %s%s\n", indent, colorDim, sanitizeTerminal(f.Location), colorReset)
+	}
+	if f.Inert != "" {
+		// Right after the location: the job the finding names cannot run
+		// at all, so this path through it is theoretical, not live.
+		_, _ = fmt.Fprintf(out, "%s %scannot run: %s%s\n", indent, colorDim, sanitizeTerminal(f.Inert), colorReset)
 	}
 	if f.DocURL != "" {
 		_, _ = fmt.Fprintf(out, "%s %s↳ docs: %s%s\n", indent, colorDim, f.DocURL, colorReset)

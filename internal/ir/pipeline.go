@@ -25,6 +25,42 @@ type NormalizedPipeline struct {
 	Branches      []Branch          `json:"branches,omitempty"`
 	Dependabot    *DependabotConfig `json:"dependabot,omitempty"`
 
+	// WorkflowStates maps a GitHub Actions workflow file's path, exactly
+	// as the workflows listing endpoint returns it (e.g.
+	// ".github/workflows/ci.yml", matching Job.OriginFile), to its state
+	// ("active", "disabled_manually", "disabled_inactivity",
+	// "disabled_fork", "deleted", ...). GitHub only.
+	WorkflowStates map[string]string `json:"workflowStates,omitempty"`
+	// WorkflowStatesKnown is whether the workflows listing could actually
+	// be read (false on a 401/403/404/network failure): WorkflowStates
+	// and ActionsDisabled carry no information when this is false.
+	WorkflowStatesKnown bool `json:"workflowStatesKnown,omitempty"`
+	// ActionsDisabled is true when the repository's GitHub Actions are
+	// turned off entirely. Derived, never fetched as its own signal: true
+	// only when the listing is known, names at least one workflow, and
+	// every one of them is disabled_manually or disabled_inactivity. A
+	// known but empty listing is never read as disabled: the workflows
+	// endpoint only lists workflows registered on the default branch, so
+	// a workflow added on a feature branch would otherwise read as
+	// Actions being off.
+	ActionsDisabled bool `json:"actionsDisabled,omitempty"`
+
+	// DefaultTokenWrite is whether the repository's actual default
+	// GITHUB_TOKEN (the token a job with no permissions block at all,
+	// its own or its workflow's, runs with) can write: "true" or
+	// "false" once FetchGitHubDefaultTokenWrite read it from a run's
+	// own "GITHUB_TOKEN Permissions" log block, "true" when a
+	// github-actions[bot] release or default-branch commit proved it
+	// instead. Omitted (absent means unknown) when neither route could
+	// decide it. GitHub only.
+	DefaultTokenWrite string `json:"defaultTokenWrite,omitempty"`
+	// DefaultTokenSource is how DefaultTokenWrite was decided: "log"
+	// (the run's own permissions log block) or "effect" (a
+	// github-actions[bot] release or default-branch commit). Omitted
+	// (absent means unknown) when DefaultTokenWrite is also absent.
+	// GitHub only.
+	DefaultTokenSource string `json:"defaultTokenSource,omitempty"`
+
 	// RegistryHost is the container registry host of the scanned GitLab
 	// project's instance (e.g. registry.gitlab.com), where GitLab Function
 	// OCI references live. It comes from the GitLab API
@@ -98,6 +134,20 @@ type NormalizedPipeline struct {
 	// on these rules reports not-evaluable rather than a false pass.
 	// Mirrors Branch.ProtectionDetailsKnown.
 	MRApprovalRulesKnown bool `json:"mrApprovalRulesKnown,omitempty"`
+
+	// Environments are the repository's deployment environments (GitHub:
+	// Settings > Environments) and the reviewer rules each one carries.
+	// GitHub only; empty on GitLab.
+	Environments []Environment `json:"environments,omitempty"`
+
+	// EnvironmentsKnown is true when Environments was fetched
+	// authoritatively (an empty Environments then means "no
+	// environments", a real state the situation facts reason about). It
+	// is false when the listing could not be read (a 401/403 on the
+	// environments API, a 404, or a network failure), so a job's
+	// environment reviewer fact stays unknown rather than a false "no
+	// reviewers". Mirrors MRApprovalRulesKnown.
+	EnvironmentsKnown bool `json:"environmentsKnown,omitempty"`
 
 	// SettingsVariables are the project's CI/CD settings variables
 	// (GitLab: Settings > CI/CD > Variables), each with its security
@@ -319,6 +369,27 @@ type Job struct {
 	// `workflow.rules` and `only/except` semantics, and the few rules that
 	// care about triggers are GitHub-specific.
 	Triggers []string `json:"triggers,omitempty"`
+	// WorkflowHasTriggers is true when the enclosing workflow declares an
+	// `on:` key naming at least one event, false when `on:` is absent or
+	// names none. Set only by the GitHub collector; GitLab jobs leave it
+	// at its zero value (false), which is why MarkInert gates its "no
+	// trigger" reason on the pipeline's provider rather than on this
+	// field alone: a GitLab job with an empty Triggers is the norm, not
+	// a job that cannot run.
+	WorkflowHasTriggers bool `json:"workflowHasTriggers,omitempty"`
+
+	// RunsOn is the job's `runs-on:` literal labels (GitHub Actions): a
+	// single string or a list, normalized to one entry per label as
+	// written. Empty when the value is a runtime expression or a
+	// `group:`/`labels:` object form (see RunsOnExpression) this
+	// collector does not model.
+	RunsOn []string `json:"runsOn,omitempty"`
+	// RunsOnExpression is true when `runs-on:` holds a `${{ ... }}`
+	// expression (in the value itself or any list element) or the
+	// `group:`/`labels:` object form. MarkInert cannot decide a retired
+	// runner label from either, so it sets nothing for the runner on
+	// such a job.
+	RunsOnExpression bool `json:"runsOnExpression,omitempty"`
 
 	// PushBranches, PushBranchesIgnore, PushTags and PushTagsIgnore carry
 	// GitHub's `on.push.branches` / `branches-ignore` / `tags` /
@@ -395,6 +466,13 @@ type Job struct {
 	// false`, `if: ${{ false }}`, `if: 'false'`): the job never runs, so
 	// it holds nothing, changes nothing and hands nothing over.
 	Dead bool `json:"dead,omitempty"`
+	// Inert is why this job can never run, filled by MarkInert: its
+	// workflow is disabled, its runner label is retired, it has no
+	// trigger, it is a reusable workflow nobody calls, or it is pinned
+	// to another repository (see the MarkInert doc comment for the full
+	// precedence). Empty for a job that can run. GitHub only; MarkInert
+	// is a no-op on GitLab.
+	Inert string `json:"inert,omitempty"`
 	// Conditions collects every `if:` expression attached to the job
 	// (job-level + each step's). Kept as raw YAML strings so Rego
 	// policies can match them with regular expressions — no attempt
@@ -438,6 +516,23 @@ type Job struct {
 	// on GitLab from the job's cache:, artifacts: and dependencies: keys.
 	Caches    []CacheRef    `json:"caches,omitempty"`
 	Artifacts []ArtifactRef `json:"artifacts,omitempty"`
+}
+
+// Environment is a GitHub Actions deployment environment's protection
+// rules, as the provider collector reads them from the repository (not
+// from the workflow file itself, which only names the environment).
+// Known is false when the collector could not read the rule set (no
+// access, environment not found, provider error), in which case the
+// other fields carry no information and a reader must not treat their
+// zero values as "no protection rule".
+type Environment struct {
+	Name              string `json:"name"`
+	Known             bool   `json:"known,omitempty"`
+	RequiredReviewers bool   `json:"requiredReviewers,omitempty"`
+	Reviewers         int    `json:"reviewers,omitempty"`
+	PreventSelfReview bool   `json:"preventSelfReview,omitempty"`
+	WaitTimer         int    `json:"waitTimer,omitempty"`
+	BranchPolicy      bool   `json:"branchPolicy,omitempty"`
 }
 
 // ReusableCaller is one call of a reusable workflow, as seen from a job of

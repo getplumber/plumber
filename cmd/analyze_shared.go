@@ -714,7 +714,7 @@ func buildProviderControlSummariesAndGroups(p provider.Provider, result *control
 		if e.ControlName == "branchMustBeProtected" {
 			sortBranchProtectionFindingsForDisplay(findings)
 		}
-		codes, items := findingsToItems(findings, result.Paths, v4, defaultBranchOf(result))
+		codes, items := findingsToItems(findings, result.Paths, v4, defaultBranchOf(result), result.Situation)
 		dismissed := 0
 		for _, item := range items {
 			if item.Dismissed {

@@ -112,7 +112,7 @@ func TestPathBlockLabelsAreBoldWithColour(t *testing.T) {
 		Tier: control.TierHigh, Entry: "main (branch anyone with write access can push to, not protected)", EntrySubject: "main",
 		Branches:        []control.PathBlockBranch{{Job: "job `build`", Reach: "an OIDC token"}},
 		So:              "as anyone with write access to `main`, an attacker can execute code to request an OIDC token",
-		ReachUnverified: "Plumber could not check that the token can write (no permissions block)",
+		ReachUnverified: "Plumber could not check that the token can write (token scope could not be read)",
 		Fix:             "protect the default branch",
 	}
 	var plain, coloured bytes.Buffer
@@ -178,8 +178,8 @@ func TestPathBlockRenderingCapped(t *testing.T) {
 func TestPathBlockRenderingUnverified(t *testing.T) {
 	b := control.PathBlock{
 		Tier: control.TierHigh, Unverified: true, Loss: 15, Entry: "o/a@v1 (mutable external action)", EntrySubject: "o/a@v1",
-		Branches:        []control.PathBlockBranch{{Job: "job `build`", Reach: "a token with push access (assumed: no permissions block)", Marker: "(unverified)"}},
-		ReachUnverified: "Plumber could not check that the token can write (no permissions block)",
+		Branches:        []control.PathBlockBranch{{Job: "job `build`", Reach: "a token with push access (token scope could not be read)", Marker: "(unverified)"}},
+		ReachUnverified: "Plumber could not check that the token can write (token scope could not be read)",
 		So:              "if this action is compromised or malicious, an attacker can execute code to push in your repository", Fix: "pin the version on the commit SHA",
 	}
 	var out bytes.Buffer
@@ -187,8 +187,8 @@ func TestPathBlockRenderingUnverified(t *testing.T) {
 	got := out.String()
 	for _, want := range []string{
 		" HIGH  Attack path 2 (unverified)\n       Entry  o/a@v1 (mutable external action)\n",
-		"       └──▶ runs in job `build` (unverified)\n            └─▶ reaches a token with push access (assumed: no permissions block)\n",
-		"       Note   Plumber could not check that the token can write (no permissions block)\n       Fix ",
+		"       └──▶ runs in job `build` (unverified)\n            └─▶ reaches a token with push access (token scope could not be read)\n",
+		"       Note   Plumber could not check that the token can write (token scope could not be read)\n       Fix ",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("block lacks %q:\n%s", want, got)

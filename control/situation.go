@@ -65,10 +65,12 @@ type ImpactFact struct {
 
 // CallerFact is one call of a job of a reusable workflow of the
 // repository (JobSituation.Callers): the calling job and what the call
-// gives the called job, its token (TokenWriteSource "default" when nothing
-// up the chain declares permissions, the assumed repository default), the
-// secrets it passes by their caller-side names, whether it passes every
-// secret (secrets: inherit), the events it runs on.
+// gives the called job, its token (TokenWriteSource "log"/"effect" when
+// nothing up the chain declares permissions but the repository default
+// was read off a run's log or a bot-authored write, "unknown" when
+// neither route decided it), the secrets it passes by their
+// caller-side names, whether it passes every secret (secrets: inherit),
+// the events it runs on.
 type CallerFact struct {
 	Job              string   `json:"job"`
 	TokenWrite       []string `json:"tokenWrite"`
@@ -87,19 +89,31 @@ type Privilege struct {
 	// AllSecrets is true when the job holds every secret of the repository,
 	// proven by the way it reads them (secrets: inherit, or the whole
 	// secrets context), whatever their names.
-	AllSecrets           bool      `json:"allSecrets"`
-	ProtectedSecrets     []string  `json:"protectedSecrets"`
-	TokenWrite           []string  `json:"tokenWrite"`
-	TokenWriteSource     string    `json:"tokenWriteSource"` // declared | default | none
+	AllSecrets       bool     `json:"allSecrets"`
+	ProtectedSecrets []string `json:"protectedSecrets"`
+	TokenWrite       []string `json:"tokenWrite"`
+	TokenWriteSource string   `json:"tokenWriteSource"` // declared | log | effect | unknown | none
+	// TokenWriteState is how settled TokenWriteSource is: "proven" for
+	// declared, log and effect (a real declaration, a run's own log, or
+	// a bot-authored write all settle it), "unknown" for unknown and
+	// none (nothing settled it either way).
+	TokenWriteState      FactState `json:"tokenWriteState"`
 	PersistedCredentials FactState `json:"persistedCredentials"`
 	// Environment is the job's deployment environment, a protection the job
-	// runs behind and never an impact by itself. Reviewers is whether it
-	// requires an approval before the job runs: "unknown" while the provider's
-	// environment settings are not collected.
+	// runs behind and never an impact by itself. Reviewers is "proven" once
+	// the provider's environments were read authoritatively, "unknown"
+	// while they were not collected (GitLab) or the collection failed
+	// (GitHub 401/403/404/network). RequiredReviewers and Rules are only
+	// meaningful when Reviewers is "proven": RequiredReviewers is whether
+	// the matching environment requires an approval before the job runs;
+	// Rules names which protection rules that environment carries
+	// (required_reviewers, wait_timer, branch_policy).
 	Environment struct {
-		Name      string `json:"name"`
-		Protected string `json:"protected"` // "true" | "false" | "unknown"
-		Reviewers string `json:"reviewers"` // "unknown"
+		Name              string    `json:"name"`
+		Protected         string    `json:"protected"` // "true" | "false" | "unknown"
+		Reviewers         FactState `json:"reviewers"` // "proven" | "unknown"
+		RequiredReviewers bool      `json:"requiredReviewers"`
+		Rules             []string  `json:"rules"`
 	} `json:"environment"`
 }
 
@@ -162,9 +176,17 @@ type JobSituation struct {
 	// repository's organization, not an outside one.
 	OwnImage bool `json:"ownImage"`
 	// Dead is true when every job carrying the name has a constant false
-	// if: (ir.Job.Dead): it never runs, so no path enters it, and it is no
-	// feed edge either way.
+	// if: (ir.Job.Dead) or a non-empty Inert reason: it never runs, so no
+	// path enters it, and it is no feed edge either way.
 	Dead bool `json:"dead"`
+	// Inert is why this job can never run (ir.Job.Inert, MarkInert): its
+	// workflow is disabled, its runner label is retired, it has no
+	// trigger, it is a reusable workflow nobody calls, or it is pinned
+	// to another repository. Empty for a job that can run; a job sharing
+	// its name with a non-inert job still reads one of the group's own
+	// non-empty reasons here (never cleared by a sibling that can run),
+	// so the terminal report still names the cause.
+	Inert string `json:"inert"`
 }
 
 // CacheFact is one cache of a job (ir.CacheRef): its key, or its key

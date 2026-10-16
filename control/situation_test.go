@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -45,9 +46,10 @@ func TestEvaluateSituationDecodesTheRegoResult(t *testing.T) {
 	if j.Privilege.PersistedCredentials != "proven" {
 		t.Errorf("persistedCredentials = %q", j.Privilege.PersistedCredentials)
 	}
-	// build declares no permissions block: the permissive repository
-	// default is a guess, not a declaration.
-	if j.Privilege.TokenWriteSource != "default" {
+	// build declares no permissions block: with no log or bot-authored
+	// write to settle the repository's real default, the token write
+	// stays unknown, not a guess.
+	if j.Privilege.TokenWriteSource != "unknown" {
 		t.Errorf("build tokenWriteSource = %q", j.Privilege.TokenWriteSource)
 	}
 	r, ok := s.Jobs["release"]
@@ -57,6 +59,60 @@ func TestEvaluateSituationDecodesTheRegoResult(t *testing.T) {
 	// release declares an explicit permissions object: a real declaration.
 	if r.Privilege.TokenWriteSource != "declared" {
 		t.Errorf("release tokenWriteSource = %q", r.Privilege.TokenWriteSource)
+	}
+}
+
+// TestEvaluateSituationReadsTheDefaultTokenOffThePipeline pins the
+// rego fact for every pipeline.defaultTokenWrite value, on a job with
+// no permissions block at all: "true"/"log" and "true"/"effect" both
+// read as proven (the real default settled, by a run's log or a
+// bot-authored write) with the full default-token write scopes;
+// "false" also reads as proven (a read-only default is still a
+// settled answer, source "log", the only route that can ever prove
+// "false"), no write scope at all; anything else (the lane never ran,
+// or neither route decided it) stays "unknown" with the old assumed
+// scopes, so nothing downstream loses the write assumption while it
+// is still open.
+func TestEvaluateSituationReadsTheDefaultTokenOffThePipeline(t *testing.T) {
+	cases := []struct {
+		name               string
+		write, source      string
+		wantSource         string
+		wantState          FactState
+		wantTokenWriteSort []string
+	}{
+		{"log write", "true", "log", "log", "proven", []string{"actions", "checks", "contents", "deployments", "issues", "packages", "pull-requests", "security-events", "statuses"}},
+		{"effect write", "true", "effect", "effect", "proven", []string{"actions", "checks", "contents", "deployments", "issues", "packages", "pull-requests", "security-events", "statuses"}},
+		{"log read-only", "false", "log", "log", "proven", nil},
+		{"never resolved", "", "", "unknown", "unknown", []string{"contents", "packages"}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			p := &ir.NormalizedPipeline{
+				Provider:           ir.ProviderGitHub,
+				Jobs:               []ir.Job{{Name: "build"}},
+				DefaultTokenWrite:  c.write,
+				DefaultTokenSource: c.source,
+			}
+			s, err := EvaluateSituation(context.Background(), p, map[string]any{})
+			if err != nil {
+				t.Fatal(err)
+			}
+			j := s.Jobs["build"]
+			if j.Privilege.TokenWriteSource != c.wantSource {
+				t.Errorf("tokenWriteSource = %q, want %q", j.Privilege.TokenWriteSource, c.wantSource)
+			}
+			if j.Privilege.TokenWriteState != c.wantState {
+				t.Errorf("tokenWriteState = %q, want %q", j.Privilege.TokenWriteState, c.wantState)
+			}
+			got := append([]string(nil), j.Privilege.TokenWrite...)
+			sort.Strings(got)
+			want := append([]string(nil), c.wantTokenWriteSort...)
+			sort.Strings(want)
+			if !reflect.DeepEqual(got, want) {
+				t.Errorf("tokenWrite = %v, want %v", got, want)
+			}
+		})
 	}
 }
 

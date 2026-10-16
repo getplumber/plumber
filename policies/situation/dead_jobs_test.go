@@ -34,3 +34,59 @@ func TestDeadJobIsAFactAndFeedsNothing(t *testing.T) {
 		t.Errorf("a dead job feeds %v", got)
 	}
 }
+
+// TestInertJobIsDeadToo pins that every_dead also reads Job.Inert (the
+// collector's reason a job cannot run at all, distinct from a constant
+// false if:): a job carrying a non-empty inert reason is dead the same
+// way, so it hands nothing over and takes nothing either.
+func TestInertJobIsDeadToo(t *testing.T) {
+	type deadFacts struct {
+		Dead  bool     `json:"dead"`
+		Inert string   `json:"inert"`
+		Feeds []string `json:"feeds"`
+	}
+	p := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{
+		{Name: "ci/build", OriginFile: "ci.yml", Artifacts: []ir.ArtifactRef{{Name: "dist", Mode: "produce"}}},
+		{Name: "ci/off", OriginFile: "ci.yml", Inert: "no trigger", Artifacts: []ir.ArtifactRef{{Name: "dist", Mode: "consume"}}},
+	}}
+	var r struct {
+		Jobs map[string]deadFacts `json:"jobs"`
+	}
+	evaluateInto(t, p, nil, &r)
+	if !r.Jobs["ci/off"].Dead || r.Jobs["ci/build"].Dead {
+		t.Errorf("dead facts: %+v", r.Jobs)
+	}
+	if r.Jobs["ci/off"].Inert != "no trigger" {
+		t.Errorf("inert reason not surfaced: %+v", r.Jobs["ci/off"])
+	}
+	if got := r.Jobs["ci/off"].Feeds; len(got) != 0 {
+		t.Errorf("an inert job feeds %v", got)
+	}
+}
+
+// TestInertJobSharingANameWithALiveSiblingStaysLive pins that a mixed
+// group (two jobs carrying the same name, only one of them inert: the
+// shape of two workflow files, e.g. ci.yml and ci.yaml, defining the
+// same job name) is not dead and carries no inert reason: the group
+// still runs, through its live member, so a path must still enter it
+// and the terminal must not print a reason that only half applies.
+func TestInertJobSharingANameWithALiveSiblingStaysLive(t *testing.T) {
+	type deadFacts struct {
+		Dead  bool   `json:"dead"`
+		Inert string `json:"inert"`
+	}
+	p := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{
+		{Name: "ci/build", OriginFile: "ci.yml"},
+		{Name: "ci/build", OriginFile: "ci.yaml", Inert: "no trigger"},
+	}}
+	var r struct {
+		Jobs map[string]deadFacts `json:"jobs"`
+	}
+	evaluateInto(t, p, nil, &r)
+	if r.Jobs["ci/build"].Dead {
+		t.Errorf("a group with a live member must not read dead: %+v", r.Jobs["ci/build"])
+	}
+	if r.Jobs["ci/build"].Inert != "" {
+		t.Errorf("a group with a live member must carry no inert reason, got %q", r.Jobs["ci/build"].Inert)
+	}
+}

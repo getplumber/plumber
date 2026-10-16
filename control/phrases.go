@@ -363,7 +363,7 @@ func unresolvableSentence(p AttackPath) string {
 		return fmt.Sprintf("Plumber could not verify %s, so this path is unverified.", code(ev))
 	}
 	if p.cause == unresolvableDefaultToken {
-		return "Plumber could not verify that `GITHUB_TOKEN` is really writable (no `permissions` block), so this path is unverified."
+		return "Plumber could not verify that `GITHUB_TOKEN` is really writable (token scope could not be read), so this path is unverified."
 	}
 	return "Plumber could not verify which secrets are in scope, so this path is unverified."
 }
@@ -388,7 +388,7 @@ func PathSentence(p AttackPath) string {
 		s += " " + m
 	}
 	if assumedTokenOnProvenPath(p) || p.cause != unresolvableDefaultToken && assumesToken(p) {
-		s += " Plumber could not verify that `GITHUB_TOKEN` is really writable (no `permissions` block)."
+		s += " Plumber could not verify that `GITHUB_TOKEN` is really writable (token scope could not be read)."
 	}
 	return truncateWords(s, maxSentenceLen)
 }
@@ -430,9 +430,9 @@ func plural(n int, one, many string) string {
 // listed.
 const secretsUnlisted = "Plumber could not list the secrets"
 
-// defaultTokenUnchecked is the line saying a default token's write is
-// assumed.
-const defaultTokenUnchecked = "Plumber could not check that the token can write (no permissions block)"
+// defaultTokenUnchecked is the line saying a default token's write
+// could not be read from the run's log or a bot-authored write.
+const defaultTokenUnchecked = "Plumber could not check that the token can write (token scope could not be read)"
 
 // commitSHARef is a reference pinned to a full commit SHA ("o/a@<40 hex>").
 var commitSHARef = regexp.MustCompile(`@([0-9a-f]{12})[0-9a-f]{28}\b`)
@@ -844,7 +844,7 @@ func reachSegments(r Reach, unlisted bool) []reachSegment {
 		verbs = slices.DeleteFunc(verbs, func(v string) bool { return shownVerb[v] })
 		if token := tokenPhrase(verbs, others); token != "" {
 			if part.assumed {
-				token += " (assumed: no permissions block)"
+				token += " (token scope could not be read)"
 			}
 			items = append(items, token)
 		}

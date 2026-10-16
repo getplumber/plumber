@@ -10,13 +10,13 @@ import (
 // never inside a parenthesised phrase and never between a token's verbs;
 // its continuation lines sit under the first word after "reaches".
 func TestReachWrapsAtTheLastBoundaryThatFits(t *testing.T) {
-	reach := "2 secrets and a token with push and publish access (assumed: no permissions block)"
+	reach := "2 secrets and a token with push and publish access (token scope could not be read)"
 	b := PathBlock{Tier: TierHigh, Branches: []PathBlockBranch{{Job: "job `monitor-issues` from workflow `monitor-new-issues.yml` (on schedule)", Reach: reach}}}
 	got := ReportPathGraph(2, b, 100)[2:5]
 	want := []string{
 		"       └──▶ runs in job `monitor-issues` from workflow `monitor-new-issues.yml` (on schedule)",
 		"            └─▶ reaches 2 secrets and a token with push and publish access",
-		"                        (assumed: no permissions block)",
+		"                        (token scope could not be read)",
 	}
 	if strings.Join(got, "\n") != strings.Join(want, "\n") {
 		t.Errorf("branch:\n%s\nwant:\n%s", strings.Join(got, "\n"), strings.Join(want, "\n"))
@@ -33,10 +33,10 @@ func TestReachWrapsAtTheLastBoundaryThatFits(t *testing.T) {
 	}{
 		{"every secret of the repository and a token with push, publish and deploy access", 77,
 			[]string{"every secret of the repository", "and a token with push, publish and deploy access"}},
-		{"2 secrets, a token with push and publish access (assumed: no permissions block) and a step that releases", 77,
-			[]string{"2 secrets, a token with push and publish access", "(assumed: no permissions block) and a step that releases"}},
-		{"a token with push, publish and deploy access (assumed: no permissions block)", 50,
-			[]string{"a token with push, publish and deploy access", "(assumed: no permissions block)"}},
+		{"2 secrets, a token with push and publish access (token scope could not be read) and a step that releases", 77,
+			[]string{"2 secrets, a token with push and publish access", "(token scope could not be read) and a step that releases"}},
+		{"a token with push, publish and deploy access (token scope could not be read)", 50,
+			[]string{"a token with push, publish and deploy access", "(token scope could not be read)"}},
 		{"a token with write access to security events and an OIDC token", 50,
 			[]string{"a token with write access to security events", "and an OIDC token"}},
 		{"code execution on the runner, no secret and no write token", 38,

@@ -133,14 +133,14 @@ func TestReachWordsTheTokenAsItIs(t *testing.T) {
 	j.Privilege.Secrets = []string{"S1", "S2"}
 	j.Privilege.SecretsState = "proven"
 	j.Privilege.TokenWrite = []string{"contents", "packages"}
-	j.Privilege.TokenWriteSource = "default"
+	j.Privilege.TokenWriteSource = "unknown"
 	sit := &Situation{Exposure: ir.VisibilityPublic, Provider: "github", Jobs: map[string]JobSituation{"w/j": j}}
 	paths := assemblePaths([]opaengine.Finding{finding(string(CodeActionUnpinned), "w/j", map[string]any{"uses": "o/a@v1"})}, sit)
 	if len(paths) != 1 {
 		t.Fatalf("want one path, got %d", len(paths))
 	}
 	b := NewPathBlock(paths[0], nil)
-	if b.ReachesShort != "2 secrets; token: write (assumed)" || b.Branches[0].Reach != "2 secrets and a token with push and publish access (assumed: no permissions block)" {
+	if b.ReachesShort != "2 secrets; token: write (assumed)" || b.Branches[0].Reach != "2 secrets and a token with push and publish access (token scope could not be read)" {
 		t.Errorf("reach = %q / %q, want the assumed token said", b.ReachesShort, b.Branches[0].Reach)
 	}
 	if !slices.Contains(b.Notes(), defaultTokenUnchecked) {
@@ -259,7 +259,7 @@ func TestPathGraphKeepsLongBranchesInTheWidth(t *testing.T) {
 			{Job: "job `build` from workflow `rusty-v8-release.yml`", Marker: marker, Fed: []string{"job `publish-release` from workflow `rusty-v8-release.yml`"},
 				Reach: "1 secret, a token with push and publish access and a step that deploys"},
 			{Job: "job `build-windows-source` from workflow `rusty-v8-release.yml`", Marker: marker, Reach: "a token with push and publish access"},
-			{Job: "job `cargo-deny` from workflow `cargo-deny.yml`", Reach: "a token with push access (assumed: no permissions block)"},
+			{Job: "job `cargo-deny` from workflow `cargo-deny.yml`", Reach: "a token with push access (token scope could not be read)"},
 		},
 		So: "if this action is compromised or malicious, an attacker can read 13 secrets of the repository, push in your repository, alter what the job deploys and ship a malicious release", Fix: "pin it"}
 	lines := graphLines(3, b, 100)
@@ -269,7 +269,7 @@ func TestPathGraphKeepsLongBranchesInTheWidth(t *testing.T) {
 		}
 	}
 	got := strings.Join(lines, "\n")
-	for _, want := range []string{"job `publish-release` from workflow `rusty-v8-release.yml`", marker, "a token with push access (assumed: no permissions block)"} {
+	for _, want := range []string{"job `publish-release` from workflow `rusty-v8-release.yml`", marker, "a token with push access (token scope could not be read)"} {
 		if !strings.Contains(got, want) {
 			t.Errorf("graph lacks %q:\n%s", want, got)
 		}
