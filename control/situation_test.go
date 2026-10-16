@@ -213,7 +213,7 @@ func TestDecodeSituationCarriesTheStructuralFacts(t *testing.T) {
 		"includes":[{"subject":"group/ci@main","source":"group/ci","file":".gitlab-ci.yml","line":3,"jobs":["build"]}],
 		"jobs":{"build":{"entries":[],
 			"forkPR":[{"kind":"fork_pr","state":"proven","evidence":"rules: merge_request_event","subject":"merge_request_event"}],
-			"push":[{"kind":"unprotected_push","state":"unresolvable","evidence":"on push; default branch main unresolvable","subject":"main"}],
+			"push":[{"kind":"unprotected_push","state":"unknown","evidence":"on push; default branch main unknown","subject":"main"}],
 			"privilege":{},"impact":[],"feeds":[]}}}`)
 	s, err := DecodeSituation(raw)
 	if err != nil {
@@ -230,7 +230,7 @@ func TestDecodeSituationCarriesTheStructuralFacts(t *testing.T) {
 	if len(b.ForkPR) != 1 || b.ForkPR[0].Kind != EntryForkPR {
 		t.Errorf("forkPR = %+v", b.ForkPR)
 	}
-	if len(b.Push) != 1 || b.Push[0].State != "unresolvable" || b.Push[0].Subject != "main" {
+	if len(b.Push) != 1 || b.Push[0].State != "unknown" || b.Push[0].Subject != "main" {
 		t.Errorf("push = %+v", b.Push)
 	}
 }

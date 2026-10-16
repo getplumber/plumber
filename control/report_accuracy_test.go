@@ -340,7 +340,7 @@ func TestPathBlockFindingsOneLinePerCode(t *testing.T) {
 func TestConsequenceHedgesAnUnconfirmedImpact(t *testing.T) {
 	p := AttackPath{BaseTier: TierCritical, Tier: TierHigh, State: PathUnverified, Modifiers: []string{"unresolvable"}, Jobs: []string{"w/j"},
 		EntryKind: EntryMutableDependency, AnchorCode: CodeActionUnpinned, Entry: EntryFact{Subject: "o/a@v1"},
-		Reach: Reach{TokenWrite: []string{"contents"}, tokenAssumed: true, Impacts: []ImpactFact{{Kind: "writes_repo", State: "unresolvable", Evidence: "peter-evans/create-pull-request"}}, Executes: true}}
+		Reach: Reach{TokenWrite: []string{"contents"}, tokenAssumed: true, Impacts: []ImpactFact{{Kind: "writes_repo", State: "unknown", Evidence: "peter-evans/create-pull-request"}}, Executes: true}}
 	b := NewPathBlock(p, nil)
 	if b.So != "if this action is compromised, an attacker may execute code to push in your repository" {
 		t.Errorf("So = %q", b.So)

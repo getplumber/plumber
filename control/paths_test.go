@@ -380,7 +380,7 @@ func TestOneEntryIntoOneJobIsOnePath(t *testing.T) {
 func TestAProvenImpactKeepsTheMergedPathProven(t *testing.T) {
 	j := JobSituation{Impact: []ImpactFact{
 		{Kind: "publishes", State: "proven", Evidence: "npm publish"},
-		{Kind: "writes_repo", State: "unresolvable", Evidence: "git push"},
+		{Kind: "writes_repo", State: "unknown", Evidence: "git push"},
 	}}
 	j.Privilege.Secrets = []string{"NPM_TOKEN"}
 	j.Privilege.SecretsState = "proven"
@@ -713,7 +713,7 @@ func TestReachWritesRepoChecksImpactAndTokenWrite(t *testing.T) {
 		want bool
 	}{
 		{"writes_repo impact", Reach{Impacts: []ImpactFact{{Kind: "writes_repo", State: "proven", Evidence: "git push"}}}, true},
-		{"unconfirmed writes_repo impact", Reach{Impacts: []ImpactFact{{Kind: "writes_repo", State: "unresolvable", Evidence: "git push"}}}, false},
+		{"unconfirmed writes_repo impact", Reach{Impacts: []ImpactFact{{Kind: "writes_repo", State: "unknown", Evidence: "git push"}}}, false},
 		{"contents write token", Reach{TokenWrite: []string{"contents"}}, true},
 		{"assumed contents write token", Reach{TokenWrite: []string{"contents"}, tokenAssumed: true}, false},
 		{"other write token", Reach{TokenWrite: []string{"issues"}}, false},
@@ -873,7 +873,7 @@ func TestJobsListDedupesAndSkipsAFeedToItselfAndAMissingJob(t *testing.T) {
 // fork trigger prunes its privilege, and its secrets cannot be decided.
 func unresolvableSecretsSituation(exposure string) *Situation {
 	j := JobSituation{}
-	j.Privilege.SecretsState = "unresolvable"
+	j.Privilege.SecretsState = "unknown"
 	return &Situation{Exposure: exposure, Provider: "github", Jobs: map[string]JobSituation{"build": j}}
 }
 
@@ -903,7 +903,7 @@ func TestModifiersAppearInFixedOrderPrivateThenUnresolvableThenGate(t *testing.T
 func TestTwoDownModifiersTakeAPathDownTwoSteps(t *testing.T) {
 	sit := unresolvableSecretsSituation(ir.VisibilityPrivate)
 	j := sit.Jobs["build"]
-	j.Impact = []ImpactFact{{Kind: "deploys", State: "unresolvable", Evidence: "kubectl apply -f ${{ inputs.env }}.yaml"}}
+	j.Impact = []ImpactFact{{Kind: "deploys", State: "unknown", Evidence: "kubectl apply -f ${{ inputs.env }}.yaml"}}
 	sit.Jobs["build"] = j
 	f := entryFinding("ISSUE-207", "build", "github.event.issue.title")
 	paths := assemblePaths([]opaengine.Finding{f}, sit)
@@ -1093,7 +1093,7 @@ func TestForkEntryDeclaredTokenDoesNotMaskAFedJobsDefaultToken(t *testing.T) {
 func TestForkEntryUnresolvableSecretsStateDoesNotLeakAfterPruning(t *testing.T) {
 	sit := injectionSituation(ir.VisibilityPublic, nil)
 	build := sit.Jobs["build"]
-	build.Privilege.SecretsState = "unresolvable" // the dropped entry job's own secrets state
+	build.Privilege.SecretsState = "unknown" // the dropped entry job's own secrets state
 	build.Feeds = []string{"deploy"}
 	sit.Jobs["build"] = build
 	deploy := JobSituation{}
@@ -1143,7 +1143,7 @@ func TestDefaultTokenPathRecordsTheDefaultTokenCause(t *testing.T) {
 func TestUnresolvableSecretsStateRecordsTheSecretsCause(t *testing.T) {
 	sit := releaseSituation(ir.VisibilityPublic)
 	j := sit.Jobs["release"]
-	j.Privilege.SecretsState = "unresolvable"
+	j.Privilege.SecretsState = "unknown"
 	sit.Jobs["release"] = j
 	f := finding("ISSUE-701", "release", map[string]any{"uses": "some/action@v1"})
 	paths := assemblePaths([]opaengine.Finding{f}, sit)
@@ -1749,7 +1749,7 @@ func TestAReferenceComputedAtRunTimeIsUnverified(t *testing.T) {
 			t.Fatalf("%v: want one path, got %+v", f.Data, paths)
 		}
 		p := paths[0]
-		if p.State != PathUnverified || p.Tier != TierMedium || p.Entry.State != "unresolvable" {
+		if p.State != PathUnverified || p.Tier != TierMedium || p.Entry.State != "unknown" {
 			t.Errorf("%v: want an unverified Medium path, got %s %s %s", f.Data, p.State, p.Tier, p.Entry.State)
 		}
 		if b := NewPathBlock(p, nil); b.EntryUnverified != "the reference is computed at run time, so Plumber cannot know what runs" {
@@ -1841,7 +1841,7 @@ func TestPrivilegedTriggerKeepsAForkRunsSecrets(t *testing.T) {
 // holding writeScopes of the token from source and the listed secrets.
 func unlistedSecretsJob(source string, writeScopes, secrets []string) *Situation {
 	j := JobSituation{}
-	j.Privilege.SecretsState = "unresolvable"
+	j.Privilege.SecretsState = "unknown"
 	j.Privilege.Secrets = secrets
 	j.Privilege.TokenWrite = writeScopes
 	j.Privilege.TokenWriteSource = source
@@ -1930,7 +1930,7 @@ func TestUnlistedSecretsNeverLowerAPathBelowItsProvenReach(t *testing.T) {
 		so         string
 	}{
 		"proven impact":      {withImpact("proven"), TierCritical, TierHigh, strings.Replace(fmt.Sprintf(so, ""), "and  alter", "and alter", 1)},
-		"unconfirmed impact": {withImpact("unresolvable"), TierCritical, TierHigh, fmt.Sprintf(so, "may")},
+		"unconfirmed impact": {withImpact("unknown"), TierCritical, TierHigh, fmt.Sprintf(so, "may")},
 	} {
 		paths := assemblePaths([]opaengine.Finding{f}, c.sit)
 		if len(paths) != 1 {

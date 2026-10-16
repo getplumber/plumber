@@ -412,7 +412,7 @@ func TestNoTemplateContainsAnEmDash(t *testing.T) {
 		{EntryKind: EntryUntrustedExpression, Jobs: []string{"build"}, Entry: EntryFact{Subject: "x"}, Tier: TierMedium},
 		{EntryKind: EntryMutableDependency, Jobs: []string{"release"}, Entry: EntryFact{Subject: "some/action@v1"}, Tier: TierLow},
 		{
-			EntryKind: EntryUnprotectedPush, Jobs: []string{"deploy"}, Entry: EntryFact{Subject: "main", State: "unresolvable", Evidence: "push rules"}, Tier: TierCritical,
+			EntryKind: EntryUnprotectedPush, Jobs: []string{"deploy"}, Entry: EntryFact{Subject: "main", State: "unknown", Evidence: "push rules"}, Tier: TierCritical,
 			Reach: Reach{
 				Secrets: []string{"S"}, TokenWrite: []string{"contents"},
 				Impacts: []ImpactFact{{Kind: "deploys", Evidence: "environment: production"}},
@@ -434,12 +434,12 @@ func TestNoTemplateContainsAnEmDash(t *testing.T) {
 // The unresolvable modifier sentence names what was really not verified,
 // picking between three distinct causes a path can carry.
 func TestUnresolvableSentencePicksTheRealCause(t *testing.T) {
-	entryPath := AttackPath{EntryKind: EntryUnprotectedPush, Jobs: []string{"build"}, Entry: EntryFact{Subject: "main", State: "unresolvable", Evidence: "push rules unclear"}}
+	entryPath := AttackPath{EntryKind: EntryUnprotectedPush, Jobs: []string{"build"}, Entry: EntryFact{Subject: "main", State: "unknown", Evidence: "push rules unclear"}}
 	if got := unresolvableSentence(entryPath); got != "Plumber could not verify `push rules unclear`, so this path is unverified." {
 		t.Errorf("entry cause: %q", got)
 	}
 
-	impactPath := AttackPath{Reach: Reach{Impacts: []ImpactFact{{Kind: "deploys", State: "unresolvable", Evidence: "environment: maybe production"}}}}
+	impactPath := AttackPath{Reach: Reach{Impacts: []ImpactFact{{Kind: "deploys", State: "unknown", Evidence: "environment: maybe production"}}}}
 	if got := unresolvableSentence(impactPath); got != "Plumber could not verify `environment: maybe production`, so this path is unverified." {
 		t.Errorf("impact cause: %q", got)
 	}
@@ -482,7 +482,7 @@ func TestDefaultTokenPathRendersTheGithubTokenSentence(t *testing.T) {
 func TestUnresolvableSecretsStateRendersTheSecretsSentence(t *testing.T) {
 	sit := releaseSituation(ir.VisibilityPublic)
 	j := sit.Jobs["release"]
-	j.Privilege.SecretsState = "unresolvable"
+	j.Privilege.SecretsState = "unknown"
 	// No listed secret and no token: the unlisted secrets are the only
 	// privilege, so the path is unverified.
 	j.Privilege.Secrets, j.Privilege.TokenWrite = nil, nil
@@ -511,7 +511,7 @@ func TestUnresolvableSecretsWithNoNamedSecretNeverSaysHoldsNone(t *testing.T) {
 	sit := releaseSituation(ir.VisibilityPublic)
 	j := sit.Jobs["release"]
 	j.Privilege.Secrets = nil
-	j.Privilege.SecretsState = "unresolvable"
+	j.Privilege.SecretsState = "unknown"
 	j.Privilege.TokenWrite = nil
 	sit.Jobs["release"] = j
 	f := finding("ISSUE-701", "release", map[string]any{"uses": "some/action@v1"})
@@ -1334,7 +1334,7 @@ func TestPathsWorstFirst(t *testing.T) {
 // about its entry, or about what it reaches.
 func TestPathBlockSaysWhatCouldNotBeVerified(t *testing.T) {
 	entry := AttackPath{State: PathUnverified, EntryKind: EntryMutableDependency, AnchorCode: "ISSUE-716", Jobs: []string{"j"},
-		Entry: EntryFact{Subject: "o/a@v1", State: "unresolvable"}}
+		Entry: EntryFact{Subject: "o/a@v1", State: "unknown"}}
 	if b := NewPathBlock(entry, nil); !b.Unverified || b.EntryUnverified != "Plumber could not check what it runs" || b.ReachUnverified != "" {
 		t.Errorf("entry: %+v", b)
 	}
@@ -1816,7 +1816,7 @@ func TestTheTableEntryIsTheEntryLine(t *testing.T) {
 	} {
 		state := FactState("")
 		if c.kind == EntryMutableDependency && computedAtRunTime(c.code, c.subject) {
-			state = "unresolvable"
+			state = "unknown"
 		}
 		p := AttackPath{ID: "x", Tier: TierHigh, EntryKind: c.kind, AnchorCode: c.code, Jobs: []string{"build"},
 			Entry: EntryFact{Subject: c.subject, Evidence: c.evidence, State: state}}

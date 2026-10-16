@@ -11,9 +11,14 @@ import (
 )
 
 // FactState is the confidence a situation fact was derived with: "proven"
-// when the pipeline data settles it, "unresolvable" when it cannot be
-// decided statically, "absent" when the fact does not hold.
+// when the pipeline data settles it, "unknown" when it cannot be decided
+// statically, "absent" when the fact does not hold.
 type FactState string
+
+// FactUnknown is the state of a fact the facts layer could not decide
+// statically: who controls what runs, whether a cache is restored, how
+// complete the secret list is, and the like.
+const FactUnknown FactState = "unknown"
 
 // EntryKind names the way an attacker-controlled input can make a job run,
 // read from the issue-code registry (EntryKindForCode); fork_pr and
@@ -118,8 +123,8 @@ type JobSituation struct {
 	// a pull request's.
 	RefTriggers []string `json:"refTriggers"`
 	// Push is the job's push to the default branch fact, present while the
-	// branch is not known to be protected; its state is unresolvable when
-	// the trigger filter or the protection cannot be decided. A
+	// branch is not known to be protected; its state is unknown when the
+	// trigger filter or the protection cannot be decided. A
 	// branch-protection finding on that branch starts its path here.
 	Push      []EntryFact  `json:"push"`
 	Privilege Privilege    `json:"privilege"`

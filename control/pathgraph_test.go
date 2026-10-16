@@ -254,7 +254,7 @@ func TestPathBlockEntryNamesTheSubjectAndItsNature(t *testing.T) {
 		kind string
 	}{{CodeImageForbiddenTag, "image"}, {CodeActionUnpinned, "action"}} {
 		p := wordingPath(EntryMutableDependency, "${{ matrix.ref }}", c.code)
-		p.Entry.State = "unresolvable"
+		p.Entry.State = "unknown"
 		cases = append(cases, wordingCase{"computed " + c.kind, p, "${{ matrix.ref }} (" + c.kind + " computed at run time)"})
 	}
 	for _, c := range cases {
@@ -359,7 +359,7 @@ func TestSoLineNamesTheActorAndTheCapability(t *testing.T) {
 			"as anyone with write access to `main`, an attacker can read every secret of the repository, push in your repository, publish packages and deploy"},
 		{"step deploys", with(wordingPath(EntryMutableDependency, "o/a@v1", CodeActionUnpinned), Reach{Impacts: []ImpactFact{{Kind: "deploys", State: "proven", Evidence: "environment: prod"}}}),
 			"if this action is compromised, an attacker can alter what the job deploys"},
-		{"unconfirmed impact", with(wordingPath(EntryMutableDependency, "o/a@v1", CodeActionUnpinned), Reach{Impacts: []ImpactFact{{Kind: "publishes", State: "unresolvable", Evidence: "npm publish"}}}),
+		{"unconfirmed impact", with(wordingPath(EntryMutableDependency, "o/a@v1", CodeActionUnpinned), Reach{Impacts: []ImpactFact{{Kind: "publishes", State: "unknown", Evidence: "npm publish"}}}),
 			"if this action is compromised, an attacker may ship a malicious release"},
 		{"unlisted secrets", unlisted, "if this action is compromised, an attacker can read the secrets Plumber could not list"},
 	}

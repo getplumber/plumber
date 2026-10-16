@@ -161,7 +161,7 @@ func TestTheEntryAndTheSoLineReadOneTrust(t *testing.T) {
 	const sha = "@1c9b1f1aaa2222bbbb3333cccc4444dddd5555ee"
 	digest := "evil.io/node@sha256:0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
 	computed := wordingPath(EntryMutableDependency, "${{ matrix.ref }}", CodeActionUnauthorizedSource)
-	computed.Entry.State = "unresolvable"
+	computed.Entry.State = "unknown"
 	cases := []struct {
 		name          string
 		p             AttackPath

@@ -5,7 +5,7 @@
 # repository's exposure and the jobs each include shapes. It emits no
 # finding: the entry of an attack path is the finding that reports it.
 # Every fact carries evidence so the explanation can quote it. States:
-# proven, unresolvable. Absence of a fact is absence from the output.
+# proven, unknown. Absence of a fact is absence from the output.
 package situation
 
 import rego.v1
@@ -496,7 +496,7 @@ default_branch_name := object.get(input.pipeline, "defaultBranch", "")
 # line on an unknown default branch name differently per provider: GitHub's
 # default_branch_state needs the name to find a match in
 # input.pipeline.branches, so without it there is nothing to resolve;
-# GitLab's determination does not, and lands on unresolvable on its own
+# GitLab's determination does not, and lands on unknown on its own
 # when a named branch cannot be ruled in or out.
 unprotected_push(job) := {entry("unprotected_push", push_entry_state(job), push_entry_evidence(job), default_branch_name, job)} if {
 	push_job(job)
@@ -511,20 +511,20 @@ unprotected_push_decidable(job) if {
 	default_branch_name != ""
 }
 
-# push_entry_state: unresolvable when the provider's own trigger reading
+# push_entry_state: unknown when the provider's own trigger reading
 # cannot be decided (GitLab's rules:, or GitHub's push filters carrying an
 # expression); otherwise default_branch_state decides it (proven, protected
-# or unresolvable per the branch's own protection). GitHub falls straight
+# or unknown per the branch's own protection). GitHub falls straight
 # to default_branch_state once the filters are known to reach the default
 # branch at all (push_job already excludes the case where they do not), so
 # an unprotected default branch with no filter, or a filter that includes
-# it, is now proven rather than forced unresolvable.
-push_entry_state(job) := "unresolvable" if {
+# it, is now proven rather than forced unknown.
+push_entry_state(job) := "unknown" if {
 	input.pipeline.provider == "gitlab"
-	gitlab_push_state(job) == "unresolvable"
-} else := "unresolvable" if {
+	gitlab_push_state(job) == "unknown"
+} else := "unknown" if {
 	input.pipeline.provider == "github"
-	github_push_trigger_state(job) == "unresolvable"
+	github_push_trigger_state(job) == "unknown"
 } else := default_branch_state
 
 push_entry_evidence(job) := sprintf("on push; default branch %s %s; push filter %s", [default_branch_name, default_branch_state, github_push_trigger_state(job)]) if {
@@ -551,7 +551,7 @@ push_job(job) if {
 # (Job.PushBranches/PushBranchesIgnore/PushTags/PushTagsIgnore) let a push
 # to the default branch run the job, total and single-valued over any
 # GitHub job:
-#   - unresolvable: a filter entry is an unresolved workflow expression
+#   - unknown: a filter entry is an unresolved workflow expression
 #     ("${{"), which cannot be judged against a branch name statically;
 #   - proven: no filter at all (push: with none of the four keys), or a
 #     branches:/branches-ignore: filter that reaches the default branch
@@ -570,7 +570,7 @@ push_job(job) if {
 # OPA's glob reads "?" as exactly one arbitrary character and "+" as a
 # literal "+"; OPA's "{a,b}" alternation has no GitHub equivalent either.
 # A character class ("[abc]") agrees between the two.
-github_push_trigger_state(job) := "unresolvable" if {
+github_push_trigger_state(job) := "unknown" if {
 	github_push_filter_has_expression(job)
 } else := "proven" if {
 	github_push_filters_absent(job)
@@ -688,15 +688,15 @@ gitlab_ref_is_regex(ref) if {
 # whether its legacy only:/except: keywords admit a push to the default
 # branch, independent of whether that branch is protected. Total over
 # every such job (no only, no except; only present; except present) and
-# single-valued: proven, absent or unresolvable, never more than one.
+# single-valued: proven, absent or unknown, never more than one.
 #
 # A bare name that is none of gitlab_push_branch_refs or
 # gitlab_push_absent_refs names a branch other than the default: with
 # the default branch known, that rules the push out (absent), since the
 # name is confirmed to be some other, specific branch; with the default
 # branch unknown, that same name might be the default branch under
-# cover, so the outcome cannot be decided (unresolvable). A regex ref
-# stays unresolvable regardless, for the same reason it is never
+# cover, so the outcome cannot be decided (unknown). A regex ref
+# stays unknown regardless, for the same reason it is never
 # compared against a branch name statically.
 gitlab_only_except_state(job) := "absent" if {
 	some ref in object.get(job, "except", [])
@@ -715,7 +715,7 @@ gitlab_only_except_state(job) := "absent" if {
 	every ref in object.get(job, "only", []) {
 		ref in gitlab_push_absent_refs
 	}
-} else := "unresolvable"
+} else := "unknown"
 
 # gitlab_push_state folds the two ways a GitLab job's rules: block can admit
 # a push to the default branch into one total, single-valued function, used
@@ -738,7 +738,7 @@ gitlab_push_state(job) := gitlab_only_except_state(job) if {
 
 # gitlab_rules_branch_state(job) reads the $CI_COMMIT_BRANCH idiom across
 # every rule whose when is not never: proven if any rule proves it,
-# else unresolvable if any rule leaves it unresolvable, else absent. Total
+# else unknown if any rule leaves it unknown, else absent. Total
 # over every GitLab job (including one with no rules: at all, where the
 # comprehension below simply never matches and the chain falls to absent),
 # single-valued by construction (an if/else chain).
@@ -753,10 +753,10 @@ gitlab_rules_branch_state(job) := "proven" if {
 	some rule in object.get(job, "rules", [])
 	object.get(rule, "when", "") != "never"
 	_rule_branch_state(rule) == "proven"
-} else := "unresolvable" if {
+} else := "unknown" if {
 	some rule in object.get(job, "rules", [])
 	object.get(rule, "when", "") != "never"
-	_rule_branch_state(rule) == "unresolvable"
+	_rule_branch_state(rule) == "unknown"
 } else := "absent"
 
 # _rule_branch_kind(if_text) classifies a single rule's if: text against the
@@ -764,7 +764,7 @@ gitlab_rules_branch_state(job) := "proven" if {
 # (an if/else chain: exactly one of the five names always comes out,
 # "none" when nothing below matches, including the never-an-inclusion
 # "!=" and "!~" spellings). Kept separate from _rule_branch_state so the
-# proven/unresolvable/no-value decision below never has to worry about two
+# proven/unknown/no-value decision below never has to worry about two
 # of its bodies matching the same text at once: the chain here has already
 # picked the one shape that applies.
 _rule_branch_kind(if_text) := "direct_equal" if {
@@ -791,30 +791,30 @@ gitlab_branch_literal(if_text) := lit if {
 	lit := m[0][1]
 }
 
-# _rule_branch_state(rule): proven/unresolvable/no-value for one rule,
+# _rule_branch_state(rule): proven/unknown/no-value for one rule,
 # built on the if/else-total _rule_branch_kind above. "direct_equal" is
 # always proven (every push to the default branch sets $CI_COMMIT_BRANCH
 # to its name, so the comparison is true exactly on that push); "bare"
 # likewise (the variable is set, full stop, on every branch push including
-# the default one); "regex" is always unresolvable (never matched
+# the default one); "regex" is always unknown (never matched
 # statically, same as gitlab_ref_is_regex); "literal_equal" depends on
 # whether the literal names the configured default branch (proven),
 # some other, specific branch (no value: that rule contributes nothing,
 # it is not evidence of a push to the default branch, but it is not
-# unresolvable either), or cannot be judged because the default branch
-# name itself is unknown (unresolvable); "none" (including the "!=" and
+# unknown either), or cannot be judged because the default branch
+# name itself is unknown (unknown); "none" (including the "!=" and
 # "!~" spellings, which exclude the default branch rather than include it)
-# never proves or leaves this fact unresolvable.
+# never proves or leaves this fact unknown.
 _rule_branch_state(rule) := "proven" if {
 	_rule_branch_kind(object.get(rule, "if", "")) == "direct_equal"
 } else := "proven" if {
 	_rule_branch_kind(object.get(rule, "if", "")) == "literal_equal"
 	default_branch_name != ""
 	gitlab_branch_literal(object.get(rule, "if", "")) == default_branch_name
-} else := "unresolvable" if {
+} else := "unknown" if {
 	_rule_branch_kind(object.get(rule, "if", "")) == "literal_equal"
 	default_branch_name == ""
-} else := "unresolvable" if {
+} else := "unknown" if {
 	_rule_branch_kind(object.get(rule, "if", "")) == "regex"
 } else := "proven" if {
 	_rule_branch_kind(object.get(rule, "if", "")) == "bare"
@@ -828,7 +828,7 @@ default_branch_state := "proven" if {
 	some b in object.get(input.pipeline, "branches", [])
 	b.name == default_branch_name
 	b.protected == true
-} else := "unresolvable"
+} else := "unknown"
 
 # ---------------------------------------------------------------- privilege
 
@@ -850,7 +850,7 @@ privilege(job) := {
 
 # merged_privilege: the privilege of every job sharing one name (see jobs
 # above), merged so the result never depends on input order: name lists
-# as sorted unions; secretsState unresolvable if any job's is;
+# as sorted unions; secretsState unknown if any job's is;
 # secretsInherit true if any; persistedCredentials proven if any;
 # tokenWriteSource the strongest signal present (declared, then default,
 # then none); environment from the job with the smallest originFile, the
@@ -867,9 +867,9 @@ merged_privilege(group) := {
 	"environment": privilege(environment_job(group)).environment,
 }
 
-merged_secrets_state(group) := "unresolvable" if {
+merged_secrets_state(group) := "unknown" if {
 	some job in group
-	privilege(job).secretsState == "unresolvable"
+	privilege(job).secretsState == "unknown"
 } else := "proven"
 
 any_inherit(group) if {
@@ -1129,10 +1129,10 @@ github_expressions(job) := {expr |
 	some expr in regex.find_n(`\$\{\{[^}]*\}\}`, text, -1)
 }
 
-# secretsState: unresolvable when the list of secrets cannot be complete:
+# secretsState: unknown when the list of secrets cannot be complete:
 # on GitLab, the settings-variable listing could not be fetched
 # authoritatively.
-secrets_state(job) := "unresolvable" if {
+secrets_state(job) := "unknown" if {
 	input.pipeline.provider == "gitlab"
 	object.get(input.pipeline, "settingsVariablesKnown", false) == false
 } else := "proven"
@@ -1238,10 +1238,10 @@ token_write_source(job) := callers_token_source(job) if {
 
 # token_dependent_state: the state an impact gets when its only evidence
 # that the job holds the write it needs is tokenWrite itself. A guessed
-# (default) token write downgrades the impact to unresolvable; any real
+# (default) token write downgrades the impact to unknown; any real
 # signal (declared, or none at all, which only fires impact rules that
 # never reach here) stays proven.
-token_dependent_state(job) := "unresolvable" if {
+token_dependent_state(job) := "unknown" if {
 	token_write_source(job) == "default"
 } else := "proven"
 
@@ -1315,7 +1315,7 @@ step_proves(job, kind) if {
 }
 
 replaced_by_token(job, i) if {
-	i.state == "unresolvable"
+	i.state == "unknown"
 	not step_proves(job, i.kind)
 	some t in token_impacts(job)
 	t.kind == i.kind
@@ -1392,7 +1392,7 @@ publish_text(script) := concat("\n", [l | some l in split(script, "\n"); not rel
 
 # local_publish_script_pattern: a run step calling a repository script
 # whose file name says it uploads or publishes. The commands sit in the
-# script, out of the workflow's text, so the publish is unresolvable.
+# script, out of the workflow's text, so the publish is unknown.
 local_publish_script_pattern := `(^|[\s;&|(])\.{0,2}/?([\w.-]+/)*[\w.-]*(publish|upload)[\w.-]*\.(sh|py|js|mjs|cjs|ts|ps1)(\s|$)`
 
 # publishScriptExcludePatterns: verification-only forms that veto a
@@ -1418,7 +1418,7 @@ publishes(job) := {{"kind": "publishes", "state": "proven", "evidence": evidence
 	some name in publish_actions
 	startswith(lower(action.uses), concat("", [lower(name), "@"]))
 	state := publish_action_state(action, lower(name))
-} | {{"kind": "publishes", "state": "unresolvable", "evidence": short_evidence(l)} |
+} | {{"kind": "publishes", "state": "unknown", "evidence": short_evidence(l)} |
 	some line in object.get(job, "scripts", [])
 	not publish_script_proven(line)
 	some l in split(line, "\n")
@@ -1441,7 +1441,7 @@ local_action(uses) if startswith(uses, "$/")
 
 # local_publish_state: a declared id-token write (registry trusted
 # publishing) proves the publish; otherwise the name alone cannot.
-local_publish_state(job) := "proven" if declared_id_token_write(job) else := "unresolvable"
+local_publish_state(job) := "proven" if declared_id_token_write(job) else := "unknown"
 
 publish_script_proven(line) if {
 	some pat in all_publish_patterns
@@ -1454,7 +1454,7 @@ publish_script_proven(line) if {
 # action here, which has no such input at all and so always counts once
 # named. On docker/build-push-action a literal true (or the YAML string
 # "true") is proven, an expression ("${{ ... }}", decided at run time) is
-# unresolvable, and anything else (absent, false, "false") yields no value,
+# unknown, and anything else (absent, false, "false") yields no value,
 # so no impact. On any other action only an explicit false ("false")
 # removes it. The bodies are mutually exclusive by their guards.
 publish_action_state(action, name) := "proven" if {
@@ -1462,7 +1462,7 @@ publish_action_state(action, name) := "proven" if {
 	push_value(action) in {true, "true"}
 }
 
-publish_action_state(action, name) := "unresolvable" if {
+publish_action_state(action, name) := "unknown" if {
 	name in image_push_actions
 	v := push_value(action)
 	is_string(v)

@@ -284,9 +284,9 @@ func TestTagPushIsNotAForkEntry(t *testing.T) {
 // through the real YAML reading (pipelines.ParseGitHubWorkflow mirrors the production
 // collector's extractGitHubPushFilters, PR #513 review), so a push to the
 // default branch is proven on an unprotected default branch, not merely
-// unresolvable; a protected default branch still removes the entry
+// unknown; a protected default branch still removes the entry
 // outright, and unknown protection (no branches collected) stays
-// unresolvable. A second fixture whose branches: filter excludes the
+// unknown. A second fixture whose branches: filter excludes the
 // default branch entirely proves the YAML path can also rule the entry out,
 // not merely let the "no filter" default carry it through by accident.
 func TestPushToUnprotectedDefaultBranch(t *testing.T) {
@@ -302,8 +302,8 @@ func TestPushToUnprotectedDefaultBranch(t *testing.T) {
 		t.Errorf("a protected default branch is not an entry")
 	}
 	p.Branches = nil
-	if e, ok := firstEntry(evaluate(t, p, nil).Jobs["deploy"].Push); !ok || e.State != "unresolvable" {
-		t.Errorf("unknown protection must be unresolvable: %+v", e)
+	if e, ok := firstEntry(evaluate(t, p, nil).Jobs["deploy"].Push); !ok || e.State != "unknown" {
+		t.Errorf("unknown protection must be unknown: %+v", e)
 	}
 }
 
@@ -550,7 +550,7 @@ func TestGitLabEnvironmentProtected(t *testing.T) {
 // TestGitLabSettingsVariablesArePrivilege pins the GitLab secrets source:
 // the protected or masked settings variables in scope of the job's
 // environment (scoped "*", the same name, or a wildcard scope matching
-// it), unresolvable when the listing itself could not be fetched
+// it), unknown when the listing itself could not be fetched
 // authoritatively. A plain variable (neither protected nor masked) is
 // configuration, not a secret. protectedSecrets keeps the protected ones.
 func TestGitLabSettingsVariablesArePrivilege(t *testing.T) {
@@ -581,8 +581,8 @@ func TestGitLabSettingsVariablesArePrivilege(t *testing.T) {
 	}
 	p.Jobs[0].Environment = ""
 	p.SettingsVariablesKnown = false
-	if got := evaluate(t, p, nil).Jobs["release"].Privilege.SecretsState; got != "unresolvable" {
-		t.Errorf("unknown settings variables must be unresolvable, got %q", got)
+	if got := evaluate(t, p, nil).Jobs["release"].Privilege.SecretsState; got != "unknown" {
+		t.Errorf("unknown settings variables must be unknown, got %q", got)
 	}
 }
 
@@ -689,7 +689,7 @@ func impactKinds(impacts []impact) map[string]impact {
 // TestDefaultPermissionsWritesRepoIsUnresolvable pins that an assumed token
 // write (no permissions: block at all) never reads as proven. A job with no permissions that nonetheless runs git push
 // only holds contents: write by the permissive-default guess, so the
-// writes_repo impact it produces is unresolvable, not proven, and
+// writes_repo impact it produces is unknown, not proven, and
 // tokenWriteSource must say so.
 func TestDefaultPermissionsWritesRepoIsUnresolvable(t *testing.T) {
 	p := &ir.NormalizedPipeline{
@@ -704,7 +704,7 @@ func TestDefaultPermissionsWritesRepoIsUnresolvable(t *testing.T) {
 	if j.Privilege.TokenWriteSource != "default" {
 		t.Errorf("tokenWriteSource = %q, want default", j.Privilege.TokenWriteSource)
 	}
-	if i, ok := impactKinds(j.Impact)["writes_repo"]; !ok || i.State != "unresolvable" {
+	if i, ok := impactKinds(j.Impact)["writes_repo"]; !ok || i.State != "unknown" {
 		t.Errorf("writes_repo: %+v", impactKinds(j.Impact))
 	}
 }
@@ -1001,8 +1001,8 @@ func TestOneImpactSourcePerKind(t *testing.T) {
 	if n, i := count("image", "publishes"); n != 1 || i.Source != "token" || i.State != "proven" {
 		t.Errorf("image: want the declared token's proven publish in place of the unresolved push, got %+v", r.Jobs["image"].Impact)
 	}
-	if n, i := count("push", "writes_repo"); n != 1 || i.Source == "token" || i.State != "unresolvable" {
-		t.Errorf("push: want the git push alone, unresolvable on a default token, got %+v", r.Jobs["push"].Impact)
+	if n, i := count("push", "writes_repo"); n != 1 || i.Source == "token" || i.State != "unknown" {
+		t.Errorf("push: want the git push alone, unknown on a default token, got %+v", r.Jobs["push"].Impact)
 	}
 }
 
@@ -1051,7 +1051,7 @@ func TestIDTokenWriteAloneIsAPrivilegeOnly(t *testing.T) {
 // branch of signs_or_releases: each signing or release command is the
 // impact, with the matching line as evidence. The state is proven when the
 // job declares id-token: write, and follows the token-dependent rule
-// otherwise (an assumed default token is unresolvable). slsa-verifier is
+// otherwise (an assumed default token is unknown). slsa-verifier is
 // deliberately not in this list: it only checks a provenance file, see
 // TestSlsaVerifierOnlyVerifiesAndGrantsNoImpact.
 func TestSigningOrReleaseScriptGrantsSignsOrReleasesImpact(t *testing.T) {
@@ -1075,8 +1075,8 @@ func TestSigningOrReleaseScriptGrantsSignsOrReleasesImpact(t *testing.T) {
 			Jobs:     []ir.Job{{Name: "sign", Scripts: []string{line}}},
 		}
 		i, ok = impactKinds(evaluate(t, assumed, nil).Jobs["sign"].Impact)["signs_or_releases"]
-		if !ok || i.State != "unresolvable" {
-			t.Errorf("%q with the default token: signs_or_releases = %+v, want unresolvable", line, i)
+		if !ok || i.State != "unknown" {
+			t.Errorf("%q with the default token: signs_or_releases = %+v, want unknown", line, i)
 		}
 	}
 	none := &ir.NormalizedPipeline{
@@ -1251,7 +1251,7 @@ func TestRepoWriterActionsEveryDefault(t *testing.T) {
 
 // TestSigningActionGrantsSignsOrReleasesImpact pins the action-list branch
 // of signs_or_releases: a known signing action is the impact, proven when
-// the job declares id-token: write and unresolvable on an assumed default
+// the job declares id-token: write and unknown on an assumed default
 // token (the token-dependent rule every signing step follows).
 func TestSigningActionGrantsSignsOrReleasesImpact(t *testing.T) {
 	p := &ir.NormalizedPipeline{
@@ -1269,8 +1269,8 @@ func TestSigningActionGrantsSignsOrReleasesImpact(t *testing.T) {
 	}
 	p.Jobs[0].Permissions = nil
 	i, ok = impactKinds(evaluate(t, p, nil).Jobs["sign"].Impact)["signs_or_releases"]
-	if !ok || i.State != "unresolvable" {
-		t.Errorf("a signing action on the default token: signs_or_releases = %+v, want unresolvable", i)
+	if !ok || i.State != "unknown" {
+		t.Errorf("a signing action on the default token: signs_or_releases = %+v, want unknown", i)
 	}
 }
 
@@ -1407,7 +1407,7 @@ func TestGitLabMergeRequestOnlyJobHoldsNoProtectedPushToken(t *testing.T) {
 // that the job can push, independent of any CI_PUSH_TOKEN settings
 // variable. tokenWriteSource stays "none" on GitLab (never "declared"
 // or "default"), so the resulting writes_repo impact is proven, not
-// downgraded to unresolvable by token_dependent_state. A GitLab job
+// downgraded to unknown by token_dependent_state. A GitLab job
 // with no such script line gets neither.
 func TestGitLabGitPushScriptGrantsContentsWrite(t *testing.T) {
 	p := &ir.NormalizedPipeline{
@@ -1494,7 +1494,7 @@ func TestSameNamedJobsPrivilegeIsMerged(t *testing.T) {
 
 // TestYAMLStringBooleansAndExpressions pins that a quoted "false" reads like
 // false (persist-credentials: "false" persists nothing), and that a
-// docker/build-push-action push: decided by an expression is unresolvable,
+// docker/build-push-action push: decided by an expression is unknown,
 // a literal true is proven, and absent or false is no publish at all.
 func TestYAMLStringBooleansAndExpressions(t *testing.T) {
 	checkout := func(persist any) *ir.NormalizedPipeline {
@@ -1526,7 +1526,7 @@ func TestYAMLStringBooleansAndExpressions(t *testing.T) {
 		{"push quoted false", map[string]any{"push": "false"}, ""},
 		{"push true", map[string]any{"push": true}, "proven"},
 		{"push quoted true", map[string]any{"push": "true"}, "proven"},
-		{"push expression", map[string]any{"push": "${{ github.event_name != 'pull_request' }}"}, "unresolvable"},
+		{"push expression", map[string]any{"push": "${{ github.event_name != 'pull_request' }}"}, "unknown"},
 	}
 	for _, tc := range cases {
 		p := &ir.NormalizedPipeline{

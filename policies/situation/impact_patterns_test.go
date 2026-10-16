@@ -28,8 +28,8 @@ func TestImpactNpmPublishInALocalAction(t *testing.T) {
 		t.Errorf("with id-token write: publishes = %+v, want proven", i)
 	}
 	got = impactOn(t, ir.Job{Name: "publish", Permissions: map[string]string{"contents": "read"}, Uses: []ir.Action{step}})
-	if i, ok := got["publishes"]; !ok || i.State != "unresolvable" {
-		t.Errorf("without id-token write: publishes = %+v, want unresolvable", i)
+	if i, ok := got["publishes"]; !ok || i.State != "unknown" {
+		t.Errorf("without id-token write: publishes = %+v, want unknown", i)
 	}
 	other := ir.Action{Uses: "./.github/actions/build", Name: "Build the package"}
 	if i, ok := impactOn(t, ir.Job{Name: "build", Uses: []ir.Action{other}})["publishes"]; ok {

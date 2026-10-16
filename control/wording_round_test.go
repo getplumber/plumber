@@ -23,7 +23,7 @@ func TestTheUnverifiedNoteNamesWhatIsUnresolved(t *testing.T) {
 	for _, c := range cases {
 		var impacts []ImpactFact
 		for _, k := range c.kinds {
-			impacts = append(impacts, ImpactFact{Kind: k, State: "unresolvable", Evidence: "step"})
+			impacts = append(impacts, ImpactFact{Kind: k, State: "unknown", Evidence: "step"})
 		}
 		p := AttackPath{BaseTier: TierCritical, Tier: TierHigh, State: PathUnverified, Modifiers: []string{"unresolvable"}, Jobs: []string{"w/j"},
 			EntryKind: EntryMutableDependency, AnchorCode: CodeActionUnpinned, Entry: EntryFact{Subject: "o/a@v1"},
@@ -39,7 +39,7 @@ func TestTheUnverifiedNoteNamesWhatIsUnresolved(t *testing.T) {
 func TestARunTimeReferenceFixNamesTheExpression(t *testing.T) {
 	p := AttackPath{Tier: TierMedium, State: PathUnverified, Jobs: []string{"ci/build"}, EntryKind: EntryMutableDependency,
 		AnchorCode: CodeImageNotPinnedByDigest, AnchorCodes: []ErrorCode{CodeImageNotPinnedByDigest},
-		Entry: EntryFact{State: "unresolvable", Subject: "ghcr.io/o/${{ inputs.image }}:latest", File: ".github/workflows/ci.yml"}}
+		Entry: EntryFact{State: "unknown", Subject: "ghcr.io/o/${{ inputs.image }}:latest", File: ".github/workflows/ci.yml"}}
 	if fix := NewPathBlock(p, nil).Fix; fix != "pin the reference to a literal in place of `${{ inputs.image }}`" {
 		t.Errorf("fix %q", fix)
 	}

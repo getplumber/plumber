@@ -860,7 +860,7 @@ func (g *pathGroup) path(exposure string, gates []opaengine.Finding, sit *Situat
 	// A gate raises a path only when it can do damage; when only secrets
 	// Plumber could not list say it can, the raise rests on them too.
 	raiseUnlisted := len(onPath) > 0 && !reachCanDamage(g.reach, "")
-	if a.fact.State == "unresolvable" || g.unresolvable || raiseUnlisted {
+	if a.fact.State == FactUnknown || g.unresolvable || raiseUnlisted {
 		p.Tier = tierShift(p.Tier, -1)
 		p.State = PathUnverified
 		p.Modifiers = append(p.Modifiers, "unresolvable")
@@ -1233,7 +1233,7 @@ func entryFromFinding(f opaengine.Finding, kind EntryKind) EntryFact {
 		Line:     f.Line,
 	}
 	if kind == EntryMutableDependency && computedAtRunTime(ErrorCode(f.Code), fact.Subject) {
-		fact.State = "unresolvable"
+		fact.State = FactUnknown
 	}
 	return fact
 }
@@ -1273,7 +1273,7 @@ var unresolvableEntryCodes = map[ErrorCode]bool{
 // entryState is the state an entry code reports its entry with.
 func entryState(code ErrorCode) FactState {
 	if unresolvableEntryCodes[code] {
-		return "unresolvable"
+		return FactUnknown
 	}
 	return "proven"
 }
@@ -1460,7 +1460,7 @@ func reachOver(sit *Situation, jobs []string, kind EntryKind) (r Reach, unresolv
 		if !ok {
 			continue
 		}
-		if js.Privilege.SecretsState == "unresolvable" {
+		if js.Privilege.SecretsState == FactUnknown {
 			cause = unresolvableSecrets
 		}
 		if len(js.Privilege.TokenWrite) > 0 {
@@ -1489,7 +1489,7 @@ func reachOver(sit *Situation, jobs []string, kind EntryKind) (r Reach, unresolv
 	// still says the secrets could not be listed.
 	contributor := contributorEntry(kind, sit.Jobs[jobs[0]])
 	proven := tierFor(
-		slices.ContainsFunc(r.Impacts, func(imp ImpactFact) bool { return imp.State != "unresolvable" }),
+		slices.ContainsFunc(r.Impacts, func(imp ImpactFact) bool { return imp.State != FactUnknown }),
 		len(r.Secrets) > 0 || r.AllSecrets || (len(r.TokenWrite) > 0 && !tokenAssumed),
 		r.Executes, contributor,
 	)

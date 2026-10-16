@@ -84,8 +84,8 @@ func TestALocalPublishScriptIsUnresolvable(t *testing.T) {
 	read := map[string]any{"contents": "read"}
 	for _, line := range []string{"bash .ci/pytorch/binary_upload.sh", "./scripts/publish-rust-crates.sh", "python3 tools/upload_wheels.py"} {
 		got := impactsWithConfig(t, ir.Job{Name: "job", Permissions: read, Scripts: []string{line}}, shippedPublishConfig)
-		if !reflect.DeepEqual(got, map[string]string{"publishes": "unresolvable"}) {
-			t.Errorf("%q: impacts = %v, want an unresolvable publish", line, got)
+		if !reflect.DeepEqual(got, map[string]string{"publishes": "unknown"}) {
+			t.Errorf("%q: impacts = %v, want an unknown publish", line, got)
 		}
 	}
 	got := impactsWithConfig(t, ir.Job{Name: "job", Permissions: read, Scripts: []string{"bash scripts/build.sh"}}, shippedPublishConfig)

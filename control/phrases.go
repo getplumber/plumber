@@ -261,7 +261,7 @@ func pathConsequence(p AttackPath) string {
 	s := consequence(p.BaseTier, r)
 	// A consequence that rests on an impact Plumber could not confirm says
 	// what may happen.
-	if len(r.Impacts) > 0 && !slices.ContainsFunc(r.Impacts, func(i ImpactFact) bool { return i.State != "unresolvable" }) {
+	if len(r.Impacts) > 0 && !slices.ContainsFunc(r.Impacts, func(i ImpactFact) bool { return i.State != FactUnknown }) {
 		switch s {
 		case "a compromise here ships a malicious release to your users or into production":
 			return "a compromise here may ship a malicious release to your users or into production"
@@ -338,11 +338,11 @@ func modifierSentences(p AttackPath) []string {
 // job's SecretsState or a bare default token (unresolvableSentence picks
 // between those from the path's own cause).
 func unresolvableEvidence(p AttackPath) string {
-	if p.Entry.State == "unresolvable" {
+	if p.Entry.State == FactUnknown {
 		return p.Entry.Evidence
 	}
 	for _, i := range p.Reach.Impacts {
-		if i.State == "unresolvable" {
+		if i.State == FactUnknown {
 			return i.Evidence
 		}
 	}
@@ -448,7 +448,7 @@ func ShortenCommitSHA(s string) string {
 // because its reference is only known when the job runs.
 func entryComputedAtRunTime(p AttackPath) bool {
 	code, _ := entryAnchor(p)
-	return p.EntryKind == EntryMutableDependency && p.Entry.State == "unresolvable" && computedAtRunTime(code, p.Entry.Subject)
+	return p.EntryKind == EntryMutableDependency && p.Entry.State == FactUnknown && computedAtRunTime(code, p.Entry.Subject)
 }
 
 // unverifiedLines is what an unverified path could not check, in one short
@@ -459,7 +459,7 @@ func unverifiedLines(p AttackPath) (entry, reach string) {
 	switch {
 	case entryComputedAtRunTime(p):
 		return "the reference is computed at run time, so Plumber cannot know what runs", ""
-	case p.Entry.State == "unresolvable":
+	case p.Entry.State == FactUnknown:
 		return "Plumber could not check what it runs", ""
 	case unresolvableEvidence(p) != "":
 		return "", "Plumber could not check that this job " + unresolvedImpacts(p.Reach.Impacts)
@@ -480,7 +480,7 @@ var unresolvedWords = map[string]string{
 func unresolvedImpacts(impacts []ImpactFact) string {
 	var unresolved []ImpactFact
 	for _, i := range impacts {
-		if i.State == "unresolvable" {
+		if i.State == FactUnknown {
 			unresolved = append(unresolved, i)
 		}
 	}
@@ -988,7 +988,7 @@ func soCapability(p AttackPath, whose bool) string {
 	for _, i := range r.Impacts {
 		if i.Source != impactFromToken {
 			steps[i.Kind] = true
-			confirmed[i.Kind] = confirmed[i.Kind] || i.State != "unresolvable"
+			confirmed[i.Kind] = confirmed[i.Kind] || i.State != FactUnknown
 		}
 	}
 	var token, tokenMay, stepped, steppedMay []string

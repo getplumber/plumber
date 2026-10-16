@@ -240,7 +240,7 @@ func TestGenerateMRComment_V4SummaryFirstThenDetails(t *testing.T) {
 func TestGenerateMRComment_V4NamesTheCapAndWhatCouldNotBeVerified(t *testing.T) {
 	medium := func(id string, state PathState) AttackPath {
 		return AttackPath{ID: id, Tier: TierMedium, BaseTier: TierMedium, State: state, EntryKind: EntryMutableDependency,
-			AnchorCode: "ISSUE-716", Jobs: []string{"build"}, Loss: 5, Entry: EntryFact{Subject: id + "@v1", State: "unresolvable"}}
+			AnchorCode: "ISSUE-716", Jobs: []string{"build"}, Loss: 5, Entry: EntryFact{Subject: id + "@v1", State: "unknown"}}
 	}
 	result := &AnalysisResult{ProjectPath: "g/p", Paths: []AttackPath{medium("a", PathUnverified)}}
 	for _, id := range []string{"b", "c", "d", "e", "f", "g", "h", "i"} {

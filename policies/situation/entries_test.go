@@ -250,20 +250,20 @@ func TestGitLabCommitBranchEqualsDefaultBranchIdiom(t *testing.T) {
 		}
 	})
 
-	t.Run("literal equal with no configured default branch is unresolvable", func(t *testing.T) {
+	t.Run("literal equal with no configured default branch is unknown", func(t *testing.T) {
 		p := newPipeline(`$CI_COMMIT_BRANCH == "main"`)
 		p.DefaultBranch = ""
 		p.Branches = nil
 		got := evaluate(t, p, nil).Jobs["deploy"].Push
-		if len(got) != 1 || got[0].State != "unresolvable" {
+		if len(got) != 1 || got[0].State != "unknown" {
 			t.Errorf("unprotected_push: %+v", got)
 		}
 	})
 
-	t.Run("regex is unresolvable", func(t *testing.T) {
+	t.Run("regex is unknown", func(t *testing.T) {
 		p := newPipeline(`$CI_COMMIT_BRANCH =~ /^release-/`)
 		got := evaluate(t, p, nil).Jobs["deploy"].Push
-		if len(got) != 1 || got[0].State != "unresolvable" {
+		if len(got) != 1 || got[0].State != "unknown" {
 			t.Errorf("unprotected_push: %+v", got)
 		}
 	})
@@ -327,7 +327,7 @@ func TestGitLabNoRulesIsAPushJob(t *testing.T) {
 // TestPushToUnprotectedDefaultBranch: a push job (no rules, or a rule on
 // $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH) on a protected default branch
 // yields no unprotected_push entry at all, and with the protection unknown
-// (no branches collected) the entry is unresolvable, never proven. Dropping
+// (no branches collected) the entry is unknown, never proven. Dropping
 // the push_entry_state != "protected" guard, or the GitLab fall-through to
 // default_branch_state, turns the first case into a proven false positive.
 func TestGitLabPushOnProtectedDefaultBranchHasNoEntry(t *testing.T) {
@@ -348,8 +348,8 @@ func TestGitLabPushOnProtectedDefaultBranchHasNoEntry(t *testing.T) {
 			}
 			p.Branches = nil
 			got := evaluate(t, p, nil).Jobs["deploy"].Push
-			if len(got) != 1 || got[0].State != "unresolvable" || got[0].Subject != "main" {
-				t.Errorf("unknown protection: unprotected_push = %+v, want one unresolvable entry on main", got)
+			if len(got) != 1 || got[0].State != "unknown" || got[0].Subject != "main" {
+				t.Errorf("unknown protection: unprotected_push = %+v, want one unknown entry on main", got)
 			}
 		})
 	}
@@ -392,7 +392,7 @@ func TestGitLabOnlyMainIsAProvenPushJob(t *testing.T) {
 // TestGitLabOnlyUnknownRefIsUnresolvable pins that an only: entry that is
 // neither a recognized branch-push ref nor a recognized non-branch source
 // (a regex, or an unknown named ref) cannot be decided statically: the
-// unprotected_push entry still exists, but unresolvable, not proven.
+// unprotected_push entry still exists, but unknown, not proven.
 func TestGitLabOnlyUnknownRefIsUnresolvable(t *testing.T) {
 	p := &ir.NormalizedPipeline{
 		Provider:      ir.ProviderGitLab,
@@ -401,7 +401,7 @@ func TestGitLabOnlyUnknownRefIsUnresolvable(t *testing.T) {
 		Jobs:          []ir.Job{{Name: "deploy", Only: []string{`/^release-.*$/`}}},
 	}
 	got := evaluate(t, p, nil).Jobs["deploy"].Push
-	if len(got) != 1 || got[0].State != "unresolvable" {
+	if len(got) != 1 || got[0].State != "unknown" {
 		t.Errorf("unprotected_push: %+v", got)
 	}
 }
@@ -530,7 +530,7 @@ func TestGitLabExceptBranchesIsNotAPushJob(t *testing.T) {
 // except: [master] on that same project must not look like it drops
 // the default-branch entry either. When the default branch itself is
 // not known, a named branch cannot be ruled in or out, so the state is
-// unresolvable rather than guessed either way.
+// unknown rather than guessed either way.
 func TestGitLabOnlyExceptBranchRefIsTheConfiguredDefaultBranchNotAHardcodedName(t *testing.T) {
 	t.Run("only master on a main-default project is not the default branch", func(t *testing.T) {
 		p := &ir.NormalizedPipeline{
@@ -571,14 +571,14 @@ func TestGitLabOnlyExceptBranchRefIsTheConfiguredDefaultBranchNotAHardcodedName(
 		}
 	})
 
-	t.Run("only main with no configured default branch is unresolvable", func(t *testing.T) {
+	t.Run("only main with no configured default branch is unknown", func(t *testing.T) {
 		p := &ir.NormalizedPipeline{
 			Provider: ir.ProviderGitLab,
 			Jobs:     []ir.Job{{Name: "deploy", Only: []string{"main"}}},
 		}
 		got := evaluate(t, p, nil).Jobs["deploy"].Push
-		if len(got) != 1 || got[0].State != "unresolvable" {
-			t.Errorf("unprotected_push: %+v, want one unresolvable entry", got)
+		if len(got) != 1 || got[0].State != "unknown" {
+			t.Errorf("unprotected_push: %+v, want one unknown entry", got)
 		}
 	})
 }
@@ -676,7 +676,7 @@ func TestGitLabExcludeThenRunReviewerProtectedBranchExample(t *testing.T) {
 // GitHub trigger-filter reading (PR #513 review): Job.PushBranches/
 // PushBranchesIgnore/PushTags/PushTagsIgnore decide whether a push trigger
 // actually reaches the default branch, replacing the old blanket
-// "unresolvable" the IR's missing filters used to force.
+// "unknown" the IR's missing filters used to force.
 func TestGitHubPushTriggerFiltersDecideTheEntry(t *testing.T) {
 	newPipeline := func(job ir.Job) *ir.NormalizedPipeline {
 		return &ir.NormalizedPipeline{
@@ -727,10 +727,10 @@ func TestGitHubPushTriggerFiltersDecideTheEntry(t *testing.T) {
 		}
 	})
 
-	t.Run("an expression filter is unresolvable", func(t *testing.T) {
+	t.Run("an expression filter is unknown", func(t *testing.T) {
 		p := newPipeline(ir.Job{Name: "deploy", Triggers: []string{"push"}, PushBranches: []string{"${{ env.TARGET_BRANCH }}"}})
 		got := evaluate(t, p, nil).Jobs["deploy"].Push
-		if len(got) != 1 || got[0].State != "unresolvable" {
+		if len(got) != 1 || got[0].State != "unknown" {
 			t.Errorf("unprotected_push: %+v", got)
 		}
 	})

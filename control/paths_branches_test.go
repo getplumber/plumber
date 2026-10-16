@@ -114,7 +114,7 @@ func TestEachEntryJobKeepsItsOwnReach(t *testing.T) {
 // only when every one of them is.
 func TestAPathIsProvenWhenOneOfItsEntryJobsIs(t *testing.T) {
 	s := &Situation{Exposure: ir.VisibilityPublic, Provider: "github", Jobs: map[string]JobSituation{}}
-	unsure := JobSituation{Impact: []ImpactFact{{Kind: "deploys", State: "unresolvable", Evidence: "deploy.sh"}}}
+	unsure := JobSituation{Impact: []ImpactFact{{Kind: "deploys", State: "unknown", Evidence: "deploy.sh"}}}
 	unsure.Privilege.Secrets = []string{"AWS_KEY"}
 	unsure.Privilege.SecretsState = "proven"
 	s.Jobs["deploy"] = unsure
