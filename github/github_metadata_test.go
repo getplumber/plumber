@@ -508,6 +508,61 @@ func Test_resolveUncached_refKnownAbsentGuard(t *testing.T) {
 	})
 }
 
+// Test_resolveUncached_redirectedOwner pins the RedirectedOwner signal
+// trust.ActorFor reads a sibling-organisation redirect off: the
+// repository object's own `full_name` is who can actually change the
+// code, which can differ from the `uses` owner after a rename or an
+// organisation transfer (ask-bonk/ask-bonk -> Cloudflare-Studio/ask-bonk).
+func Test_resolveUncached_redirectedOwner(t *testing.T) {
+	const (
+		usesOwner = "ask-bonk"
+		repo      = "ask-bonk"
+	)
+	newClient := func(t *testing.T, fullName string) *GitHubMetadataClient {
+		rt := roundTripFunc(func(r *http.Request) (*http.Response, error) {
+			p := r.URL.Path
+			body, status := `{}`, http.StatusNotFound
+			switch {
+			case p == "/repos/"+usesOwner+"/"+repo:
+				body, status = `{"archived":false,"stargazers_count":0,"full_name":"`+fullName+`"}`, http.StatusOK
+			case strings.Contains(p, "/releases"):
+				body, status = `[]`, http.StatusOK
+			case strings.HasPrefix(p, "/advisories"):
+				body, status = `[]`, http.StatusOK
+			}
+			return &http.Response{
+				StatusCode: status,
+				Body:       io.NopCloser(strings.NewReader(body)),
+				Header:     make(http.Header),
+				Request:    r,
+			}, nil
+		})
+		c := NewGitHubMetadataClientForHost("")
+		rest, err := api.NewRESTClient(api.ClientOptions{AuthToken: "x", Transport: rt})
+		if err != nil {
+			t.Fatalf("new rest client: %v", err)
+		}
+		c.rest = rest
+		return c
+	}
+
+	t.Run("redirected owner is reported", func(t *testing.T) {
+		c := newClient(t, "Cloudflare-Studio/"+repo)
+		m := c.resolveUncached(usesOwner, repo, "main")
+		if m.RedirectedOwner != "Cloudflare-Studio" {
+			t.Fatalf("RedirectedOwner = %q, want %q", m.RedirectedOwner, "Cloudflare-Studio")
+		}
+	})
+
+	t.Run("same owner (no redirect) is not reported", func(t *testing.T) {
+		c := newClient(t, usesOwner+"/"+repo)
+		m := c.resolveUncached(usesOwner, repo, "main")
+		if m.RedirectedOwner != "" {
+			t.Fatalf("RedirectedOwner = %q, want empty (same owner)", m.RedirectedOwner)
+		}
+	})
+}
+
 // Test_tagObjectResolves covers the ISSUE-401 dereference step. A pin
 // can name an annotated tag OBJECT rather than the commit that tag
 // points at (what `git rev-parse v1.2.3` returns without `^{commit}`).

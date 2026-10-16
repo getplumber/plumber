@@ -18,16 +18,18 @@ import (
 type entry struct {
 	Kind, State, Evidence, Subject, File string
 	Line                                 int
+	CacheScopes                          []string `json:"cacheScopes"`
 }
 type privilege struct {
-	Secrets              []string `json:"secrets"`
-	SecretsState         string   `json:"secretsState"`
-	SecretsInherit       bool     `json:"secretsInherit"`
-	AllSecrets           bool     `json:"allSecrets"`
-	ProtectedSecrets     []string `json:"protectedSecrets"`
-	TokenWrite           []string `json:"tokenWrite"`
-	TokenWriteSource     string   `json:"tokenWriteSource"`
-	PersistedCredentials string   `json:"persistedCredentials"`
+	Secrets              []string       `json:"secrets"`
+	SecretsState         string         `json:"secretsState"`
+	SecretsInherit       bool           `json:"secretsInherit"`
+	AllSecrets           bool           `json:"allSecrets"`
+	ProtectedSecrets     []string       `json:"protectedSecrets"`
+	TokenWrite           []string       `json:"tokenWrite"`
+	TokenWriteSource     string         `json:"tokenWriteSource"`
+	PersistedCredentials string         `json:"persistedCredentials"`
+	SecretFirstLine      map[string]int `json:"secretFirstLine"`
 	Environment          struct {
 		Name              string   `json:"name"`
 		Protected         string   `json:"protected"`
@@ -49,6 +51,7 @@ type jobFacts struct {
 	Feeds              []string            `json:"feeds"`
 	FeedsVia           map[string][]string `json:"feedsVia"`
 	Caches             []cacheFact         `json:"caches"`
+	CacheScopes        []string            `json:"cacheScopes"`
 }
 type cacheFact struct {
 	Key    string `json:"key"`
@@ -151,6 +154,32 @@ func TestForkPRInjectionEntries(t *testing.T) {
 	r := evaluate(t, githubFixture(t, "fork_pr_injection.workflow.yml", "public"), nil)
 	if e, ok := firstEntry(r.Jobs["build"].ForkPR); !ok || e.State != "proven" {
 		t.Errorf("fork_pr missing or not proven: %+v", r.Jobs["build"].ForkPR)
+	}
+}
+
+// TestEntryCacheScopeNarrowsToTheProvingRun pins entry_cache_scope: a
+// fork_pr entry's run saves in the pull request's merge ref alone,
+// whatever other trigger the same job carries elsewhere; an entry this
+// policy does not narrow (unprotected_push here) takes the job's own
+// cache_scopes as-is, since nothing about the entry itself says which of
+// the job's runs holds it.
+func TestEntryCacheScopeNarrowsToTheProvingRun(t *testing.T) {
+	r := evaluate(t, githubFixture(t, "fork_pr_injection.workflow.yml", "public"), nil)
+	e, ok := firstEntry(r.Jobs["build"].ForkPR)
+	if !ok || !reflect.DeepEqual(e.CacheScopes, []string{"pull_request"}) {
+		t.Errorf("fork_pr cacheScopes = %v, want [pull_request]: %+v", e.CacheScopes, e)
+	}
+
+	p := githubFixture(t, "push_unprotected.workflow.yml", "public")
+	p.DefaultBranch = "main"
+	p.Branches = []ir.Branch{{Name: "main", Protected: false}}
+	pr := evaluate(t, p, nil)
+	pe, ok := firstEntry(pr.Jobs["deploy"].Push)
+	if !ok {
+		t.Fatalf("want an unprotected_push entry: %+v", pr.Jobs["deploy"])
+	}
+	if !reflect.DeepEqual(pe.CacheScopes, pr.Jobs["deploy"].CacheScopes) {
+		t.Errorf("unprotected_push cacheScopes = %v, want the job's own %v", pe.CacheScopes, pr.Jobs["deploy"].CacheScopes)
 	}
 }
 
@@ -868,6 +897,9 @@ func TestSecretsRegexAnchoredToExpression(t *testing.T) {
 		{"an actual expression is", "echo ${{ secrets.NPM_TOKEN }}", []string{"NPM_TOKEN"}},
 		{"two names in one expression", "echo ${{ secrets.A || secrets.B }}", []string{"A", "B"}},
 		{"two separate expressions", "echo ${{ secrets.A }} and ${{ secrets.B }}", []string{"A", "B"}},
+		{"lower-case github_token is the token, not a secret", "echo ${{ secrets.github_token }}", nil},
+		{"mixed-case GitHub_Token is still the token", "echo ${{ secrets.GitHub_Token }}", nil},
+		{"a real secret alongside the token keeps only the secret", "echo ${{ secrets.github_token }} ${{ secrets.NPM_TOKEN }}", []string{"NPM_TOKEN"}},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -1493,6 +1525,87 @@ func TestSameNamedJobsPrivilegeIsMerged(t *testing.T) {
 			t.Errorf("environment = %+v, want the one of ci.yaml (smallest origin file)", got.Environment)
 		}
 	}
+}
+
+// TestMergedSecretFirstLineRequiresTheSameFileAndAgreement pins the
+// group-wide secretFirstLine merge: a line recorded against one workflow
+// file is not a position in another, so a group whose jobs come from
+// different files, or whose jobs disagree on a name they both record,
+// carries no secretFirstLine at all once merged (every secret stays kept
+// downstream, never dropped on an untrustworthy line). A single-job
+// group, and a multi-job group from the same file that never disagrees,
+// still merge normally.
+func TestMergedSecretFirstLineRequiresTheSameFileAndAgreement(t *testing.T) {
+	cases := []struct {
+		name string
+		jobs []ir.Job
+		want map[string]int
+	}{
+		{
+			name: "a single job passes its own map through unchanged",
+			jobs: []ir.Job{{
+				Name: "ci/build", OriginFile: ".github/workflows/ci.yml",
+				SecretFirstLine: map[string]int{"A": 12},
+			}},
+			want: map[string]int{"A": 12},
+		},
+		{
+			name: "same file, no shared name in common, merges the union",
+			jobs: []ir.Job{
+				{Name: "ci/build", OriginFile: ".github/workflows/ci.yml", SecretFirstLine: map[string]int{"A": 12}},
+				{Name: "ci/build", OriginFile: ".github/workflows/ci.yml", SecretFirstLine: map[string]int{"B": 30}},
+			},
+			want: map[string]int{"A": 12, "B": 30},
+		},
+		{
+			name: "same file, agreeing on a name both record, merges the union",
+			jobs: []ir.Job{
+				{Name: "ci/build", OriginFile: ".github/workflows/ci.yml", SecretFirstLine: map[string]int{"A": 12, "B": 30}},
+				{Name: "ci/build", OriginFile: ".github/workflows/ci.yml", SecretFirstLine: map[string]int{"A": 12}},
+			},
+			want: map[string]int{"A": 12, "B": 30},
+		},
+		{
+			name: "different files carry no line at all, whatever they record",
+			jobs: []ir.Job{
+				{Name: "ci/build", OriginFile: ".github/workflows/ci.yml", SecretFirstLine: map[string]int{"A": 12}},
+				{Name: "ci/build", OriginFile: ".github/workflows/ci.yaml", SecretFirstLine: map[string]int{"B": 30}},
+			},
+			want: nil,
+		},
+		{
+			name: "same file, disagreeing on a name both record, carries no line at all",
+			jobs: []ir.Job{
+				{Name: "ci/build", OriginFile: ".github/workflows/ci.yml", SecretFirstLine: map[string]int{"A": 12}},
+				{Name: "ci/build", OriginFile: ".github/workflows/ci.yml", SecretFirstLine: map[string]int{"A": 40}},
+			},
+			want: nil,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			for _, order := range [][]ir.Job{tc.jobs, reversedJobs(tc.jobs)} {
+				p := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: order}
+				got := evaluate(t, p, nil).Jobs["ci/build"].Privilege.SecretFirstLine
+				if len(got) == 0 && len(tc.want) == 0 {
+					continue
+				}
+				if !reflect.DeepEqual(got, tc.want) {
+					t.Errorf("secretFirstLine = %v, want %v", got, tc.want)
+				}
+			}
+		})
+	}
+}
+
+// reversedJobs returns a copy of jobs in reverse order, so a merge test
+// can confirm its result does not depend on input order.
+func reversedJobs(jobs []ir.Job) []ir.Job {
+	out := make([]ir.Job, len(jobs))
+	for i, j := range jobs {
+		out[len(jobs)-1-i] = j
+	}
+	return out
 }
 
 // TestYAMLStringBooleansAndExpressions pins that a quoted "false" reads like

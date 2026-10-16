@@ -135,7 +135,7 @@ func (f repositoryFacts) Resolve(ref string) (string, bool) {
 
 // githubRepositoryRef is the single reference repositoryLiteralReason
 // resolves, read by expr.Eval and reused to find the literal the
-// condition compares it against (nearestLiteral, from gates.go).
+// condition compares it against (expr.ComparedLiteral).
 var githubRepositoryRef = []string{"github.repository"}
 
 // repositoryLiteralReason reports a job whose own `if:` is provably
@@ -150,7 +150,7 @@ func repositoryLiteralReason(p *NormalizedPipeline, job Job) string {
 	if expr.Eval(job.If, repositoryFacts{repository: p.ProjectPath}) != expr.False {
 		return ""
 	}
-	literal, ok := nearestLiteral(job.If, githubRepositoryRef)
+	literal, ok := expr.ComparedLiteral(job.If, githubRepositoryRef)
 	if !ok {
 		return ""
 	}

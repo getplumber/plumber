@@ -7,6 +7,8 @@ import (
 	"strings"
 	"unicode"
 	"unicode/utf8"
+
+	"github.com/getplumber/plumber/internal/ir"
 )
 
 // maxSentenceLen bounds every path explanation (spec section 3: a platform
@@ -54,6 +56,9 @@ func entryClause(p AttackPath) string {
 	case EntryForkPR:
 		return "A fork pull request can start " + job
 	case EntryPRTarget:
+		if maintainerApproved(p) {
+			return fmt.Sprintf("A pull request a maintainer lets in runs inside %s with the base repository's privileges, checking out %s", job, code(p.Entry.Subject))
+		}
 		return fmt.Sprintf("A pull request from anyone runs inside %s with the base repository's privileges, checking out %s", job, code(p.Entry.Subject))
 	case EntryUntrustedExpression:
 		who := expressionController(p.Entry.Subject)
@@ -66,10 +71,33 @@ func entryClause(p AttackPath) string {
 	case EntryUnprotectedPush:
 		return fmt.Sprintf("Anyone with write access to %s runs %s", code(p.Entry.Subject), job)
 	case EntryPoisonedCache:
-		return fmt.Sprintf("Code running in %s can write caches that %s restore%s, since %s lifts GitHub's read-only cache access for its untrusted triggers",
-			job, joinAnd(codeSpans(p.Jobs[1:])), pluralS(len(p.Jobs[1:]) == 1), code("cache-mode: write"))
+		restorers := p.Jobs[1:]
+		what := "caches"
+		if p.cacheName != "" {
+			what = cacheWords(p.cacheName)
+		}
+		return fmt.Sprintf("Code running in %s can write %s that %s restore%s, since %s lifts GitHub's read-only cache access for its untrusted triggers",
+			job, what, joinAnd(codeSpans(restorers)), pluralS(len(restorers) == 1), code("cache-mode: write"))
 	}
 	return "An attacker can reach " + job
+}
+
+// namedCache is a cache name cacheFactName gives a caching action's own
+// cache ("npm cache of setup-node", "cache of setup-go"), read as words.
+var namedCache = regexp.MustCompile(`^(.+ )?cache of [^ ]+$`)
+
+// cacheWords is how a sentence names the cache a poisoned_cache path's
+// writer saves and its restorers read (AttackPath.cacheName): a
+// rust-cache key family by its prefix, in code; a name Plumber gave a
+// caching action's cache, as words; a literal key, in code.
+func cacheWords(name string) string {
+	if prefix, ok := strings.CutPrefix(name, rustCacheName); ok {
+		return "the Rust build cache under the key prefix " + code(prefix)
+	}
+	if namedCache.MatchString(name) {
+		return "the " + name
+	}
+	return "the cache " + code(name)
 }
 
 // codeSpans renders each name as its own code span.
@@ -138,7 +166,7 @@ func impactClause(impacts []ImpactFact) string {
 		delete(kinds, k) // read out with the token that gives it
 	}
 	var parts []string
-	for _, k := range []string{"publishes", "deploys", "writes_repo", "signs_or_releases"} {
+	for _, k := range []string{"publishes", "deploys", "writes_repo", "signs_or_releases", impactAltersArtifact} {
 		i, ok := kinds[k]
 		if !ok {
 			continue
@@ -156,6 +184,8 @@ func impactClause(impacts []ImpactFact) string {
 			parts = append(parts, "pushes to the repository")
 		case "signs_or_releases":
 			parts = append(parts, "signs or publishes releases")
+		case impactAltersArtifact:
+			parts = append(parts, "alters the artifact job "+code(i.Evidence)+" produces")
 		}
 	}
 	return strings.Join(parts, " and ")
@@ -238,26 +268,38 @@ func consequence(t PathTier, r Reach) string {
 		case len(r.Impacts) > 0:
 			return "what this job deploys or publishes can be altered"
 		}
-		return runnerAbused
+		return runnerReach(r)
 	case TierMedium:
-		return runnerAbused
+		return runnerReach(r)
+	}
+	if r.Executes {
+		return runnerReach(r)
 	}
 	return "no exploitable reach was found"
 }
 
-// runnerAbused is what code execution alone gives the attacker.
+// runnerAbused is what code execution alone gives the attacker on a
+// runner that saves a cache or uploads an artifact (Reach.keeps).
 const runnerAbused = "the runner can be abused and anything it caches or uploads can be poisoned"
 
-// pathConsequence is consequence for p's BaseTier and reach. A path whose
-// only privilege is secrets Plumber could not list is priced from High,
-// what those secrets would give, and reads as the secrets being read and
-// reused, the reach its Reaches line names, never as something the job
-// deploys or publishes.
+// runnerEphemeral is what code execution alone gives the attacker on a
+// runner that saves and uploads nothing: it is thrown away once the job
+// ends.
+const runnerEphemeral = "code runs on an ephemeral runner and nothing else is proven"
+
+// runnerReach is what code execution alone gives on r's entry runner.
+func runnerReach(r Reach) string {
+	if r.keeps {
+		return runnerAbused
+	}
+	return runnerEphemeral
+}
+
+// pathConsequence is consequence for p's BaseTier and reach. Secrets
+// Plumber could not list add no tier (provenPrivileged), so they never
+// make the consequence read as the secrets being reused.
 func pathConsequence(p AttackPath) string {
 	r := p.Reach
-	if p.BaseTier == TierHigh && p.cause == unresolvableSecrets && len(r.Secrets) == 0 && !r.AllSecrets && len(r.TokenWrite) == 0 && len(r.Impacts) == 0 {
-		return "the secrets can be read and reused elsewhere"
-	}
 	s := consequence(p.BaseTier, r)
 	// A consequence that rests on an impact Plumber could not confirm says
 	// what may happen.
@@ -294,7 +336,7 @@ func modifierSentences(p AttackPath) []string {
 	throughWriters := slices.Contains(p.Modifiers, "cache_writer_cap")
 	for _, m := range p.Modifiers {
 		switch {
-		case throughWriters && (m == "push_entry_cap" || m == "dependency_cap" || m == "source_cap"):
+		case throughWriters && (m == "push_entry_cap" || m == "dependency_cap" || m == "source_cap" || m == "advisory_cap"):
 			// said with cache_writer_cap: the cap is the writers'
 		case m == "cache_writer_cap":
 			out = append(out, "Writing the cache takes getting into one of the jobs that can write it first, so this path is capped at "+tierTitle(p.Tier)+".")
@@ -310,6 +352,12 @@ func modifierSentences(p AttackPath) []string {
 			out = append(out, "The dependency must be compromised first, so this path is capped at "+tierTitle(p.Tier)+".")
 		case m == "source_cap":
 			// said with dependency_cap, which it always follows
+		case m == "maintainer_cap":
+			out = append(out, "A maintainer has to let this run first, so this path is capped at High.")
+		case m == "advisory_cap":
+			out = append(out, "The published advisory on this version is rated "+advisoryRating(p.Tier)+", so this path is capped at "+tierTitle(p.Tier)+".")
+		case m == "pinned_head_cap":
+			out = append(out, "A maintainer has to let this run first, and the commit they approved is the one that runs, so this path is capped at Medium.")
 		case m == "unresolvable":
 			out = append(out, unresolvableSentence(p))
 		case strings.HasPrefix(m, "gate:"):
@@ -456,6 +504,16 @@ func entryComputedAtRunTime(p AttackPath) bool {
 // that is itself unresolvable, or a default token whose write access is
 // assumed. Secrets Plumber could not list need no line: Reaches says so.
 func unverifiedLines(p AttackPath) (entry, reach string) {
+	entry, reach = unverifiedFactLines(p)
+	if entry == "" {
+		entry = gateUnverifiedLine(p)
+	}
+	return entry, reach
+}
+
+// unverifiedFactLines is unverifiedLines before the entry gate: what an
+// unresolved entry, impact or token fact leaves unchecked.
+func unverifiedFactLines(p AttackPath) (entry, reach string) {
 	switch {
 	case entryComputedAtRunTime(p):
 		return "the reference is computed at run time, so Plumber cannot know what runs", ""
@@ -530,8 +588,14 @@ func dependencyKind(p AttackPath) string {
 // entryNature is what the entry of p is, in a few words after its subject
 // on the Entry line, from the row of the code that anchors it (the most
 // serious one when several do, entryAnchor): the variant the path calls
-// for (entryNatureWords), its slots filled in.
+// for (entryNatureWords), its slots filled in, then the maintainer's gate
+// that holds it, when one does (gateNatureSuffix).
 func entryNature(p AttackPath) string {
+	return codeNature(p) + gateNatureSuffix(p)
+}
+
+// codeNature is entryNature before the gate.
+func codeNature(p AttackPath) string {
 	kind := dependencyKind(p)
 	if entryComputedAtRunTime(p) {
 		return kind + " computed at run time"
@@ -601,6 +665,19 @@ func entryLineSubject(p AttackPath) string {
 // runs, as whom the attacker acts. kind is the dependency as the line
 // names it (dependencyKind, or a shorter word).
 func soActor(p AttackPath, kind string) string {
+	// trust.ActorFor's insider actor (a first-party script, a sibling
+	// organisation's redirected action) overrides the dependency's
+	// default compromised/malicious wording: the party who can change
+	// the code is named directly. Its outsider actor (a run-time fetch
+	// from an unguarded, unverified outside host) names that host
+	// instead of reading the dependency generically.
+	if (p.actorClass == ir.GateInsider || p.actorClass == ir.GateOutsider) && p.actor != "" {
+		return p.actor
+	}
+	// A maintainer's gate on the entry job names who it lets in.
+	if actor, ok := gatedActor(p); ok {
+		return actor
+	}
 	rule := kindActors[p.EntryKind]
 	if row, ok := entryRow(p); ok {
 		rule = row.actor
@@ -784,6 +861,7 @@ var stepReach = []struct{ kind, words, verb string }{
 	{"deploys", "a step that deploys", "deploy"},
 	{"writes_repo", "a step that pushes", "push"},
 	{"signs_or_releases", "a step that releases", ""},
+	{impactAltersArtifact, "a step that alters an artifact", ""},
 }
 
 // partsOf is the reach split by the job each item comes from (Reach.parts),
@@ -792,7 +870,7 @@ func partsOf(r Reach) []reachPart {
 	if len(r.parts) > 0 {
 		return r.parts
 	}
-	return []reachPart{{secrets: r.Secrets, allSecrets: r.AllSecrets, scopes: r.TokenWrite, assumed: r.tokenAssumed, impacts: r.Impacts}}
+	return []reachPart{{secrets: r.Secrets, allSecrets: r.AllSecrets, scopes: r.TokenWrite, assumed: r.tokenAssumed, tokenUnknown: r.tokenAssumed, impacts: r.Impacts}}
 }
 
 // reachSegment is what one job adds to what a branch reaches: the job,
@@ -917,6 +995,9 @@ func reachFragment(r Reach, cause unresolvableCause, name func(job string) strin
 	}
 	segments := reachSegments(r, cause == unresolvableSecrets)
 	if len(segments) == 0 {
+		if !r.keeps {
+			return "code execution on the runner; nothing else proven"
+		}
 		return "code execution on the runner, no secret and no write token"
 	}
 	out := ""
@@ -985,10 +1066,14 @@ func soCapability(p AttackPath, whose bool) string {
 	}
 	verbs, others, oidc := tokenReach(scopes, r.Impacts)
 	steps, confirmed := map[string]bool{}, map[string]bool{}
+	var alteredArtifactEvidence string
 	for _, i := range r.Impacts {
 		if i.Source != impactFromToken {
 			steps[i.Kind] = true
 			confirmed[i.Kind] = confirmed[i.Kind] || i.State != FactUnknown
+			if i.Kind == impactAltersArtifact && alteredArtifactEvidence == "" {
+				alteredArtifactEvidence = i.Evidence
+			}
 		}
 	}
 	var token, tokenMay, stepped, steppedMay []string
@@ -1015,6 +1100,9 @@ func soCapability(p AttackPath, whose bool) string {
 	if release {
 		add(confirmed["publishes"] || confirmed["signs_or_releases"], "ship a malicious release", &stepped, &steppedMay)
 	}
+	if steps[impactAltersArtifact] {
+		add(confirmed[impactAltersArtifact], "alter the artifact job "+code(alteredArtifactEvidence)+" produces", &stepped, &steppedMay)
+	}
 	// The So line holds in two lines: the other scopes and the OIDC token
 	// say what the token does only when no verb does (the branch line
 	// lists every scope).
@@ -1033,6 +1121,9 @@ func soCapability(p AttackPath, whose bool) string {
 		return "may " + may
 	case can != "":
 		return "can " + can
+	}
+	if !r.keeps {
+		return "can execute code on an ephemeral runner"
 	}
 	return "can execute code on the runner and poison what it caches or uploads"
 }
@@ -1168,7 +1259,13 @@ func entryFix(code ErrorCode) string {
 // otherwise when it reads as an action's or a reusable workflow's
 // (actionFix), and an entry an unauthorized source joins replaced by a
 // trusted one (untrustedFix, else a trusted image or action, pinned).
+// A path a maintainer's gate holds keeps the gate (gatedFix).
 func pathFixOf(p AttackPath) string {
+	return gatedFix(p, entryPathFix(p))
+}
+
+// entryPathFix is pathFixOf before the gate.
+func entryPathFix(p AttackPath) string {
 	if entryComputedAtRunTime(p) {
 		return "pin the reference to a literal in place of " + code(runTimeExpression(p.Entry.Subject))
 	}
@@ -1240,11 +1337,11 @@ func runsIn(jobs []string) string {
 	return "jobs " + strings.Join(jobs, ", ")
 }
 
-var impactOrder = []string{"publishes", "deploys", "writes_repo", "signs_or_releases"}
+var impactOrder = []string{"publishes", "deploys", "writes_repo", "signs_or_releases", impactAltersArtifact}
 
 var impactNouns = map[string]string{
 	"publishes": "publishing", "deploys": "deployment", "writes_repo": "repository writes",
-	"signs_or_releases": "releases",
+	"signs_or_releases": "releases", impactAltersArtifact: "an altered artifact",
 }
 
 // impactKinds is the distinct impact kinds present, in impactOrder.

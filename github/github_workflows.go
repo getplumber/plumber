@@ -316,18 +316,20 @@ func enrichActionsWithClient(pipeline *ir.NormalizedPipeline, client *GitHubMeta
 				continue
 			}
 			amd := &ir.ActionMetadata{
-				RepoArchived:      meta.RepoArchived,
-				RefExists:         meta.RefExists,
-				RefKnownAbsent:    meta.RefKnownAbsent,
-				RefKind:           meta.RefKind,
-				RefCommitSha:      meta.RefCommitSha,
-				TagSha:            meta.TagSha,
-				LatestTag:         meta.LatestTag,
-				LatestReleaseSha:  meta.LatestReleaseSha,
-				RefIsAmbiguous:    meta.RefIsAmbiguous,
-				Advisories:        meta.Advisories,
-				StargazersCount:   meta.StargazersCount,
-				MutableRemoteExec: mre,
+				RepoArchived:       meta.RepoArchived,
+				RefExists:          meta.RefExists,
+				RefKnownAbsent:     meta.RefKnownAbsent,
+				RefKind:            meta.RefKind,
+				RefCommitSha:       meta.RefCommitSha,
+				TagSha:             meta.TagSha,
+				LatestTag:          meta.LatestTag,
+				LatestReleaseSha:   meta.LatestReleaseSha,
+				RefIsAmbiguous:     meta.RefIsAmbiguous,
+				Advisories:         meta.Advisories,
+				AdvisorySeverities: meta.AdvisorySeverities,
+				StargazersCount:    meta.StargazersCount,
+				MutableRemoteExec:  mre,
+				RedirectedOwner:    meta.RedirectedOwner,
 			}
 			if action.Comment != "" {
 				amd.CommentVersion = extractVersionFromComment(action.Comment)
@@ -465,6 +467,7 @@ type workflowContext struct {
 	pushTags             []string
 	pushTagsIgnore       []string
 	workflowRunUpstreams []string
+	triggerTypes         map[string][]string
 	name                 string
 	hasConcurrency       bool
 	cacheMode            *ir.CacheModeDecl
@@ -472,6 +475,10 @@ type workflowContext struct {
 	jobLines             map[string]int
 	usesLines            map[string][]int
 	usesComments         map[string]string
+	// secretLines is job name to secret name to the 1-based line of its
+	// first reference, as scanGitHubSecretLines reads it: Job.SecretFirstLine
+	// for the job of that name.
+	secretLines map[string]map[string]int
 }
 
 // mergedEnv combines workflow-level, job-level, and step-level env maps into
@@ -565,7 +572,8 @@ func parseGitHubRunsOn(v any) (labels []string, expression bool) {
 // from its actions steps: the official cache actions, the caching actions
 // the cache poisoning control knows (builtinCacheRefs), and the official
 // artifact actions.
-func cacheAndArtifactRefs(uses []ir.Action, jobID string) (caches []ir.CacheRef, artifacts []ir.ArtifactRef) {
+func cacheAndArtifactRefs(uses []ir.Action, jobID string, runsOn []string, runsOnExpression bool) (caches []ir.CacheRef, artifacts []ir.ArtifactRef) {
+	osName, arch := runnerOSArch(runsOn, runsOnExpression)
 	for _, a := range uses {
 		name := a.Uses
 		if i := strings.Index(name, "@"); i >= 0 {
@@ -639,12 +647,134 @@ func cacheAndArtifactRefs(uses []ir.Action, jobID string) (caches []ir.CacheRef,
 		case "actions/download-artifact":
 			artifacts = append(artifacts, ir.ArtifactRef{Name: withStr("name"), Pattern: withStr("pattern"), Mode: "consume", CrossRun: withStr("run-id") != ""})
 		default:
-			for _, ref := range builtinCacheRefs(strings.ToLower(name), a.With, jobID) {
+			for _, ref := range builtinCacheRefs(strings.ToLower(name), a.With, jobID, osName, arch) {
 				caches = append(caches, step(ref))
 			}
 		}
 	}
 	return caches, artifacts
+}
+
+// runnerOSArch resolves the OS and architecture a job's runs-on labels
+// name, when runsOn is exactly one literal label one of the hosted
+// runner families recognizes: "ubuntu-*" -> Linux, "macos-*" -> macOS
+// (its architecture, macOSArch), "windows-*" -> Windows (its
+// architecture, labelArch). A matrix (`runs-on: ${{ matrix.os }}`), an
+// expression, zero or more than one label, or a label this program does
+// not recognize resolves neither OS nor arch: guessing wrong is worse
+// than leaving the cache key's os/arch part open (control/cachekeys.go
+// then matches it against anything, never asserting equal or different
+// without evidence). The OS itself is read off the prefix alone (a
+// "-large"/"-xlarge"/"-intel" variant is still that OS); only the arch
+// is this strict about the label's exact shape.
+func runnerOSArch(runsOn []string, runsOnExpression bool) (osName, arch string) {
+	if runsOnExpression || len(runsOn) != 1 {
+		return "", ""
+	}
+	label := strings.ToLower(runsOn[0])
+	switch {
+	case strings.HasPrefix(label, "ubuntu-"):
+		return "Linux", labelArch(label, ubuntuPlainLabel)
+	case strings.HasPrefix(label, "windows-"):
+		return "Windows", labelArch(label, windowsPlainLabel)
+	case strings.HasPrefix(label, "macos-"):
+		return "macOS", macOSArch(label)
+	}
+	return "", ""
+}
+
+// ubuntuPlainLabel and windowsPlainLabel match only the plain hosted
+// runner labels GitHub documents for each family ("ubuntu-24.04",
+// "ubuntu-latest", "windows-2025", "windows-latest"): any other shape
+// ("-large", "-xlarge", a self-hosted label, anything with an extra
+// suffix) is not one this program asserts an architecture for at all.
+var (
+	ubuntuPlainLabel  = regexp.MustCompile(`^ubuntu-(latest|\d+\.\d+)$`)
+	windowsPlainLabel = regexp.MustCompile(`^windows-(latest|\d+)$`)
+	macosPlainLabel   = regexp.MustCompile(`^macos-(latest|\d+)$`)
+)
+
+// labelArch is ARM64 when the label itself names an ARM runner ("-arm",
+// "arm64": GitHub's Linux and Windows ARM hosted labels, e.g.
+// "ubuntu-24.04-arm"), X64 for a plain hosted label (plain), no arch
+// part at all for every other shape: a "-large"/"-xlarge" variant or
+// anything this program does not recognize as one of the two.
+func labelArch(label string, plain *regexp.Regexp) string {
+	if strings.Contains(label, "arm64") || strings.Contains(label, "-arm") {
+		return "ARM64"
+	}
+	if plain.MatchString(label) {
+		return "X64"
+	}
+	return ""
+}
+
+// macOSArch is the architecture a macos-* label resolves to: ARM64 when
+// the label names it explicitly ("-arm", "arm64"); for a plain hosted
+// label (macosPlainLabel), by the runner's numbered generation: macos-13
+// and earlier were Intel (X64), macos-14 and later (Apple Silicon) and
+// the unversioned "macos-latest" (which tracks the current default, now
+// past 14) are ARM64; every other shape ("-large", "-xlarge", "-intel",
+// anything with an extra suffix) gives no arch part at all, never a
+// guess (a label such as "macos-15-intel" is exactly this case: its
+// numbered generation would read ARM64, but the "-intel" suffix says
+// otherwise, so this program asserts neither).
+func macOSArch(label string) string {
+	if strings.Contains(label, "arm64") || strings.Contains(label, "-arm") {
+		return "ARM64"
+	}
+	if !macosPlainLabel.MatchString(label) {
+		return ""
+	}
+	if n, err := strconv.Atoi(strings.TrimPrefix(label, "macos-")); err == nil && n <= 13 {
+		return "X64"
+	}
+	return "ARM64"
+}
+
+// cacheRefParts builds a CacheRef.Parts map from the per-action extras
+// (manager, version, job, key: dropped empty) and the job's own os/arch,
+// nil when none of them resolved to anything.
+func cacheRefParts(osName, arch string, extra map[string]string) map[string]string {
+	out := map[string]string{}
+	for k, v := range extra {
+		if v != "" {
+			out[k] = v
+		}
+	}
+	if osName != "" {
+		out["os"] = osName
+	}
+	if arch != "" {
+		out["arch"] = arch
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// literalVersionInput reads a version input's resolved value: empty when
+// the step instead names a version file (node-version-file,
+// python-version-file, go-version-file: the version then lives in a file
+// this program does not read), when the input is empty, or when it is a
+// runtime expression this program cannot resolve to one literal value.
+func literalVersionInput(version, versionFile string) string {
+	if versionFile != "" || version == "" || strings.Contains(version, "${{") {
+		return ""
+	}
+	return version
+}
+
+// literalInput returns v unless it still carries a `${{ ... }}`
+// expression (a `cache: ${{ matrix.cache }}` input, say): a resolved
+// value never contains expression syntax, so anything that does was
+// never really resolved to one literal manager name.
+func literalInput(v string) string {
+	if strings.Contains(v, "${{") {
+		return ""
+	}
+	return v
 }
 
 // builtinCacheRefs is the cache of a caching action that keys its cache
@@ -669,7 +799,7 @@ func cacheAndArtifactRefs(uses []ir.Action, jobID string) (caches []ir.CacheRef,
 //   - pnpm/action-setup (opt-in with cache): the action name.
 //   - docker/build-push-action with a type=gha cache: one entry per scope
 //     (default buildkit) in cache-from (restored) and cache-to (saved).
-func builtinCacheRefs(name string, with map[string]any, jobID string) []ir.CacheRef {
+func builtinCacheRefs(name string, with map[string]any, jobID, osName, arch string) []ir.CacheRef {
 	in := func(key string) string {
 		switch v := with[key].(type) {
 		case string:
@@ -703,33 +833,56 @@ func builtinCacheRefs(name string, with map[string]any, jobID string) []ir.Cache
 			key = "v0-rust"
 		}
 		ref := family(key)
+		extra := map[string]string{}
 		if shared := in("shared-key"); shared != "" {
 			ref = family(key + "-" + shared)
+			if !strings.Contains(shared, "${{") {
+				extra["key"] = shared
+			}
 		} else {
 			if k := in("key"); k != "" {
 				ref = family(key + "-" + k)
+				if !strings.Contains(k, "${{") {
+					extra["key"] = k
+				}
 			}
 			if !isFalse("add-job-id-key") && jobID != "" {
 				ref.Key += "-" + jobID
+				extra["job"] = jobID
 			}
 		}
 		if isFalse("save-if") {
 			ref.Mode = "restore"
 		}
+		ref.Parts = cacheRefParts(osName, arch, extra)
 		return []ir.CacheRef{ref}
 	case "actions/setup-node", "actions/setup-python", "actions/setup-java", "actions/setup-dotnet":
 		if in("cache") == "" || isFalse("cache") {
 			return nil
 		}
-		if isTrue("cache") {
-			return exact(short)
+		manager := ""
+		fam := short
+		if !isTrue("cache") {
+			manager = in("cache")
+			fam = short + "-" + manager
 		}
-		return exact(short + "-" + in("cache"))
+		refs := exact(fam)
+		extra := map[string]string{"manager": literalInput(manager)}
+		switch name {
+		case "actions/setup-node":
+			extra["version"] = literalVersionInput(in("node-version"), in("node-version-file"))
+		case "actions/setup-python":
+			extra["version"] = literalVersionInput(in("python-version"), in("python-version-file"))
+		}
+		refs[0].Parts = cacheRefParts(osName, arch, extra)
+		return refs
 	case "actions/setup-go":
 		if isFalse("cache") {
 			return nil
 		}
-		return exact(short)
+		refs := exact(short)
+		refs[0].Parts = cacheRefParts(osName, arch, map[string]string{"version": literalVersionInput(in("go-version"), in("go-version-file"))})
+		return refs
 	case "gradle/actions/setup-gradle", "gradle/gradle-build-action":
 		if isTrue("cache-disabled") {
 			return nil
@@ -738,12 +891,15 @@ func builtinCacheRefs(name string, with map[string]any, jobID string) []ir.Cache
 		if isTrue("cache-read-only") {
 			ref.Mode = "restore"
 		}
+		ref.Parts = cacheRefParts(osName, arch, nil)
 		return []ir.CacheRef{ref}
 	case "pnpm/action-setup":
 		if in("cache") == "" || isFalse("cache") {
 			return nil
 		}
-		return []ir.CacheRef{family(name)}
+		ref := family(name)
+		ref.Parts = cacheRefParts(osName, arch, nil)
+		return []ir.CacheRef{ref}
 	case "docker/build-push-action":
 		return buildxGhaCaches(name, in("cache-from"), in("cache-to"))
 	}
@@ -815,6 +971,7 @@ func buildJob(jobName string, section map[string]any, wfCtx workflowContext, nam
 		PushTags:               wfCtx.pushTags,
 		PushTagsIgnore:         wfCtx.pushTagsIgnore,
 		WorkflowRunWorkflows:   wfCtx.workflowRunUpstreams,
+		TriggerTypes:           wfCtx.triggerTypes,
 		WorkflowName:           wfCtx.name,
 		WorkflowHasConcurrency: wfCtx.hasConcurrency,
 	}
@@ -894,10 +1051,13 @@ func buildJob(jobName string, section map[string]any, wfCtx workflowContext, nam
 	for _, need := range stringOrList(section["needs"]) {
 		job.Needs = append(job.Needs, namespace+"/"+need)
 	}
-	job.Caches, job.Artifacts = cacheAndArtifactRefs(job.Uses, jobName)
+	job.Caches, job.Artifacts = cacheAndArtifactRefs(job.Uses, jobName, job.RunsOn, job.RunsOnExpression)
 	job.Artifacts = matrixArtifacts(job.Artifacts, section)
 	if job.ReusableWorkflowUses != "" {
 		job.MatrixCombinations = matrixCombinations(section)
+	}
+	if lines := wfCtx.secretLines[jobName]; len(lines) > 0 {
+		job.SecretFirstLine = lines
 	}
 	return job
 }
@@ -952,11 +1112,13 @@ func parseGitHubWorkflowJobs(data []byte, namespace, originFile string) ([]ir.Jo
 		pushTags:             pushTags,
 		pushTagsIgnore:       pushTagsIgnore,
 		workflowRunUpstreams: extractGitHubWorkflowRunUpstreams(wf.On),
+		triggerTypes:         extractGitHubTriggerTypes(wf.On),
 		name:                 wf.Name,
 		hasConcurrency:       wf.Concurrency != nil,
 		jobLines:             scanGitHubJobLines(data),
 		usesLines:            scanGitHubUsesLines(data),
 		usesComments:         scanGitHubUsesComments(data),
+		secretLines:          scanGitHubSecretLines(data),
 	}
 
 	jobs := make([]ir.Job, 0, len(wf.Jobs))
@@ -1146,6 +1308,179 @@ func scanGitHubJobLines(data []byte) map[string]int {
 	return out
 }
 
+// secretRefPattern matches a GitHub Actions secrets-context reference,
+// `secrets.X` or the bracket form `secrets['X']` / `secrets["X"]`: the
+// same family situation.rego's secret_member_pattern reads, mirrored here
+// so the collector can record where each secret is first referenced, in
+// file order, rather than only which names exist.
+var secretRefPattern = regexp.MustCompile(`\bsecrets(?:\.([A-Za-z_][A-Za-z0-9_-]*)|\[\s*['"]([A-Za-z_][A-Za-z0-9_-]*)['"]\s*\])`)
+
+// secretNamesInLine returns every secret name secretRefPattern finds in
+// text (a line, or a ${{ ... }} span cut from one), name case preserved.
+// GITHUB_TOKEN, in any case, is left out: it is the job token, never a
+// secret.
+func secretNamesInLine(text string) []string {
+	var names []string
+	for _, m := range secretRefPattern.FindAllStringSubmatch(text, -1) {
+		name := m[1]
+		if name == "" {
+			name = m[2]
+		}
+		if strings.EqualFold(name, "github_token") {
+			continue
+		}
+		names = append(names, name)
+	}
+	return names
+}
+
+// secretNamesPerLine scans every line of the file once, top to bottom,
+// and returns, for each 0-based line index, the secret names
+// secretNamesInLine finds strictly inside a ${{ ... }} expression on that
+// line: the same restriction situation.rego's github_expressions applies
+// before secret_member_pattern ever runs, so a bash comment ("# rotate
+// secrets.NPM_TOKEN") or a quoted string literal ("echo \"secrets.X\"")
+// never counts, only a live expression does.
+//
+// A ${{ opened without a closing }} on the same line carries the open
+// expression into the next line, conservatively: everything up to the
+// next }} found (or the rest of that line, if none) counts as inside the
+// expression too, rather than being dropped as unmatched.
+func secretNamesPerLine(lines []string) [][]string {
+	out := make([][]string, len(lines))
+	open := false
+	for i, line := range lines {
+		rest := line
+		var spans []string
+		if open {
+			if j := strings.Index(rest, "}}"); j >= 0 {
+				spans = append(spans, rest[:j+2])
+				rest = rest[j+2:]
+				open = false
+			} else {
+				spans = append(spans, rest)
+				rest = ""
+			}
+		}
+		for {
+			k := strings.Index(rest, "${{")
+			if k < 0 {
+				break
+			}
+			if j := strings.Index(rest[k:], "}}"); j >= 0 {
+				spans = append(spans, rest[k:k+j+2])
+				rest = rest[k+j+2:]
+				continue
+			}
+			spans = append(spans, rest[k:])
+			open = true
+			break
+		}
+		var names []string
+		for _, span := range spans {
+			names = append(names, secretNamesInLine(span)...)
+		}
+		out[i] = names
+	}
+	return out
+}
+
+// jobLevelStepsHeader matches a job's own `steps:` key at the canonical
+// 4-space indent directly under a 2-space job header (the same
+// canonical-indentation assumption scanGitHubJobLines already makes).
+var jobLevelStepsHeader = regexp.MustCompile(`^    steps:\s*(#.*)?$`)
+
+// leadingSpaces counts the leading space characters of a line (tabs are
+// not modeled, matching the rest of this file's indentation scanners).
+func leadingSpaces(line string) int {
+	n := 0
+	for _, c := range line {
+		if c != ' ' {
+			break
+		}
+		n++
+	}
+	return n
+}
+
+// scanGitHubSecretLines walks the raw workflow bytes and returns, for
+// each job name, the secret names secretNamesPerLine finds mapped to the
+// 1-based line of their first reference inside that job's own YAML block
+// (the job's start line, from scanGitHubJobLines, to the line before the
+// next job's start, or the end of the file for the last job).
+//
+// A reference outside the job's own `steps:` key, at any depth (the
+// job's own `env:`, its `container:`'s or a `services:` entry's `env:`,
+// an `if:`, `permissions:`, or any other job-level key), is recorded at
+// line 0: everything the runner resolves before any step starts is
+// available to every step regardless of where it sits in the file, the
+// same as a name the enclosing workflow's own top-level configuration
+// carries (also line 0, for every job). Only a reference actually inside
+// `steps:` keeps its own textual line.
+func scanGitHubSecretLines(data []byte) map[string]map[string]int {
+	jobStarts := scanGitHubJobLines(data)
+	if len(jobStarts) == 0 {
+		return nil
+	}
+	lines := strings.Split(string(data), "\n")
+	namesPerLine := secretNamesPerLine(lines)
+	type jobRange struct {
+		name  string
+		start int
+	}
+	ranges := make([]jobRange, 0, len(jobStarts))
+	for name, start := range jobStarts {
+		ranges = append(ranges, jobRange{name: name, start: start})
+	}
+	sort.Slice(ranges, func(i, j int) bool { return ranges[i].start < ranges[j].start })
+
+	workflowNames := map[string]bool{}
+	for i := 0; i < ranges[0].start-1 && i < len(namesPerLine); i++ {
+		for _, name := range namesPerLine[i] {
+			workflowNames[name] = true
+		}
+	}
+
+	out := map[string]map[string]int{}
+	for i, r := range ranges {
+		end := len(lines)
+		if i+1 < len(ranges) {
+			end = ranges[i+1].start - 1
+		}
+		m := map[string]int{}
+		for name := range workflowNames {
+			m[name] = 0
+		}
+		inSteps := false
+		for ln := r.start; ln <= end && ln-1 < len(lines); ln++ {
+			line := lines[ln-1]
+			trimmed := strings.TrimSpace(line)
+			if trimmed != "" && !strings.HasPrefix(trimmed, "#") {
+				if inSteps && leadingSpaces(line) <= 4 {
+					inSteps = false
+				}
+				if !inSteps && jobLevelStepsHeader.MatchString(line) {
+					inSteps = true
+					continue
+				}
+			}
+			for _, name := range namesPerLine[ln-1] {
+				if inSteps {
+					if _, known := m[name]; !known {
+						m[name] = ln
+					}
+					continue
+				}
+				m[name] = 0
+			}
+		}
+		if len(m) > 0 {
+			out[r.name] = m
+		}
+	}
+	return out
+}
+
 // extractGitHubUses walks `jobs.<name>.steps[]` and collects every step
 // that invokes a reusable action via `uses:`, together with the raw
 // `with:` block. Inline `run:` steps are ignored (they land in
@@ -1326,6 +1661,38 @@ func extractGitHubWorkflowRunUpstreams(v any) []string {
 		return nil
 	}
 	return stringOrList(run["workflows"])
+}
+
+// extractGitHubTriggerTypes reads on.<event>.types for every event of the
+// map form of on:, keyed by event name, as written. An event without a
+// types: filter has no entry, and neither has any event of the string or
+// list forms (no filter there: every type fires). Nil when no event
+// carries one.
+func extractGitHubTriggerTypes(v any) map[string][]string {
+	m, ok := v.(map[any]any)
+	if !ok {
+		return nil
+	}
+	var out map[string][]string
+	for k, cfg := range m {
+		event, ok := k.(string)
+		if !ok {
+			continue
+		}
+		section, ok := ghCastStringMap(cfg)
+		if !ok {
+			continue
+		}
+		types := stringOrList(section["types"])
+		if len(types) == 0 {
+			continue
+		}
+		if out == nil {
+			out = map[string][]string{}
+		}
+		out[event] = types
+	}
+	return out
 }
 
 // normalizeGitHubPermissions converts YAML's untyped map[any]any into a

@@ -174,6 +174,163 @@ func TestPrivateExposureDoesNotWeakenThirdPartyEntries(t *testing.T) {
 	}
 }
 
+// --- trust follows the party that can change the code (control/trust.go) ---
+
+// A SHA-pinned action whose remote exec sits behind a preinstalled-tool
+// guard never actually runs the download on a runner that already has
+// the tool: the guard never fires, so the anchor does not exist at all.
+func TestGuardedDownloadOnKnownPreinstalledRunnerAnchorsNothing(t *testing.T) {
+	f := finding("ISSUE-714", "build", map[string]any{
+		"uses":          "dtolnay/rust-toolchain@deadbeef",
+		"downloadGuard": "rustup",
+		"runsOn":        []any{"ubuntu-latest"},
+	})
+	paths := assemblePaths([]opaengine.Finding{f}, oneJobSituation("build"))
+	if len(paths) != 0 {
+		t.Fatalf("a guard that fires on a known preinstalled runner must anchor nothing, got %+v", paths)
+	}
+}
+
+// The same guard on a runner label family Preinstalled cannot answer
+// for (self-hosted, a matrix, an expression) cannot be proven to fire:
+// the anchor stays, but unresolved.
+func TestGuardedDownloadOnUnknownRunnerAnchorsUnknown(t *testing.T) {
+	f := finding("ISSUE-714", "build", map[string]any{
+		"uses":          "dtolnay/rust-toolchain@deadbeef",
+		"downloadGuard": "rustup",
+		"runsOn":        []any{"self-hosted"},
+	})
+	paths := assemblePaths([]opaengine.Finding{f}, oneJobSituation("build"))
+	if len(paths) != 1 {
+		t.Fatalf("an unknown runner family must still anchor (unresolved), got %+v", paths)
+	}
+	if paths[0].State != PathUnverified {
+		t.Errorf("want PathUnverified, got %+v", paths[0])
+	}
+}
+
+// A checksum- or signature-verified download is content-pinned even
+// though its ref is not: no anchor.
+func TestVerifiedDownloadAnchorsNothing(t *testing.T) {
+	f := finding("ISSUE-714", "build", map[string]any{
+		"uses":             "CodSpeedHQ/action@deadbeef",
+		"downloadVerified": true,
+	})
+	paths := assemblePaths([]opaengine.Finding{f}, oneJobSituation("build"))
+	if len(paths) != 0 {
+		t.Fatalf("a checksum-verified download must anchor nothing, got %+v", paths)
+	}
+}
+
+// An archived action's tag can never be retargeted: no mutable_dependency
+// entry, even though the reference is not pinned to a commit SHA.
+func TestArchivedActionTagAnchorsNothing(t *testing.T) {
+	f := finding("ISSUE-701", "build", map[string]any{
+		"uses":        "ancient/frozen-action@v1",
+		"archivedTag": true,
+	})
+	paths := assemblePaths([]opaengine.Finding{f}, oneJobSituation("build"))
+	if len(paths) != 0 {
+		t.Fatalf("an archived action's tag must anchor no mutable_dependency path, got %+v", paths)
+	}
+}
+
+// A first-party script (fetched from the scanned repository's own
+// owner's domain) is an insider actor, not an outsider's: the path
+// holds at the Medium ceiling, and the So line names the first-party
+// host directly rather than reading the script as compromised or
+// malicious.
+func TestFirstPartyScriptIsInsiderAtMediumCeiling(t *testing.T) {
+	f := finding("ISSUE-411", "release", map[string]any{
+		"scriptLine": "curl https://clickhouse.com/ | sh",
+		"firstParty": true,
+	})
+	paths := AssemblePaths([]opaengine.Finding{f}, releaseSituation(ir.VisibilityPublic), "clickhouse/x")
+	if len(paths) != 1 {
+		t.Fatalf("want one path, got %+v", paths)
+	}
+	p := paths[0]
+	if p.actorClass != ir.GateInsider {
+		t.Errorf("want GateInsider, got %q", p.actorClass)
+	}
+	if p.Tier != TierMedium {
+		t.Errorf("want the Medium ceiling, got %+v", p)
+	}
+	if got := soLine(p); !strings.Contains(got, "clickhouse.com") {
+		t.Errorf("the So line must name the first-party host, got %q", got)
+	}
+}
+
+// A known-bad dependency (ISSUE-703) joining the same subject as an
+// insider redirect (ISSUE-701) must win: the group's actor is the
+// outsider wording and no Medium insider cap applies, in either input
+// order (the actor and the cap are read off every anchor in the
+// group, never just the one trust.ActorFor happened to see first).
+func TestKnownBadDependencyOverridesInsiderActorAndCap(t *testing.T) {
+	redirect := finding("ISSUE-701", "release", map[string]any{
+		"uses": "ask-bonk/ask-bonk@main", "redirectedOwner": "Cloudflare-Studio",
+	})
+	knownBad := finding("ISSUE-703", "release", map[string]any{"uses": "ask-bonk/ask-bonk@main"})
+	for _, order := range [][]opaengine.Finding{{redirect, knownBad}, {knownBad, redirect}} {
+		paths := AssemblePaths(order, releaseSituation(ir.VisibilityPublic), "cloudflare/project")
+		if len(paths) != 1 {
+			t.Fatalf("want one path, got %+v", paths)
+		}
+		p := paths[0]
+		if p.actorClass == ir.GateInsider {
+			t.Errorf("a known-bad dependency must override the insider actor, got class=%q actor=%q", p.actorClass, p.actor)
+		}
+		if p.Tier != TierCritical {
+			t.Errorf("a known-bad dependency must not be held to the Medium insider cap, got %+v", p)
+		}
+		if slices.Contains(p.Modifiers, "insider_cap") || slices.Contains(p.Modifiers, "dependency_cap") {
+			t.Errorf("no cap modifier must apply over a known-bad dependency, got %+v", p.Modifiers)
+		}
+	}
+}
+
+// A SHA-pinned action that downloads at run time from an outside host,
+// unguarded and unverified, names that host directly in the So line
+// ("if <host> is compromised"), in the register of the ordinary
+// dependency wording rather than the generic "if this action is
+// compromised".
+func TestRunTimeFetchNamesTheDownloadHost(t *testing.T) {
+	f := finding("ISSUE-714", "release", map[string]any{
+		"uses":     "dtolnay/rust-toolchain@deadbeef",
+		"fetchUrl": "https://raw.githubusercontent.com/anchore/grype/main/install.sh",
+	})
+	paths := AssemblePaths([]opaengine.Finding{f}, releaseSituation(ir.VisibilityPublic), "me/repo")
+	if len(paths) != 1 {
+		t.Fatalf("want one path, got %+v", paths)
+	}
+	p := paths[0]
+	got := soLine(p)
+	if want := "if raw.githubusercontent.com is compromised"; !strings.Contains(got, want) {
+		t.Errorf("soLine = %q, want it to contain %q", got, want)
+	}
+}
+
+// An action redirected to a sibling organisation (Cloudflare's own
+// documented split) is an insider actor too: the Medium ceiling, not
+// an outsider's High.
+func TestSiblingOrganizationRedirectIsInsiderAtMediumCeiling(t *testing.T) {
+	f := finding("ISSUE-701", "release", map[string]any{
+		"uses":            "ask-bonk/ask-bonk@main",
+		"redirectedOwner": "Cloudflare-Studio",
+	})
+	paths := AssemblePaths([]opaengine.Finding{f}, releaseSituation(ir.VisibilityPublic), "cloudflare/project")
+	if len(paths) != 1 {
+		t.Fatalf("want one path, got %+v", paths)
+	}
+	p := paths[0]
+	if p.actorClass != ir.GateInsider {
+		t.Errorf("want GateInsider, got %q", p.actorClass)
+	}
+	if p.Tier != TierMedium {
+		t.Errorf("want the Medium ceiling, got %+v", p)
+	}
+}
+
 func injectionSituation(exposure string, secrets []string) *Situation {
 	s := &Situation{Exposure: exposure, Provider: "github", Jobs: map[string]JobSituation{}}
 	j := JobSituation{ForkPR: []EntryFact{{Kind: EntryForkPR, State: "proven", Evidence: "on: pull_request", Subject: "pull_request"}}}
@@ -183,23 +340,34 @@ func injectionSituation(exposure string, secrets []string) *Situation {
 	return s
 }
 
-func TestInjectionInAnEmptyHandedJobIsHigh(t *testing.T) {
+// Code execution alone in a job holding nothing is Low.
+func TestInjectionInAnEmptyHandedJobIsLow(t *testing.T) {
 	paths := assemblePaths([]opaengine.Finding{entryFinding("ISSUE-207", "build", "github.event.pull_request.title")}, injectionSituation(ir.VisibilityPublic, nil))
-	if len(paths) != 1 || paths[0].Tier != TierHigh || paths[0].ReachKind != "execution" {
+	if len(paths) != 1 || paths[0].Tier != TierLow || paths[0].ReachKind != "execution" {
 		t.Fatalf("paths = %+v", paths)
 	}
 }
 
+// privilegedInjection is an injection into a pull_request_target job
+// holding a listed secret: a contributor entry with a privilege, Critical.
+func privilegedInjection(exposure string) *Situation {
+	s := injectionSituation(exposure, []string{"S"})
+	j := s.Jobs["build"]
+	j.ForkPR, j.PrivilegedTriggers = nil, []string{"pull_request_target"}
+	s.Jobs["build"] = j
+	return s
+}
+
 func TestPrivateExposureWeakensContributorEntries(t *testing.T) {
-	paths := assemblePaths([]opaengine.Finding{entryFinding("ISSUE-207", "build", "github.event.pull_request.title")}, injectionSituation(ir.VisibilityPrivate, nil))
-	if paths[0].Tier != TierMedium || paths[0].Modifiers[0] != "private_exposure" {
-		t.Errorf("want Medium with private_exposure, got %+v", paths[0])
+	paths := assemblePaths([]opaengine.Finding{entryFinding("ISSUE-207", "build", "github.event.pull_request.title")}, privilegedInjection(ir.VisibilityPrivate))
+	if paths[0].Tier != TierHigh || paths[0].Modifiers[0] != "private_exposure" {
+		t.Errorf("want High with private_exposure, got %+v", paths[0])
 	}
 }
 
 func TestUnknownExposureCountsAsPublic(t *testing.T) {
-	paths := assemblePaths([]opaengine.Finding{entryFinding("ISSUE-207", "build", "github.event.pull_request.title")}, injectionSituation(ir.VisibilityUnknown, nil))
-	if paths[0].Tier != TierHigh || len(paths[0].Modifiers) != 0 {
+	paths := assemblePaths([]opaengine.Finding{entryFinding("ISSUE-207", "build", "github.event.pull_request.title")}, privilegedInjection(ir.VisibilityUnknown))
+	if paths[0].Tier != TierCritical || len(paths[0].Modifiers) != 0 {
 		t.Errorf("unknown is public: %+v", paths[0])
 	}
 }
@@ -339,6 +507,126 @@ func TestTwoHopChainDoesNotReachBeyondTheDirectlyFedJob(t *testing.T) {
 			t.Fatalf("paths = %+v, want the directly-fed publish job reached as Critical", paths)
 		}
 	})
+}
+
+// TestOutputComparedOnlyReachesNoSecret pins that a needs output read
+// only inside a comparison (a paths-filter job's output read in an if:,
+// never in a script or a with: value) lets no code cross: the fed job's
+// secrets never join the walk, even though it is still listed as fed.
+func TestOutputComparedOnlyReachesNoSecret(t *testing.T) {
+	sit := &Situation{Exposure: ir.VisibilityPublic, Jobs: map[string]JobSituation{}}
+	sit.Jobs["changes"] = JobSituation{
+		ForkPR:   []EntryFact{{Kind: EntryForkPR, State: "proven", Subject: "pull_request"}},
+		Feeds:    []string{"build"},
+		FeedsVia: map[string][]string{"build": {FeedOutputCompared}},
+	}
+	build := JobSituation{}
+	build.Privilege.Secrets = []string{"A", "B", "C"}
+	build.Privilege.SecretsState = "proven"
+	sit.Jobs["build"] = build
+
+	paths := assemblePaths([]opaengine.Finding{entryFinding("ISSUE-207", "changes", "github.event.pull_request.title")}, sit)
+	if len(paths) != 1 {
+		t.Fatalf("paths = %+v", paths)
+	}
+	p := paths[0]
+	if len(p.Reach.Secrets) != 0 || p.Reach.AllSecrets {
+		t.Errorf("Reach = %+v, want no secret: an output read only in a comparison crosses no code", p.Reach)
+	}
+	if len(p.Jobs) != 2 || p.Jobs[1] != "build" {
+		t.Errorf("Jobs = %v, want [changes build]: the fed job is still listed, just unreached", p.Jobs)
+	}
+}
+
+// TestOutputExecutedReachesTheFedJobsSecrets pins the opposite of
+// TestOutputComparedOnlyReachesNoSecret: the same output, interpolated
+// into a script instead of only compared, runs as a value and the fed
+// job's secrets are reached.
+func TestOutputExecutedReachesTheFedJobsSecrets(t *testing.T) {
+	sit := &Situation{Exposure: ir.VisibilityPublic, Jobs: map[string]JobSituation{}}
+	sit.Jobs["changes"] = JobSituation{
+		ForkPR:   []EntryFact{{Kind: EntryForkPR, State: "proven", Subject: "pull_request"}},
+		Feeds:    []string{"build"},
+		FeedsVia: map[string][]string{"build": {FeedOutputExecuted}},
+	}
+	build := JobSituation{}
+	build.Privilege.Secrets = []string{"A", "B", "C"}
+	build.Privilege.SecretsState = "proven"
+	sit.Jobs["build"] = build
+
+	paths := assemblePaths([]opaengine.Finding{entryFinding("ISSUE-207", "changes", "github.event.pull_request.title")}, sit)
+	if len(paths) != 1 {
+		t.Fatalf("paths = %+v", paths)
+	}
+	p := paths[0]
+	want := []string{"A", "B", "C"}
+	if !reflect.DeepEqual(p.Reach.Secrets, want) {
+		t.Errorf("Reach.Secrets = %v, want %v: the output is run as a value, the secrets are reached", p.Reach.Secrets, want)
+	}
+}
+
+// TestArtifactAlteredOnlyReachesThePublishImpactNotTheSecrets pins that
+// an artifact a job builds, fed to a job that only releases it
+// (artifact_altered), reaches the release job's "alter the artifact"
+// impact alone, never its secrets: the attacker can get a malicious
+// artifact shipped, never run code in the release job itself.
+func TestArtifactAlteredOnlyReachesThePublishImpactNotTheSecrets(t *testing.T) {
+	sit := &Situation{Exposure: ir.VisibilityPublic, Jobs: map[string]JobSituation{}}
+	sit.Jobs["build"] = JobSituation{
+		ForkPR:   []EntryFact{{Kind: EntryForkPR, State: "proven", Subject: "pull_request"}},
+		Feeds:    []string{"release"},
+		FeedsVia: map[string][]string{"release": {FeedArtifactAltered}},
+	}
+	release := JobSituation{Impact: []ImpactFact{{Kind: "signs_or_releases", State: "proven", Evidence: "softprops/action-gh-release"}}}
+	release.Privilege.Secrets = []string{"RELEASE_TOKEN"}
+	release.Privilege.SecretsState = "proven"
+	sit.Jobs["release"] = release
+
+	paths := assemblePaths([]opaengine.Finding{entryFinding("ISSUE-207", "build", "github.event.pull_request.title")}, sit)
+	if len(paths) != 1 {
+		t.Fatalf("paths = %+v", paths)
+	}
+	p := paths[0]
+	if len(p.Reach.Secrets) != 0 {
+		t.Errorf("Reach.Secrets = %v, want none: the release job's secrets never join an artifact_altered walk", p.Reach.Secrets)
+	}
+	if len(p.Reach.Impacts) != 1 || p.Reach.Impacts[0].Kind != impactAltersArtifact {
+		t.Errorf("Reach.Impacts = %+v, want the one alters_artifact impact, never the release job's own signs_or_releases", p.Reach.Impacts)
+	}
+	if s := PathSentence(p); !strings.Contains(s, "alters the artifact") {
+		t.Errorf("PathSentence = %q, want it to say the artifact is altered", s)
+	}
+}
+
+// TestSoCapabilityNamesAnAlteredArtifact pins that the So line's
+// capability sentence for a path whose whole reach is the
+// alters_artifact impact names that impact, never falling to the
+// generic "can execute code on the runner and poison what it caches or
+// uploads" the same reach would otherwise read as (no secret, no token,
+// an impact none of the existing step kinds recognizes).
+func TestSoCapabilityNamesAnAlteredArtifact(t *testing.T) {
+	sit := &Situation{Exposure: ir.VisibilityPublic, Jobs: map[string]JobSituation{}}
+	sit.Jobs["build"] = JobSituation{
+		ForkPR:   []EntryFact{{Kind: EntryForkPR, State: "proven", Subject: "pull_request"}},
+		Feeds:    []string{"release"},
+		FeedsVia: map[string][]string{"release": {FeedArtifactAltered}},
+	}
+	release := JobSituation{Impact: []ImpactFact{{Kind: "signs_or_releases", State: "proven", Evidence: "softprops/action-gh-release"}}}
+	release.Privilege.Secrets = []string{"RELEASE_TOKEN"}
+	release.Privilege.SecretsState = "proven"
+	sit.Jobs["release"] = release
+
+	paths := assemblePaths([]opaengine.Finding{entryFinding("ISSUE-207", "build", "github.event.pull_request.title")}, sit)
+	if len(paths) != 1 {
+		t.Fatalf("paths = %+v", paths)
+	}
+	cap := soCapability(paths[0], true)
+	if strings.Contains(cap, "poison what it caches or uploads") {
+		t.Errorf("soCapability = %q, fell to the generic fallback instead of naming the altered artifact", cap)
+	}
+	if !strings.Contains(cap, "alter the artifact") {
+		t.Errorf("soCapability = %q, want it to name the altered artifact", cap)
+	}
 }
 
 func TestDismissedAndRoleLessFindingsAnchorNothing(t *testing.T) {
@@ -495,11 +783,16 @@ func TestOutputOrderIsDeterministicUnderShuffledInput(t *testing.T) {
 // entry anchored by its own gate finding, which has no script of its own
 // on the walked job. ---
 
+// unprotectedPushSituation is one push-triggered job holding a deploy
+// secret: a push entry forms a path only when a walked job proves an
+// escalation.
 func unprotectedPushSituation(exposure string) *Situation {
 	s := &Situation{Exposure: exposure, Jobs: map[string]JobSituation{}}
-	s.Jobs["build"] = JobSituation{
+	j := JobSituation{
 		Push: []EntryFact{{Kind: EntryUnprotectedPush, State: "proven", Evidence: "push: branches: [main]", Subject: "main"}},
 	}
+	j.Privilege.Secrets = []string{"DEPLOY_KEY"}
+	s.Jobs["build"] = j
 	return s
 }
 
@@ -674,9 +967,9 @@ func TestDefaultBranchGateDoesNotAmplifyAnExecutionOnlyPath(t *testing.T) {
 // A branch gate matched through a walked push-triggered job obeys the same
 // rule as the default-branch clause: it amplifies only a path whose reach
 // writes the repository. The most common CI shape (on: [push,
-// pull_request] with an injection, holding nothing) stays Medium with no
-// gate modifier, since the 501 already prices the branch on its own
-// unprotected_push path.
+// pull_request] with an injection, holding nothing) stays Low with no
+// gate modifier: the 501 is priced on its own, its push entry proving no
+// escalation.
 func TestPushTriggeredBranchGateDoesNotAmplifyAnExecutionOnlyPath(t *testing.T) {
 	sit := injectionSituation(ir.VisibilityPublic, nil)
 	build := sit.Jobs["build"]
@@ -697,8 +990,8 @@ func TestPushTriggeredBranchGateDoesNotAmplifyAnExecutionOnlyPath(t *testing.T) 
 	if p == nil {
 		t.Fatalf("want a path anchored by ISSUE-207, got %+v", paths)
 	}
-	if p.Tier != TierHigh || len(p.Modifiers) != 0 || len(p.GateHashes) != 0 {
-		t.Errorf("want the execution-only path High with no gate modifier, got %+v", p)
+	if p.Tier != TierLow || len(p.Modifiers) != 0 || len(p.GateHashes) != 0 {
+		t.Errorf("want the execution-only path Low with no gate modifier, got %+v", p)
 	}
 }
 
@@ -769,8 +1062,8 @@ func TestJobLessIncludeFindingAnchorsEveryJobItsIncludeShapes(t *testing.T) {
 }
 
 // --- A walked job's default (assumed) token write, with no secret and no
-// declared token anywhere on the path, is unresolvable: the path is marked
-// unverified and lowered a tier, same as any other unresolvable fact. ---
+// declared token anywhere on the path, adds no tier: the path keeps it as
+// its cause and says so. ---
 
 func defaultTokenSituation(exposure string) *Situation {
 	s := &Situation{Exposure: exposure, Jobs: map[string]JobSituation{}}
@@ -781,9 +1074,9 @@ func defaultTokenSituation(exposure string) *Situation {
 	return s
 }
 
-// A default token whose write is assumed is the only privilege: the tier
-// rests on the code execution, which gives High on its own, so the path
-// stays proven and keeps the assumption as its cause.
+// A default token whose write is assumed is the only privilege: it adds
+// no tier, the path rests on the code execution, Low, stays proven and
+// keeps the assumption as its cause.
 func TestDefaultTokenAsOnlyPrivilegeKeepsTheCodeExecutionTier(t *testing.T) {
 	f := finding("ISSUE-714", "release", map[string]any{"uses": "some/action@v1"})
 	paths := assemblePaths([]opaengine.Finding{f}, defaultTokenSituation(ir.VisibilityPublic))
@@ -791,8 +1084,8 @@ func TestDefaultTokenAsOnlyPrivilegeKeepsTheCodeExecutionTier(t *testing.T) {
 		t.Fatalf("want one path, got %+v", paths)
 	}
 	p := paths[0]
-	if p.Tier != TierHigh || p.State != PathProven || len(p.Modifiers) != 0 || p.cause != unresolvableDefaultToken {
-		t.Errorf("a default token alone is an assumption the tier does not rest on, want High/proven: %+v", p)
+	if p.Tier != TierLow || p.State != PathProven || len(p.Modifiers) != 0 || p.cause != unresolvableDefaultToken {
+		t.Errorf("a default token alone is an assumption the tier does not rest on, want Low/proven: %+v", p)
 	}
 	// The path still says the token's write is assumed.
 	if s := PathSentence(p); !strings.HasSuffix(s, " Plumber could not verify that `GITHUB_TOKEN` is really writable (token scope could not be read).") {
@@ -882,6 +1175,9 @@ func unresolvableSecretsSituation(exposure string) *Situation {
 // code.
 func TestModifiersAppearInFixedOrderPrivateThenUnresolvableThenGate(t *testing.T) {
 	sit := unresolvableSecretsSituation(ir.VisibilityPrivate)
+	j := sit.Jobs["build"]
+	j.Impact = []ImpactFact{{Kind: "deploys", State: "unknown", Evidence: "kubectl apply -f ${{ inputs.env }}.yaml"}}
+	sit.Jobs["build"] = j
 	findings := []opaengine.Finding{
 		entryFinding("ISSUE-207", "build", "github.event.issue.title"),
 		finding("ISSUE-305", "build", nil), // a gate on the same job
@@ -896,13 +1192,14 @@ func TestModifiersAppearInFixedOrderPrivateThenUnresolvableThenGate(t *testing.T
 	}
 }
 
-// Both down-modifiers apply in turn: unlisted secrets and an impact that
+// Both down-modifiers apply in turn: a listed secret and an impact that
 // could not be confirmed give Critical, the private repository and the
 // unverified facts take it down one step each, to Medium, and both are
 // recorded. Critical never rises above Critical even with a gate.
 func TestTwoDownModifiersTakeAPathDownTwoSteps(t *testing.T) {
 	sit := unresolvableSecretsSituation(ir.VisibilityPrivate)
 	j := sit.Jobs["build"]
+	j.Privilege.Secrets, j.Privilege.SecretsState = []string{"S"}, "proven"
 	j.Impact = []ImpactFact{{Kind: "deploys", State: "unknown", Evidence: "kubectl apply -f ${{ inputs.env }}.yaml"}}
 	sit.Jobs["build"] = j
 	f := entryFinding("ISSUE-207", "build", "github.event.issue.title")
@@ -938,7 +1235,7 @@ func TestForkPRJobOnGitHubGetsNoSecrets(t *testing.T) {
 	j.Privilege.TokenWrite = []string{"contents", "packages"} // the permissive default
 	sit.Jobs["build"] = j
 	paths := assemblePaths([]opaengine.Finding{entryFinding("ISSUE-207", "build", "github.event.pull_request.title")}, sit)
-	if paths[0].Tier != TierHigh || len(paths[0].Reach.Secrets) != 0 || len(paths[0].Reach.TokenWrite) != 0 {
+	if paths[0].Tier != TierLow || len(paths[0].Reach.Secrets) != 0 || len(paths[0].Reach.TokenWrite) != 0 {
 		t.Errorf("a fork pull_request run never sees secrets or a write token: %+v", paths[0])
 	}
 }
@@ -953,6 +1250,52 @@ func TestPRTargetJobKeepsItsSecrets(t *testing.T) {
 	// A contributor entry holding a secret is Critical.
 	if paths[0].Tier != TierCritical || len(paths[0].Reach.Secrets) != 1 {
 		t.Errorf("pull_request_target runs with the base repository's secrets: %+v", paths[0])
+	}
+}
+
+// TestSecretsReachedInStepOrderDropsASecretReferencedBeforeTheEntry pins
+// the step-order rule SecretFirstLine exists for: the entry job holds two
+// secrets, A referenced at line 12 and B at line 30; the path's anchor
+// sits at line 20, inside the same job. A step that walks in at line 20
+// cannot leak A: that reference already happened, and is done, before the
+// walk-in step ever runs. B is still ahead of it, so the path reaches B.
+func TestSecretsReachedInStepOrderDropsASecretReferencedBeforeTheEntry(t *testing.T) {
+	sit := &Situation{Exposure: ir.VisibilityPublic, Jobs: map[string]JobSituation{}}
+	build := JobSituation{}
+	build.Privilege.Secrets = []string{"A", "B"}
+	build.Privilege.SecretsState = "proven"
+	build.Privilege.SecretFirstLine = map[string]int{"A": 12, "B": 30}
+	sit.Jobs["build"] = build
+
+	f := opaengine.Finding{Code: "ISSUE-207", Job: "build", File: ".github/workflows/ci.yml", Line: 20, Subject: "github.event.pull_request.title"}
+	paths := assemblePaths([]opaengine.Finding{f}, sit)
+	if len(paths) != 1 {
+		t.Fatalf("want one path, got %+v", paths)
+	}
+	if got := paths[0].Reach.Secrets; !reflect.DeepEqual(got, []string{"B"}) {
+		t.Fatalf("Reach.Secrets = %v, want [B]: A is referenced at line 12, before the line-20 entry, so it cannot be leaked by it", got)
+	}
+}
+
+// TestSecretsReachedInStepOrderKeepsAWorkflowLevelSecretAtAnyLine pins the
+// line-0 exception: a secret SecretFirstLine records at line 0 (the
+// workflow's own top-level configuration) is reached regardless of the
+// entry's own line, even one well past it.
+func TestSecretsReachedInStepOrderKeepsAWorkflowLevelSecretAtAnyLine(t *testing.T) {
+	sit := &Situation{Exposure: ir.VisibilityPublic, Jobs: map[string]JobSituation{}}
+	build := JobSituation{}
+	build.Privilege.Secrets = []string{"GLOBAL"}
+	build.Privilege.SecretsState = "proven"
+	build.Privilege.SecretFirstLine = map[string]int{"GLOBAL": 0}
+	sit.Jobs["build"] = build
+
+	f := opaengine.Finding{Code: "ISSUE-207", Job: "build", File: ".github/workflows/ci.yml", Line: 20, Subject: "github.event.pull_request.title"}
+	paths := assemblePaths([]opaengine.Finding{f}, sit)
+	if len(paths) != 1 {
+		t.Fatalf("want one path, got %+v", paths)
+	}
+	if got := paths[0].Reach.Secrets; !reflect.DeepEqual(got, []string{"GLOBAL"}) {
+		t.Fatalf("Reach.Secrets = %v, want [GLOBAL]: a workflow-level secret reaches every step", got)
 	}
 }
 
@@ -987,7 +1330,7 @@ func TestForkPRWithOnlyADefaultTokenIsNotUnresolvable(t *testing.T) {
 		t.Fatalf("want one path, got %+v", paths)
 	}
 	p := paths[0]
-	if p.Tier != TierHigh || p.State != PathProven || len(p.Modifiers) != 0 || p.cause != "" {
+	if p.Tier != TierLow || p.State != PathProven || len(p.Modifiers) != 0 || p.cause != "" {
 		t.Errorf("a fork run's default token is dropped, not left as an unresolvable guess: %+v", p)
 	}
 }
@@ -1696,7 +2039,7 @@ func TestEntryFindingIsItsOwnEntry(t *testing.T) {
 		t.Fatalf("want one path, got %+v", paths)
 	}
 	p := paths[0]
-	if p.EntryKind != EntryUntrustedExpression || p.Tier != TierHigh || p.State != PathProven {
+	if p.EntryKind != EntryUntrustedExpression || p.Tier != TierLow || p.State != PathProven {
 		t.Errorf("path = %+v", p)
 	}
 	if p.Entry.Subject != "github.event.pull_request.title" || p.Entry.State != "proven" || p.Entry.Evidence != f.Message {
@@ -1848,23 +2191,27 @@ func unlistedSecretsJob(source string, writeScopes, secrets []string) *Situation
 	return &Situation{Exposure: ir.VisibilityPublic, Provider: "github", Jobs: map[string]JobSituation{"build": j}}
 }
 
-// Secrets that could not be listed lower a path only when its tier rests
-// on them: a declared write token, or a secret that was listed, already
-// gives the path its tier, so the path stays proven at that tier, and its
-// block still says the secrets could not be listed.
+// Secrets that could not be listed never lower a path: a declared write
+// token gives the path its tier, so the path stays proven at that tier,
+// and its block still says the secrets could not be listed. A secret
+// named on a job whose secrets could not all be listed is not proven
+// either: it stays in the reach and adds no tier.
 func TestUnlistedSecretsDoNotLowerAPathAProvenPrivilegeHolds(t *testing.T) {
 	f := finding("ISSUE-714", "build", map[string]any{"uses": "some/action@v1"})
-	for name, sit := range map[string]*Situation{
-		"declared write token": unlistedSecretsJob("declared", []string{"contents"}, nil),
-		"listed secret":        unlistedSecretsJob("", nil, []string{"NPM_TOKEN"}),
+	for name, c := range map[string]struct {
+		sit  *Situation
+		tier PathTier
+	}{
+		"declared write token": {unlistedSecretsJob("declared", []string{"contents"}, nil), TierHigh},
+		"listed secret":        {unlistedSecretsJob("", nil, []string{"NPM_TOKEN"}), TierLow},
 	} {
-		paths := assemblePaths([]opaengine.Finding{f}, sit)
+		paths := assemblePaths([]opaengine.Finding{f}, c.sit)
 		if len(paths) != 1 {
 			t.Fatalf("%s: want one path, got %+v", name, paths)
 		}
 		p := paths[0]
-		if p.Tier != TierHigh || p.BaseTier != TierHigh || p.State != PathProven || len(p.Modifiers) != 0 {
-			t.Errorf("%s: want a proven High path, got %+v", name, p)
+		if p.Tier != c.tier || p.BaseTier != c.tier || p.State != PathProven || len(p.Modifiers) != 0 {
+			t.Errorf("%s: want a proven %s path, got %+v", name, c.tier, p)
 		}
 		if p.cause != unresolvableSecrets {
 			t.Errorf("%s: cause = %q, want secrets", name, p.cause)
@@ -1892,28 +2239,26 @@ func TestUnlistedSecretsDoNotLowerAPathAProvenPrivilegeHolds(t *testing.T) {
 
 // When the only privilege is the one that could not be read (secrets that
 // could not be listed, a default token whose write is assumed), the path
-// keeps the High its code execution proves: the tier does not rest on the
+// keeps the Low its code execution proves: the tier does not rest on the
 // privilege, so the path stays proven.
-func TestAnUnreadPrivilegeBesideCodeExecutionKeepsItHigh(t *testing.T) {
+func TestAnUnreadPrivilegeBesideCodeExecutionKeepsItLow(t *testing.T) {
 	f := finding("ISSUE-714", "build", map[string]any{"uses": "some/action@v1"})
 	for name, sit := range map[string]*Situation{
 		"nothing else":  unlistedSecretsJob("", nil, nil),
 		"default token": unlistedSecretsJob("unknown", []string{"contents"}, nil),
 	} {
 		paths := assemblePaths([]opaengine.Finding{f}, sit)
-		if len(paths) != 1 || paths[0].Tier != TierHigh || paths[0].BaseTier != TierHigh || paths[0].State != PathProven || len(paths[0].Modifiers) != 0 {
-			t.Errorf("%s: want a proven High path, got %+v", name, paths)
+		if len(paths) != 1 || paths[0].Tier != TierLow || paths[0].BaseTier != TierLow || paths[0].State != PathProven || len(paths[0].Modifiers) != 0 {
+			t.Errorf("%s: want a proven Low path, got %+v", name, paths)
 		}
 	}
 }
 
-// Secrets that could not be listed never lower a path below the tier its
-// proven reach gives: the path is priced one step below the tier it would
-// have if the secrets were real, which is never under the proven one. A
-// proven impact holds High on its own, so unlisted secrets beside it give
-// Critical lowered to High, not High lowered to Medium; an impact that
-// could not be confirmed reads the same way. The block says what the
-// secrets would give, never that the path reaches nothing.
+// Secrets that could not be listed add no tier and lower nothing: a
+// proven impact holds High on its own, proven; an impact that could not
+// be confirmed gives High lowered to Medium, unverified on the impact
+// alone. The block says what the secrets would give, never that the path
+// reaches nothing.
 func TestUnlistedSecretsNeverLowerAPathBelowItsProvenReach(t *testing.T) {
 	f := finding("ISSUE-714", "build", map[string]any{"uses": "some/action@v1"})
 	withImpact := func(state FactState) *Situation {
@@ -1927,18 +2272,20 @@ func TestUnlistedSecretsNeverLowerAPathBelowItsProvenReach(t *testing.T) {
 	for name, c := range map[string]struct {
 		sit        *Situation
 		base, want PathTier
+		state      PathState
+		mods       []string
 		so         string
 	}{
-		"proven impact":      {withImpact("proven"), TierCritical, TierHigh, strings.Replace(fmt.Sprintf(so, ""), "and  alter", "and alter", 1)},
-		"unconfirmed impact": {withImpact("unknown"), TierCritical, TierHigh, fmt.Sprintf(so, "may")},
+		"proven impact":      {withImpact("proven"), TierHigh, TierHigh, PathProven, nil, strings.Replace(fmt.Sprintf(so, ""), "and  alter", "and alter", 1)},
+		"unconfirmed impact": {withImpact("unknown"), TierHigh, TierMedium, PathUnverified, []string{"unresolvable"}, fmt.Sprintf(so, "may")},
 	} {
 		paths := assemblePaths([]opaengine.Finding{f}, c.sit)
 		if len(paths) != 1 {
 			t.Fatalf("%s: want one path, got %+v", name, paths)
 		}
 		p := paths[0]
-		if p.BaseTier != c.base || p.Tier != c.want || p.State != PathUnverified || !reflect.DeepEqual(p.Modifiers, []string{"unresolvable"}) {
-			t.Errorf("%s: want %s lowered to %s and unverified, got %+v", name, c.base, c.want, p)
+		if p.BaseTier != c.base || p.Tier != c.want || p.State != c.state || !reflect.DeepEqual(p.Modifiers, c.mods) {
+			t.Errorf("%s: want %s at %s, %s, %v, got %+v", name, c.base, c.want, c.state, c.mods, p)
 		}
 		b := NewPathBlock(p, nil)
 		if b.So != c.so || !strings.Contains(b.ReachesShort, "unlisted secrets") {
@@ -1960,8 +2307,8 @@ func TestAGateNeverRaisesAPathThatReachesCodeExecutionOnly(t *testing.T) {
 		finding(string(CodeBranchUnprotected), "", map[string]any{"branchName": "main"}),
 	}
 	paths := assemblePaths(findings, sit)
-	if len(paths) != 1 || paths[0].Tier != TierHigh || paths[0].ReachKind != "execution" || len(paths[0].Modifiers) != 0 || len(paths[0].GateHashes) != 0 {
-		t.Errorf("want the execution-only path High and not raised, got %+v", paths)
+	if len(paths) != 1 || paths[0].Tier != TierLow || paths[0].ReachKind != "execution" || len(paths[0].Modifiers) != 0 || len(paths[0].GateHashes) != 0 {
+		t.Errorf("want the execution-only path Low and not raised, got %+v", paths)
 	}
 
 	// An impact alone is damage the protection would have stopped, and a
@@ -2027,7 +2374,7 @@ func TestAForkRunDropsTheTokenImpacts(t *testing.T) {
 	j.ForkPR = []EntryFact{{Kind: EntryForkPR, State: "proven", Evidence: "on: pull_request", Subject: "pull_request"}}
 	sit.Jobs["build"] = j
 	paths := assemblePaths([]opaengine.Finding{entryFinding("ISSUE-207", "build", "github.event.pull_request.title")}, sit)
-	if len(paths) != 1 || paths[0].ReachKind != "execution" || paths[0].Tier != TierHigh || len(paths[0].Reach.Impacts) != 0 {
+	if len(paths) != 1 || paths[0].ReachKind != "execution" || paths[0].Tier != TierLow || len(paths[0].Reach.Impacts) != 0 {
 		t.Errorf("want the fork run's path to reach code execution alone, got %+v", paths)
 	}
 }
@@ -2083,28 +2430,31 @@ func TestAForkRunHoldsNoneOfEverySecret(t *testing.T) {
 	}
 }
 
-// Code execution alone is High: an attacker running code in the job holds
-// the runner whatever else the job carries. Medium only comes from a
-// modifier lowering a High path, and a path where no code runs stays Low.
-func TestCodeExecutionAloneIsHigh(t *testing.T) {
-	if got := baseTier(Reach{Executes: true}, "", false); got != TierHigh {
-		t.Errorf("code execution alone: %s, want high", got)
+// Code execution alone is Low: an attacker running code in a job that
+// holds nothing proven holds a runner thrown away once the job ends.
+// Medium only comes from a modifier lowering a High path.
+func TestCodeExecutionAloneIsLow(t *testing.T) {
+	if got := baseTier(Reach{Executes: true}, false); got != TierLow {
+		t.Errorf("code execution alone: %s, want low", got)
 	}
-	if got := baseTier(Reach{}, "", false); got != TierLow {
-		t.Errorf("no code runs: %s, want low", got)
+	if got := baseTier(Reach{Executes: true, Secrets: []string{"S"}}, false); got != TierHigh {
+		t.Errorf("a listed secret: %s, want high", got)
 	}
 	f := finding("ISSUE-703", "build", map[string]any{"uses": "some/action@v1"})
 	sit := &Situation{Exposure: ir.VisibilityPublic, Provider: "github", Jobs: map[string]JobSituation{"build": {}}}
 	paths := assemblePaths([]opaengine.Finding{f}, sit)
-	if len(paths) != 1 || paths[0].BaseTier != TierHigh || paths[0].Tier != TierHigh || paths[0].State != PathProven {
-		t.Fatalf("want one proven High path, got %+v", paths)
+	if len(paths) != 1 || paths[0].BaseTier != TierLow || paths[0].Tier != TierLow || paths[0].State != PathProven {
+		t.Fatalf("want one proven Low path, got %+v", paths)
 	}
-	if so := NewPathBlock(paths[0], nil).So; so != "through the known vulnerability of this action, an attacker can execute code on the runner and poison what it caches or uploads" {
+	if so := NewPathBlock(paths[0], nil).So; so != "through the known vulnerability of this action, an attacker can execute code on an ephemeral runner" {
 		t.Errorf("So = %q", so)
 	}
 
-	// A private repository lowers a contributor entry one step, to Medium.
-	sit = &Situation{Exposure: ir.VisibilityPrivate, Provider: "github", Jobs: map[string]JobSituation{"build": {}}}
+	// A private repository lowers a contributor entry one step: a job
+	// holding a secret, High, goes to Medium.
+	js := JobSituation{}
+	js.Privilege.Secrets = []string{"S"}
+	sit = &Situation{Exposure: ir.VisibilityPrivate, Provider: "github", Jobs: map[string]JobSituation{"build": js}}
 	paths = assemblePaths([]opaengine.Finding{entryFinding("ISSUE-207", "build", "github.event.issue.title")}, sit)
 	if len(paths) != 1 || paths[0].BaseTier != TierHigh || paths[0].Tier != TierMedium || !reflect.DeepEqual(paths[0].Modifiers, []string{"private_exposure"}) {
 		t.Errorf("want the private contributor path lowered to Medium, got %+v", paths)
@@ -2112,15 +2462,14 @@ func TestCodeExecutionAloneIsHigh(t *testing.T) {
 }
 
 // Secrets Plumber could not list beside code execution: the tier rests on
-// the code execution, so the path stays High and proven and says the
-// secrets could not be listed. A missing protection that raises it only
-// because of those secrets rests on them: priced Critical, it goes down
-// one, unverified, never below the High the code execution proves.
-func TestUnlistedSecretsBesideCodeExecutionStayHigh(t *testing.T) {
+// the code execution, so the path stays Low and proven and says the
+// secrets could not be listed. A missing protection does not raise it on
+// those secrets: they prove nothing.
+func TestUnlistedSecretsBesideCodeExecutionStayLow(t *testing.T) {
 	f := finding("ISSUE-714", "build", map[string]any{"uses": "some/action@v1"})
 	paths := assemblePaths([]opaengine.Finding{f}, unlistedSecretsJob("", nil, nil))
-	if len(paths) != 1 || paths[0].BaseTier != TierHigh || paths[0].Tier != TierHigh || paths[0].State != PathProven || len(paths[0].Modifiers) != 0 {
-		t.Fatalf("want one proven High path, got %+v", paths)
+	if len(paths) != 1 || paths[0].BaseTier != TierLow || paths[0].Tier != TierLow || paths[0].State != PathProven || len(paths[0].Modifiers) != 0 {
+		t.Fatalf("want one proven Low path, got %+v", paths)
 	}
 	if b := NewPathBlock(paths[0], nil); b.ReachUnverified != "Plumber could not list the secrets" {
 		t.Errorf("block = %+v", b)
@@ -2129,9 +2478,8 @@ func TestUnlistedSecretsBesideCodeExecutionStayHigh(t *testing.T) {
 	sit := unlistedSecretsJob("", nil, nil)
 	gate := finding(string(CodeSecretsOutsideEnv), "build", nil)
 	paths = assemblePaths([]opaengine.Finding{f, gate}, sit)
-	if len(paths) != 1 || paths[0].Tier != TierHigh || paths[0].State != PathUnverified || len(paths[0].GateHashes) != 1 ||
-		!reflect.DeepEqual(paths[0].Modifiers, []string{"unresolvable", "gate:" + string(CodeSecretsOutsideEnv)}) {
-		t.Errorf("want the raised path lowered back to High and unverified, got %+v", paths)
+	if len(paths) != 1 || paths[0].Tier != TierLow || paths[0].State != PathProven || len(paths[0].GateHashes) != 0 || len(paths[0].Modifiers) != 0 {
+		t.Errorf("want the path left Low and proven, got %+v", paths)
 	}
 }
 

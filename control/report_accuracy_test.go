@@ -404,8 +404,8 @@ func TestPrivateExposureDoesNotLowerAnInsiderEntry(t *testing.T) {
 	if len(paths) != 1 {
 		t.Fatalf("execution-only insider: want one path, got %+v", paths)
 	}
-	if p := paths[0]; p.Tier != TierHigh || slices.Contains(p.Modifiers, "private_exposure") {
-		t.Errorf("execution-only insider: tier %s modifiers %v, want High with no private_exposure", p.Tier, p.Modifiers)
+	if p := paths[0]; p.Tier != TierLow || slices.Contains(p.Modifiers, "private_exposure") {
+		t.Errorf("execution-only insider: tier %s modifiers %v, want Low with no private_exposure", p.Tier, p.Modifiers)
 	}
 }
 

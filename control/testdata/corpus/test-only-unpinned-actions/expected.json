@@ -6,11 +6,11 @@
   "visibility": "public",
   "defaultBranch": "main",
   "branches": [{"name": "main", "protected": true}],
-  "note": "The spec's clean example (section 7, group b): one pull_request test matrix with permissions: contents: read, no secret, and a third-party action (astral-sh/setup-uv@v7) pinned by tag. A new setup-uv release reaches a job that holds a read token and nothing else: code execution in the runner, High, and the action is only not pinned, so the dependency cap holds it at Medium. Hand count: one Medium path 6, no other finding, so 100 - 6 = 94: A.",
+  "note": "The spec's clean example (section 7, group b): one pull_request test matrix with permissions: contents: read, no secret, and a third-party action (astral-sh/setup-uv@v7) pinned by tag. A new setup-uv release reaches a job that holds a read token and nothing else and saves no cache: code execution alone on an ephemeral runner, Low. Hand count: one Low path 3, no other finding, so 100 - 3 = 97: A.",
   "expect": {
-    "maxTier": "medium",
+    "maxTier": "low",
     "paths": [
-      {"entryKind": "mutable_dependency", "tier": "medium", "job": "ci/test", "subjectContains": "astral-sh/setup-uv@v7", "reachKind": "execution", "state": "proven",
+      {"entryKind": "mutable_dependency", "tier": "low", "job": "ci/test", "subjectContains": "astral-sh/setup-uv@v7", "reachKind": "execution", "state": "proven",
        "sentenceContains": ["`astral-sh/setup-uv@v7`", "`ci/test`", "holds no secret"]}
     ],
     "noPathAbove": "high",

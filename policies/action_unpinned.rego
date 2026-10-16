@@ -34,7 +34,7 @@ deny contains finding if {
 	not _is_local(use.uses)
 	not _is_own_repo(use.uses)
 	not _is_trusted_owner(use.uses)
-	finding := {
+	base := {
 		"code":     "ISSUE-701",
 		"severity": "high",
 		"message":  sprintf("job %q references action %q with a mutable ref — pin by commit SHA instead", [job.name, use.uses]),
@@ -42,6 +42,32 @@ deny contains finding if {
 		"uses":     use.uses,
 		"line":     object.get(use, "line", 0),
 	}
+	finding := object.union(object.union(base, _archived_tag_fields(use)), _redirected_owner_fields(use))
+}
+
+# _archived_tag_fields and _redirected_owner_fields are additive: a
+# reference with neither signal keeps the finding exactly as it read
+# before trust followed the party that can change the code, not the
+# party the workflow merely names.
+default _archived_tag_fields(_) := {}
+
+_archived_tag_fields(use) := {"archivedTag": true} if _is_archived_tag(use)
+
+# _is_archived_tag: the action's repository is archived and the pinned
+# ref is a tag: nobody can retag it any more, so the reference is
+# immutable in practice even though it is not pinned to a commit SHA.
+_is_archived_tag(use) if {
+	meta := object.get(use, "metadata", {})
+	object.get(meta, "repoArchived", false) == true
+	object.get(meta, "refKind", "") == "tag"
+}
+
+default _redirected_owner_fields(_) := {}
+
+_redirected_owner_fields(use) := {"redirectedOwner": owner} if {
+	meta := object.get(use, "metadata", {})
+	owner := object.get(meta, "redirectedOwner", "")
+	owner != ""
 }
 
 # Job-level reusable-workflow calls (`jobs.<id>.uses:

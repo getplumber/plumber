@@ -255,7 +255,7 @@ func TestGenerateMRComment_V4NamesTheCapAndWhatCouldNotBeVerified(t *testing.T) 
 		"### Individual findings (0)\n\n### Attack paths (9)\n\n| # | Tier | Entry | Job | Reaches |\n| --- | --- | --- | --- | --- |\n| 1 | Medium |",
 		"| 9 | Medium | i\\@v1 \\(external action that downloads code at run time Plumber could not check\\) | build | code execution without secrets |\n\n### Controls",
 		"### Attack path details",
-		"#### MEDIUM path 1 (unverified)\n", "#### MEDIUM path 4\n", "       └──▶ runs in job `build` (unverified)\n            └─▶ reaches code execution on the runner, no secret and no write token\n", "       Note   Plumber could not check what it runs\n",
+		"#### MEDIUM path 1 (unverified)\n", "#### MEDIUM path 4\n", "       └──▶ runs in job `build` (unverified)\n            └─▶ reaches code execution on the runner; nothing else proven\n", "       Note   Plumber could not check what it runs\n",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("comment lacks %q:\n%s", want, body)

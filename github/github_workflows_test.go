@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 
@@ -565,5 +566,214 @@ func Test_enrichActionsWithClient_carriesTagObjectMetadata(t *testing.T) {
 	}
 	if absent.Metadata.RefCommitSha != "" {
 		t.Fatalf("Metadata.RefCommitSha = %q for an absent SHA, want empty", absent.Metadata.RefCommitSha)
+	}
+}
+
+// TestSecretFirstLineRecordsWhereEachSecretIsFirstReferenced pins the
+// fixture the step-order reach check depends on: secrets.A at line 12,
+// secrets.github_token at line 14 (never recorded, any case, it is the
+// job token), an untrusted uses: step at line 20 referencing nothing, and
+// secrets.B at line 30. The collector must record only A and B, each at
+// its own first line.
+func TestSecretFirstLineRecordsWhereEachSecretIsFirstReferenced(t *testing.T) {
+	tmp := t.TempDir()
+	wfDir := filepath.Join(tmp, ".github", "workflows")
+	if err := os.MkdirAll(wfDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	ci := `name: CI
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: pad1
+        run: echo pad1
+      - name: pad2
+        run: echo pad2
+      - name: use-a
+        run: echo "${{ secrets.A }}"
+      - name: use-token
+        run: echo "${{ secrets.github_token }}"
+      - name: pad3
+        run: echo pad3
+      - name: pad4
+        run: echo pad4
+      - name: untrusted
+        uses: some/untrusted-action@v1
+      - name: pad5
+        run: echo pad5
+      - name: pad6
+        run: echo pad6
+      - name: pad7
+        run: echo pad7
+      - name: pad8
+        run: echo pad8
+      - name: use-b
+        run: echo "${{ secrets.B }}"
+`
+	if err := os.WriteFile(filepath.Join(wfDir, "ci.yml"), []byte(ci), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Fixture-line sanity: the test fixture above has to actually carry
+	// each reference at the line number the assertion below expects, or
+	// the test would pass for the wrong reason.
+	lines := strings.Split(ci, "\n")
+	if got := lines[11]; !strings.Contains(got, "secrets.A") {
+		t.Fatalf("fixture drifted: line 12 is %q, want it to carry secrets.A", got)
+	}
+	if got := lines[13]; !strings.Contains(got, "secrets.github_token") {
+		t.Fatalf("fixture drifted: line 14 is %q, want it to carry secrets.github_token", got)
+	}
+	if got := lines[19]; !strings.Contains(got, "uses: some/untrusted-action") {
+		t.Fatalf("fixture drifted: line 20 is %q, want the untrusted uses: step", got)
+	}
+	if got := lines[29]; !strings.Contains(got, "secrets.B") {
+		t.Fatalf("fixture drifted: line 30 is %q, want it to carry secrets.B", got)
+	}
+
+	pipeline, partial, err := ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(partial) != 0 {
+		t.Fatalf("unexpected partial errors: %v", partial)
+	}
+	if len(pipeline.Jobs) != 1 {
+		t.Fatalf("want one job, got %d", len(pipeline.Jobs))
+	}
+	job := pipeline.Jobs[0]
+	want := map[string]int{"A": 12, "B": 30}
+	if !reflect.DeepEqual(job.SecretFirstLine, want) {
+		t.Fatalf("SecretFirstLine = %v, want %v (github_token never recorded)", job.SecretFirstLine, want)
+	}
+}
+
+// scanOneWorkflowJob writes ci as the sole workflow file of a fresh repo,
+// scans it, and returns its one job's SecretFirstLine. Shared by the
+// job-level-env and comment/string-literal cases below.
+func scanOneWorkflowJob(t *testing.T, ci string) map[string]int {
+	t.Helper()
+	tmp := t.TempDir()
+	wfDir := filepath.Join(tmp, ".github", "workflows")
+	if err := os.MkdirAll(wfDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(wfDir, "ci.yml"), []byte(ci), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	pipeline, partial, err := ScanGitHubWorkflowsWithProgress("owner/repo", "main", tmp, "", false, true, nil)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(partial) != 0 {
+		t.Fatalf("unexpected partial errors: %v", partial)
+	}
+	if len(pipeline.Jobs) != 1 {
+		t.Fatalf("want one job, got %d", len(pipeline.Jobs))
+	}
+	return pipeline.Jobs[0].SecretFirstLine
+}
+
+// TestSecretFirstLineJobLevelEnvIsLineZero pins that a secret referenced
+// in the job's own env: (outside steps:) is recorded at line 0, not its
+// textual line: it is set up before any step runs, so it is visible to
+// every step regardless of where in the job's YAML block it sits,
+// exactly like a workflow-level env: reference.
+func TestSecretFirstLineJobLevelEnvIsLineZero(t *testing.T) {
+	ci := `name: CI
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    env:
+      TOKEN: ${{ secrets.ENVSECRET }}
+    steps:
+      - name: untrusted
+        uses: some/untrusted-action@v1
+      - name: later
+        run: echo done
+`
+	got := scanOneWorkflowJob(t, ci)
+	want := map[string]int{"ENVSECRET": 0}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("SecretFirstLine = %v, want %v: a job-level env: reference reaches every step", got, want)
+	}
+}
+
+// TestSecretFirstLineContainerAndServicesEnvAreLineZero extends the
+// job-level-env rule to a job's container: and services: blocks, which
+// are set up the same way, before any step runs.
+func TestSecretFirstLineContainerAndServicesEnvAreLineZero(t *testing.T) {
+	t.Run("container env", func(t *testing.T) {
+		ci := `name: CI
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: node:20
+      env:
+        CTOKEN: ${{ secrets.CONTAINERSECRET }}
+    steps:
+      - name: untrusted
+        uses: some/untrusted-action@v1
+`
+		got := scanOneWorkflowJob(t, ci)
+		want := map[string]int{"CONTAINERSECRET": 0}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("SecretFirstLine = %v, want %v", got, want)
+		}
+	})
+	t.Run("services env", func(t *testing.T) {
+		ci := `name: CI
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    services:
+      redis:
+        image: redis
+        env:
+          STOKEN: ${{ secrets.SERVICESECRET }}
+    steps:
+      - name: untrusted
+        uses: some/untrusted-action@v1
+`
+		got := scanOneWorkflowJob(t, ci)
+		want := map[string]int{"SERVICESECRET": 0}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("SecretFirstLine = %v, want %v", got, want)
+		}
+	})
+}
+
+// TestSecretFirstLineOnlyCountsLiveExpressions pins that a bash comment
+// mentioning secrets.X, or a quoted string literal that merely contains
+// the text "secrets.X", never counts: only a real ${{ ... }} expression
+// does, the same restriction situation.rego's github_expressions applies
+// before its own secret_member_pattern ever runs.
+func TestSecretFirstLineOnlyCountsLiveExpressions(t *testing.T) {
+	ci := `name: CI
+on: push
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: comment-step
+        run: |
+          # rotate secrets.NPM_TOKEN
+          echo "secrets.X"
+      - name: untrusted
+        uses: some/untrusted-action@v1
+      - name: real-use
+        run: echo "${{ secrets.NPM_TOKEN }}"
+`
+	got := scanOneWorkflowJob(t, ci)
+	want := map[string]int{"NPM_TOKEN": 14}
+	if !reflect.DeepEqual(got, want) {
+		t.Fatalf("SecretFirstLine = %v, want %v: the comment at line 9 and the quoted literal at line 10 must not count, and X must never appear at all", got, want)
 	}
 }

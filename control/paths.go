@@ -74,6 +74,10 @@ type Reach struct {
 	// from, and whether that job's token is assumed. Never serialized; a
 	// reach built by hand has none and reads as one job's.
 	parts []reachPart
+	// keeps is set when the entry job saves a cache or uploads an
+	// artifact (keepsSomething): code on its runner can poison what a
+	// later run reads. Unset, the runner is ephemeral. Never serialized.
+	keeps bool
 }
 
 // reachPart is what one walked job holds of a reach: its surviving
@@ -87,6 +91,13 @@ type reachPart struct {
 	scopes     []string
 	assumed    bool
 	impacts    []ImpactFact
+	// secretsUnknown is set when the job's secrets could not be listed
+	// (SecretsState unknown), tokenUnknown when its token write was not
+	// settled (TokenWriteState unknown, or the repository default read
+	// as a guess): what they list stays in the reach but adds no tier
+	// (provenPrivileged).
+	secretsUnknown bool
+	tokenUnknown   bool
 }
 
 // AttackPath is one way a finding's entry fact can be walked to privilege or
@@ -113,7 +124,7 @@ type AttackPath struct {
 	Reach        Reach       `json:"reach"`
 	ReachKind    string      `json:"reachKind"`  // the first of ReachKinds: "impact:<kind>" | "secrets" | "token" | "execution" | "none"
 	ReachKinds   []string    `json:"reachKinds"` // every reach kind of Reach, strongest first
-	Modifiers    []string    `json:"modifiers"`  // "private_exposure", "unresolvable", "gate:<code>", "push_entry_cap", "dependency_cap", "source_cap"
+	Modifiers    []string    `json:"modifiers"`  // "private_exposure", "unresolvable", "gate:<code>", "push_entry_cap", "dependency_cap", "source_cap", "insider_cap", "maintainer_cap", "pinned_head_cap", "advisory_cap", "cache_writer_cap"
 	GateHashes   []string    `json:"gateHashes"` // findings that amplified this path
 	Exposure     string      `json:"exposure"`
 	// Branches is one per entry job, in Jobs order: the walk from that job,
@@ -155,6 +166,22 @@ type AttackPath struct {
 	// package.
 	gateBranches map[string]string
 
+	// cacheWriterStates is, on a poisoned_cache path, per job the path
+	// reaches through the cache (Jobs[1:]), the state cacheWriterReaches
+	// gave the edge from the job granted cache write to it: "proven" (the
+	// common case) or "unknown" (the restoring job's own scope could not
+	// be decided). Read by the claims of the path; never serialized.
+	cacheWriterStates map[string]string
+
+	// cacheName is, on a poisoned_cache path, the name of the cache every
+	// job it reaches restores when the job granted cache write declares a
+	// save whose key template matches each restore (keyTemplate.Matches):
+	// phrases.go's entryClause then names that cache. Empty (no declared,
+	// matching save, or restorers reading different caches) reads the
+	// generic sentence: code running in the writer can still save under
+	// whatever key a restorer reads. Never serialized.
+	cacheName string
+
 	// ownRepo is the analysed repository's "owner/repo", lower case, empty
 	// when unknown: an action of its owner is never read out as a third
 	// party's. Never serialized.
@@ -165,6 +192,23 @@ type AttackPath struct {
 	// sentence names who, and it holds at High like a push entry. Never
 	// serialized.
 	insider bool
+
+	// actor and actorClass are what trust.ActorFor decided about the
+	// path's own anchor (pathAnchor.actor/actorClass, carried through):
+	// who the attacker acts as when that decision overrides the
+	// dependency's default wording, and the gate class that caps the
+	// path's tier (GateInsider: the Medium ceiling). "" when trust.go
+	// has no opinion and the ordinary dependency wording and ceiling
+	// apply unchanged. Never serialized.
+	actor      string
+	actorClass ir.GateClass
+
+	// unknownRefs is, on a path whose entry gate could not be decided
+	// (Entry.Actor "unknown"), the references of the condition the gate
+	// evaluator could not resolve (ir.Gate.Unknown), for the Note line:
+	// the output task that adds that line prints it; nothing reads it
+	// yet. Never serialized.
+	unknownRefs []string
 
 	// alternatives is every subject the entry stands for when one finding
 	// identity covers several (the values of a matrix), sorted; nil for
@@ -304,7 +348,9 @@ func tierShift(t PathTier, delta int) PathTier {
 // checkout of the pull request head or of another workflow's run, or an
 // untrusted expression on a pull request trigger (a fork pull request, a
 // pull_request_target or review event). An expression only an insider
-// sets is none (no such trigger reaches its job).
+// sets is none (no such trigger reaches its job). The entry job's gate
+// class does not change it: the class applies through the ceiling
+// (gateCeiling), never through the base tier.
 func contributorEntry(kind EntryKind, js JobSituation) bool {
 	switch kind {
 	case EntryForkPR, EntryPRTarget:
@@ -561,7 +607,7 @@ func AssemblePaths(findings []opaengine.Finding, sit *Situation, projectPath str
 					// With no restorer the branch is dropped below.
 					reached = jobs[1:]
 				}
-				reach, unresolvable, cause, surviving := reachOver(sit, reached, a.kind)
+				reach, unresolvable, cause, surviving := reachOver(sit, reached, a.kind, a.fact.Line)
 				g = &pathGroup{anchor: a, jobs: jobs, reach: reach, unresolvable: unresolvable, cause: cause, surviving: surviving, hashes: map[string]bool{}, codes: map[ErrorCode]bool{},
 					contributor: contributorEntry(a.kind, sit.Jobs[a.entryJob]), alternatives: map[string]bool{a.fact.Subject: true}}
 				pg.branches[a.entryJob] = g
@@ -574,6 +620,9 @@ func AssemblePaths(findings []opaengine.Finding, sit *Situation, projectPath str
 				g.anchor.fact.State = "proven"
 			}
 			g.codes[ErrorCode(f.Code)] = true
+			if ErrorCode(f.Code) == CodeKnownVulnerableAction {
+				g.advisorySeverities = append(g.advisorySeverities, advisorySeverityOf(f))
+			}
 		}
 	}
 	// A finding about the subject itself starts nothing: it joins the path
@@ -606,26 +655,37 @@ func AssemblePaths(findings []opaengine.Finding, sit *Situation, projectPath str
 		}
 	}
 	out := make([]AttackPath, 0, len(keys))
+	// writerOnly is the push entries no walked job escalates from: no
+	// path, but a run there still writes the cache (cacheWriters).
+	var writerOnly []AttackPath
 	var cacheKeys []string
 	for _, key := range keys {
 		if strings.HasPrefix(key, string(EntryPoisonedCache)+"|") {
 			cacheKeys = append(cacheKeys, key)
 			continue
 		}
-		p := paths[key].path(key, exposure, gates, sit)
+		pg := paths[key]
+		if idle := pg.withoutEscalation(); idle != nil {
+			writerOnly = append(writerOnly, idle.path(key, exposure, gates, sit))
+		}
+		if len(pg.branches) == 0 {
+			continue
+		}
+		p := pg.path(key, exposure, gates, sit)
 		p.ownRepo = own
 		p.situation = sit
 		out = append(out, p)
 	}
-	writers := cacheWriters(out, sit)
+	writers := cacheWriters(append(append([]AttackPath(nil), out...), writerOnly...), sit)
 	for _, key := range cacheKeys {
 		pg := paths[key]
 		for job, g := range pg.branches {
 			// The writer's grant is only a way in when another path already
-			// runs code from outside the team in it, and only reaches
-			// something when a job restores a cache.
+			// runs code from outside the team in it (cacheWriters), and only
+			// reaches the jobs restoring a cache its entered run saves for
+			// (cacheWriterReaches).
 			w, entered := writers[job]
-			if !entered || len(g.jobs) < 2 {
+			if !entered || !g.reachThroughCache(w, sit) {
 				delete(pg.branches, job)
 				continue
 			}
@@ -640,6 +700,7 @@ func AssemblePaths(findings []opaengine.Finding, sit *Situation, projectPath str
 		p := pg.path(key, exposure, gates, sit)
 		p.ownRepo = own
 		p.situation = sit
+		p.cacheWriterStates, p.cacheName = pg.cacheEdges()
 		out = append(out, p)
 	}
 	sort.Slice(out, func(i, j int) bool { return worseFirst(out[i], out[j]) })
@@ -755,6 +816,24 @@ func (pg *pathGroups) path(key, exposure string, gates []opaengine.Finding, sit 
 	return p
 }
 
+// withoutEscalation empties a push entry's pg when no branch's walk
+// proves an escalation (pushEscalates), and returns what it held, nil
+// when pg is no push entry or one branch escalates: such an entry anchors
+// no path. A branch that escalates keeps every other branch of its path.
+func (pg *pathGroups) withoutEscalation() *pathGroups {
+	if len(pg.branches) == 0 {
+		return nil
+	}
+	for _, g := range pg.branches {
+		if g.anchor.kind != EntryUnprotectedPush || pushEscalates(g.reach) {
+			return nil
+		}
+	}
+	idle := &pathGroups{branches: pg.branches}
+	pg.branches = map[string]*pathGroup{}
+	return idle
+}
+
 // anchorOf is the anchor a path reads as: its first hash, and the first
 // of its codes that makes the entry one, or, when there is one, the code
 // that keeps a dependency uncapped. It sorts codes in place.
@@ -831,6 +910,20 @@ type pathGroup struct {
 	// alternatives is every subject the branch's findings name, the
 	// values of a matrix one finding identity stands for.
 	alternatives map[string]bool
+	// advisorySeverities is, per ISSUE-703 anchor of the branch, the
+	// worst severity of its advisories (advisorySeverityOf), "" when not
+	// known: what advisoryCeiling caps the branch by.
+	advisorySeverities []string
+	// writersUnknown is set on a poisoned_cache branch when no edge from
+	// the writer to a job it reaches is proven (cacheWriterReaches gave
+	// each "unknown"): the restoring jobs' privilege then adds no tier.
+	writersUnknown bool
+	// cacheStates and cacheName are, on a poisoned_cache branch, what
+	// reachThroughCache found: the state of the edge to each job reached,
+	// and the cache they all restore when the writer's declared save
+	// names it (AttackPath.cacheWriterStates, AttackPath.cacheName).
+	cacheStates map[string]string
+	cacheName   string
 }
 
 // path applies the tier rules to one branch: base tier, then the private
@@ -850,7 +943,13 @@ func (g *pathGroup) path(exposure string, gates []opaengine.Finding, sit *Situat
 	p.AnchorHash, p.AnchorCode = anchorOf(p.AnchorHashes, p.AnchorCodes)
 	p.ReachKinds = reachKinds(g.reach)
 	p.ReachKind = p.ReachKinds[0]
-	p.BaseTier = baseTier(g.reach, g.cause, g.contributor)
+	reach := g.reach
+	if g.writersUnknown {
+		// No writer is proven to reach this cache: what the restoring
+		// job holds stays listed but adds no tier.
+		reach.parts = withoutPrivilege(partsOf(reach))
+	}
+	p.BaseTier = baseTier(reach, g.contributor)
 	p.Tier = p.BaseTier
 	p.insider = insiderController(a.kind, a.fact.Subject, sit.Jobs[g.jobs[0]]) != ""
 	if exposure == ir.VisibilityPrivate && contributorEntries[a.kind] && !p.insider {
@@ -858,15 +957,15 @@ func (g *pathGroup) path(exposure string, gates []opaengine.Finding, sit *Situat
 		p.Modifiers = append(p.Modifiers, "private_exposure")
 	}
 	p.cause = g.cause
-	onPath := gatesOnPath(gates, g.jobs, sit, anchors, a.kind, g.reach, g.cause)
-	// A gate raises a path only when it can do damage; when only secrets
-	// Plumber could not list say it can, the raise rests on them too.
-	raiseUnlisted := len(onPath) > 0 && !reachCanDamage(g.reach, "")
-	if a.fact.State == FactUnknown || g.unresolvable || raiseUnlisted {
+	// A gate raises a path only when it can do proven damage
+	// (gateCanRaise): an unproven privilege raises nothing.
+	onPath := gatesOnPath(gates, g.jobs, sit, anchors, a.kind, reach)
+	if a.fact.State == FactUnknown || g.unresolvable {
 		p.Tier = tierShift(p.Tier, -1)
 		p.State = PathUnverified
 		p.Modifiers = append(p.Modifiers, "unresolvable")
 	}
+	applyUnknownGate(&p, a.unknownRefs)
 	for _, gate := range onPath {
 		p.Tier = tierShift(p.Tier, 1)
 		p.Modifiers = append(p.Modifiers, "gate:"+gate.Code)
@@ -879,6 +978,19 @@ func (g *pathGroup) path(exposure string, gates []opaengine.Finding, sit *Situat
 		if gateHash, ok := findingAnchorHash(gate); ok {
 			p.GateHashes = append(p.GateHashes, gateHash)
 		}
+	}
+	p.actor, p.actorClass = a.actor, a.actorClass
+	// A known-bad dependency (g.knownBad(): a published advisory, an
+	// impostor commit, an obfuscated fetch) or a run-time fetch from an
+	// outside host (CodeActionMutableRemoteExec) joining the same
+	// subject overrides whatever one anchor's own INSIDER read said:
+	// the group's attack surface is not limited to that one insider
+	// party, so the ordinary dependency wording and no insider cap
+	// apply instead. Read over every anchor in the group (g.codes),
+	// never just a's own. Never clears an outsider actor (trust.go's
+	// download-host wording): that is already the outsider's own.
+	if g.overridesInsiderToOutsider() && p.actorClass == ir.GateInsider {
+		p.actor, p.actorClass = "", ""
 	}
 	p.ceiling = TierCritical
 	if a.kind == EntryUnprotectedPush || p.insider {
@@ -893,6 +1005,17 @@ func (g *pathGroup) path(exposure string, gates []opaengine.Finding, sit *Situat
 			}
 		}
 	}
+	if ceiling, ok := g.advisoryCeiling(); ok && TierRank(ceiling) < TierRank(p.ceiling) {
+		p.ceiling, p.ceilingModifiers = ceiling, []string{"advisory_cap"}
+	}
+	// An insider actor (trust.ActorFor: a first-party script, a sibling
+	// organisation's redirected action) is closer to home than an
+	// outside dependency: it holds at the Medium ceiling, unless the
+	// group override above already cleared it.
+	if a.kind == EntryMutableDependency && p.actorClass == ir.GateInsider && TierRank(insiderCeiling) < TierRank(p.ceiling) {
+		p.ceiling, p.ceilingModifiers = insiderCeiling, []string{"insider_cap"}
+	}
+	p.ceiling, p.ceilingModifiers = gateCeiling(a.fact, p.ceiling, p.ceilingModifiers)
 	if TierRank(p.Tier) > TierRank(p.ceiling) {
 		p.Tier = p.ceiling
 		p.Modifiers = append(p.Modifiers, p.ceilingModifiers...)
@@ -938,55 +1061,25 @@ func (g *pathGroup) knownBad() bool {
 	return false
 }
 
-// cacheWriter is what entering a cache writer takes: the strongest
-// ceiling among the branches entering the job (AttackPath.ceiling), and
-// the modifiers that ceiling sets when it holds a cache path.
-type cacheWriter struct {
-	ceiling   PathTier
-	modifiers []string
-}
-
-// cacheWriters is the jobs that can write a poisoned cache: the entry jobs,
-// of every branch of the paths given (none a poisoned_cache path), that run
-// code from outside the team in a run whose cache other runs read. Their
-// privilege was not pruned as a fork pull request run's, they run, and
-// their runs save in the default branch's scope (savesForDefaultBranch).
-// Whatever caches such a job declares, code running in it holds the run's
-// cache token and can save any key. Each writer keeps the strongest
-// ceiling of the branches entering it, the first in the paths' order on a
-// tie; it reads the assembled paths, so the order of the findings does not
-// matter.
-func cacheWriters(paths []AttackPath, sit *Situation) map[string]cacheWriter {
-	out := map[string]cacheWriter{}
-	ordered := append([]AttackPath(nil), paths...)
-	sort.Slice(ordered, func(i, j int) bool { return ordered[i].ID < ordered[j].ID })
-	for _, p := range ordered {
-		for _, b := range p.Branches {
-			if !slices.Contains(b.survivingJobs, b.Job) {
-				continue // a fork pull request run saves only its merge ref's cache
-			}
-			if !savesForDefaultBranch(sit.Jobs[b.Job]) {
-				continue
-			}
-			ceiling := b.ceiling
-			if ceiling == "" {
-				ceiling = TierCritical
-			}
-			if cur, ok := out[b.Job]; !ok || TierRank(ceiling) > TierRank(cur.ceiling) {
-				out[b.Job] = cacheWriter{ceiling: ceiling, modifiers: b.ceilingModifiers}
-			}
+// overridesInsiderToOutsider reports whether the group's own codes force
+// the outsider wording and strip any insider cap trust.ActorFor read off
+// a single anchor: a dependency already known bad (knownBad, which
+// already covers a published advisory and an impostor commit), or a
+// run-time fetch from an outside host (CodeActionMutableRemoteExec)
+// joining the same subject, means the attack surface the group as a
+// whole exposes is not limited to the one insider party an anchor's own
+// data named. Read over every code in g.codes, never just the group's
+// first anchor, so the result does not depend on finding order.
+func (g *pathGroup) overridesInsiderToOutsider() bool {
+	if g.knownBad() {
+		return true
+	}
+	for c := range g.codes {
+		if c == CodeActionMutableRemoteExec {
+			return true
 		}
 	}
-	return out
-}
-
-// savesForDefaultBranch reports whether a run of js saves what a run of
-// another ref restores: a job that runs (not Dead) whose cache scopes hold
-// the default branch, or any ref for a job carrying no trigger. A save in a
-// pull request's, a tag's or another branch's scope reaches runs of that
-// same ref only.
-func savesForDefaultBranch(js JobSituation) bool {
-	return !js.Dead && (slices.Contains(js.CacheScopes, "default") || slices.Contains(js.CacheScopes, "any"))
+	return false
 }
 
 // cacheRestorers is every job, but the writer, that runs and restores a
@@ -1117,6 +1210,22 @@ type pathAnchor struct {
 	kind     EntryKind
 	fact     EntryFact
 	entryJob string
+	// data is the anchoring finding's own Data payload, for a
+	// mutable_dependency anchor: control/trust.go reads the
+	// download-guard, verification, first-party and redirect facts off
+	// it (paths.go carries no action metadata of its own). Nil for every
+	// other kind.
+	data map[string]any
+	// actor and actorClass are what trust.ActorFor decided about this
+	// anchor: who the attacker acts as when that decision overrides the
+	// dependency's default wording (an insider party), and the gate
+	// class that caps the tier of the path it starts (GateInsider: the
+	// Medium ceiling). "" when trust.go has no opinion.
+	actor      string
+	actorClass ir.GateClass
+	// unknownRefs is what the entry job's gate could not resolve, when it
+	// is unknown (gateEntry).
+	unknownRefs []string
 }
 
 // anchorsFor returns the entries a finding starts (spec section 2,
@@ -1146,10 +1255,25 @@ func anchorsFor(f opaengine.Finding, sit *Situation, own string) []pathAnchor {
 				return nil
 			}
 			fact := entryFromFinding(f, kind)
-			if kind == EntryMutableDependency && localReference(fact.Subject, own) {
+			if kind == EntryMutableDependency {
+				if localReference(fact.Subject, own) {
+					return nil
+				}
+				if suppress, unknownRunner := Suppressed(f); suppress {
+					return nil
+				} else if unknownRunner {
+					fact.State = FactUnknown
+				}
+			}
+			skip, unknown := gateEntry(kind, &fact, sit.Jobs[f.Job], f)
+			if skip {
 				return nil
 			}
-			return []pathAnchor{{kind: kind, fact: fact, entryJob: f.Job}}
+			a := pathAnchor{kind: kind, fact: fact, entryJob: f.Job, data: f.Data, unknownRefs: unknown}
+			if kind == EntryMutableDependency {
+				a.actor, a.actorClass = ActorFor(a, own)
+			}
+			return []pathAnchor{a}
 		}
 		if kind != EntryMutableDependency {
 			return nil
@@ -1337,6 +1461,88 @@ func sortAnchorsByJob(anchors []pathAnchor) {
 	sort.Slice(anchors, func(i, j int) bool { return anchors[i].entryJob < anchors[j].entryJob })
 }
 
+// feedStrength is how fully a fed job's own privilege and impact join a
+// walk, read off the strongest kind FeedsVia records for the direct edge
+// from the entry job (walkedJobs keeps one hop, so that edge always runs
+// from jobs[0]): feedFull for every kind this situation model does not
+// single out (an executed output or artifact, a cache, or either of
+// GitLab's own untyped kinds), feedAltered for an edge whose strongest
+// kind is FeedArtifactAltered (the fed job only moved, released or
+// published a download, running nothing from it), feedCompareOnly for an
+// edge made only of FeedOutputCompared (a needs output read only inside a
+// comparison the runner evaluates itself, crossing no code at all). An
+// edge with no FeedsVia entry (a job fed with the kind unknown, as most
+// Go-level situation fixtures leave it) defaults to feedFull, preserving
+// the reach the model gave before these two kinds existed.
+type feedStrength int
+
+const (
+	feedCompareOnly feedStrength = iota
+	feedAltered
+	feedFull
+)
+
+func strengthOfFeed(kinds []string) feedStrength {
+	if len(kinds) == 0 {
+		return feedFull
+	}
+	strength := feedCompareOnly
+	for _, k := range kinds {
+		switch k {
+		case FeedOutputCompared:
+			// Contributes nothing on its own.
+		case FeedArtifactAltered:
+			if strength < feedAltered {
+				strength = feedAltered
+			}
+		default:
+			return feedFull
+		}
+	}
+	return strength
+}
+
+// feedStrengthFor is strengthOfFeed for name, read off its direct edge
+// from jobs[0]; the entry job itself is always feedFull.
+func feedStrengthFor(sit *Situation, jobs []string, name string) feedStrength {
+	if len(jobs) == 0 || name == jobs[0] {
+		return feedFull
+	}
+	return strengthOfFeed(sit.Jobs[jobs[0]].FeedsVia[name])
+}
+
+// withoutRestrictedFeeds drops, from surviving, any job whose own edge
+// from jobs[0] is compare-only or artifact-altered-only: reachOver already
+// gives such a job none of its own privilege, so it must not survive into
+// the token-sourced impact pass or the declared/default token check that
+// follow, which would otherwise read its privilege straight off the
+// situation again.
+func withoutRestrictedFeeds(sit *Situation, jobs, surviving []string) []string {
+	var out []string
+	for _, j := range surviving {
+		if feedStrengthFor(sit, jobs, j) == feedFull {
+			out = append(out, j)
+		}
+	}
+	return out
+}
+
+// impactAltersArtifact is the synthetic ImpactFact.Kind reachOver and
+// reachParts give a job walked only through an artifact_altered edge:
+// never emitted by the facts policy itself, it stands in for every impact
+// and every secret that job's own situation carries, since an attacker
+// who only gets to move, release or publish a download never ran anything
+// there.
+const impactAltersArtifact = "alters_artifact"
+
+// alteredArtifactImpact is the one impact fact an artifact_altered-only
+// edge gives. Evidence names the producing job (entryJob, jobs[0]): the
+// artifact's own name is not part of the situation model, so the job that
+// produced it stands in its place.
+func alteredArtifactImpact(entryJob string) ImpactFact {
+	return ImpactFact{Kind: impactAltersArtifact, State: "proven", Evidence: jobID(entryJob)}
+}
+
 // walkedJobs is the entry job followed by its directly fed jobs (one hop,
 // not the transitive closure of Feeds), deduped, and filtered to jobs the
 // situation actually knows about, so a Feeds entry naming a missing job
@@ -1394,31 +1600,58 @@ func feedsViaOf(walk []string, sit *Situation) map[string][]string {
 // the platform rules: an impact the job token gives (Source "token") counts
 // only from a job whose privilege survived them, the token being gone from
 // the others. unresolvable reports whether the path's tier rests on a fact
-// that could not be decided: the tier the proven reach gives (listed
-// secrets, a token that is not only assumed, proven impacts, code
-// execution) differs from the tier the reach gives with those facts read
-// as true (baseTier: an unresolvable impact, an unresolvable SecretsState,
-// a default token write, since a default token is a guess about what the
-// runner falls back to, not a read fact). The path is then priced one step
-// below the second, which is never under the first. cause names which of
-// the last two it was (set for unlisted secrets even when a proven
-// privilege kept the path resolvable), for the
-// paths explain.go renders a custom sentence for (empty when the entry or
-// an impact fact is the unresolvable one instead, which explain.go reads
-// off the path directly). surviving is the surviving-privilege job set
+// that could not be decided: the tier the proven reach gives (proven
+// privilege, proven impacts) differs from the tier baseTier gives with an
+// unconfirmed impact read as true. The path is then priced one step below
+// the second, which is never under the first. A privilege that could not
+// be settled (secrets that could not be listed, a default token whose
+// write is assumed) adds no tier either way (provenPrivileged), so it
+// never makes a path unresolvable; cause still names it (an unresolvable
+// SecretsState, or a bare default token with nothing else to go on), for
+// the sentences explain.go renders about what could not be checked.
+// surviving is the surviving-privilege job set
 // (survivingPrivilegeJobs) computed along the way: AssemblePaths records
 // it on the path so a privilege-role finding's "on path" check can
 // read the one set both this function and that check agree on, rather
 // than recomputing it a second time and risking the two drifting apart.
-func reachOver(sit *Situation, jobs []string, kind EntryKind) (r Reach, unresolvable bool, cause unresolvableCause, surviving []string) {
+//
+// entryLine is the anchor's own line (0 when unknown or job-level). Above
+// 0, it bounds the ENTRY job alone: a secret this job references only
+// before that line cannot be leaked by a step walking in there, since
+// that step runs before the reference ever happens; one carried by the
+// workflow's own top-level configuration (line 0 in SecretFirstLine) is
+// read as available from the job's first step regardless, and a secret
+// with no recorded line at all is kept exactly as it was before this
+// check existed. A fed job's privilege is reached through the edge, not
+// through the entry job's own step order, so entryLine never bounds it.
+func reachOver(sit *Situation, jobs []string, kind EntryKind, entryLine int) (r Reach, unresolvable bool, cause unresolvableCause, surviving []string) {
 	secrets := map[string]bool{}
 	scopes := map[string]bool{}
-	for _, name := range jobs {
+	for i, name := range jobs {
 		js, ok := sit.Jobs[name]
 		if !ok {
 			continue
 		}
+		strength := feedFull
+		if i > 0 {
+			strength = feedStrengthFor(sit, jobs, name)
+		}
+		if strength == feedCompareOnly {
+			// A needs output read only inside a comparison the runner
+			// evaluates itself lets no code cross: nothing of this job
+			// joins the walk.
+			continue
+		}
+		if strength == feedAltered {
+			// The download was only moved, released or published, never
+			// run: one impact says so, none of the job's own secrets.
+			r.Impacts = append(r.Impacts, alteredArtifactImpact(jobs[0]))
+			continue
+		}
 		for _, s := range js.Privilege.Secrets {
+			if i == 0 && entryLine > 0 && secretReferencedBeforeEntry(js.Privilege.SecretFirstLine, s, entryLine) {
+				continue
+			}
 			secrets[s] = true
 		}
 		r.AllSecrets = r.AllSecrets || js.Privilege.AllSecrets
@@ -1446,7 +1679,7 @@ func reachOver(sit *Situation, jobs []string, kind EntryKind) (r Reach, unresolv
 	// entirely (a GitHub fork run's own entry job, say) contributes
 	// nothing to the path any more, so its own token source or secrets
 	// state must not make the (now pruned) path unresolvable.
-	surviving = survivingPrivilegeJobs(sit, jobs, kind)
+	surviving = withoutRestrictedFeeds(sit, jobs, survivingPrivilegeJobs(sit, jobs, kind))
 	for _, name := range surviving {
 		for _, imp := range sit.Jobs[name].Impact {
 			if imp.Source == impactFromToken && countedImpact(imp) {
@@ -1485,18 +1718,30 @@ func reachOver(sit *Situation, jobs []string, kind EntryKind) (r Reach, unresolv
 		cause = unresolvableDefaultToken
 	}
 	// A fact that could not be decided lowers the path only when its tier
-	// rests on it: a listed secret or a declared write token holds the
-	// tier unlisted secrets would give, one proven impact the tier an
-	// unconfirmed one would give. cause stays set either way, so the path
-	// still says the secrets could not be listed.
+	// rests on it: one proven impact holds the tier an unconfirmed one
+	// would give. A privilege that could not be settled adds no tier at
+	// all (provenPrivileged); cause stays set, so the path still says the
+	// secrets could not be listed.
 	contributor := contributorEntry(kind, sit.Jobs[jobs[0]])
+	r.keeps = keepsSomething(sit.Jobs[jobs[0]])
 	proven := tierFor(
 		slices.ContainsFunc(r.Impacts, func(imp ImpactFact) bool { return imp.State != FactUnknown }),
-		len(r.Secrets) > 0 || r.AllSecrets || (len(r.TokenWrite) > 0 && !tokenAssumed),
-		r.Executes, contributor,
+		provenPrivileged(r), contributor,
 	)
-	unresolvable = baseTier(r, cause, contributor) != proven
+	unresolvable = baseTier(r, contributor) != proven
 	return r, unresolvable, cause, surviving
+}
+
+// secretReferencedBeforeEntry reports whether secretFirstLine records name
+// at a line strictly before entryLine: the secret was already read, and
+// done with, by the time the entry's own step runs, so that step cannot be
+// the one that leaks it. A name the map does not carry at all is never
+// reported as before the entry (the caller keeps it, as it always has);
+// line 0 (the workflow's own top-level configuration) never is either, it
+// reaches every step of the job regardless of order.
+func secretReferencedBeforeEntry(secretFirstLine map[string]int, name string, entryLine int) bool {
+	line, known := secretFirstLine[name]
+	return known && line != 0 && line < entryLine
 }
 
 // reachParts splits a pruned reach r over the walked jobs, in walk order:
@@ -1511,6 +1756,17 @@ func reachParts(sit *Situation, jobs, surviving []string, r Reach) []reachPart {
 	for _, name := range jobs {
 		js := sit.Jobs[name]
 		part := reachPart{job: name}
+		switch feedStrengthFor(sit, jobs, name) {
+		case feedCompareOnly:
+			// Nothing of this job joins the walk: no secret, no impact.
+			parts = append(parts, part)
+			continue
+		case feedAltered:
+			// The one impact reachOver itself added, never the job's own.
+			part.impacts = []ImpactFact{alteredArtifactImpact(jobs[0])}
+			parts = append(parts, part)
+			continue
+		}
 		for _, imp := range js.Impact {
 			if countedImpact(imp) && (imp.Source != impactFromToken || kept[name]) {
 				part.impacts = append(part.impacts, imp)
@@ -1531,6 +1787,8 @@ func reachParts(sit *Situation, jobs, surviving []string, r Reach) []reachPart {
 			sort.Strings(part.secrets)
 			sort.Strings(part.scopes)
 			part.assumed = len(part.scopes) > 0 && js.Privilege.TokenWriteSource == "unknown"
+			part.secretsUnknown = js.Privilege.SecretsState == FactUnknown
+			part.tokenUnknown = part.assumed || js.Privilege.TokenWriteState == FactUnknown
 		}
 		parts = append(parts, part)
 	}
@@ -1653,6 +1911,12 @@ func applyPlatformReachRules(sit *Situation, jobs []string, kind EntryKind, r Re
 	scopes := map[string]bool{}
 	r.AllSecrets = false
 	for _, j := range jobs[1:] {
+		if feedStrengthFor(sit, jobs, j) != feedFull {
+			// Compare-only and altered-only edges already give this job
+			// none of its own privilege (reachOver); it must not come
+			// back here, read straight off the situation again.
+			continue
+		}
 		js := sit.Jobs[j]
 		if len(js.ForkPR) > 0 {
 			continue
@@ -1732,34 +1996,6 @@ func reachKinds(r Reach) []string {
 	return out
 }
 
-// baseTier is rule 6 over the reach with every fact Plumber could not
-// decide read as true (an unconfirmed impact, a default token's assumed
-// write, and secrets that could not be listed, which cause carries since
-// they have no name in r): the tier the unresolvable modifier lowers.
-// contributor is set for an entry anyone opening a pull request controls
-// (contributorEntry).
-func baseTier(r Reach, cause unresolvableCause, contributor bool) PathTier {
-	privileged := len(r.Secrets) > 0 || r.AllSecrets || len(r.TokenWrite) > 0 || cause == unresolvableSecrets
-	return tierFor(len(r.Impacts) > 0, privileged, r.Executes, contributor)
-}
-
-// tierFor is rule 6: impact present and privilege (secrets or tokenWrite)
-// -> Critical; a contributor entry with a privilege alone -> Critical
-// (anyone opening a pull request holds it); privilege without impact ->
-// High; impact without privilege also -> High (the
-// deploy/publish/write/sign itself is the damage); Executes without
-// privilege also -> High (code running in the job holds the runner); else
-// Low. Medium only comes from a modifier lowering a High path.
-func tierFor(impact, privileged, executes, contributor bool) PathTier {
-	switch {
-	case (impact || contributor) && privileged:
-		return TierCritical
-	case impact, privileged, executes:
-		return TierHigh
-	}
-	return TierLow
-}
-
 // gateFindings is every non-dismissed finding whose code role is gate, in a
 // deterministic order so gatesOnPath's amplification is order-independent.
 func gateFindings(findings []opaengine.Finding) []opaengine.Finding {
@@ -1806,19 +2042,13 @@ func reachWritesRepo(r Reach) bool {
 	})
 }
 
-// gateCanRaise is reachCanDamage without a write token that is only
-// assumed: no gate raises a path whose only privilege is the repository's
-// default token.
-func gateCanRaise(r Reach, cause unresolvableCause) bool {
-	declared := slices.ContainsFunc(partsOf(r), func(part reachPart) bool { return !part.assumed && len(part.scopes) > 0 })
-	return len(r.Secrets) > 0 || r.AllSecrets || declared || len(r.Impacts) > 0 || cause == unresolvableSecrets
-}
-
-// reachCanDamage reports whether a path's reach holds something a
-// protection guards: a secret, listed, every secret of the repository, or
-// one Plumber could not list, a write token, or an impact. A reach of code execution alone holds none.
-func reachCanDamage(r Reach, cause unresolvableCause) bool {
-	return len(r.Secrets) > 0 || r.AllSecrets || len(r.TokenWrite) > 0 || len(r.Impacts) > 0 || cause == unresolvableSecrets
+// gateCanRaise reports whether a path's reach holds something a
+// protection guards and the facts prove: a proven privilege
+// (provenPrivileged) or an impact. A reach of code execution alone holds
+// none, and neither do secrets Plumber could not list or the
+// repository's default token, whose write is assumed.
+func gateCanRaise(r Reach) bool {
+	return provenPrivileged(r) || len(r.Impacts) > 0
 }
 
 // neverAmplifyingGateCodes are gate-role codes whose risk does not depend
@@ -1873,11 +2103,11 @@ func branchGateTouchesPath(branch string, jobs []string, sit *Situation, reach R
 // through the default-branch rule, and a job-matched gate outside
 // neverAmplifyingGateCodes (ISSUE-305 and the other job-scoped gate
 // codes) amplifies every path that walks its job and can do damage
-// (reachCanDamage). No gate amplifies a path that cannot: a missing
+// (gateCanRaise). No gate amplifies a path that cannot: a missing
 // protection raises a path only when the protection would have stopped
 // something, a privilege or an impact the path reaches.
-func gatesOnPath(gates []opaengine.Finding, jobs []string, sit *Situation, anchors map[string]bool, entryKind EntryKind, reach Reach, cause unresolvableCause) []opaengine.Finding {
-	if !gateCanRaise(reach, cause) {
+func gatesOnPath(gates []opaengine.Finding, jobs []string, sit *Situation, anchors map[string]bool, entryKind EntryKind, reach Reach) []opaengine.Finding {
+	if !gateCanRaise(reach) {
 		return nil
 	}
 	onPath := map[string]bool{}

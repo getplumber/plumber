@@ -26,6 +26,13 @@ const (
 	// GateUnknown means the facts available do not determine whether an
 	// outsider can make the job run.
 	GateUnknown GateClass = "unknown"
+	// GateInsider means the party who can change what runs is a first
+	// party (the scanned repository's own owner or domain) or a sibling
+	// organisation's redirected repository: not an outsider, and not
+	// gated behind a maintainer action either, but close enough to home
+	// that a path through it holds at the Medium ceiling rather than
+	// Critical (control/trust.go's ActorFor).
+	GateInsider GateClass = "insider"
 )
 
 // Gate is the result of classifying who can trigger a job, given the
@@ -39,9 +46,13 @@ type Gate struct {
 	Unknown []string `json:"unknown,omitempty"`
 }
 
-// labelRefs, authorRefs, mergedRefs and sameRepoRefs are the fact
-// families causalReason hides one at a time to find which one a False
-// result depends on.
+// labelRefs, authorRefs, actorRefs, mergedRefs and sameRepoRefs are the
+// fact families causalReason hides one at a time to find which one a
+// False result depends on. authorRefs is the pull request's author alone,
+// the identity an outsider can never take ("author <login>"); actorRefs
+// is whoever triggered the event or wrote the comment or issue, which an
+// outsider can make a bot be (a synchronize event on their own pull
+// request that the bot updates), read "actor <login>".
 var (
 	labelRefs = []string{
 		"github.event.label.name",
@@ -49,6 +60,8 @@ var (
 	}
 	authorRefs = []string{
 		"github.event.pull_request.user.login",
+	}
+	actorRefs = []string{
 		"github.actor",
 		"github.triggering_actor",
 		"github.event.comment.user.login",
@@ -196,6 +209,7 @@ func causalReason(ifText string, facts outsiderFacts) (GateClass, string) {
 	}{
 		{labelRefs, GateMaintainerApproved, "label"},
 		{authorRefs, GateMaintainerApproved, "author"},
+		{actorRefs, GateMaintainerApproved, "actor"},
 		{mergedRefs, GateMaintainerApproved, "merged"},
 		{sameRepoRefs, GateSameRepo, "same repository"},
 	}
@@ -209,7 +223,7 @@ func causalReason(ifText string, facts outsiderFacts) (GateClass, string) {
 			// already the full reason.
 			return fam.class, fam.name
 		}
-		if literal, ok := nearestLiteral(ifText, fam.refs); ok {
+		if literal, ok := expr.ComparedLiteral(ifText, fam.refs); ok {
 			return fam.class, fam.name + " " + literal
 		}
 		return fam.class, fam.name
@@ -247,104 +261,57 @@ func appendUnique(base, add []string) []string {
 	return base
 }
 
-// nearestLiteral scans text for one of refs and, when found, the single
-// quoted string literal written nearest to it: the quoted literal a
-// condition compares that reference against is almost always right next
-// to it (`== 'literal'`, `contains(ref, 'literal')`), so this is a plain
-// text scan rather than a re-parse of the expression.
-func nearestLiteral(text string, refs []string) (string, bool) {
-	refPos := -1
-	refLen := 0
-	for _, ref := range refs {
-		if idx := strings.Index(text, ref); idx >= 0 {
-			if refPos < 0 {
-				refPos = idx
-				refLen = len(ref)
-			}
-		}
-	}
-	if refPos < 0 {
-		return "", false
-	}
-
-	literals := quotedLiterals(text)
-	if len(literals) == 0 {
-		return "", false
-	}
-
-	best := -1
-	bestDist := -1
-	for i, lit := range literals {
-		dist := distanceToRange(lit.start, lit.end, refPos, refPos+refLen)
-		if bestDist < 0 || dist < bestDist {
-			bestDist = dist
-			best = i
-		}
-	}
-	return literals[best].val, true
-}
-
-type quotedLiteral struct {
-	start, end int
-	val        string
-}
-
-// quotedLiterals finds every single-quoted substring in text, mirroring
-// how internal/expr's lexer reads a string literal (no escape handling:
-// a condition's string literals never need one).
-func quotedLiterals(text string) []quotedLiteral {
-	var out []quotedLiteral
-	i, n := 0, len(text)
-	for i < n {
-		if text[i] != '\'' {
-			i++
-			continue
-		}
-		j := i + 1
-		for j < n && text[j] != '\'' {
-			j++
-		}
-		if j < n {
-			out = append(out, quotedLiteral{start: i, end: j + 1, val: text[i+1 : j]})
-			i = j + 1
-		} else {
-			break
-		}
-	}
-	return out
-}
-
-// distanceToRange is how far [bStart, bEnd) is from [aStart, aEnd), 0
-// when they overlap or touch.
-func distanceToRange(aStart, aEnd, bStart, bEnd int) int {
-	if aEnd <= bStart {
-		return bStart - aEnd
-	}
-	if bEnd <= aStart {
-		return aStart - bEnd
-	}
-	return 0
-}
-
-// checkoutPinnedSha reports whether job's actions/checkout step pins the
-// ref to the pull request or workflow_run head, the one way a checkout
-// can run code an outsider controls regardless of how the job itself is
-// gated.
+// checkoutPinnedSha reports whether every actions/checkout step of job
+// that checks out the pull request or workflow_run head pins it to the
+// head commit SHA, and there is at least one: what runs is then the
+// commit the event named, never one pushed after it. One checkout of the
+// head by branch name makes the job not pinned.
 func checkoutPinnedSha(job Job) bool {
+	pinned := false
 	for _, a := range job.Uses {
 		if !strings.HasPrefix(a.Uses, "actions/checkout") {
 			continue
 		}
 		ref, ok := a.With["ref"].(string)
-		if !ok {
+		if !ok || !IsPRHeadRef(ref) {
 			continue
 		}
-		ref = stripRefWrapper(ref)
-		if ref == "github.event.pull_request.head.sha" || ref == "github.event.workflow_run.head_sha" {
+		if !IsPRHeadShaRef(ref) {
+			return false
+		}
+		pinned = true
+	}
+	return pinned
+}
+
+// prHeadRefMarkers are the fragments of a checkout ref that name the code
+// of a pull request or of another workflow's run: its head commit, its
+// head branch, its number (refs/pull/N/...).
+var prHeadRefMarkers = []string{
+	"github.event.pull_request.head.",
+	"github.head_ref",
+	"github.event.workflow_run.head_",
+	"github.event.number",
+	"refs/pull/",
+}
+
+// IsPRHeadRef reports whether a checkout ref (wrapped in ${{ }} or not)
+// checks out the code of a pull request or of another workflow's run.
+func IsPRHeadRef(ref string) bool {
+	for _, m := range prHeadRefMarkers {
+		if strings.Contains(ref, m) {
 			return true
 		}
 	}
 	return false
+}
+
+// IsPRHeadShaRef reports whether a checkout ref is the head commit SHA of
+// the pull request or of the workflow run: what runs is the commit the
+// event names, nothing pushed after it.
+func IsPRHeadShaRef(ref string) bool {
+	ref = stripRefWrapper(ref)
+	return ref == "github.event.pull_request.head.sha" || ref == "github.event.workflow_run.head_sha"
 }
 
 // stripRefWrapper trims whitespace and, when present, the "${{ ... }}"

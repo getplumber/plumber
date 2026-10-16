@@ -630,9 +630,13 @@ func TestFindingsToItemsPopulatesRoleOnPathPerPathForABranchGate(t *testing.T) {
 		DefaultBranch: "main",
 		Jobs:          map[string]control.JobSituation{},
 	}
-	sit.Jobs["build"] = control.JobSituation{
+	// The push entry forms a path only when its job proves an
+	// escalation: build holds a deploy secret.
+	build := control.JobSituation{
 		Push: []control.EntryFact{{Kind: control.EntryUnprotectedPush, State: "proven", Evidence: "push: branches: [main]", Subject: "main"}},
 	}
+	build.Privilege.Secrets = []string{"DEPLOY_KEY"}
+	sit.Jobs["build"] = build
 	release := control.JobSituation{}
 	release.Privilege.TokenWrite = []string{"contents"}
 	sit.Jobs["release"] = release

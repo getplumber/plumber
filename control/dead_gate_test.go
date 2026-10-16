@@ -20,13 +20,13 @@ func tokenJobSituation(source string) *Situation {
 
 // A missing branch protection raises a path only when the path really
 // writes the repository: a declared contents write does, the repository's
-// default token, assumed, does not.
+// default token, assumed, does not, and adds no tier either.
 func TestABranchGateNeedsARealRepositoryWrite(t *testing.T) {
 	findings := []opaengine.Finding{
 		finding("ISSUE-715", "links/check", map[string]any{"uses": "lycheeverse/lychee-action@v1.4.1"}),
 		finding(string(CodeBranchUnprotected), "", map[string]any{"branchName": "main"}),
 	}
-	for source, want := range map[string]PathTier{"declared": TierCritical, "unknown": TierHigh} {
+	for source, want := range map[string]PathTier{"declared": TierCritical, "unknown": TierLow} {
 		var dep *AttackPath
 		paths := assemblePaths(findings, tokenJobSituation(source))
 		for i := range paths {
@@ -51,8 +51,8 @@ func TestAJobGateNeverRaisesOnAnAssumedTokenAlone(t *testing.T) {
 		finding("ISSUE-305", "links/check", nil),
 	}
 	paths := assemblePaths(findings, tokenJobSituation("unknown"))
-	if len(paths) != 1 || paths[0].Tier != TierHigh || len(paths[0].GateHashes) != 0 {
-		t.Errorf("want one High path no gate raised, got %+v", paths)
+	if len(paths) != 1 || paths[0].Tier != TierLow || len(paths[0].GateHashes) != 0 {
+		t.Errorf("want one Low path no gate raised, got %+v", paths)
 	}
 }
 

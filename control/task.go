@@ -381,6 +381,9 @@ func attachSituation(l *logrus.Entry, conf *configuration.Configuration, provide
 	defer cancel()
 	sit, err := EvaluateSituation(ctx, pipeline, buildEngineConfig(controls, conf.GitlabURL))
 	result.Situation = sit
+	// A finding on a job no outsider can make run anchors no path: it is
+	// priced as an individual finding, downgraded, with the note.
+	MarkGatedFindings(result.Findings, sit)
 	if err != nil {
 		l.WithError(err).Warn("situation facts unavailable")
 		result.Warnings = append(result.Warnings, "situation facts unavailable: "+err.Error())

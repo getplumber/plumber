@@ -56,7 +56,45 @@ facts(group) := {
 	"callers": sort([c | some c in {caller_fact(job, c) | some job in group; some c in object.get(job, "callers", [])}]),
 	"cacheScopes": sort({sc | some job in group; some sc in save_scopes(job)}),
 	"restoresCache": count({job | some job in group; restores_cache(job)}) > 0,
+	"uploads": any_upload(group),
+	"gate": merged_gate(group),
 }
+
+# any_upload: some job sharing the name produces an artifact (an
+# actions/upload-artifact or actions/upload-pages-artifact step on GitHub,
+# an artifacts: block on GitLab): code on its runner can poison what a
+# later run downloads.
+any_upload(group) if {
+	some job in group
+	some a in object.get(job, "artifacts", [])
+	a.mode == "produce"
+} else := false
+
+# _gate_ranks orders the gate classes ir.ClassifyGates stores on a job
+# (job.gate) from the outsider's side: the lower, the easier to get in.
+_gate_ranks := {"outsider": 0, "unknown": 1, "maintainer_approved": 2, "same_repo": 3}
+
+# merged_gate: the weakest gate among the jobs sharing the name (an
+# outsider let in by one of them is let in), the first in input order on
+# a tie; null when none of them carries one (no privileged trigger, or
+# GitLab). A job carrying a privileged trigger but no gate was never
+# classified: it counts as an outsider's.
+merged_gate(group) := g if {
+	gates := [job_gate(job) | some job in group; job_gated(job)]
+	count(gates) > 0
+	lowest := min({object.get(_gate_ranks, x.class, 0) | some x in gates})
+	g := [x | some x in gates; object.get(_gate_ranks, x.class, 0) == lowest][0]
+} else := null
+
+# job_gated: the job carries a gate, or a privileged trigger that should
+# have one.
+job_gated(job) if object.get(job, "gate", null) != null
+
+job_gated(job) if count(privileged_triggers_of(job)) > 0
+
+# job_gate: the job's own gate, an outsider's when it has none.
+job_gate(job) := job.gate if object.get(job, "gate", null) != null
+else := {"class": "outsider"}
 
 # every_own_image: every job sharing the name runs in a container, and
 # every image it resolves to (through its matrix, or each caller of a
@@ -132,6 +170,7 @@ cache_fact(c) := {
 	"prefix": object.get(c, "prefix", false),
 	"uses": object.get(c, "uses", ""),
 	"line": object.get(c, "line", 0),
+	"parts": object.get(c, "parts", {}),
 }
 
 # cache_family: the name a reader recognizes for the cache (the
@@ -273,15 +312,49 @@ _scope_reaches(saver, restorer) if {
 origin(job) := {"file": object.get(job, "originFile", ""), "line": object.get(job, "originLine", 0)}
 
 entry(kind, state, evidence, subject, job) := object.union(
-	{"kind": kind, "state": state, "evidence": evidence, "subject": subject},
+	{"kind": kind, "state": state, "evidence": evidence, "subject": subject, "cacheScopes": sort(entry_cache_scope(kind, job))},
 	origin(job),
 )
 
+# _entry_events: the event of the run that proves an entry of this kind,
+# for the kinds whose proving run is one event whatever other trigger the
+# job also carries: a fork pull request, or a base-context trigger (the
+# caller's secrets and write token).
+_entry_events := {
+	"fork_pr": "pull_request",
+	"pr_target": "pull_request_target",
+	"issue_comment": "issue_comment",
+	"workflow_run": "workflow_run",
+	"pull_request_review": "pull_request_review",
+	"pull_request_review_comment": "pull_request_review_comment",
+	"discussion": "discussion",
+	"issues": "issues",
+}
+
+# entry_cache_scope: the scopes the run that executes an entry of this
+# kind saves its cache under. A kind proven by one event (_entry_events)
+# saves under that event's scope (trigger_cache_scopes: a fork pull
+# request or a review event in the pull request's merge ref, a
+# base-context event in the default branch's), and only when GitHub lets
+# that event save (saves_under: a low-trust event on the default branch
+# reads only, unless the job's cache-mode grants write). Every other entry
+# (mutable_dependency, unprotected_push, and any kind this policy does not
+# special-case) takes the job's own save_scopes, since nothing about the
+# entry itself narrows which of the job's runs it holds in.
+entry_cache_scope(kind, job) := {sc |
+	t := _entry_events[kind]
+	saves_under(job, t)
+	some sc in trigger_cache_scopes(job, t)
+} if kind in object.keys(_entry_events)
+else := save_scopes(job)
+
 # fork_pr: GitHub pull_request without a same-repo guard; GitLab MR pipelines.
-fork_pr(job) := {entry("fork_pr", "proven", "on: pull_request", "pull_request", job)} if {
+# A fork pull request run has no gate to evaluate, so its entry is always
+# an outsider's (actor).
+fork_pr(job) := {object.union(entry("fork_pr", "proven", "on: pull_request", "pull_request", job), {"actor": "outsider"})} if {
 	"pull_request" in object.get(job, "triggers", [])
 	not same_repo_guard(job)
-} else := {entry("fork_pr", "proven", "rules: merge_request_event", "merge_request_event", job)} if {
+} else := {object.union(entry("fork_pr", "proven", "rules: merge_request_event", "merge_request_event", job), {"actor": "outsider"})} if {
 	input.pipeline.provider == "gitlab"
 	merge_request_job(job)
 	not forks_forbidden
@@ -867,6 +940,7 @@ privilege(job) := {
 	"tokenWriteSource": token_write_source(job),
 	"tokenWriteState": token_write_state(job),
 	"persistedCredentials": persisted_credentials(job),
+	"secretFirstLine": secret_first_line(job),
 	"environment": {
 		"name": object.get(job, "environment", ""),
 		"protected": environment_protected(job),
@@ -894,6 +968,7 @@ merged_privilege(group) := {
 	"tokenWriteSource": merged_token_write_source(group),
 	"tokenWriteState": merged_token_write_state(group),
 	"persistedCredentials": merged_persisted_credentials(group),
+	"secretFirstLine": merged_secret_first_line(group),
 	"environment": privilege(environment_job(group)).environment,
 }
 
@@ -928,6 +1003,10 @@ merged_token_write_source(group) := "declared" if {
 
 merged_token_write_state(group) := "proven" if {
 	merged_token_write_source(group) in {"declared", "log", "effect"}
+} else := "proven" if {
+	merged_token_write_source(group) == "none"
+	some job in group
+	token_write_state(job) == "proven"
 } else := "unknown"
 
 merged_persisted_credentials(group) := "proven" if {
@@ -942,10 +1021,10 @@ environment_job(group) := group[i] if {
 }
 
 # secrets: GitHub names every distinct X in ${{ secrets.X }} across scripts,
-# step with values and job variables/env values (GITHUB_TOKEN excluded: it
-# is the token, handled by tokenWrite). GitLab names the settings variables
-# in scope of the job. Total by construction: the final else covers every
-# provider this module does not special-case.
+# step with values and job variables/env values (GITHUB_TOKEN excluded,
+# any case: it is the token, handled by tokenWrite). GitLab names the
+# settings variables in scope of the job. Total by construction: the final
+# else covers every provider this module does not special-case.
 #
 # Two passes, not one regex over the whole text: a single greedy
 # `\$\{\{[^}]*\bsecrets\.(...)` scan backtracks to the LAST secrets.X
@@ -963,7 +1042,7 @@ secrets(job) := sort({name |
 	some expr in github_expressions(job)
 	some m in regex.find_all_string_submatch_n(secret_member_pattern, expr, -1)
 	name := concat("", [m[1], m[2]])
-	name != "GITHUB_TOKEN"
+	upper(name) != "GITHUB_TOKEN"
 }) if {
 	input.pipeline.provider == "github"
 } else := sort({v.name |
@@ -974,6 +1053,56 @@ secrets(job) := sort({name |
 }) if {
 	input.pipeline.provider == "gitlab"
 } else := []
+
+# secret_first_line: the job's own Job.SecretFirstLine, passed through
+# unchanged (the collector already excludes GITHUB_TOKEN in any case and
+# already resolves a workflow-level env: reference to line 0). GitHub
+# only; empty for every other provider, so a GitLab job's merge has
+# nothing to combine.
+secret_first_line(job) := object.get(job, "secretFirstLine", {}) if {
+	input.pipeline.provider == "github"
+} else := {}
+
+# merged_secret_first_line: a line recorded against one workflow file is
+# not comparable to a line recorded against another, so a group spanning
+# more than one file can never trust any of its lines: the single-job
+# case (no merge at all) passes its map through; a multi-job group whose
+# every job was collected from the same file, and whose jobs never
+# disagree on a name they both record, merges the union of their maps
+# (same_origin_file, secret_first_lines_agree); every other group (a
+# different file, or a real disagreement) carries no line for the name
+# the step-order check reads a kept reach, never a line that could drop
+# one wrongly.
+merged_secret_first_line(group) := secret_first_line(group[0]) if {
+	count(group) == 1
+} else := {name: line |
+	some job in group
+	some name, line in secret_first_line(job)
+} if {
+	same_origin_file(group)
+	secret_first_lines_agree(group)
+} else := {}
+
+# same_origin_file: every job of the group was collected from the same
+# workflow file (Job.OriginFile), so their textual line numbers are
+# positions in the same source and can be compared at all.
+same_origin_file(group) if {
+	count({object.get(job, "originFile", "") | some job in group}) == 1
+}
+
+# secret_first_lines_agree: no job of the group records a name at a line
+# some other job of the group also records, but at a different one. A
+# name only part of the group records is not a disagreement (nothing to
+# compare it against), and agrees trivially.
+secret_first_lines_agree(group) if {
+	every job in group {
+		every name, line in secret_first_line(job) {
+			every other in group {
+				object.get(secret_first_line(other), name, line) == line
+			}
+		}
+	}
+}
 
 # ------------------------------------------------------- reusable workflows
 
@@ -1004,12 +1133,12 @@ caller_secrets(job, c) := {n | some n in secrets(job)} if {
 }
 
 # expression_secrets: the secrets.X names in a text, GITHUB_TOKEN left
-# out (it is the job token).
+# out in any case (it is the job token).
 expression_secrets(text) := {name |
 	some expr in regex.find_n(`\$\{\{[^}]*\}\}`, text, -1)
 	some m in regex.find_all_string_submatch_n(secret_member_pattern, expr, -1)
 	name := concat("", [m[1], m[2]])
-	name != "GITHUB_TOKEN"
+	upper(name) != "GITHUB_TOKEN"
 }
 
 # caller_fact: one call of a called job, what it gives the job: the token
@@ -1345,9 +1474,16 @@ token_dependent_state(job) := "unknown" if {
 
 # token_write_state: "proven" once tokenWriteSource is a real
 # declaration or a read repository default (declared, log, effect),
-# "unknown" when it is unresolved (unknown) or absent (none).
+# "unknown" when it is unresolved (unknown) or absent (none). On GitLab a
+# contents write rests on a positive signal (gitlab_contents_write: a
+# protected CI_PUSH_TOKEN reaching the job, or a script running git
+# push), so it is proven too; its source stays "none", GitLab declaring
+# no token scope.
 token_write_state(job) := "proven" if {
 	token_write_source(job) in {"declared", "log", "effect"}
+} else := "proven" if {
+	input.pipeline.provider == "gitlab"
+	gitlab_contents_write(job)
 } else := "unknown"
 
 persisted_credentials(job) := "proven" if {
@@ -1822,8 +1958,9 @@ signing_state(job) := "proven" if {
 
 # feeds: names of jobs that consume an artifact this job produces, plus
 # jobs that restore a cache this job saves, plus jobs that read this job's
-# outputs through needs (feeds_by "output"). Sorted so the output is deterministic regardless of job
-# iteration order.
+# outputs through needs (feeds_by "output", "output_compared" or
+# "output_executed"). Sorted so the output is deterministic regardless of
+# job iteration order.
 feeds(job) := sort({other.name |
 	some other in input.pipeline.jobs
 	other.name != job.name
@@ -1831,10 +1968,16 @@ feeds(job) := sort({other.name |
 })
 
 # feeds_via: per job feeds names, the kinds of edge that link the two,
-# sorted: "artifact" (an artifact this job uploads, the other downloads),
-# "cache" (a cache this job saves, the other restores), "output" (the other
-# reads this job's outputs through needs, see feeds_by below). Jobs
-# sharing a name merge their kinds.
+# sorted: "artifact_executed" or "artifact_altered" (an artifact this job
+# uploads, the other downloads and either runs something from or only
+# moves, releases or publishes), "cache" (a cache this job saves, the
+# other restores), "output" (GitLab: a needs dependency alone, which also
+# downloads the needed job's artifacts there), "output_compared" (GitHub:
+# the other reads this job's outputs only inside a comparison its runner
+# evaluates itself, crossing no code) or "output_executed" (GitHub: that
+# read reaches a script, a with: value, an env value, an image or a
+# reusable call's input, see feeds_by below). Jobs sharing a name merge
+# their kinds.
 feeds_via(job) := {name: sort({kind |
 	some other in input.pipeline.jobs
 	other.name == name
@@ -1846,7 +1989,10 @@ feeds_via(job) := {name: sort({kind |
 	some name in feeds(job)
 }
 
-feed_kinds := {"artifact", "cache", "output"}
+feed_kinds := {
+	"artifact", "artifact_executed", "artifact_altered",
+	"cache", "output", "output_compared", "output_executed",
+}
 
 # A dead or inert job (Job.Dead, Job.Inert) never runs: it hands nothing
 # over and takes nothing in, so it is no edge either way.
@@ -1858,20 +2004,33 @@ feeds_job(job, other) if {
 }
 
 # The output edge: on GitHub, other lists job in needs and reads its job
-# outputs (needs.<id>.outputs.*) somewhere they reach the run: a script, a
-# with: value, an env value, an if:, its container image or a reusable
-# workflow call's with: input. A bare needs: only orders the two jobs and
-# hands nothing over. On GitLab, needs: also downloads the needed job's
-# artifacts, so the dependency alone stays an edge.
+# outputs (needs.<id>.outputs.*) somewhere they reach the run. A read
+# inside only a comparison the runner evaluates itself (the job's or a
+# step's if:) lets no code cross: that is output_compared. A read that
+# reaches a script, a with: value, an env value, its container image or a
+# reusable workflow call's with: input runs the value: that is
+# output_executed, and wins over output_compared when other does both (see
+# feed_kinds and control/paths.go's reachOver, which gives the two kinds
+# different reach). A bare needs: only orders the two jobs and hands
+# nothing over. On GitLab, needs: also downloads the needed job's
+# artifacts, so the dependency alone stays an edge, kept as the one
+# "output" kind.
 feeds_by(job, other, "output") if {
 	input.pipeline.provider != "github"
 	job.name in object.get(other, "needs", [])
 }
 
-feeds_by(job, other, "output") if {
+feeds_by(job, other, "output_executed") if {
 	input.pipeline.provider == "github"
 	job.name in object.get(other, "needs", [])
-	reads_outputs_of(other, job_id(job.name))
+	reads_outputs_of(output_executed_texts(other), job_id(job.name))
+}
+
+feeds_by(job, other, "output_compared") if {
+	input.pipeline.provider == "github"
+	job.name in object.get(other, "needs", [])
+	not reads_outputs_of(output_executed_texts(other), job_id(job.name))
+	reads_outputs_of(output_compared_texts(other), job_id(job.name))
 }
 
 # job_id: the job's own id, the name without its workflow namespace, the
@@ -1881,15 +2040,28 @@ job_id(name) := id if {
 	id := parts[count(parts) - 1]
 }
 
-reads_outputs_of(other, id) if {
+reads_outputs_of(texts, id) if {
 	q := regex_quote(id)
 	pattern := sprintf(`\bneeds\.%s\.outputs\b|\bneeds\[\s*['"]%s['"]\s*\]\.outputs\b`, [q, q])
-	some text in output_reading_texts(other)
+	some text in texts
 	regex.match(pattern, text)
 }
 
-output_reading_texts(job) := array.concat(
-	array.concat(job_texts_and_env(job), job_conditions(job)),
+# output_compared_texts: the texts the runner itself evaluates before any
+# step of the job runs, never handed to a shell or an action: the job's
+# own if: and every step if: (job_conditions), and each run step's own
+# if: carried separately for the cache-poisoning release-path resolution
+# (scriptIfs). A needs output read only here crosses as a yes or no,
+# never as a value.
+output_compared_texts(job) := array.concat(job_conditions(job), object.get(job, "scriptIfs", []))
+
+# output_executed_texts: the texts a needs output read here is run as a
+# value, never merely compared: the run scripts and the step with: values
+# (job_texts), the job's own env (variables, GitHub's env: merged in by
+# the collector), its container image, and a reusable workflow call's
+# with: inputs.
+output_executed_texts(job) := array.concat(
+	array.concat(job_texts(job), obj_values(object.get(job, "variables", {}))),
 	array.concat(image_texts(job), [v | some _, v in object.get(job, "reusableWith", {}); is_string(v)]),
 )
 
@@ -1902,13 +2074,216 @@ image_texts(job) := [concat(":", [object.get(img, "name", ""), object.get(img, "
 # escaped, so a job id is matched literally.
 regex_quote(s) := regex.replace(s, `([.\\+*?()|\[\]{}^$])`, `\$1`)
 
+# The artifact edge: on GitLab, needs: downloads the needed job's
+# artifacts (see the output edge above), and so does an explicit
+# dependencies:/artifacts: pair, read as the one untyped "artifact" kind,
+# this task never touching GitLab's own model. On GitHub the edge splits
+# by what the consumer does with the download: artifact_executed when it
+# runs something from it (a script or a with: value naming the download,
+# or, the download's own path not being tracked, any script segment that
+# is not itself a recognized upload/release/publish command:
+# conservative, crossing with the full reach is the safe error),
+# artifact_altered when the consumer only re-uploads, releases or
+# publishes it and runs nothing at all.
 feeds_by(job, other, "artifact") if {
+	input.pipeline.provider != "github"
 	some produced in object.get(job, "artifacts", [])
 	produced.mode == "produce"
 	some consumed in object.get(other, "artifacts", [])
 	consumed.mode == "consume"
 	artifact_matches(produced, consumed)
 	same_workflow_if_github(job, other, consumed)
+}
+
+feeds_by(job, other, "artifact_executed") if {
+	input.pipeline.provider == "github"
+	some produced in object.get(job, "artifacts", [])
+	produced.mode == "produce"
+	some consumed in object.get(other, "artifacts", [])
+	consumed.mode == "consume"
+	artifact_matches(produced, consumed)
+	same_workflow_if_github(job, other, consumed)
+	not artifact_consumption_altered_only(other)
+}
+
+feeds_by(job, other, "artifact_altered") if {
+	input.pipeline.provider == "github"
+	some produced in object.get(job, "artifacts", [])
+	produced.mode == "produce"
+	some consumed in object.get(other, "artifacts", [])
+	consumed.mode == "consume"
+	artifact_matches(produced, consumed)
+	same_workflow_if_github(job, other, consumed)
+	artifact_consumption_altered_only(other)
+}
+
+# artifact_consumption_altered_only: other carries a known
+# upload/release/publish signal (an action or a command segment that only
+# moves, lists, hashes, echoes or ships an artifact onward) and every
+# command segment of its own scripts is itself one of those recognized
+# commands: a chained command ("npm ci && npm publish") is read segment
+# by segment, never as one string a single recognized verb anywhere in
+# it can launder. Read job-wide rather than against the one downloaded
+# path: ArtifactRef never carries a download's destination path (the
+# GitHub collector's download-artifact branch sets none), so a per-path
+# match is not available here, and one unrecognized segment already
+# makes the whole edge artifact_executed.
+artifact_consumption_altered_only(other) if {
+	artifact_alter_signal(other)
+	not artifact_has_non_alter_segment(other)
+}
+
+artifact_alter_signal(other) if {
+	some action in object.get(other, "uses", [])
+	artifact_alter_action(action)
+}
+
+artifact_alter_signal(other) if {
+	some line in object.get(other, "scripts", [])
+	some l in split(line, "\n")
+	some seg in artifact_command_segments(_command_text(l))
+	artifact_alter_only_command(seg)
+}
+
+artifact_alter_action(action) if {
+	some name in artifact_alter_actions
+	startswith(lower(action.uses), concat("", [lower(name), "@"]))
+}
+
+# artifact_alter_actions: actions.uses prefixes that only move, release or
+# publish an artifact the job downloaded, release_actions (already
+# defined above, for signs_or_releases) plus the official upload action
+# itself (a re-upload, never an execution).
+artifact_alter_actions := release_actions | {"actions/upload-artifact"}
+
+# artifact_consumption_structural_actions: actions that are scaffolding
+# for the consumption itself, never a sign other runs anything from the
+# download: the checkout almost every job carries, and the artifact
+# actions themselves (the download this edge is already about, and the
+# upload/Pages actions that double as a produce step elsewhere). They
+# never disqualify an alter-only read on their own, but they never grant
+# one either: artifact_alter_signal still needs a real alter action or
+# script to fire.
+artifact_consumption_structural_actions := {
+	"actions/checkout", "actions/download-artifact",
+	"actions/upload-artifact", "actions/upload-pages-artifact", "actions/deploy-pages",
+}
+
+artifact_consumption_structural_action(action) if {
+	some name in artifact_consumption_structural_actions
+	startswith(lower(action.uses), concat("", [lower(name), "@"]))
+}
+
+# artifact_command_segments: a script line (after _command_text strips
+# its quoted substrings and comment) split on the shell operators that
+# chain one command into the next (&&, ||, ;, a pipe), each trimmed,
+# empty segments (a trailing separator, a blank line) dropped. A command
+# piped into another ("cat dist/manifest | sha256sum") is still two
+# segments, both checked.
+artifact_command_segments(text) := [s |
+	some raw in regex.split(`&&|\|\||[;|]`, text)
+	s := trim_space(raw)
+	s != ""
+]
+
+# artifact_command_body: a command segment with any leading "sudo" and
+# any leading NAME=value environment assignments stripped, so the
+# anchored patterns below match the command itself whatever a caller
+# puts in front of it.
+artifact_command_body(seg) := body if {
+	once := regex.replace(seg, `^sudo\s+`, "")
+	body := regex.replace(once, `^([A-Za-z_][A-Za-z0-9_]*=\S*\s+)+`, "")
+}
+
+# artifact_segment_executing_patterns: a construct that runs something
+# before, or regardless of, whatever verb opens the segment: command
+# substitution ($(...) or backticks), process substitution (<(...) or
+# >(...)), an eval, a source (by name or its leading-dot shorthand), or
+# an interpreter/xargs/exec/env invocation anywhere in the text. A
+# segment carrying one of these is never read as alter-only, however
+# closely the rest of it matches a recognized verb: "echo $(./evil.sh)"
+# matches "^echo\b" on its own, but the substitution runs the artifact's
+# own script first.
+artifact_segment_executing_patterns := [
+	`\$\(`,
+	"`",
+	`<\(`,
+	`>\(`,
+	`\beval\b`,
+	`\bsource\b`,
+	`^\.\s`,
+	`\bxargs\b`,
+	`\bsh\b`,
+	`\bbash\b`,
+	`\bpython[0-9.]*\b`,
+	`\bnode\b`,
+	`\bexec\b`,
+	`\benv\b`,
+]
+
+artifact_segment_executes(seg) if {
+	some pat in artifact_segment_executing_patterns
+	regex.match(pat, seg)
+}
+
+# artifact_alter_command_patterns: commands that only move, release,
+# publish, list or hash an artifact, or a harmless shell preamble line
+# that commonly precedes one (set -e and its variants, a plain export
+# assignment, cd, mkdir -p, pwd), never running anything from inside the
+# download, each anchored at the start of a command segment
+# (artifact_command_body already stripped any sudo/env prefix) so a verb
+# elsewhere in a longer word never matches ("lsof" is not "ls").
+# artifact_segment_executes is checked ahead of every one of these (see
+# artifact_alter_only_command): a substitution in an exported value still
+# executes, whatever the leading keyword reads as.
+artifact_alter_command_patterns := [
+	`^gh\s+release\s+(create|upload)\b`,
+	`^goreleaser\s+release\b`,
+	`^twine\s+upload\b`,
+	`^npm\s+publish\b`,
+	`^cargo\s+publish\b`,
+	`^gem\s+push\b`,
+	`^aws\s+s3\s+(cp|sync)\b`,
+	`^gsutil\s+(cp|rsync)\b`,
+	`^az\s+storage\s+blob\s+upload\b`,
+	`^cp\b`,
+	`^mv\b`,
+	`^ls\b`,
+	`^echo\b`,
+	`^sha256sum\b`,
+	`^shasum\b`,
+	`^cat\b`,
+	`^set\s+[-+]\S+\b`,
+	`^export\s+[A-Za-z_][A-Za-z0-9_]*=`,
+	`^cd\s+\S+`,
+	`^mkdir\s+-p\b`,
+	`^pwd\b`,
+]
+
+artifact_alter_only_command(seg) if {
+	not artifact_segment_executes(seg)
+	some pat in artifact_alter_command_patterns
+	regex.match(pat, artifact_command_body(seg))
+}
+
+# artifact_has_non_alter_segment: some command segment of other, in any
+# script line, is not itself one of the recognized upload/release/list/
+# hash commands, so whatever it runs is read, conservatively, as running
+# something from the download; or other calls an action that is neither
+# a recognized alter action nor mere scaffolding (checkout, the artifact
+# actions themselves) and so can run anything, a local composite or
+# Docker action (`uses: ./`) included.
+artifact_has_non_alter_segment(other) if {
+	some line in object.get(other, "scripts", [])
+	some l in split(line, "\n")
+	some seg in artifact_command_segments(_command_text(l))
+	not artifact_alter_only_command(seg)
+}
+
+artifact_has_non_alter_segment(other) if {
+	some action in object.get(other, "uses", [])
+	not artifact_alter_action(action)
+	not artifact_consumption_structural_action(action)
 }
 
 # A download with no name and no pattern takes every artifact of the run.

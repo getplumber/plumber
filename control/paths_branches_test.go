@@ -73,7 +73,7 @@ func TestOneEntryIntoSeveralJobsIsOnePath(t *testing.T) {
 	want := []row{
 		{"build", []string{"build"}, TierHigh, PathProven, []string{"push_entry_cap"}, 0, 1},
 		{"scan", []string{"scan"}, TierHigh, PathProven, nil, 1, 0},
-		{"lint", []string{"lint"}, TierHigh, PathProven, nil, 0, 0},
+		{"lint", []string{"lint"}, TierLow, PathProven, nil, 0, 0},
 	}
 	for i, w := range want {
 		b := p.Branches[i]
@@ -258,7 +258,7 @@ func TestAttackPathJSONCarriesItsBranches(t *testing.T) {
 // a dependency entering a job that holds a secret and the job granted
 // cache write makes the latter a writer.
 func TestAnyEntryJobOfAPathCanWriteTheCache(t *testing.T) {
-	holder := JobSituation{}
+	holder := JobSituation{RefTriggers: []string{"pull_request"}, CacheScopes: []string{"pull_request"}}
 	holder.Privilege.Secrets = []string{"AWS_KEY"}
 	holder.Privilege.SecretsState = "proven"
 	sit := cacheSituation(map[string]JobSituation{"ci/a-holder": holder})

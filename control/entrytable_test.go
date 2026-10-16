@@ -265,3 +265,51 @@ func TestTheGitLabSourceCodesReadAsTheirDependency(t *testing.T) {
 		}
 	}
 }
+
+// Every code whose entry a trigger's gate can hold (a privileged checkout,
+// an untrusted expression) reads the gate on each of its lines once a
+// maintainer has to let the run go: the Entry nature names the gate, the
+// So line who it lets in, and the fix keeps it; with no gate, none of the
+// three changes.
+func TestEveryGateableEntryCodeReadsTheGate(t *testing.T) {
+	for code, entry := range entryCodes {
+		info := LookupCode(code)
+		if info == nil || (info.EntryKind != EntryPRTarget && info.EntryKind != EntryUntrustedExpression) {
+			continue
+		}
+		open := wordingPath(info.EntryKind, "github.event.pull_request.head.sha", code)
+		gated := open
+		gated.Entry.Actor, gated.Entry.Gate = "maintainer_approved", "label safe to test"
+		if got, want := entryNature(gated), entryNature(open)+", gated by the label `safe to test`"; got != want {
+			t.Errorf("%s: nature %q, want %q", code, got, want)
+		}
+		if got := soActor(gated, "action"); got != "as anyone whose pull request a maintainer labels `safe to test`" {
+			t.Errorf("%s: actor %q", code, got)
+		}
+		if got := soActor(open, "action"); strings.Contains(got, "maintainer") {
+			t.Errorf("%s: ungated actor %q", code, got)
+		}
+		if got, want := pathFixOf(gated), entry.fix+", and keep the gate"; got != want {
+			t.Errorf("%s: fix %q, want %q", code, got, want)
+		}
+	}
+}
+
+// The gate's reason reads the same way on the Entry nature and the So
+// line, per kind of gate.
+func TestGateWordsPerReason(t *testing.T) {
+	for _, tc := range []struct{ reason, nature, actor string }{
+		{"label tests:run-cloud", ", gated by the label `tests:run-cloud`", "as anyone whose pull request a maintainer labels `tests:run-cloud`"},
+		{"author octocat", ", author `octocat` only", "as `octocat`, and only `octocat`"},
+		{"actor dependabot[bot]", ", actor `dependabot[bot]` only", "as `dependabot[bot]`, and only `dependabot[bot]`"},
+		{"environment frogbot requires reviewers", ", approved in environment `frogbot`", "as anyone whose deployment a maintainer approves in `frogbot`"},
+		{"merged", ", after merge only", "as anyone whose pull request a maintainer merges"},
+		{"types labeled", ", on labeled only", "as anyone a maintainer lets in"},
+		{"condition", ", gated by its condition", "as anyone a maintainer lets in"},
+	} {
+		nature, actor := gateWords(tc.reason, "pull request")
+		if nature != tc.nature || actor != tc.actor {
+			t.Errorf("%s: (%q, %q), want (%q, %q)", tc.reason, nature, actor, tc.nature, tc.actor)
+		}
+	}
+}

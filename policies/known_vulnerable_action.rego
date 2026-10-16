@@ -35,6 +35,7 @@ deny contains finding if {
 		"job":        job.name,
 		"uses":       action.uses,
 		"advisories": action.metadata.advisories,
+		"advisorySeverities": object.get(action.metadata, "advisorySeverities", {}),
 		"line":       object.get(action, "line", 0),
 	}
 }

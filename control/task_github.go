@@ -524,6 +524,9 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 	// MarkInert finds cannot run at all must read as inert everywhere
 	// downstream, policy findings and the attack-path situation alike.
 	ir.MarkInert(pipeline)
+	// Who can make each privileged job run (ir.Job.Gate), read by the
+	// policies and the situation alike, once the environments are known.
+	ir.ClassifyGates(pipeline)
 
 	if conf.ProgressFunc != nil {
 		total := githubpkg.TotalProgressStepsForPipeline(pipeline)
@@ -658,6 +661,9 @@ func RunGitHubAnalysisRemote(conf *configuration.Configuration, owner, repo, ref
 	// Same ordering as the local path: after every enrichment lane, before
 	// the situation facts are evaluated below.
 	ir.MarkInert(pipeline)
+	// Who can make each privileged job run (ir.Job.Gate), read by the
+	// policies and the situation alike, once the environments are known.
+	ir.ClassifyGates(pipeline)
 
 	if conf.ProgressFunc != nil {
 		total := githubpkg.TotalProgressStepsForPipeline(pipeline)

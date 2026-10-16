@@ -40,6 +40,10 @@ _signals contains sig if {
 		"job":  job.name,
 		"uses": action.uses,
 		"line": object.get(action, "line", 0),
+		"guard": object.get(mre, "downloadGuard", ""),
+		"verified": object.get(mre, "downloadVerified", false),
+		"runsOn": object.get(job, "runsOn", []),
+		"runsOnExpression": object.get(job, "runsOnExpression", false),
 	}
 }
 
@@ -52,6 +56,10 @@ _signals contains sig if {
 		"job":  "",
 		"uses": "",
 		"line": 0,
+		"guard": object.get(mre, "downloadGuard", ""),
+		"verified": object.get(mre, "downloadVerified", false),
+		"runsOn": [],
+		"runsOnExpression": false,
 	}
 }
 
@@ -68,10 +76,47 @@ deny contains finding if {
 	}
 }
 
+# _guard_fields and _verified_fields are additive: a signal with no guard
+# and no verification carries neither key, so an ISSUE-714 finding keeps
+# its original shape except where one of the two trust signals actually
+# applies (trust follows the party that can change the code, not the
+# party the workflow merely names).
+default _guard_fields(_) := {}
+
+_guard_fields(sig) := {
+	"downloadGuard": sig.guard,
+	"runsOn": sig.runsOn,
+	"runsOnExpression": sig.runsOnExpression,
+} if sig.guard != ""
+
+default _verified_fields(_) := {}
+
+_verified_fields(sig) := {"downloadVerified": true} if sig.verified
+
+# _url_fields carries the fetch's own URL, for the download-host actor
+# (control/trust.go's "if <host> is compromised") to read the host
+# off. sig.url is often the whole matched command snippet, not a bare
+# URL (a pipe-to-shell hit's own url is "curl -sSf https://host/x |
+# sh"), so the first http(s):// substring is extracted out of it here
+# rather than carried through as-is: urlHost's own scheme check would
+# otherwise never match a command snippet, and the generic dependency
+# wording would come back for exactly the fetches this actor exists
+# to name.
+_fetch_url_pattern := `(?i)https?://[^\s|;&'")]+`
+
+default _url_fields(_) := {}
+
+_url_fields(sig) := {"fetchUrl": url} if {
+	sig.url != ""
+	matches := regex.find_n(_fetch_url_pattern, sig.url, 1)
+	count(matches) > 0
+	url := matches[0]
+}
+
 deny contains finding if {
 	some sig in _signals
 	sig.tier == "exec"
-	finding := {
+	base := {
 		"code":     "ISSUE-714",
 		"severity": "high",
 		"message":  sprintf("%s fetches and runs remote code from a mutable ref with no checksum (`%s`) — a SHA pin on the action does not reach this; a clean result means \"no known pattern seen\", not \"safe\"", [sig.who, sig.url]),
@@ -79,6 +124,9 @@ deny contains finding if {
 		"uses":     sig.uses,
 		"line":     sig.line,
 	}
+	with_guard := object.union(base, _guard_fields(sig))
+	with_verified := object.union(with_guard, _verified_fields(sig))
+	finding := object.union(with_verified, _url_fields(sig))
 }
 
 deny contains finding if {

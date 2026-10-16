@@ -180,6 +180,13 @@ func blockBranches(p AttackPath, findings []opaengine.Finding) []PathBlockBranch
 	return out
 }
 
+// outputFeedKinds is every kind a fed job's line reads as a bare "output"
+// handoff: GitLab's untyped kind, and GitHub's two typed ones (whether the
+// read only compares the output or runs it, the line names the same
+// handoff either way; shownFeedKinds' (compared only) marker already says
+// when nothing actually crossed).
+var outputFeedKinds = []string{FeedOutput, FeedOutputCompared, FeedOutputExecuted}
+
 // shownFeedKinds is what a fed job's line names the entry job hands it:
 // its artifact and cache kinds, and the job outputs of a needs dependency
 // only when nothing else links the two, a needs being how an artifact
@@ -187,23 +194,54 @@ func blockBranches(p AttackPath, findings []opaengine.Finding) []PathBlockBranch
 func shownFeedKinds(kinds []string) []string {
 	var shown []string
 	for _, k := range kinds {
-		if k != FeedOutput {
+		if !slices.Contains(outputFeedKinds, k) {
 			shown = append(shown, k)
 		}
 	}
-	if len(shown) == 0 && slices.Contains(kinds, FeedOutput) {
-		return []string{FeedOutput}
+	if len(shown) == 0 {
+		for _, k := range outputFeedKinds {
+			if slices.Contains(kinds, k) {
+				return []string{k}
+			}
+		}
 	}
 	return shown
 }
 
+// feedWord is a feed kind's word in a fed job's line: the two GitHub
+// output kinds read as "output" (whether the read only compares it or
+// runs it, the line names the handoff, not how the consumer used it; the
+// (compared only) marker in fedLine already says when nothing crossed at
+// all), and the two artifact kinds as "artifact", for the same reason.
+func feedWord(kind string) string {
+	switch kind {
+	case FeedOutputCompared, FeedOutputExecuted:
+		return FeedOutput
+	case FeedArtifactAltered, FeedArtifactExecuted:
+		return FeedArtifact
+	default:
+		return kind
+	}
+}
+
 // fedLine is a fed job's line: "feeds artifact and cache to job ...", or
-// "feeds job ..." when the kinds are not known.
+// "feeds job ..." when the kinds are not known. A compared-only output
+// edge hands over nothing at all (control/paths.go's reachOver gives it
+// no reach either), so its line says so instead of reading as a plain
+// "output" handoff.
 func fedLine(job string, kinds []string) string {
 	if len(kinds) == 0 {
 		return "feeds " + job
 	}
-	return "feeds " + strings.Join(kinds, " and ") + " to " + job
+	marker := ""
+	if len(kinds) == 1 && kinds[0] == FeedOutputCompared {
+		marker = " (compared only)"
+	}
+	words := make([]string, len(kinds))
+	for i, k := range kinds {
+		words[i] = feedWord(k)
+	}
+	return "feeds " + strings.Join(words, " and ") + " to " + job + marker
 }
 
 // maxSameReach is how many branches reaching the same thing a graph draws

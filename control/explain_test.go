@@ -43,7 +43,7 @@ func TestPathSentenceMediumInjectionWithModifiers(t *testing.T) {
 	p := AttackPath{
 		ID: "d4", Tier: TierLow, BaseTier: TierMedium, State: PathProven, EntryKind: EntryUntrustedExpression,
 		Entry: EntryFact{Kind: EntryUntrustedExpression, Subject: "github.event.pull_request.title", Evidence: `echo "${{ github.event.pull_request.title }}"`},
-		Jobs:  []string{"build"}, Reach: Reach{Executes: true}, ReachKind: "execution",
+		Jobs:  []string{"build"}, Reach: Reach{Executes: true, keeps: true}, ReachKind: "execution",
 		Modifiers: []string{"private_exposure"}, Exposure: "private",
 	}
 	got := PathSentence(p)
@@ -95,7 +95,7 @@ func TestPathSentenceAmplifiedPathKeepsItsBaseTierConsequence(t *testing.T) {
 	p := AttackPath{
 		ID: "d5", Tier: TierHigh, BaseTier: TierMedium, State: PathProven, EntryKind: EntryUntrustedExpression,
 		Entry: EntryFact{Kind: EntryUntrustedExpression, Subject: "github.event.pull_request.title", Evidence: `echo "${{ github.event.pull_request.title }}"`},
-		Jobs:  []string{"build"}, Reach: Reach{Executes: true}, ReachKind: "execution",
+		Jobs:  []string{"build"}, Reach: Reach{Executes: true, keeps: true}, ReachKind: "execution",
 		Modifiers: []string{"gate:ISSUE-305"},
 	}
 	got := PathSentence(p)
@@ -252,11 +252,14 @@ func TestConsequenceByTier(t *testing.T) {
 	}{
 		{TierCritical, Reach{}, "a compromise here ships a malicious release to your users or into production"},
 		{TierHigh, Reach{Secrets: []string{"S"}}, "the secrets can be read and reused elsewhere"},
-		{TierMedium, Reach{}, "the runner can be abused and anything it caches or uploads can be poisoned"},
+		{TierMedium, Reach{keeps: true}, "the runner can be abused and anything it caches or uploads can be poisoned"},
+		{TierMedium, Reach{}, "code runs on an ephemeral runner and nothing else is proven"},
+		{TierLow, Reach{Executes: true}, "code runs on an ephemeral runner and nothing else is proven"},
+		{TierLow, Reach{Executes: true, keeps: true}, "the runner can be abused and anything it caches or uploads can be poisoned"},
 		{TierLow, Reach{}, "no exploitable reach was found"},
 	}
 	for _, tc := range cases {
-		t.Run(string(tc.tier), func(t *testing.T) {
+		t.Run(string(tc.tier)+"/"+strings.Join(reachKinds(tc.r), ",")+map[bool]string{true: "/keeps"}[tc.r.keeps], func(t *testing.T) {
 			if got := consequence(tc.tier, tc.r); got != tc.want {
 				t.Errorf("got %q, want %q", got, tc.want)
 			}
@@ -461,9 +464,12 @@ func TestUnresolvableSentencePicksTheRealCause(t *testing.T) {
 // Test honesty: one end-to-end test per unresolvable cause, asserting the
 // RENDERED sentence from a path AssemblePaths itself assembled, not from a
 // hand-set cause field. TestUnresolvableSentencePicksTheRealCause above
-// still pins unresolvableSentence's own branches directly; these three
-// pin the whole pipeline that gets a path into each branch.
-func TestDefaultTokenPathRendersTheGithubTokenSentence(t *testing.T) {
+// still pins unresolvableSentence's own branches directly; these pin the
+// whole pipeline that gets a path into each branch, or keeps it out.
+//
+// A default token whose write is assumed adds no tier: the path rests on
+// its impact alone, proven, and never says it is unverified.
+func TestADefaultTokenAloneLeavesThePathProven(t *testing.T) {
 	f := finding("ISSUE-701", "release", map[string]any{"uses": "some/action@v1"})
 	sit := defaultTokenSituation(ir.VisibilityPublic)
 	j := sit.Jobs["release"]
@@ -473,28 +479,34 @@ func TestDefaultTokenPathRendersTheGithubTokenSentence(t *testing.T) {
 	if len(paths) != 1 {
 		t.Fatalf("want one path, got %+v", paths)
 	}
-	want := "Plumber could not verify that `GITHUB_TOKEN` is really writable (token scope could not be read), so this path is unverified."
-	if got := PathSentence(paths[0]); !strings.Contains(got, want) {
-		t.Errorf("sentence = %q, want it to contain %q", got, want)
+	if paths[0].State != PathProven || paths[0].BaseTier != TierHigh {
+		t.Errorf("want a proven High base, got %s %s", paths[0].State, paths[0].BaseTier)
+	}
+	if got := PathSentence(paths[0]); strings.Contains(got, "unverified") {
+		t.Errorf("sentence = %q, want no unverified sentence", got)
 	}
 }
 
-func TestUnresolvableSecretsStateRendersTheSecretsSentence(t *testing.T) {
+// Secrets that could not be listed are the only privilege: they add no
+// tier, so a missing protection does not raise the path on them either,
+// and the path stays proven, never saying it is unverified.
+func TestUnlistedSecretsAloneNeitherRaiseNorUnverifyAPath(t *testing.T) {
 	sit := releaseSituation(ir.VisibilityPublic)
 	j := sit.Jobs["release"]
 	j.Privilege.SecretsState = "unknown"
-	// No listed secret and no token: the unlisted secrets are the only
-	// privilege, so the path is unverified.
-	j.Privilege.Secrets, j.Privilege.TokenWrite = nil, nil
+	j.Privilege.Secrets, j.Privilege.TokenWrite, j.Impact = nil, nil, nil
 	sit.Jobs["release"] = j
 	f := finding("ISSUE-701", "release", map[string]any{"uses": "some/action@v1"})
-	paths := assemblePaths([]opaengine.Finding{f}, sit)
+	paths := assemblePaths([]opaengine.Finding{f, finding(string(CodeSecretsOutsideEnv), "release", nil)}, sit)
 	if len(paths) != 1 {
 		t.Fatalf("want one path, got %+v", paths)
 	}
-	want := "Plumber could not verify which secrets are in scope, so this path is unverified."
-	if got := PathSentence(paths[0]); !strings.Contains(got, want) {
-		t.Errorf("sentence = %q, want it to contain %q", got, want)
+	p := paths[0]
+	if p.Tier != TierLow || p.State != PathProven || len(p.Modifiers) != 0 || len(p.GateHashes) != 0 {
+		t.Errorf("want a proven Low path no gate raised, got %s %s %v %v", p.Tier, p.State, p.Modifiers, p.GateHashes)
+	}
+	if got := PathSentence(p); strings.Contains(got, "unverified") {
+		t.Errorf("sentence = %q, want no unverified sentence", got)
 	}
 }
 
@@ -502,17 +514,16 @@ func TestUnresolvableSecretsStateRendersTheSecretsSentence(t *testing.T) {
 // shape an unresolvable SecretsState takes when Plumber has no secret name
 // to go on at all (GitLab: the settings-variable listing could not be
 // fetched, so Privilege.Secrets stays empty): the reach clause must not
-// say "holds no secret", which would read as a clean pipeline right next
-// to the trailing sentence saying the opposite. It says instead that
-// Plumber could not list what the job holds, and the existing unverified
-// sentence (TestUnresolvableSecretsStateRendersTheSecretsSentence) still
-// follows it unchanged.
+// say "holds no secret", which would read as a clean pipeline. It says
+// instead that Plumber could not list what the job holds; the path, Low on
+// its code execution, stays proven (TestUnlistedSecretsAloneNeitherRaiseNorUnverifyAPath).
 func TestUnresolvableSecretsWithNoNamedSecretNeverSaysHoldsNone(t *testing.T) {
 	sit := releaseSituation(ir.VisibilityPublic)
 	j := sit.Jobs["release"]
 	j.Privilege.Secrets = nil
 	j.Privilege.SecretsState = "unknown"
 	j.Privilege.TokenWrite = nil
+	j.Impact = nil
 	sit.Jobs["release"] = j
 	f := finding("ISSUE-701", "release", map[string]any{"uses": "some/action@v1"})
 	paths := assemblePaths([]opaengine.Finding{f}, sit)
@@ -526,8 +537,8 @@ func TestUnresolvableSecretsWithNoNamedSecretNeverSaysHoldsNone(t *testing.T) {
 	if !strings.Contains(got, "holding secrets Plumber could not list") {
 		t.Errorf("want the unresolvable-secrets reach clause, got %q", got)
 	}
-	if !strings.Contains(got, "Plumber could not verify which secrets are in scope, so this path is unverified.") {
-		t.Errorf("the unverified trailing sentence must still follow, got %q", got)
+	if strings.Contains(got, "unverified") {
+		t.Errorf("a path resting on its code execution alone is proven, got %q", got)
 	}
 }
 
@@ -1186,8 +1197,8 @@ func TestEveryAnchorOfAMergedPathReadsAsItsEntry(t *testing.T) {
 		if got := PathIDsFor(f, result.Paths); !reflect.DeepEqual(got, []string{p.ID}) {
 			t.Errorf("%s: PathIDsFor = %v", f.Code, got)
 		}
-		if got := ContextualSeverity(f, result.Paths, ""); got != SeverityHigh {
-			t.Errorf("%s: ContextualSeverity = %s, want high", f.Code, got)
+		if got := ContextualSeverity(f, result.Paths, ""); got != SeverityLow {
+			t.Errorf("%s: ContextualSeverity = %s, want low (code execution alone)", f.Code, got)
 		}
 	}
 	if !reflect.DeepEqual(s.Paths[0].FindingIDs, p.AnchorHashes) {
@@ -1195,7 +1206,7 @@ func TestEveryAnchorOfAMergedPathReadsAsItsEntry(t *testing.T) {
 	}
 	// Fixing one of two anchors would leave the path; the fix is the path
 	// itself, both anchors together.
-	if s.BestFix == nil || s.BestFix.PathID != p.ID || s.BestFix.PointsGained != 15 || s.BestFix.NewPoints != 100 {
+	if s.BestFix == nil || s.BestFix.PathID != p.ID || s.BestFix.PointsGained != 3 || s.BestFix.NewPoints != 100 {
 		t.Errorf("the best fix is the merged path, both anchors together: %+v", s.BestFix)
 	}
 }
@@ -1512,7 +1523,7 @@ func TestPathLossIsTheTierPrice(t *testing.T) {
 func TestPathThatHoldsNothingReadsCodeExecution(t *testing.T) {
 	p := AttackPath{ID: "x", Tier: TierMedium, EntryKind: EntryMutableDependency, AnchorCode: "ISSUE-701", Entry: EntryFact{Subject: "o/a@v1"}, Jobs: []string{"build"}}
 	b := NewPathBlock(p, nil)
-	if b.ReachesShort != "code execution without secrets" || len(b.Branches) != 1 || b.Branches[0].Reach != "code execution on the runner, no secret and no write token" {
+	if b.ReachesShort != "code execution without secrets" || len(b.Branches) != 1 || b.Branches[0].Reach != "code execution on the runner; nothing else proven" {
 		t.Errorf("block = %+v", b)
 	}
 	if got := PathSummary(p); got != "o/a@v1 (mutable external action) in job build, reaches code execution without secrets" {

@@ -6334,6 +6334,71 @@ func TestIssue114_KnownVulnerableAction(t *testing.T) {
 		}
 	})
 
+	// The severity of each advisory rides on the finding, for the path
+	// assembly's advisory cap.
+	t.Run("carries the advisory severities", func(t *testing.T) {
+		pipeline := &ir.NormalizedPipeline{
+			Provider: ir.ProviderGitHub,
+			Jobs: []ir.Job{{
+				Name: "publish",
+				Uses: []ir.Action{{Uses: "pypa/gh-action-pypi-publish@v1.12.4", Line: 10, Metadata: &ir.ActionMetadata{
+					RefKind: "tag", RefExists: true, Advisories: []string{"GHSA-low1-aaaa-bbbb"},
+					AdvisorySeverities: map[string]string{"GHSA-low1-aaaa-bbbb": "low"},
+				}}},
+			}},
+		}
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		hits := 0
+		for _, f := range findings {
+			if f.Code != "ISSUE-703" {
+				continue
+			}
+			hits++
+			sevs, _ := f.Data["advisorySeverities"].(map[string]any)
+			if sevs["GHSA-low1-aaaa-bbbb"] != "low" {
+				t.Errorf("advisorySeverities = %v", f.Data["advisorySeverities"])
+			}
+		}
+		if hits != 1 {
+			t.Fatalf("expected 1 ISSUE-703 finding, got %d", hits)
+		}
+	})
+
+	// Two advisories on one ref: each id keeps its own severity.
+	t.Run("carries the severity of every advisory", func(t *testing.T) {
+		pipeline := &ir.NormalizedPipeline{
+			Provider: ir.ProviderGitHub,
+			Jobs: []ir.Job{{
+				Name: "publish",
+				Uses: []ir.Action{{Uses: "pypa/gh-action-pypi-publish@v1.12.4", Line: 10, Metadata: &ir.ActionMetadata{
+					RefKind: "tag", RefExists: true, Advisories: []string{"GHSA-low1-aaaa-bbbb", "GHSA-med1-cccc-dddd"},
+					AdvisorySeverities: map[string]string{"GHSA-low1-aaaa-bbbb": "low", "GHSA-med1-cccc-dddd": "medium"},
+				}}},
+			}},
+		}
+		findings, err := evaluateStrict(engine, context.Background(), pipeline, nil)
+		if err != nil {
+			t.Fatalf("evaluate: %v", err)
+		}
+		hits := 0
+		for _, f := range findings {
+			if f.Code != "ISSUE-703" {
+				continue
+			}
+			hits++
+			sevs, _ := f.Data["advisorySeverities"].(map[string]any)
+			if len(sevs) != 2 || sevs["GHSA-low1-aaaa-bbbb"] != "low" || sevs["GHSA-med1-cccc-dddd"] != "medium" {
+				t.Errorf("advisorySeverities = %v, want both ids rated", f.Data["advisorySeverities"])
+			}
+		}
+		if hits != 1 {
+			t.Fatalf("expected 1 ISSUE-703 finding, got %d", hits)
+		}
+	})
+
 	t.Run("multi-advisory lists every GHSA URL", func(t *testing.T) {
 		pipeline := &ir.NormalizedPipeline{
 			Provider: ir.ProviderGitHub,

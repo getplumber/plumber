@@ -184,7 +184,7 @@ func TestRenderFindingGroupsV4PrintsFindingsThenBlocks(t *testing.T) {
 	if block < 0 || other < 0 || other > block {
 		t.Fatalf("want the findings before the path block:\n%s", out)
 	}
-	assertContains(t, out, " Attack path 1\n       Entry  some/action@v1 (untrusted external action)\n       │\n       └──▶ runs in job `release`\n            └─▶ reaches ")
+	assertContains(t, out, " Attack path 1\n       Entry  some/action@v1 (untrusted external action)\n       │\n       └──▶ runs in job `release` ─▶ reaches code execution on the runner; nothing else proven\n")
 	for _, unwanted := range []string{"Gate:", "Hygiene:", "Entry of path", "Situation", "Protections missing", "Failed Controls", "critpath"} {
 		if strings.Contains(out, unwanted) {
 			t.Errorf("the contextual report printed %q:\n%s", unwanted, out)

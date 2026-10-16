@@ -291,6 +291,12 @@ func NewPathBlock(p AttackPath, findings []opaengine.Finding) PathBlock {
 		b.Cap = "Capped at High: the source is not authorized, so a compromise is more likely"
 	case slices.Contains(p.Modifiers, "dependency_cap"):
 		b.Cap = "Capped at " + tierTitle(p.Tier) + ": it needs a dependency compromise first"
+	case slices.Contains(p.Modifiers, "advisory_cap"):
+		b.Cap = "Capped at " + tierTitle(p.Tier) + ": the published advisory is rated " + advisoryRating(p.Tier)
+	case slices.Contains(p.Modifiers, "pinned_head_cap"):
+		b.Cap = "Capped at Medium: a maintainer approves the commit that runs"
+	case slices.Contains(p.Modifiers, "maintainer_cap"):
+		b.Cap = "Capped at High: it needs a maintainer to let it run first"
 	}
 	// The lines read the branch the path holds its tier from.
 	if p.State == PathUnverified || slices.Contains(p.Modifiers, "unresolvable") {

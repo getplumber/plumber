@@ -41,8 +41,20 @@ func TestClassifyGateAuthorGate(t *testing.T) {
 	if got.Class != GateMaintainerApproved {
 		t.Fatalf("Class = %q, want %q", got.Class, GateMaintainerApproved)
 	}
-	if got.Reason != "author dependabot[bot]" {
-		t.Fatalf("Reason = %q, want %q", got.Reason, "author dependabot[bot]")
+	if got.Reason != "actor dependabot[bot]" {
+		t.Fatalf("Reason = %q, want %q", got.Reason, "actor dependabot[bot]")
+	}
+}
+
+// TestClassifyGatePullRequestAuthorGate covers a job gated on the pull
+// request's author, the one identity reference whose reason reads
+// "author": an outsider can make a bot the actor of an event on their
+// own pull request, never its author.
+func TestClassifyGatePullRequestAuthorGate(t *testing.T) {
+	job := Job{Name: "automerge", If: "github.event.pull_request.user.login == 'dependabot[bot]'"}
+	got := ClassifyGate(job, nil, "pull_request_target", nil, Environment{}, false)
+	if got.Class != GateMaintainerApproved || got.Reason != "author dependabot[bot]" {
+		t.Fatalf("gate = %+v", got)
 	}
 }
 

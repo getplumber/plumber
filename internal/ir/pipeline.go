@@ -302,10 +302,21 @@ type Job struct {
 	// declared none. Set only when at least one run step in the job is
 	// conditional, so the field stays absent in the common unconditional
 	// case. Read by the situation facts alongside the job's texts.
-	ScriptIfs    []string          `json:"scriptIfs,omitempty"`
-	AllowFailure bool              `json:"allowFailure,omitempty"`
-	When         string            `json:"when,omitempty"`
-	Variables    map[string]string `json:"variables,omitempty"`
+	ScriptIfs []string `json:"scriptIfs,omitempty"`
+	// SecretFirstLine maps the name of a secret this job references
+	// (GitHub Actions `secrets.X` / `secrets['X']` / `secrets["X"]`, name
+	// case preserved, GITHUB_TOKEN excluded in any case: it is the job
+	// token, never a secret) to the 1-based line of its first reference
+	// inside this job's own YAML block (a job-level `env:` value counts,
+	// at its real line). A name the enclosing workflow's own top-level
+	// configuration carries (its `env:`, read before any job's block
+	// starts) is recorded here at line 0 instead, for every job of the
+	// workflow: it reaches every step regardless of where that job's own
+	// references sit. GitHub only; empty for a GitLab job.
+	SecretFirstLine map[string]int    `json:"secretFirstLine,omitempty"`
+	AllowFailure    bool              `json:"allowFailure,omitempty"`
+	When            string            `json:"when,omitempty"`
+	Variables       map[string]string `json:"variables,omitempty"`
 	// LocalVariables is the raw `variables:` map authored by the
 	// project itself (root .gitlab-ci.yml or workflow file), before any
 	// merge with upstream component/template definitions. Empty when
@@ -377,6 +388,13 @@ type Job struct {
 	// field alone: a GitLab job with an empty Triggers is the norm, not
 	// a job that cannot run.
 	WorkflowHasTriggers bool `json:"workflowHasTriggers,omitempty"`
+	// TriggerTypes is each event's `on.<event>.types` filter, keyed by
+	// event name, as written (GitHub Actions). An event with no types:
+	// filter (every type fires), and every event of the string and list
+	// forms of on:, has no entry; nil when no event carries one.
+	// ClassifyGates reads it to decide which event actions an outsider
+	// can produce.
+	TriggerTypes map[string][]string `json:"triggerTypes,omitempty"`
 
 	// RunsOn is the job's `runs-on:` literal labels (GitHub Actions): a
 	// single string or a list, normalized to one entry per label as
@@ -473,6 +491,11 @@ type Job struct {
 	// precedence). Empty for a job that can run. GitHub only; MarkInert
 	// is a no-op on GitLab.
 	Inert string `json:"inert,omitempty"`
+	// Gate is who can make this job run on its privileged triggers, filled
+	// by ClassifyGates: the weakest gate across the privileged triggers
+	// the job carries (an outsider on one of them makes it an outsider's).
+	// Nil for a job with no privileged trigger, and on GitLab.
+	Gate *Gate `json:"gate,omitempty"`
 	// Conditions collects every `if:` expression attached to the job
 	// (job-level + each step's). Kept as raw YAML strings so Rego
 	// policies can match them with regular expressions — no attempt
@@ -621,6 +644,11 @@ type ActionMetadata struct {
 	CommentTagSha    string   `json:"commentTagSha,omitempty"`
 	RefIsAmbiguous   bool     `json:"refIsAmbiguous,omitempty"`
 	Advisories       []string `json:"advisories,omitempty"`
+	// AdvisorySeverities maps a GHSA id of Advisories to the severity the
+	// GitHub Advisory Database rates it with, lower-cased (low, medium,
+	// high, critical); an id it did not rate is absent. The path assembly
+	// caps an ISSUE-703 path by the worst of them.
+	AdvisorySeverities map[string]string `json:"advisorySeverities,omitempty"`
 	// StargazersCount is the action repository's star count, resolved
 	// from the GitHub API at collect time. Consumed by the authorized-
 	// sources control (ISSUE-713) to enforce a minimum-stars trust
@@ -634,6 +662,15 @@ type ActionMetadata struct {
 	// analysed (offline, non-github.com host, trusted owner) or nothing
 	// mutable was found. Consumed by the mutable-remote-exec control.
 	MutableRemoteExec *MutableRemoteExec `json:"mutableRemoteExec,omitempty"`
+	// RedirectedOwner is the owner the action's repository currently
+	// reports as its full_name (the metadata lane's own `GET
+	// repos/{owner}/{repo}` call), when it differs from the `uses`
+	// owner, case insensitive. GitHub keeps the old owner/repo path
+	// resolving after a rename or an organisation transfer, so this is
+	// who can actually change the code, not who the workflow still
+	// names. Empty when the names agree or the repository could not be
+	// read.
+	RedirectedOwner string `json:"redirectedOwner,omitempty"`
 }
 
 // MutableRemoteExec describes a mutable-remote-code signal found inside
@@ -649,6 +686,18 @@ type MutableRemoteExec struct {
 	URL  string `json:"url"`
 	Ref  string `json:"ref,omitempty"`
 	File string `json:"file"`
+	// DownloadGuard is the tool name when the fetch sits under a
+	// preinstalled-tool guard (`if ! command -v X`, `command -v X ||`,
+	// `which X ||`, `[ -x <path> ] ||`, `test -x ... ||`, `type X
+	// >/dev/null ||`): the download never runs on a runner where X is
+	// already on PATH. Empty when no such guard wraps the fetch.
+	DownloadGuard string `json:"downloadGuard,omitempty"`
+	// DownloadVerified is true when a checksum or signature check
+	// (sha256sum -c/--check, shasum -a 256/512 -c, sha512sum -c, gpg
+	// --verify, cosign verify-blob, or a literal 64-hex digest compared
+	// with the downloaded file) follows the fetch in the same step or
+	// the next: the content is pinned even though the ref is not.
+	DownloadVerified bool `json:"downloadVerified,omitempty"`
 }
 
 // Image references a container image (job image, service, step base).
@@ -964,6 +1013,17 @@ type CacheRef struct {
 	Prefix bool     `json:"prefix,omitempty"`
 	Uses   string   `json:"uses,omitempty"`
 	Line   int      `json:"line,omitempty"`
+	// Parts is the discriminators of the real key a caching action builds
+	// itself, resolved to a concrete value, by name: "os", "arch"
+	// (read off the job's own runs-on, every caching action), "version"
+	// and "manager" (setup-node, setup-python, setup-go; the input that
+	// gives it, when it is a literal, never a `.nvmrc`/a `*-version-file`
+	// or an expression), "job" and "key" (Swatinem/rust-cache, the job id
+	// and the key/shared-key input when literal). A discriminator this
+	// program cannot resolve is absent here, never guessed; the situation
+	// layer's key-template match (control/cachekeys.go) then leaves it an
+	// open placeholder.
+	Parts map[string]string `json:"parts,omitempty"`
 }
 
 // ArtifactRef is one artifact a job produces or consumes. An empty Name and

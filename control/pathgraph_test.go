@@ -143,7 +143,7 @@ func TestNewPathBlockReadsTheBranches(t *testing.T) {
 	want := []PathBlockBranch{
 		{Job: "job `build`", Reach: "1 secret and a step that publishes"},
 		{Job: "job `scan`", Reach: "a token with write access to security events"},
-		{Job: "job `lint`", Reach: "code execution on the runner, no secret and no write token"},
+		{Job: "job `lint`", Reach: "code execution on the runner; nothing else proven"},
 	}
 	if len(b.Branches) != len(want) {
 		t.Fatalf("branches = %+v", b.Branches)
@@ -204,7 +204,7 @@ func wordingPath(kind EntryKind, subject string, codes ...ErrorCode) AttackPath 
 	return AttackPath{
 		Tier: TierHigh, BaseTier: TierHigh, State: PathProven, EntryKind: kind,
 		Entry: EntryFact{Kind: kind, State: "proven", Subject: subject}, AnchorCode: codes[0], AnchorCodes: codes,
-		Jobs: []string{"ci/build"}, Reach: Reach{Executes: true},
+		Jobs: []string{"ci/build"}, Reach: Reach{Executes: true, keeps: true},
 	}
 }
 
@@ -294,7 +294,8 @@ func TestReachFragmentReadsAsASentence(t *testing.T) {
 		{"assumed token", Reach{TokenWrite: []string{"contents", "packages"}, tokenAssumed: true}, unresolvableDefaultToken, "a token with push and publish access (token scope could not be read)"},
 		{"OIDC only", Reach{TokenWrite: []string{"id-token"}}, "", "an OIDC token"},
 		{"OIDC and another scope", Reach{TokenWrite: []string{"id-token", "security-events"}}, "", "a token with write access to security events and an OIDC token"},
-		{"execution only", Reach{Executes: true}, "", "code execution on the runner, no secret and no write token"},
+		{"execution only, the runner keeps something", Reach{Executes: true, keeps: true}, "", "code execution on the runner, no secret and no write token"},
+		{"execution only, an ephemeral runner", Reach{Executes: true}, "", "code execution on the runner; nothing else proven"},
 		{"unlisted secrets", Reach{}, unresolvableSecrets, "secrets Plumber could not list"},
 		{"unlisted secrets and a token", Reach{TokenWrite: []string{"contents"}}, unresolvableSecrets, "secrets Plumber could not list and a token with push access"},
 		{"step publishes, token covers it", Reach{Secrets: []string{"NPM_TOKEN"}, TokenWrite: writeAllScopes, Impacts: []ImpactFact{stepPublishes, writeAllImpact[0], writeAllImpact[2]}}, "", "1 secret, a token with push, publish and deploy access and write access to actions, pull requests and security events and an OIDC token"},
@@ -338,6 +339,8 @@ func TestSoLineNamesTheActorAndTheCapability(t *testing.T) {
 			"if this reusable workflow is compromised, an attacker can read every secret, push in your repository, alter what the job deploys and ship a malicious release"},
 		{"image, execution only", wordingPath(EntryMutableDependency, "node:latest", CodeImageForbiddenTag),
 			"if this image is compromised, an attacker can execute code on the runner and poison what it caches or uploads"},
+		{"image, execution only, an ephemeral runner", with(wordingPath(EntryMutableDependency, "node:latest", CodeImageForbiddenTag), Reach{Executes: true}),
+			"if this image is compromised, an attacker can execute code on an ephemeral runner"},
 		{"include, 2 secrets", with(wordingPath(EntryMutableDependency, "g/t@main", CodeIncludeForbiddenVersion), Reach{Secrets: []string{"A", "B"}}),
 			"if this include is compromised, an attacker can read 2 secrets of the repository"},
 		{"script, OIDC", with(wordingPath(EntryMutableDependency, "https://x/i.sh", CodeUnverifiedScriptExecution), Reach{TokenWrite: []string{"id-token"}}),
@@ -597,6 +600,16 @@ func TestPathGraphNamesTheHandoffToEachFedJob(t *testing.T) {
 		{[]string{FeedCache}, "            └──▶ feeds cache to job `build-s3-hub` from workflow `build.yaml`"},
 		{[]string{FeedOutput}, "            └──▶ feeds output to job `build-s3-hub` from workflow `build.yaml`"},
 		{[]string{FeedArtifact, FeedCache}, "            └──▶ feeds artifact and cache to job `build-s3-hub` from workflow `build.yaml`"},
+		// A compared-only output edge hands over nothing at all (its reach
+		// is empty, control/paths_test.go's
+		// TestOutputComparedOnlyReachesNoSecret pins that side), so its
+		// line says so instead of reading as a plain "output" handoff.
+		{[]string{FeedOutputCompared}, "            └──▶ feeds output to job `build-s3-hub` from workflow `build.yaml` (compared only)"},
+		// An executed output or artifact reads exactly as the untyped
+		// kind: the line names the handoff, not how the consumer used it.
+		{[]string{FeedOutputExecuted}, "            └──▶ feeds output to job `build-s3-hub` from workflow `build.yaml`"},
+		{[]string{FeedArtifactExecuted}, "            └──▶ feeds artifact to job `build-s3-hub` from workflow `build.yaml`"},
+		{[]string{FeedArtifactAltered}, "            └──▶ feeds artifact to job `build-s3-hub` from workflow `build.yaml`"},
 	} {
 		b := PathBlock{Tier: TierCritical, Branches: []PathBlockBranch{{
 			Job:    "job `build-image` from workflow `build.yaml`",
@@ -630,6 +643,27 @@ func TestBlockBranchesNameTheFeedKinds(t *testing.T) {
 	}}}
 	got := blockBranches(p, nil)
 	want := [][]string{{FeedArtifact, FeedCache}, {FeedOutput}, {FeedArtifact}}
+	if len(got) != 1 || !reflect.DeepEqual(got[0].FedVia, want) {
+		t.Errorf("branches = %+v, want FedVia %v", got, want)
+	}
+}
+
+// The same redundancy rule holds for the typed GitHub kinds: a
+// compared-only edge still shows as the bare output kind when nothing
+// else links the pair (shownFeedKinds, fedLine's own marker then says
+// nothing crossed), and an executed or altered kind beside a substantive
+// one drops out exactly as the untyped kinds do.
+func TestBlockBranchesNameTheTypedFeedKinds(t *testing.T) {
+	p := AttackPath{Jobs: []string{"w/build"}, Branches: []PathBranch{{
+		Job: "w/build", Jobs: []string{"w/build", "w/changes", "w/release", "w/sign"},
+		FeedsVia: map[string][]string{
+			"w/changes": {FeedOutputCompared},
+			"w/release": {FeedArtifactAltered, FeedCache},
+			"w/sign":    {FeedArtifact, FeedOutputExecuted},
+		},
+	}}}
+	got := blockBranches(p, nil)
+	want := [][]string{{FeedOutputCompared}, {FeedArtifactAltered, FeedCache}, {FeedArtifact}}
 	if len(got) != 1 || !reflect.DeepEqual(got[0].FedVia, want) {
 		t.Errorf("branches = %+v, want FedVia %v", got, want)
 	}

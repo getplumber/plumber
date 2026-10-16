@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"regexp"
+	"slices"
 	"strings"
 	"sync"
 	"time"
@@ -73,7 +74,18 @@ type GitHubMetadata struct {
 	LatestReleaseSha string
 	RefIsAmbiguous   bool
 	Advisories       []string
-	StargazersCount  int
+	// AdvisorySeverities maps each id of Advisories to its severity
+	// (low, medium, high or critical), read off the same listing; an id
+	// whose severity the listing did not give is absent.
+	AdvisorySeverities map[string]string
+	StargazersCount    int
+	// RedirectedOwner is the owner the repository's current full_name
+	// names, when it differs from the `uses` owner (case insensitive):
+	// GitHub keeps resolving the old owner/repo path after a rename or
+	// an organisation transfer, so this is who can actually change the
+	// code. Empty when the names agree or the repository could not be
+	// read.
+	RedirectedOwner string
 }
 
 // GitHubMetadataClient resolves `owner/repo@ref` references against
@@ -126,11 +138,20 @@ type advisoryInfo struct {
 	GhsaID          string
 	VulnerableRange string
 	PatchedVersions string
+	// Severity is the advisory's own rating as the listing returns it,
+	// lower-cased: low, medium, high or critical; empty when absent.
+	Severity string
 }
 
 type repoCacheEntry struct {
 	archived bool
 	stars    int
+	// fullName is the repository's current owner/repo, from the same
+	// `GET repos/{owner}/{repo}` response as archived/stars: GitHub
+	// keeps resolving the OLD owner/repo path after a rename or an
+	// organisation transfer, so this is the one place that tells the
+	// two apart.
+	fullName string
 	fetched  bool
 	err      error
 }
@@ -242,6 +263,9 @@ func (c *GitHubMetadataClient) resolveUncached(owner, repo, ref string) GitHubMe
 	info := c.repoInfo(owner, repo)
 	m.RepoArchived = info.archived
 	m.StargazersCount = info.stars
+	if redirOwner, _, ok := strings.Cut(info.fullName, "/"); ok && redirOwner != "" && !strings.EqualFold(redirOwner, owner) {
+		m.RedirectedOwner = redirOwner
+	}
 	if info.err != nil {
 		// An unreadable repo yields the ZERO entry, and the fields it
 		// feeds are only meaningful when they were actually read.
@@ -266,6 +290,7 @@ func (c *GitHubMetadataClient) resolveUncached(owner, repo, ref string) GitHubMe
 		}
 	}
 	m.Advisories = c.advisoriesForRef(owner, repo, ref)
+	m.AdvisorySeverities = c.advisorySeverities(owner, repo, m.Advisories)
 
 	// Probe in order: tag → branch → commit. First hit wins, but
 	// when we match a tag we still check whether a same-named branch
@@ -367,6 +392,26 @@ func (c *GitHubMetadataClient) advisoriesForRef(owner, repo, ref string) []strin
 	return out
 }
 
+// advisorySeverities is the severity of each of ids, read off the
+// advisory listing advisoriesForRef already fetched and cached for
+// owner/repo: no further read. nil when none carries one.
+func (c *GitHubMetadataClient) advisorySeverities(owner, repo string, ids []string) map[string]string {
+	if len(ids) == 0 {
+		return nil
+	}
+	var out map[string]string
+	for _, a := range c.advisoriesForRepo(owner, repo) {
+		if a.Severity == "" || !slices.Contains(ids, a.GhsaID) {
+			continue
+		}
+		if out == nil {
+			out = map[string]string{}
+		}
+		out[a.GhsaID] = a.Severity
+	}
+	return out
+}
+
 // recordDegraded notes that the known-CVE check for owner/repo@ref could
 // not be completed because the pinned commit did not resolve to a version.
 // Deduped by ref so a heavily-reused action warns only once.
@@ -448,6 +493,7 @@ func (c *GitHubMetadataClient) advisoriesForRepo(owner, repo string) []advisoryI
 
 	var resp []struct {
 		GhsaID          string `json:"ghsa_id"`
+		Severity        string `json:"severity"`
 		Vulnerabilities []struct {
 			Package struct {
 				Name string `json:"name"`
@@ -482,6 +528,7 @@ func (c *GitHubMetadataClient) advisoriesForRepo(owner, repo string) []advisoryI
 					GhsaID:          a.GhsaID,
 					VulnerableRange: v.VulnerableVersionRange,
 					PatchedVersions: v.PatchedVersions,
+					Severity:        strings.ToLower(a.Severity),
 				})
 			}
 		}
@@ -816,8 +863,9 @@ func (c *GitHubMetadataClient) repoInfo(owner, repo string) repoCacheEntry {
 		return cached
 	}
 	var resp struct {
-		Archived        bool `json:"archived"`
-		StargazersCount int  `json:"stargazers_count"`
+		Archived        bool   `json:"archived"`
+		StargazersCount int    `json:"stargazers_count"`
+		FullName        string `json:"full_name"`
 	}
 	entry := repoCacheEntry{fetched: true}
 	if err := c.rest.Get(fmt.Sprintf("repos/%s/%s", owner, repo), &resp); err != nil {
@@ -825,6 +873,7 @@ func (c *GitHubMetadataClient) repoInfo(owner, repo string) repoCacheEntry {
 	} else {
 		entry.archived = resp.Archived
 		entry.stars = resp.StargazersCount
+		entry.fullName = resp.FullName
 	}
 	c.mu.Lock()
 	c.repoCache[key] = entry
@@ -1123,6 +1172,9 @@ func isZeroMetadata(meta GitHubMetadata) bool {
 	// not be resolved — the authorized-sources control (ISSUE-713) reads
 	// it for the minimumStars threshold, so keep the metadata.
 	if meta.StargazersCount > 0 {
+		return false
+	}
+	if meta.RedirectedOwner != "" {
 		return false
 	}
 	return true

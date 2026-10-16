@@ -61,6 +61,11 @@ type detailedFinding struct {
 	// the finding's path is theoretical, not live. Empty for a job that
 	// can run, or when no situation was available to look it up.
 	Inert string
+	// GateNote says why the finding anchors no path although its code is
+	// an entry: no outsider can make its job run
+	// (control.MarkGatedFindings, Data "gateNote"). Printed after the
+	// location line, like Inert. Empty otherwise.
+	GateNote string
 	// DetailLines is optional (e.g. ISSUE-505: one headline, several sub-reasons).
 	DetailLines []string
 	// Dismissed mirrors opaengine.Finding.Dismissed (#447): the platform
@@ -570,6 +575,9 @@ func renderFindingBlock(out io.Writer, f detailedFinding, indent, role string) {
 		// Right after the location: the job the finding names cannot run
 		// at all, so this path through it is theoretical, not live.
 		_, _ = fmt.Fprintf(out, "%s %scannot run: %s%s\n", indent, colorDim, sanitizeTerminal(f.Inert), colorReset)
+	}
+	if f.GateNote != "" {
+		_, _ = fmt.Fprintf(out, "%s %s%s%s\n", indent, colorDim, sanitizeTerminal(f.GateNote), colorReset)
 	}
 	if f.DocURL != "" {
 		_, _ = fmt.Fprintf(out, "%s %s↳ docs: %s%s\n", indent, colorDim, f.DocURL, colorReset)

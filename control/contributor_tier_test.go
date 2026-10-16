@@ -21,7 +21,7 @@ func prTargetJob(secrets, scopes []string) *Situation {
 
 // A contributor entry is Critical with a privilege alone: anyone opening a
 // pull request holds a secret or a write token, the OIDC token included.
-// Code execution alone stays High.
+// Code execution alone is Low.
 func TestAContributorEntryIsCriticalWithAPrivilegeAlone(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -34,7 +34,7 @@ func TestAContributorEntryIsCriticalWithAPrivilegeAlone(t *testing.T) {
 		{"checkout with the OIDC token", prTargetJob(nil, []string{"id-token"}), entryFinding("ISSUE-804", "pr/triage", "github.event.pull_request.head.sha"), TierCritical, false},
 		{"checkout with a write token", prTargetJob(nil, []string{"issues"}), entryFinding("ISSUE-804", "pr/triage", "github.event.pull_request.head.sha"), TierCritical, false},
 		{"injection with a secret", prTargetJob([]string{"API_KEY"}, nil), entryFinding("ISSUE-207", "pr/triage", "github.event.pull_request.title"), TierCritical, false},
-		{"checkout and nothing else", prTargetJob(nil, nil), entryFinding("ISSUE-804", "pr/triage", "github.event.pull_request.head.sha"), TierHigh, false},
+		{"checkout and nothing else", prTargetJob(nil, nil), entryFinding("ISSUE-804", "pr/triage", "github.event.pull_request.head.sha"), TierLow, false},
 	}
 	for _, c := range cases {
 		paths := assemblePaths([]opaengine.Finding{c.f}, c.sit)

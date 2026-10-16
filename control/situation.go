@@ -46,6 +46,30 @@ type EntryFact struct {
 	Subject  string    `json:"subject"`
 	File     string    `json:"file,omitempty"`
 	Line     int       `json:"line,omitempty"`
+	// CacheScopes is the scope the run that executes this entry saves its
+	// cache under (entry_cache_scope): "pull_request" for a fork pull
+	// request (its run never leaves the pull request's merge ref), the
+	// job's own CacheScopes for every other entry this program builds
+	// structurally (fork_pr, unprotected_push): the fact does not narrow
+	// what a push or a dependency entry already tells the job's triggers.
+	// Empty for an entry read off a finding rather than a situation fact
+	// (control/paths.go computes the equivalent scope itself, off the
+	// entry's own kind, for those).
+	CacheScopes []string `json:"cacheScopes,omitempty"`
+	// Actor is who can make the entry's job run (ir.GateClass): "outsider"
+	// on a fork pull request entry and on a privileged entry no gate
+	// holds, the class of the entry job's gate otherwise
+	// (control/actor.go). "unknown" is the true value when the gate could
+	// not be decided: the path then takes the outsider's mechanics, in the
+	// unverified state, one tier down. Gate is that gate's reason ("label
+	// x", "author x" for the pull request's author, "actor x", "environment
+	// x requires reviewers", "merged"), and PinnedSha whether what the
+	// entry runs is the head commit that was approved (a checkout only).
+	// All three empty on an entry no outsider reaches through a trigger (a
+	// dependency, a push, a cache).
+	Actor     string `json:"actor,omitempty"`
+	Gate      string `json:"gate,omitempty"`
+	PinnedSha bool   `json:"pinnedSha,omitempty"`
 }
 
 // ImpactFact is something the job can change, and how sure the facts
@@ -86,6 +110,14 @@ type Privilege struct {
 	Secrets        []string  `json:"secrets"`
 	SecretsState   FactState `json:"secretsState"`
 	SecretsInherit bool      `json:"secretsInherit"`
+	// SecretFirstLine maps a name of Secrets to the 1-based line, inside
+	// the job's own YAML block, of its first reference (GitHub only,
+	// collector-scanned); 0 for a name the workflow's own top-level
+	// configuration carries, reached by every step regardless of order.
+	// A name absent from this map (a GitLab job, or a merge the collector
+	// could not place) carries no line, and reachOver keeps it exactly as
+	// it did before this field existed.
+	SecretFirstLine map[string]int `json:"secretFirstLine,omitempty"`
 	// AllSecrets is true when the job holds every secret of the repository,
 	// proven by the way it reads them (secrets: inherit, or the whole
 	// secrets context), whatever their names.
@@ -145,7 +177,12 @@ type JobSituation struct {
 	Impact    []ImpactFact `json:"impact"`
 	Feeds     []string     `json:"feeds"`
 	// FeedsVia is, per job of Feeds, the kinds of edge that link the two,
-	// sorted: FeedArtifact, FeedCache, FeedOutput.
+	// sorted: FeedArtifact, FeedArtifactAltered, FeedArtifactExecuted,
+	// FeedCache, FeedOutput, FeedOutputCompared, FeedOutputExecuted. On
+	// GitHub, needs output reads and artifact downloads never carry the
+	// bare FeedArtifact or FeedOutput any more (see the two typed kinds
+	// of each); GitLab keeps both, needs: alone being how an artifact
+	// download there waits for its upload too.
 	FeedsVia map[string][]string `json:"feedsVia"`
 	// Caches is every cache the job restores, saves or both, with the step
 	// declaring it, sorted.
@@ -163,6 +200,13 @@ type JobSituation struct {
 	// its cache-mode leaves restoring on (not write-only or none): a job a
 	// poisoned cache reaches.
 	RestoresCache bool `json:"restoresCache"`
+	// Uploads is true when some job carrying the name produces an
+	// artifact (ir.ArtifactRef Mode "produce": an actions/upload-artifact
+	// or actions/upload-pages-artifact step on GitHub, an artifacts:
+	// block on GitLab). With a cache save (CacheFact Mode "save" or
+	// "both") it is what lets code on the runner poison something a
+	// later run reads: without either, the runner is thrown away.
+	Uploads bool `json:"uploads"`
 	// Callers is, on a job of a reusable workflow of the repository, every
 	// call that runs it, sorted. The job's own Privilege already reads
 	// through them (its token the union of theirs when it declares none,
@@ -187,6 +231,10 @@ type JobSituation struct {
 	// non-empty reasons here (never cleared by a sibling that can run),
 	// so the terminal report still names the cause.
 	Inert string `json:"inert"`
+	// Gate is who can make the job run on its privileged triggers
+	// (ir.Job.Gate, ir.ClassifyGates), the weakest among the jobs sharing
+	// its name; nil when none carries a privileged trigger, and on GitLab.
+	Gate *ir.Gate `json:"gate,omitempty"`
 }
 
 // CacheFact is one cache of a job (ir.CacheRef): its key, or its key
@@ -204,16 +252,41 @@ type CacheFact struct {
 	Prefix bool   `json:"prefix"`
 	Uses   string `json:"uses"`
 	Line   int    `json:"line"`
+	// Parts is the discriminators of the real key a caching action builds
+	// itself (setup-node, setup-python, setup-go, setup-uv, rust-cache)
+	// that this program resolved to a concrete value, by name: "os",
+	// "arch", "version", "manager". A name absent here is a part
+	// cacheKeyTemplate (control/cachekeys.go) cannot resolve either, so it
+	// stays an open placeholder, matching whatever the other side carries,
+	// never a literal guess (Parts is additive, nil for every caller that
+	// predates it).
+	Parts map[string]string `json:"parts,omitempty"`
 }
 
 // The kinds of edge by which a job feeds another (JobSituation.FeedsVia):
 // an artifact it uploads and the other downloads, a cache it saves and the
 // other restores, the job outputs the other reads through needs (on GitLab,
 // a needs dependency alone, which also downloads the needed job's artifacts).
+// FeedArtifact and FeedOutput are GitLab's own, unsplit kinds; on GitHub
+// each instead carries one of the two typed kinds below, by what the
+// consumer does with the handoff: FeedArtifactExecuted / FeedOutputExecuted
+// when it runs what it received (a script, a with: value, an env value,
+// an image or a reusable call's input), FeedArtifactAltered when it only
+// moves, releases or publishes a downloaded artifact and runs nothing
+// from it, FeedOutputCompared when a needs output is read only inside a
+// comparison the runner evaluates itself (an if:), crossing no code at
+// all. control/paths.go's reachOver gives the three families different
+// reach: full for Executed and the untyped kinds, a single "altered the
+// artifact" impact and no secret for Altered, nothing at all for
+// Compared.
 const (
-	FeedArtifact = "artifact"
-	FeedCache    = "cache"
-	FeedOutput   = "output"
+	FeedArtifact         = "artifact"
+	FeedArtifactAltered  = "artifact_altered"
+	FeedArtifactExecuted = "artifact_executed"
+	FeedCache            = "cache"
+	FeedOutput           = "output"
+	FeedOutputCompared   = "output_compared"
+	FeedOutputExecuted   = "output_executed"
 )
 
 // IncludeFact is one pipeline include: the subject a job-less include

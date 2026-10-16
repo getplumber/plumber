@@ -22,15 +22,15 @@ func imagePath(t *testing.T, image, file, own string) AttackPath {
 }
 
 // No image-source control runs on GitHub: an image entry there says its
-// source was not checked and reads as possibly malicious, still capped at
-// Medium; on GitLab, where the source is checked, it reads as before.
+// source was not checked and reads as possibly malicious; a job holding
+// nothing keeps it Low; on GitLab, where the source is checked, it reads as before.
 func TestAnImageOnGitHubSaysItsSourceWasNotChecked(t *testing.T) {
 	p := imagePath(t, "python:3.11", ".github/workflows/ci.yml", "o/r")
 	b := NewPathBlock(p, nil)
 	if b.Entry != "python:3.11 (mutable image tag, source not checked on GitHub)" {
 		t.Errorf("entry %q", b.Entry)
 	}
-	if !strings.HasPrefix(b.So, "if this image is compromised or malicious, ") || p.Tier != TierMedium {
+	if !strings.HasPrefix(b.So, "if this image is compromised or malicious, ") || p.Tier != TierLow {
 		t.Errorf("so %q, tier %s", b.So, p.Tier)
 	}
 	g := imagePath(t, "python:3.11", ".gitlab-ci.yml", "o/r")

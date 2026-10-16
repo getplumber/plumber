@@ -50,13 +50,439 @@ deny contains finding if {
 	# same `run:` block cannot suppress the finding for the real fetch.
 	not _line_is_verified(visible)
 	not _fetch_target_is_trusted(visible, line)
-	finding := {
+	# An immutable self-reference (the scanned repository's own content,
+	# pinned to the exact commit the workflow runs at) is no entry at
+	# all: the only party that could ever change it already committed
+	# here. A self-reference on a branch or tag is NOT suppressed: it
+	# falls through to _first_party_fields below, which reads it as a
+	# first-party (insider) source instead of an outsider's.
+	not _self_reference_immutable(line)
+	base := {
 		"code":       "ISSUE-411",
 		"severity":   "high",
 		"message":    sprintf("Job `%s` runs a script fetched from the network: `%s`.", [job.name, _quoted_script_line(line)]),
 		"job":        job.name,
 		"scriptLine": line,
 	}
+	finding := object.union(base, _first_party_fields(line))
+}
+
+# _first_party_fields is additive: a script line that is not first-party
+# keeps the finding exactly as it read before trust followed the party
+# that can change the code, not the party the workflow merely names.
+default _first_party_fields(_) := {}
+
+_first_party_fields(line) := {"firstParty": true} if _first_party(line)
+
+# _fp_owner_repo is the scanned repository's own "owner/repo", lower
+# case, "" when unknown.
+_fp_owner_repo := own if {
+	own := lower(object.get(input.pipeline, "projectPath", ""))
+	own != ""
+}
+
+# _fp_owner is just the owner segment of an "owner/repo" path.
+_fp_owner(ownerRepo) := owner if {
+	parts := split(ownerRepo, "/")
+	count(parts) > 0
+	owner := parts[0]
+}
+
+# _url_pattern matches one fetch URL: a whole `${{ ... }}` expression
+# taken as one unit (which may carry spaces of its own, e.g. `${{
+# github.sha }}`), OR a run of characters that are never part of a
+# shell metacharacter. The `${{ ... }}` branch MUST be tried first: Go's
+# regexp (leftmost-first, not POSIX leftmost-longest) never backtracks
+# out of a repetition to prefer a later, longer-matching alternative, so
+# with the branches in the other order "$" and "{" each matched the
+# plain-character branch one at a time and the match still stopped at
+# the first internal space. Matching it this way, rather than a plain
+# \S+ or a run up to the next shell metacharacter, is also what lets two
+# URLs separated only by a space ("...install.sh https://evil/i.sh")
+# split into two matches instead of one match swallowing both.
+_url_pattern := `(?i)https?://(?:\$\{\{[^}]*\}\}|[^\s|;&'")])+`
+
+# _fetch_segments splits line into one segment per shell command: a
+# run of `;`, `&` (covering `;`, `&&`) or `|` (covering `|`, `||`) is a
+# command separator, normalized to one marker character first
+# (regex.replace, a fixed replacement with no backreference) so the
+# plain string split() below needs only one literal delimiter. Each
+# resulting segment carries at most one top-level command, which is
+# what lets EVERY curl/wget command on the line be checked on its own,
+# not just every literal URL some regex happened to find anywhere on
+# the whole line, which could never tell a command with no checkable
+# URL at all (a shell variable, a scheme-less target) apart from one
+# that was simply never there.
+_fetch_segments(line) := split(regex.replace(line, `[|;&]+`, "\u0001"), "\u0001")
+
+# _is_fetch_segment is true when segment itself names a curl/wget
+# command, as opposed to a segment some OTHER command's output merely
+# flows into (the "sh" in "curl ... | sh").
+_is_fetch_segment(segment) if regex.match(`(?i)\bcurl\b|\bwget\b`, segment)
+
+# _fetch_command_segments is every segment of line that is its own
+# curl/wget command.
+_fetch_command_segments(line) := {s |
+	some s in _fetch_segments(line)
+	_is_fetch_segment(s)
+}
+
+# _command_token_pattern matches one shell token: a double- or
+# single-quoted span (kept together even when it holds internal
+# whitespace, so `-H "Authorization: x"` reads as two tokens, not
+# four), or a run of (a whole `${{ ... }}` expression, which carries
+# spaces of its own, taken as one unit, tried FIRST in the inner
+# alternation, since Go's regexp is leftmost-first and never
+# backtracks out of a repetition to prefer a later, longer-matching
+# alternative; or any other non-whitespace character). Without the
+# `${{ ... }}` branch, a self-reference URL built from
+# `${{ github.sha }}` split into three separate tokens at its own
+# internal spaces, rather than staying the one token it actually is.
+# A bare `$( ... )` or backtick command substitution is kept whole the
+# same way, so _fetch_units below can read its content as a command of
+# its own.
+_command_token_pattern := sprintf(`(?:"[^"]*"|'[^']*'|(?:\$\{\{[^}]*\}\}|\$\([^()]*\)|%s[^%s]*%s|[^\s])+)`, [_backtick, _backtick, _backtick])
+
+# _has_fetch_keyword is true when the command's own tokens carry the
+# curl/wget keyword at top level (not inside a substitution).
+_has_fetch_keyword(tokens) if {
+	some t in tokens
+	lower(t) in {"curl", "wget"}
+}
+
+# _substitution_content is the command text inside a token that is, as
+# a whole, one `$( ... )` or backtick command substitution (quoted or
+# bare: the quotes are already trimmed off the token).
+_substitution_content(tok) := substring(tok, 2, count(tok) - 3) if {
+	startswith(tok, "$(")
+	endswith(tok, ")")
+}
+
+_substitution_content(tok) := substring(tok, 1, count(tok) - 2) if {
+	count(tok) >= 2
+	startswith(tok, _backtick)
+	endswith(tok, _backtick)
+}
+
+# _fetch_units is every command a fetch segment actually runs a fetch
+# in: the segment itself when its own tokens carry the curl/wget
+# keyword, plus the content of each whole-token command substitution
+# that itself fetches (`sh -c "$(curl ...)"` runs its fetch there, one
+# level deep). A fetch segment with neither (a keyword buried in some
+# other shape) stays its own unit, which then fails every check below
+# for lack of a top-level keyword: it is never provably first-party nor
+# a self-reference.
+_fetch_units(segment) := units if {
+	top := {segment | _has_fetch_keyword(_command_tokens(segment))}
+	subs := {c |
+		some tok in _command_tokens(segment)
+		c := _substitution_content(tok)
+		_is_fetch_segment(c)
+	}
+	units := top | subs
+	count(units) > 0
+} else := {segment}
+
+# _fetch_command_units is every fetch unit of every fetch segment of
+# line.
+_fetch_command_units(line) := {u |
+	some s in _fetch_command_segments(line)
+	some u in _fetch_units(s)
+}
+
+# _command_tokens is segment's own command tokenised in order (an
+# array, not a set: positions matter for telling an option's own
+# value apart from a fetch target), quotes trimmed off each token.
+_command_tokens(segment) := [trim(m, "\"'") |
+	some m in regex.find_n(_command_token_pattern, segment, -1)
+]
+
+# _fetch_keyword_index is the position, within tokens, of the
+# curl/wget keyword that starts this command.
+_fetch_keyword_index(tokens) := min({i |
+	some i
+	lower(tokens[i]) in {"curl", "wget"}
+})
+
+# _is_option_flag is true for any token that is itself an option
+# (`-x`, `--long`), never a fetch target on its own.
+_is_option_flag(tok) if startswith(tok, "-")
+
+# _value_taking_options are, per fetch tool, the options that take a
+# following argument of their own: that argument is an option's VALUE,
+# never a fetch target, whatever it names. The sets are per tool
+# because the same letter means different things: curl's `-O` saves
+# under the remote name (no value) where wget's `-O` names the output
+# file, and wget's `-H`, `-d`, `-c`, `-b`, `-m`, `-x`, `-K` and `-F`
+# are plain flags. Reading a flag as value-taking would swallow the
+# next token, a real fetch target, out of every check below, so only
+# options documented as taking a value are listed: one missing here
+# only keeps a finding (its value reads as a target that is not
+# first-party), one wrongly listed could hide a target. A flag such as
+# `--tlsv1.2` or `--ca-native` takes no value and is not listed.
+_value_taking_options := {
+	"curl": {
+		"-o", "--output", "--output-dir",
+		"-H", "--header",
+		"-d", "--data", "--data-raw", "--data-binary", "--data-urlencode",
+		"-F", "--form",
+		"-A", "--user-agent",
+		"-u", "--user",
+		"-U", "--proxy-user",
+		"-X", "--request",
+		"-e", "--referer",
+		"-b", "--cookie",
+		"-c", "--cookie-jar",
+		"-T", "--upload-file",
+		"-x", "--proxy",
+		"-K", "--config",
+		"-m", "--max-time",
+		"-w", "--write-out",
+		"-r", "--range",
+		"-E", "--cert",
+		"--key",
+		"--cacert",
+		"--proto", "--proto-redir",
+		"--resolve",
+		"--retry", "--retry-delay", "--retry-max-time",
+		"--connect-timeout",
+		"--limit-rate",
+	},
+	"wget": {
+		"-O", "--output-document",
+		"-o", "--output-file",
+		"-a", "--append-output",
+		"-e", "--execute",
+		"-U", "--user-agent",
+		"-T", "--timeout",
+		"-t", "--tries",
+		"-P", "--directory-prefix",
+		"-A", "--accept",
+		"-R", "--reject",
+		"-X", "--exclude-directories",
+		"-D", "--domains",
+		"--header",
+		"--user", "--password",
+		"--post-data", "--body-data",
+		"--referer",
+		"--ca-certificate", "--certificate",
+		"--limit-rate",
+	},
+}
+
+# _target_injecting_options are, per fetch tool, the options whose
+# value can bring in fetch targets the command line never shows: a
+# curl config file (`-K`/`--config`) or variable (`--variable`, read by
+# the `--expand-*` options), a wget input list (`-i`/`--input-file`),
+# startup command (`-e`/`--execute`) or config file (`--config`). A
+# command carrying one is never provably a self-reference nor
+# first-party (_command_urls fails), whatever its visible URLs are.
+_target_injecting_options := {
+	"curl": {"-K", "--config", "--variable"},
+	"wget": {"-i", "--input-file", "-e", "--execute", "--config"},
+}
+
+# _target_injecting_short_letters are the same options' short letters,
+# matched inside a bundle of short flags (`-fsSLK cfg`).
+_target_injecting_short_letters := {
+	"curl": {"K"},
+	"wget": {"i", "e"},
+}
+
+_injects_fetch_targets(tokens) if {
+	tool := lower(tokens[_fetch_keyword_index(tokens)])
+	some tok in tokens
+	_is_target_injecting(tool, tok)
+}
+
+# The exact option, or its glued `--long=value` form.
+_is_target_injecting(tool, tok) if {
+	some opt in _target_injecting_options[tool]
+	_option_matches(tok, opt)
+}
+
+# Every curl `--expand-*` option reads a `--variable` value.
+_is_target_injecting(tool, tok) if {
+	tool == "curl"
+	startswith(tok, "--expand-")
+}
+
+# A bundle of short flags (or a short option with its value glued on)
+# that carries one of the letters.
+_is_target_injecting(tool, tok) if {
+	startswith(tok, "-")
+	not startswith(tok, "--")
+	some letter in _target_injecting_short_letters[tool]
+	contains(substring(tok, 1, -1), letter)
+}
+
+_option_matches(tok, opt) if tok == opt
+
+_option_matches(tok, opt) if {
+	startswith(opt, "--")
+	startswith(tok, concat("", [opt, "="]))
+}
+
+# _is_options_value is true for the token right after a value-taking
+# option of this command's own tool: it is consumed by that option,
+# not a target in its own right (the `file` in `-o file`, the header
+# text in `-H "..."`).
+_is_options_value(tokens, i) if {
+	i > 0
+	tool := lower(tokens[_fetch_keyword_index(tokens)])
+	tokens[i - 1] in _value_taking_options[tool]
+}
+
+# _fetch_targets is every token of the command, after its own
+# curl/wget keyword, that is neither an option flag nor an option's
+# own value: every one of these is a fetch target the command actually
+# names, whatever it looks like (a literal URL, a scheme-less host, a
+# shell variable, a bare word).
+_fetch_targets(tokens) := [tok |
+	kw := _fetch_keyword_index(tokens)
+	some i
+	i > kw
+	tok := tokens[i]
+	not _is_option_flag(tok)
+	not _is_options_value(tokens, i)
+]
+
+# _is_literal_url is true when tok, taken as a WHOLE token (anchored
+# start to end), is itself a well-formed http(s) URL: a scheme-less
+# host, a bare word, or a `$`-expansion never matches this, whatever
+# else it might otherwise look like.
+_is_literal_url(tok) if regex.match(concat("", ["^", _url_pattern, "$"]), tok)
+
+# _command_urls is every fetch target of ONE fetch segment's command,
+# but ONLY when EVERY target is itself a literal URL (_is_literal_url):
+# a command may carry more than one URL argument, and every one of
+# them must pass, or the whole command fails. This is what tells a
+# command whose second argument is a shell variable or a scheme-less
+# host apart from one that simply never had a second argument at all,
+# rather than silently reading only whichever targets happened to look
+# like a URL and ignoring the rest.
+default _command_urls(_) := set()
+
+_command_urls(segment) := urls if {
+	tokens := _command_tokens(segment)
+	not _injects_fetch_targets(tokens)
+	targets := _fetch_targets(tokens)
+	count(targets) > 0
+	every t in targets { _is_literal_url(t) }
+	urls := {t | some t in targets}
+}
+
+# _url_host parses the host out of a (lower-cased) URL: strip the
+# scheme, cut the authority at its first "/", drop a "userinfo@"
+# prefix (everything up to and including the LAST "@": a password may
+# itself carry one, but the host is always what follows the last one)
+# and a ":port" suffix. No owner or other untrusted value is ever
+# interpolated into a regex here: the result is compared as a plain
+# string.
+_url_host(url) := host if {
+	after_scheme := regex.replace(url, `^https?://`, "")
+	authority := split(after_scheme, "/")[0]
+	at_parts := split(authority, "@")
+	host_and_port := at_parts[count(at_parts) - 1]
+	host := split(host_and_port, ":")[0]
+}
+
+# _url_path is the path segment of a (lower-cased) URL, "" when the URL
+# has none (bare host, no trailing "/...").
+_url_path(url) := path if {
+	after_scheme := regex.replace(url, `^https?://`, "")
+	idx := indexof(after_scheme, "/")
+	idx >= 0
+	path := substring(after_scheme, idx, -1)
+} else := ""
+
+# _first_party: EVERY fetch command on the line (not just every URL
+# some regex found) carries a literal URL, and every one of those is a
+# first-party domain of the scanned repository's own owner (the owner
+# name as the registrable domain: clickhouse.com for ClickHouse/*), or
+# the owner's own GitHub content (raw.githubusercontent.com/<owner>/...
+# or github.com/<owner>/..., any repo, any ref), including the owner's
+# own repository on a branch or tag, which _self_reference_immutable
+# below does not cover. A command whose own URL is a shell variable or
+# scheme-less fails this (empty _command_urls), the same as a
+# non-first-party one. A line with no curl/wget command at all is
+# never first-party.
+_first_party(line) if {
+	segments := _fetch_command_units(line)
+	count(segments) > 0
+	owner := _fp_owner(_fp_owner_repo)
+	owner != ""
+	every segment in segments {
+		urls := _command_urls(segment)
+		count(urls) > 0
+		every url in urls {
+			_first_party_host(lower(url), owner)
+		}
+	}
+}
+
+_first_party_host(url, owner) if _url_host(url) == sprintf("%s.com", [owner])
+
+_first_party_host(url, owner) if {
+	_url_host(url) == "raw.githubusercontent.com"
+	startswith(_url_path(url), sprintf("/%s/", [owner]))
+}
+
+_first_party_host(url, owner) if {
+	_url_host(url) == "github.com"
+	startswith(_url_path(url), sprintf("/%s/", [owner]))
+}
+
+# _self_reference_immutable: EVERY fetch command on the line carries a
+# literal URL, and every one of those is the scanned repository's own
+# content (exact "owner/repo"), pinned to the commit the workflow runs
+# at (a 40-hex SHA, or the unresolved ${{ github.sha }} expression).
+# Nobody but whoever already committed here can ever change it, so
+# this is no entry at all, unlike a branch or tag self-reference
+# (first-party, not suppressed), and unlike a line that also fetches
+# so much as one OTHER, non-self-referencing command (or one whose own
+# URL is a shell variable or scheme-less, which fails this the same
+# way: it is not provably a self-reference, so it must still be read
+# as a finding, and as not first-party).
+_self_reference_immutable(line) if {
+	segments := _fetch_command_units(line)
+	count(segments) > 0
+	own := _fp_owner_repo
+	own != ""
+	every segment in segments {
+		urls := _command_urls(segment)
+		count(urls) > 0
+		every url in urls {
+			_self_reference_immutable_url(lower(url), own)
+		}
+	}
+}
+
+# _self_ref_commit_pattern has no owner or other untrusted value
+# interpolated: by the time it runs, the "/<own>/" (or
+# "/<own>/blob/"/"/<own>/raw/") prefix has already been stripped by a
+# plain string operation (startswith/trim_prefix), so this only ever
+# matches the remainder.
+_self_ref_commit_pattern := `(?i)^(?:[0-9a-f]{40}|\$\{\{\s*github\.sha\s*\}\})/`
+
+_self_reference_immutable_url(url, own) if {
+	_url_host(url) == "raw.githubusercontent.com"
+	p := _url_path(url)
+	prefix := sprintf("/%s/", [own])
+	startswith(p, prefix)
+	regex.match(_self_ref_commit_pattern, trim_prefix(p, prefix))
+}
+
+# github.com/<own>/blob/<sha>/... (the HTML blob view) and
+# github.com/<own>/raw/<sha>/... (the raw-content redirect) are both
+# the repository's own content at that path.
+_self_reference_immutable_url(url, own) if {
+	_url_host(url) == "github.com"
+	p := _url_path(url)
+	some marker in ["blob", "raw"]
+	prefix := sprintf("/%s/%s/", [own, marker])
+	startswith(p, prefix)
+	regex.match(_self_ref_commit_pattern, trim_prefix(p, prefix))
 }
 
 # The script line as quoted in the message. A backtick command

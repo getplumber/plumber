@@ -1865,6 +1865,7 @@ func findingsToItems(findings []opaengine.Finding, paths []control.AttackPath, v
 			Dismissed:   f.Dismissed,
 			Inert:       inertReasonFor(sit, f.Job),
 		}
+		item.GateNote, _ = f.Data["gateNote"].(string)
 		if v4 {
 			item.ContextualSeverity = string(control.ContextualSeverity(f, paths, defaultBranch))
 			item.Role = control.FindingLine(f, paths)

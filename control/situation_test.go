@@ -294,7 +294,11 @@ func TestDecodeSituationCarriesTheStructuralFacts(t *testing.T) {
 // TestEvaluateSituationCarriesTheFeedKinds pins that each fed job reaches
 // the Go side with the kinds of edge that link it to its feeder: an
 // artifact and a cache together on one pair, a job output read through
-// needs on another.
+// needs on another. On GitHub neither the artifact (publish runs no
+// script and calls no action on the download, so it is read
+// conservatively as artifact_executed) nor the output (notify runs it in
+// a script) is the bare kind: both carry the typed one that says the
+// consumer ran what it received.
 func TestEvaluateSituationCarriesTheFeedKinds(t *testing.T) {
 	p := &ir.NormalizedPipeline{
 		Provider: ir.ProviderGitHub,
@@ -308,7 +312,7 @@ func TestEvaluateSituationCarriesTheFeedKinds(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	want := map[string][]string{"notify": {FeedOutput}, "publish": {FeedArtifact, FeedCache}}
+	want := map[string][]string{"notify": {FeedOutputExecuted}, "publish": {FeedArtifactExecuted, FeedCache}}
 	if got := s.Jobs["build"].FeedsVia; !reflect.DeepEqual(got, want) {
 		t.Errorf("build.FeedsVia = %v, want %v", got, want)
 	}

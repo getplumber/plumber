@@ -481,12 +481,17 @@ func TestJobLessPrivilegeFindingWithoutAVariableIsAnOtherFinding(t *testing.T) {
 }
 
 // A merged path is priced once, and every finding anchoring it is consumed:
-// two findings on one action (a known advisory, so uncapped) are one High
-// path (15), two on one image (only not pinned, so held at Medium by the
-// dependency cap) one Medium path (6), with no other finding left.
+// two findings on one action (a known advisory, so uncapped) in a job
+// holding a secret are one High path (15), two on one image (only not
+// pinned, so held at Medium by the dependency cap) one Medium path (6),
+// with no other finding left.
 func TestV4MergedPathCountsOnceAndConsumesEveryAnchor(t *testing.T) {
 	findings := append(pinnedActionFindings(), imageFindings()...)
-	paths := assemblePaths(findings, pinnedActionSituation())
+	sit := pinnedActionSituation()
+	build := sit.Jobs["build"]
+	build.Privilege.Secrets = []string{"DEPLOY_KEY"}
+	sit.Jobs["build"] = build
+	paths := assemblePaths(findings, sit)
 	s := ComputePlumberScoreV4(ScoreInputV4{Findings: findings, Paths: paths})
 	if len(paths) != 2 || len(s.PathLosses) != 2 || s.PathLosses[0].Count != 1 || s.PathLosses[1].Count != 1 {
 		t.Fatalf("want two merged paths, one per tier, got paths %d, losses %+v", len(paths), s.PathLosses)

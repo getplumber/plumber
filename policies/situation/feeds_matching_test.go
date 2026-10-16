@@ -154,16 +154,218 @@ func feedsViaOf(t *testing.T, jobs []ir.Job, producer string) map[string][]strin
 	return r.Jobs[producer].FeedsVia
 }
 
-// TestFeedsViaArtifact pins the artifact kind: build uploads the artifact
-// publish downloads, with no needs and no cache between them.
+// TestFeedsViaArtifact pins the artifact_executed kind: build uploads the
+// artifact publish downloads, with no needs and no cache between them.
+// publish runs no script and calls no action on the download, so its
+// consumption is unknown, read conservatively as artifact_executed (the
+// safe error: crossing with the full reach, never pretending the artifact
+// is only moved).
 func TestFeedsViaArtifact(t *testing.T) {
 	jobs := []ir.Job{
 		{Name: "build", Artifacts: []ir.ArtifactRef{{Name: "dist", Mode: "produce"}}},
 		{Name: "publish", Artifacts: []ir.ArtifactRef{{Name: "dist", Mode: "consume"}}},
 	}
-	want := map[string][]string{"publish": {"artifact"}}
+	want := map[string][]string{"publish": {"artifact_executed"}}
 	if got := feedsViaOf(t, jobs, "build"); !reflect.DeepEqual(got, want) {
 		t.Errorf("build.feedsVia = %v, want %v", got, want)
+	}
+}
+
+// TestFeedsViaArtifactOnGitLabStaysTheBareKind pins that the typed
+// artifact_executed/artifact_altered split is GitHub-only: a GitLab
+// produce/consume pair keeps the untyped "artifact" kind, whatever the
+// consumer job does, this task not touching GitLab's own model.
+func TestFeedsViaArtifactOnGitLabStaysTheBareKind(t *testing.T) {
+	gl := evaluate(t, &ir.NormalizedPipeline{
+		Provider: ir.ProviderGitLab,
+		Jobs: []ir.Job{
+			{Name: "build", Artifacts: []ir.ArtifactRef{{Name: "dist", Mode: "produce"}}},
+			{Name: "deploy", Artifacts: []ir.ArtifactRef{{Name: "dist", Mode: "consume"}}},
+		},
+	}, nil)
+	want := map[string][]string{"deploy": {"artifact"}}
+	if got := gl.Jobs["build"].FeedsVia; !reflect.DeepEqual(got, want) {
+		t.Errorf("GitLab build.feedsVia = %v, want %v", got, want)
+	}
+}
+
+// TestFeedsViaArtifactAltered pins the artifact_altered kind: build
+// uploads dist, release downloads it and only ships it on with a release
+// action, running no script of its own: the download is moved, released
+// or published, never executed.
+func TestFeedsViaArtifactAltered(t *testing.T) {
+	jobs := []ir.Job{
+		{Name: "build", Artifacts: []ir.ArtifactRef{{Name: "dist", Mode: "produce"}}},
+		{
+			Name:      "release",
+			Artifacts: []ir.ArtifactRef{{Name: "dist", Mode: "consume"}},
+			Uses:      []ir.Action{{Uses: "softprops/action-gh-release@v1", With: map[string]any{"files": "dist/*"}}},
+		},
+	}
+	want := map[string][]string{"release": {"artifact_altered"}}
+	if got := feedsViaOf(t, jobs, "build"); !reflect.DeepEqual(got, want) {
+		t.Errorf("build.feedsVia = %v, want %v", got, want)
+	}
+}
+
+// TestFeedsViaArtifactExecutedWhenConsumerAlsoRunsAScript pins that a
+// known release/upload action alone never reads as artifact_altered when
+// the consumer also runs a script beyond that pattern: one unrelated run
+// step makes the whole edge artifact_executed, the conservative default.
+func TestFeedsViaArtifactExecutedWhenConsumerAlsoRunsAScript(t *testing.T) {
+	jobs := []ir.Job{
+		{Name: "build", Artifacts: []ir.ArtifactRef{{Name: "dist", Mode: "produce"}}},
+		{
+			Name:      "release",
+			Artifacts: []ir.ArtifactRef{{Name: "dist", Mode: "consume"}},
+			Uses:      []ir.Action{{Uses: "softprops/action-gh-release@v1", With: map[string]any{"files": "dist/*"}}},
+			Scripts:   []string{"./dist/app --self-test"},
+		},
+	}
+	want := map[string][]string{"release": {"artifact_executed"}}
+	if got := feedsViaOf(t, jobs, "build"); !reflect.DeepEqual(got, want) {
+		t.Errorf("build.feedsVia = %v, want %v", got, want)
+	}
+}
+
+// TestFeedsViaArtifactExecutedThroughAChainedCommand pins that a chained
+// command is read segment by segment: "npm ci && npm publish" is not
+// alter-only just because its second half is a recognized publish
+// command, since "npm ci" runs arbitrary install/build logic first.
+func TestFeedsViaArtifactExecutedThroughAChainedCommand(t *testing.T) {
+	jobs := []ir.Job{
+		{Name: "build", Artifacts: []ir.ArtifactRef{{Name: "dist", Mode: "produce"}}},
+		{
+			Name:      "release",
+			Artifacts: []ir.ArtifactRef{{Name: "dist", Mode: "consume"}},
+			Scripts:   []string{"npm ci && npm publish"},
+		},
+	}
+	want := map[string][]string{"release": {"artifact_executed"}}
+	if got := feedsViaOf(t, jobs, "build"); !reflect.DeepEqual(got, want) {
+		t.Errorf("build.feedsVia = %v, want %v", got, want)
+	}
+}
+
+// TestFeedsViaArtifactAlteredThroughAChainedCommand pins the opposite:
+// every segment of "sha256sum dist/* && gh release upload v1 dist/*" is
+// itself a recognized alter-only command (hashing, then releasing), so
+// the edge stays artifact_altered even though the script has two parts.
+func TestFeedsViaArtifactAlteredThroughAChainedCommand(t *testing.T) {
+	jobs := []ir.Job{
+		{Name: "build", Artifacts: []ir.ArtifactRef{{Name: "dist", Mode: "produce"}}},
+		{
+			Name:      "release",
+			Artifacts: []ir.ArtifactRef{{Name: "dist", Mode: "consume"}},
+			Scripts:   []string{"sha256sum dist/* && gh release upload v1 dist/*"},
+		},
+	}
+	want := map[string][]string{"release": {"artifact_altered"}}
+	if got := feedsViaOf(t, jobs, "build"); !reflect.DeepEqual(got, want) {
+		t.Errorf("build.feedsVia = %v, want %v", got, want)
+	}
+}
+
+// TestFeedsViaArtifactExecutedWhenConsumerRunsAnotherAction pins that a
+// consumer whose own scripts are only echo/cat lines (both alter-only on
+// their own) still reads as artifact_executed when it also calls a
+// third-party or local action beyond checkout and the artifact actions
+// themselves: that action can run anything, so it is never read as a
+// sign the download was only moved, listed or hashed. This is the real
+// shape of the GitHub changed-files "test" job (corpus reviewdog-2025):
+// actions/checkout, actions/download-artifact, several `uses: ./` runs,
+// and run: steps that only echo or cat a step's own output.
+func TestFeedsViaArtifactExecutedWhenConsumerRunsAnotherAction(t *testing.T) {
+	jobs := []ir.Job{
+		{Name: "build", Artifacts: []ir.ArtifactRef{{Name: "build-assets", Mode: "produce"}}},
+		{
+			Name:      "test",
+			Artifacts: []ir.ArtifactRef{{Name: "build-assets", Mode: "consume"}},
+			Uses: []ir.Action{
+				{Uses: "actions/checkout@v4"},
+				{Uses: "actions/download-artifact@v4", With: map[string]any{"name": "build-assets"}},
+				{Uses: "./"},
+			},
+			Scripts: []string{"echo '${{ toJSON(steps.changed-files.outputs) }}'", "cat .github/outputs/all_changed_files.json"},
+		},
+	}
+	want := map[string][]string{"test": {"artifact_executed"}}
+	if got := feedsViaOf(t, jobs, "build"); !reflect.DeepEqual(got, want) {
+		t.Errorf("build.feedsVia = %v, want %v: the local action './' can run anything, never alter-only", got, want)
+	}
+}
+
+// TestFeedsViaArtifactExecutedThroughCommandSubstitution pins that a
+// command substitution inside an otherwise alter-only verb's argument
+// still executes the download first: "echo $(./dist/evil.sh)" matches
+// "^echo\b" on its own, but the substitution runs the artifact's own
+// script before echo ever sees its output.
+func TestFeedsViaArtifactExecutedThroughCommandSubstitution(t *testing.T) {
+	jobs := []ir.Job{
+		{Name: "build", Artifacts: []ir.ArtifactRef{{Name: "dist", Mode: "produce"}}},
+		{
+			Name:      "release",
+			Artifacts: []ir.ArtifactRef{{Name: "dist", Mode: "consume"}},
+			Scripts:   []string{"echo $(./dist/evil.sh)"},
+		},
+	}
+	want := map[string][]string{"release": {"artifact_executed"}}
+	if got := feedsViaOf(t, jobs, "build"); !reflect.DeepEqual(got, want) {
+		t.Errorf("build.feedsVia = %v, want %v: $(...) runs the artifact before echo does", got, want)
+	}
+}
+
+// TestFeedsViaArtifactExecutedThroughBacktickSubstitution pins the same
+// bypass in its backtick spelling.
+func TestFeedsViaArtifactExecutedThroughBacktickSubstitution(t *testing.T) {
+	jobs := []ir.Job{
+		{Name: "build", Artifacts: []ir.ArtifactRef{{Name: "dist", Mode: "produce"}}},
+		{
+			Name:      "release",
+			Artifacts: []ir.ArtifactRef{{Name: "dist", Mode: "consume"}},
+			Scripts:   []string{"echo `./dist/evil.sh`"},
+		},
+	}
+	want := map[string][]string{"release": {"artifact_executed"}}
+	if got := feedsViaOf(t, jobs, "build"); !reflect.DeepEqual(got, want) {
+		t.Errorf("build.feedsVia = %v, want %v: backticks run the artifact before echo does", got, want)
+	}
+}
+
+// TestFeedsViaArtifactAlteredWithShellPreamble pins that the harmless
+// shell preamble lines (set -e and its variants) that commonly precede a
+// release command do not themselves disqualify an alter-only read.
+func TestFeedsViaArtifactAlteredWithShellPreamble(t *testing.T) {
+	jobs := []ir.Job{
+		{Name: "build", Artifacts: []ir.ArtifactRef{{Name: "dist", Mode: "produce"}}},
+		{
+			Name:      "release",
+			Artifacts: []ir.ArtifactRef{{Name: "dist", Mode: "consume"}},
+			Scripts:   []string{"set -euo pipefail\ngh release upload v1 dist/*"},
+		},
+	}
+	want := map[string][]string{"release": {"artifact_altered"}}
+	if got := feedsViaOf(t, jobs, "build"); !reflect.DeepEqual(got, want) {
+		t.Errorf("build.feedsVia = %v, want %v: a set preamble line never disqualifies the release line after it", got, want)
+	}
+}
+
+// TestFeedsViaArtifactExecutedWhenExportSubstitutes pins that the
+// preamble allow-list never covers a substitution: "export X=$(cat
+// dist/v)" reads the same leading keyword (export) as a plain
+// assignment, but the substitution inside its value still executes.
+func TestFeedsViaArtifactExecutedWhenExportSubstitutes(t *testing.T) {
+	jobs := []ir.Job{
+		{Name: "build", Artifacts: []ir.ArtifactRef{{Name: "dist", Mode: "produce"}}},
+		{
+			Name:      "release",
+			Artifacts: []ir.ArtifactRef{{Name: "dist", Mode: "consume"}},
+			Scripts:   []string{"export X=$(cat dist/v)"},
+		},
+	}
+	want := map[string][]string{"release": {"artifact_executed"}}
+	if got := feedsViaOf(t, jobs, "build"); !reflect.DeepEqual(got, want) {
+		t.Errorf("build.feedsVia = %v, want %v: $(...) in the exported value still executes", got, want)
 	}
 }
 
@@ -179,11 +381,13 @@ func TestFeedsViaCache(t *testing.T) {
 	}
 }
 
-// TestFeedsViaOutput pins the output kind on GitHub: b reads a's job
-// outputs (needs.a.outputs.*) in a script, a with: value, an env value or
-// an if:, the edge job outputs travel along. A bare needs: orders the two
-// jobs and hands over nothing, so it is no edge. On GitLab, needs: also
-// downloads the needed job's artifacts, so it stays an edge there.
+// TestFeedsViaOutput pins the two output kinds on GitHub: b reads a's job
+// outputs (needs.a.outputs.*) in a script, a with: value or an env value,
+// each a read that runs the value (output_executed); an if: alone only
+// compares it (output_compared), letting no code cross. A bare needs:
+// orders the two jobs and hands over nothing, so it is no edge. On
+// GitLab, needs: also downloads the needed job's artifacts, so it stays
+// the one "output" edge there.
 func TestFeedsViaOutput(t *testing.T) {
 	jobs := []ir.Job{
 		{Name: "ci/a"},
@@ -194,7 +398,10 @@ func TestFeedsViaOutput(t *testing.T) {
 		{Name: "ci/bare", Needs: []string{"ci/a"}, Scripts: []string{"make"}},
 		{Name: "ci/other", Needs: []string{"ci/a"}, Scripts: []string{"echo ${{ needs.ab.outputs.v }}"}},
 	}
-	want := map[string][]string{"ci/env": {"output"}, "ci/if": {"output"}, "ci/script": {"output"}, "ci/with": {"output"}}
+	want := map[string][]string{
+		"ci/env": {"output_executed"}, "ci/if": {"output_compared"},
+		"ci/script": {"output_executed"}, "ci/with": {"output_executed"},
+	}
 	if got := feedsViaOf(t, jobs, "ci/a"); !reflect.DeepEqual(got, want) {
 		t.Errorf("a.feedsVia = %v, want %v", got, want)
 	}
@@ -206,16 +413,37 @@ func TestFeedsViaOutput(t *testing.T) {
 	}
 }
 
+// TestFeedsViaOutputExecutedWinsOverCompared pins that when a job both
+// compares a needs output in an if: and runs it in a script, the edge is
+// output_executed alone: the stronger kind wins, output_compared never
+// also listed.
+func TestFeedsViaOutputExecutedWinsOverCompared(t *testing.T) {
+	jobs := []ir.Job{
+		{Name: "a"},
+		{
+			Name: "b", Needs: []string{"a"},
+			If:      "needs.a.outputs.release == 'true'",
+			Scripts: []string{"echo ${{ needs.a.outputs.version }}"},
+		},
+	}
+	want := map[string][]string{"b": {"output_executed"}}
+	if got := feedsViaOf(t, jobs, "a"); !reflect.DeepEqual(got, want) {
+		t.Errorf("a.feedsVia = %v, want %v", got, want)
+	}
+}
+
 // TestFeedsViaTwoKindsOnOnePair pins that every kind linking one pair is
-// listed, sorted: build uploads the artifact publish downloads and saves
-// the cache key publish restores, and feeds still names publish once. A
-// job feeding nothing carries an empty fact.
+// listed, sorted: build uploads the artifact publish downloads (publish
+// runs no script and calls no action on it, so it reads as
+// artifact_executed, the conservative default) and saves the cache key
+// publish restores, and feeds still names publish once. A job feeding
+// nothing carries an empty fact.
 func TestFeedsViaTwoKindsOnOnePair(t *testing.T) {
 	jobs := []ir.Job{
 		{Name: "build", Artifacts: []ir.ArtifactRef{{Name: "dist", Mode: "produce"}}, Caches: []ir.CacheRef{{Key: "deps", Mode: "save"}}},
 		{Name: "publish", Artifacts: []ir.ArtifactRef{{Name: "dist", Mode: "consume"}}, Caches: []ir.CacheRef{{Key: "deps", Mode: "restore"}}},
 	}
-	want := map[string][]string{"publish": {"artifact", "cache"}}
+	want := map[string][]string{"publish": {"artifact_executed", "cache"}}
 	if got := feedsViaOf(t, jobs, "build"); !reflect.DeepEqual(got, want) {
 		t.Errorf("build.feedsVia = %v, want %v", got, want)
 	}
