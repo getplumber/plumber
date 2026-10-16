@@ -95,12 +95,12 @@ func TestBannerNarrowTerminal(t *testing.T) {
 	}
 }
 
-// In colour, the wordmark is bold green; without truecolor, no 24-bit
+// In colour, the wordmark is bold in the brand teal; without truecolor, no 24-bit
 // sequence.
 func TestBannerColors(t *testing.T) {
 	for i, l := range renderBanner(termCaps{Color: colorTrue}) {
-		if !strings.Contains(l, "1;38;2;91;201;118") {
-			t.Errorf("row %d: the wordmark is not bold green: %q", i, l)
+		if !strings.Contains(l, "1;38;2;9;195;195") {
+			t.Errorf("row %d: the wordmark is not bold teal: %q", i, l)
 		}
 	}
 	joined := strings.Join(renderBanner(termCaps{Color: colorBasic}), "\n")
@@ -142,9 +142,9 @@ func TestScoreLetterBlockArt(t *testing.T) {
 	}
 }
 
-// The accent is the brand green.
-func TestAccentIsTheBrandGreen(t *testing.T) {
-	if colAccent != lipgloss.Color("#30D158") {
+// The accent is the brand teal.
+func TestAccentIsTheBrandTeal(t *testing.T) {
+	if colAccent != lipgloss.Color("#09C3C3") {
 		t.Errorf("accent %s", colAccent)
 	}
 }

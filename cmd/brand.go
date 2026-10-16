@@ -82,14 +82,14 @@ const (
 	bannerName    = "PLUMBER"
 )
 
-// renderBanner is the start of a run: the wordmark in bold green; on a
+// renderBanner is the start of a run: the wordmark in bold brand teal; on a
 // terminal narrower than the wordmark, the plain bold name.
 func renderBanner(caps termCaps) []string {
 	r := paletteFor(caps.Color)
 	if caps.Width > 0 && caps.Width < len(bannerIndent)+wordmarkWidth {
 		return []string{bannerIndent + r.NewStyle().Bold(true).Render(bannerName)}
 	}
-	word := r.NewStyle().Foreground(colPass).Bold(true)
+	word := r.NewStyle().Foreground(colAccent).Bold(true)
 	out := make([]string, len(wordmark))
 	for i, l := range wordmark {
 		out[i] = bannerIndent + word.Render(strings.TrimRight(l, " "))
