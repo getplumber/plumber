@@ -443,6 +443,19 @@ type ProjectContext struct {
 	Policies        []Policy         `json:"policies"`
 	Snapshot        Snapshot         `json:"snapshot"`
 	DismissedIssues []DismissedIssue `json:"dismissed_issues"`
+	// CapabilityRecognizers are the org-defined recognizers, merged after the
+	// CLI's shipped defaults. Absent from an older platform's answer, which
+	// decodes to nil and leaves the defaults alone.
+	CapabilityRecognizers []CapabilityRecognizer `json:"capability_recognizers"`
+}
+
+// CapabilityRecognizer is one org-defined recognizer the platform serves on /context
+// (monorepo spec 2026-10-16, section 4.6): merged after the CLI's defaults.
+type CapabilityRecognizer struct {
+	Capability string   `json:"capability"`
+	Tool       string   `json:"tool"`
+	Images     []string `json:"images"`
+	Commands   []string `json:"commands"`
 }
 
 // ResolveRequest asks the platform to resolve the CI config at a specific

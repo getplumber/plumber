@@ -112,6 +112,7 @@ func (p *GitLabProvider) WritePBOM(result *control.AnalysisResult, conf *configu
 		WithComplianceData(complianceData).
 		WithIncludeOverrideData(overrideData).
 		WithJobResources(pipelineJobsOf(result)).
+		WithCapabilities(CapabilitiesOf(result, conf)).
 		WithCommit(result.ArtifactCommitSHA, result.ArtifactRef)
 	if conf.NoControls {
 		gen = gen.WithoutComplianceVerdicts()

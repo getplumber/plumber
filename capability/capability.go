@@ -48,9 +48,9 @@ type Match struct {
 var defaults = []Recognizer{
 	{Capability: KindSecretDetection, Tool: "gitleaks", Images: []string{"zricethezav/gitleaks", "ghcr.io/gitleaks/gitleaks"}, Commands: []string{"gitleaks"}},
 	{Capability: KindSecretDetection, Tool: "betterleaks", Images: []string{"ghcr.io/betterleaks/betterleaks"}, Commands: []string{"betterleaks"}},
-	{Capability: KindSecretDetection, Tool: "trufflehog", Images: []string{"trufflesecurity/trufflehog"}, Commands: []string{"trufflehog"}},
-	{Capability: KindSecretDetection, Tool: "detect-secrets", Commands: []string{"detect-secrets"}},
-	{Capability: KindSecretDetection, Tool: "ggshield", Images: []string{"gitguardian/ggshield"}, Commands: []string{"ggshield"}},
+	{Capability: KindSecretDetection, Tool: "trufflehog", Images: []string{"trufflesecurity/trufflehog", "ghcr.io/trufflesecurity/trufflehog"}, Commands: []string{"trufflehog"}},
+	{Capability: KindSecretDetection, Tool: "detect-secrets", Commands: []string{"detect-secrets", "detect_secrets", "detect-secrets-hook"}},
+	{Capability: KindSecretDetection, Tool: "ggshield", Images: []string{"gitguardian/ggshield"}, Commands: []string{"ggshield secret", "ggshield scan"}},
 	{Capability: KindSecretDetection, Tool: "gitlab-secret-detection", Images: []string{"registry.gitlab.com/security-products/secrets"},
 		Includes: []string{"Security/Secret-Detection.gitlab-ci.yml", "Jobs/Secret-Detection.gitlab-ci.yml", "secret-detection"}, ReportTypes: []string{"secret_detection"}},
 }

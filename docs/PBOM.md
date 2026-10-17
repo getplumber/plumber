@@ -94,7 +94,8 @@ Top-level keys are emitted in this order (human-readable flow: context → aggre
   "plumberScore": { ... },
   "containerImages": [ ... ],
   "includes": [ ... ],
-  "jobs": [ ... ]
+  "jobs": [ ... ],
+  "capabilities": [ ... ]
 }
 ```
 
@@ -110,6 +111,7 @@ Top-level keys are emitted in this order (human-readable flow: context → aggre
 | `containerImages` | array | All container images used in the pipeline |
 | `includes` | array | All includes (components, templates, local, remote, project) |
 | `jobs` | array | GitLab only. Per-job service images and runner tags. Omitted entirely when the run produced no pipeline model to read. |
+| `capabilities` | array | GitLab only. What the pipeline's jobs do (today: secret detection), as the CLI recognized it. Omitted when nothing was recognized. |
 
 ### `project` Object
 
@@ -310,6 +312,44 @@ Each entry in `services[]` is an image reference with no compliance verdict atta
 ```
 
 The CycloneDX export does not carry `jobs[]`: a runner tag is not a component, and a service image is already published as one through the pipeline's container images.
+
+### `capabilities[]` Array
+
+**GitLab only.** One entry per job and capability: what the job does, the tool it does it with, and the evidence the match rests on. The CLI recognizes it from what it already parsed (the job's image, the includes, the job's `artifacts:reports`, its own script lines) and from the shell scripts the job calls in the checkout. The key is omitted when nothing was recognized.
+
+Entries are sorted by job name, then by kind, so two runs over the same pipeline produce the same document. Hidden jobs (a name starting with `.`) are never listed: they never run on their own, and a job that extends one is judged under its own name.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `kind` | string | The capability. Closed vocabulary: `secret_detection` |
+| `job` | string | The job name, exactly as the pipeline declares it |
+| `tool` | string | The tool the recognizer names (`gitleaks`, `betterleaks`, `trufflehog`, `detect-secrets`, `ggshield`, `gitlab-secret-detection`, or a tool your organization defined on the platform) |
+| `evidence` | string | What the match rests on. Closed vocabulary, in the order the rules run (the first that matches wins): `image`, `include`, `report`, `command`, `wrapper_script` |
+
+The five evidence rules:
+
+- `image`: the job's image (`<registry>/<name>`, tag and digest ignored) matches a recognizer's image pattern.
+- `include`: the job is defined by an include a recognizer names (the GitLab Secret Detection template or component).
+- `report`: the job declares an `artifacts:reports` key a recognizer names (`secret_detection`). A job that only re-publishes a report it did not produce is listed too, because the rule reads the declaration, not the run; such a job is rare and an organization can tell it apart from the job name.
+- `command`: one of the job's own `before_script` / `script` / `after_script` lines runs a recognizer's command. Known prefixes are skipped (`env` with its `VAR=value` fields and options, `sudo` with its options and their values, `timeout` with its options and its duration, `time`, `nice`, `exec`, `command`, `nohup`), and `python -m <module>` counts as the module (`python -m detect_secrets`). Launchers are skipped too, the next field being the command (`bundle exec`, `poetry run`, `pipenv run`, `uv run`, `pdm run`, `pipx run`, `pnpm exec`, `npx` with its options), and `pre-commit run <hook>` counts as the hook (`pre-commit run gitleaks`), the run's own options understood and skipped first (`--hook-stage`, `--from-ref`, `--to-ref`, `--color` and the like, including their `=` form); an all-hooks run (`pre-commit run --all-files`) is not recognized because the hook list is in `.pre-commit-config.yaml`, which the rules do not read, and neither is a run whose hook id follows `--files` or `--file` (`pre-commit run --files a.py b.py gitleaks`), because those options consume every file field after them and a hook id placed there is indistinguishable from a file path. Shell comments are ignored, and a `make` target is not followed (`make secret-scan` counts as `make`). A container-run line (`docker run`, `podman run`, `nerdctl run`) also counts when one of its arguments is an image a recognizer's image pattern matches (`docker run --rm trufflesecurity/trufflehog:latest filesystem .`); the job's own image is not involved. The image is the first argument after `run` that is neither a flag nor a flag's value (`--rm`, `-it` and a flag written with `=` take no value, any other flag takes the next argument), and the arguments after it are the container's command, never an image. A recognizer's command may also be a space-separated sequence (`ggshield secret`), which matches only when the fields after the command equal the sequence's remaining words, in order; this disambiguates a multi-purpose tool's CLI (`ggshield secret scan .` matches, `ggshield iac scan .` does not), and a recognizer your organization defines on the platform may use the same form. Flags and their values may stand before the subcommand (`ggshield --config .gitguardian.yaml secret scan ci` matches), another word may not (`ggshield iac scan ci` does not). A flag's value is only skipped when it does not look like a bare word: a value holding a digit, a quote or one of `. / : = @ ~ ,` is skipped, while a word made only of letters, hyphens and underscores is never taken for a flag's value (`ggshield -v iac scan .` does not match). The accepted cost: a bare-word flag value before the subcommand is not understood (`corp-scan --profile ci secrets` does not match `corp-scan secrets`); ggshield is recognized by `ggshield secret` and by the legacy `ggshield scan` (ggshield before 1.14).
+- `wrapper_script`: a line runs a shell script of the repository (`./ci/scan.sh`, `bash scripts/scan.sh`, `cd ci && ./scan.sh`), and that script runs a recognizer's command. One level only (a script called by the script is not read), relative paths under the repository root only, at most 256 KiB per script. A script that is absent, outside the root, unreadable or over the cap is skipped quietly: it yields no evidence and never fails the run. Scripts are read only when the checkout the CLI runs in is the analyzed project itself, checked out at the analyzed ref (a CI job of that project on that branch); otherwise, including a local run or a run that names another project with `--project`, this rule is off, so a script of one repository never becomes evidence for another.
+
+The recognizers are the CLI's shipped defaults, then, in platform mode, the recognizers your organization defined on the platform (served on the project context), merged after them: a served recognizer extends the defaults, it never removes one.
+
+The platform push carries the same list in its `bom` section, always as an array (`[]` when nothing was recognized), at most 500 entries; past that bound the whole `bom` section is left out of the push and the bound is named on stderr.
+
+**Example:**
+
+```json
+{
+  "kind": "secret_detection",
+  "job": "secret-scan",
+  "tool": "gitleaks",
+  "evidence": "image"
+}
+```
+
+The CycloneDX export does not carry `capabilities[]`: a capability is not a component.
 
 ### `summary` Object
 
