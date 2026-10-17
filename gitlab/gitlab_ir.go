@@ -795,6 +795,7 @@ func enrichFromMergedConf(job *ir.Job, name string, conf *GitlabCIConf) {
 	job.Needs = gitlabNeeds(parsed.Needs)
 	job.Caches = gitlabCaches(jobCache(parsed, conf))
 	job.Artifacts = gitlabArtifacts(name, parsed.Artifacts, parsed.Needs, parsed.Dependencies)
+	job.ReportTypes = gitlabReportTypes(parsed.Artifacts)
 	if job.Environment == "" {
 		job.Environment = gitlabEnvironmentName(parsed.Environment)
 	}
@@ -1268,6 +1269,29 @@ func gitlabCaches(v any) []ir.CacheRef {
 		}
 		out = append(out, ref)
 	}
+	return out
+}
+
+// gitlabReportTypes returns the sorted, deduplicated keys of a job's artifacts.reports map
+// (`secret_detection`, `sast`, ...). artifacts is the raw `artifacts:` value of the merged
+// configuration (the same value gitlabArtifacts reads); any shape other than a map with a
+// `reports` map yields nil. yamlMap normalizes the yaml.v2 map[interface{}]interface{} shape
+// (recursively, including the nested reports map) the same way gitlabArtifacts already relies
+// on, so a direct type assertion to map[string]any would silently miss every real pipeline.
+func gitlabReportTypes(artifacts any) []string {
+	m := yamlMap(artifacts)
+	if m == nil {
+		return nil
+	}
+	reports, ok := m["reports"].(map[string]any)
+	if !ok || len(reports) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(reports))
+	for k := range reports {
+		out = append(out, k)
+	}
+	sort.Strings(out)
 	return out
 }
 

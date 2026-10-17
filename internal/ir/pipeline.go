@@ -434,6 +434,10 @@ type Job struct {
 	// on GitLab from the job's cache:, artifacts: and dependencies: keys.
 	Caches    []CacheRef    `json:"caches,omitempty"`
 	Artifacts []ArtifactRef `json:"artifacts,omitempty"`
+	// ReportTypes are the keys of the job's artifacts.reports map (secret_detection, sast, ...),
+	// sorted and deduplicated. The platform's pipeline capabilities read them as evidence that
+	// a job runs a scanner; nothing else reads them. Empty when the job declares no report.
+	ReportTypes []string `json:"reportTypes,omitempty"`
 }
 
 // ReusableCaller is one call of a reusable workflow, as seen from a job of
