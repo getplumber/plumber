@@ -570,6 +570,7 @@ func buildJobs(origin *GitlabPipelineOriginData, imagesByJob map[string]ir.Image
 	// every finding has a clickable pointer into the user's file.
 	lineByJob := scanGitLabJobLines(origin.ConfString)
 	originKindByJob := indexJobOriginKind(origin)
+	originIncludeByJob := indexJobOriginInclude(origin)
 	overrideKeysByJob := indexOverrideKeys(origin)
 	includeLineByJob := indexIncludeLineByJob(origin, includes)
 	jobs := make([]ir.Job, 0, len(origin.JobMap))
@@ -586,6 +587,9 @@ func buildJobs(origin *GitlabPipelineOriginData, imagesByJob map[string]ir.Image
 			job.OriginKind = "hardcoded"
 		case originKindByJob[name] != "":
 			job.OriginKind = originKindByJob[name]
+		}
+		if origin.JobHardcodedMap == nil || !origin.JobHardcodedMap[name] {
+			job.OriginInclude = originIncludeByJob[name]
 		}
 		if data.IsOverridden {
 			job.Overridden = true
@@ -692,6 +696,51 @@ func indexJobOriginKind(origin *GitlabPipelineOriginData) map[string]string {
 		}
 	}
 	return out
+}
+
+// indexJobOriginInclude walks origin.Origins like indexJobOriginKind and returns a map of
+// job name -> the identity of the include that defined it: the include's Source, or its
+// Path when Source is empty, computed exactly as buildIncludes computes them so the value
+// equals the matching ir.Include's Source or Path. A job listed by several origins keeps the
+// first.
+func indexJobOriginInclude(origin *GitlabPipelineOriginData) map[string]string {
+	if origin == nil || len(origin.Origins) == 0 {
+		return nil
+	}
+	out := make(map[string]string)
+	for i := range origin.Origins {
+		o := &origin.Origins[i]
+		id := originIncludeIdentity(o)
+		if id == "" {
+			continue
+		}
+		for _, job := range o.Jobs {
+			if job.Name == "" {
+				continue
+			}
+			if _, seen := out[job.Name]; seen {
+				continue
+			}
+			out[job.Name] = id
+		}
+	}
+	return out
+}
+
+// originIncludeIdentity is the Source buildIncludes gives this origin's include (the
+// include location, else the component include path), or, when that is empty, the Path it
+// falls back to (the Plumber template path).
+func originIncludeIdentity(o *GitlabPipelineOriginDataFull) string {
+	if o.GitlabIncludeOrigin.Location != "" {
+		return o.GitlabIncludeOrigin.Location
+	}
+	if o.GitlabComponent.ComponentIncludePath != "" {
+		return o.GitlabComponent.ComponentIncludePath
+	}
+	if o.FromPlumber {
+		return o.PlumberOrigin.Path
+	}
+	return ""
 }
 
 // enrichLocalVariables sets job.LocalVariables to the variables block

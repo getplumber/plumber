@@ -700,3 +700,52 @@ func TestExtractGitLabRunStepsSkipsStepsWithoutFunction(t *testing.T) {
 		t.Fatalf("expected no functions, got %+v", fns)
 	}
 }
+
+// TestBuildJobs_OriginIncludeNamesTheDefiningInclude covers ir.Job.OriginInclude, the
+// identity (Source, or Path when Source is empty) of the include that defined a job, which
+// the pipeline capabilities' include rule matches (spec 2026-10-16 pipeline capabilities,
+// evidence `include`). A job the project's own CI file defines keeps it empty, and a job
+// listed by several origins keeps the first.
+func TestBuildJobs_OriginIncludeNamesTheDefiningInclude(t *testing.T) {
+	tmpl := GitlabPipelineOriginDataFull{}
+	tmpl.OriginType = "template"
+	tmpl.GitlabIncludeOrigin.Location = "Security/Secret-Detection.gitlab-ci.yml"
+	tmpl.Jobs = []GitlabPipelineJobData{{Name: "secret_detection"}, {Name: "shared"}}
+	comp := GitlabPipelineOriginDataFull{}
+	comp.OriginType = "component"
+	comp.GitlabComponent.ComponentIncludePath = "gitlab.com/acme/ci/secret-detection@1.0.0"
+	comp.Jobs = []GitlabPipelineJobData{{Name: "comp_scan"}, {Name: "shared"}}
+	plumberTmpl := GitlabPipelineOriginDataFull{}
+	plumberTmpl.OriginType = "project"
+	plumberTmpl.FromPlumber = true
+	plumberTmpl.PlumberOrigin.Path = "gitleaks"
+	plumberTmpl.Jobs = []GitlabPipelineJobData{{Name: "plumber_scan"}}
+	origin := &GitlabPipelineOriginData{
+		JobMap: map[string]*GitlabPipelineJobData{
+			"secret_detection": {Name: "secret_detection"},
+			"comp_scan":        {Name: "comp_scan"},
+			"shared":           {Name: "shared"},
+			"plumber_scan":     {Name: "plumber_scan"},
+			"build":            {Name: "build"},
+		},
+		JobHardcodedMap: map[string]bool{"build": true},
+		Origins:         []GitlabPipelineOriginDataFull{tmpl, comp, plumberTmpl},
+	}
+
+	byName := map[string]ir.Job{}
+	for _, j := range buildJobs(origin, nil, ".gitlab-ci.yml", nil) {
+		byName[j.Name] = j
+	}
+	want := map[string]string{
+		"secret_detection": "Security/Secret-Detection.gitlab-ci.yml",
+		"comp_scan":        "gitlab.com/acme/ci/secret-detection@1.0.0",
+		"shared":           "Security/Secret-Detection.gitlab-ci.yml",
+		"plumber_scan":     "gitleaks",
+		"build":            "",
+	}
+	for name, w := range want {
+		if got := byName[name].OriginInclude; got != w {
+			t.Errorf("%s.OriginInclude = %q, want %q", name, got, w)
+		}
+	}
+}
