@@ -285,6 +285,11 @@ type Job struct {
 	OriginFile string   `json:"originFile,omitempty"`
 	OriginLine int      `json:"originLine,omitempty"`
 	OriginKind string   `json:"originKind,omitempty"`
+	// OriginInclude is the Source (or Path when Source is empty) of the include that defined
+	// this job, empty for a job the project's own CI file defines. It names the include's
+	// identity where OriginKind names only its type; the pipeline capabilities' include
+	// evidence matches it against the recognizers' include names.
+	OriginInclude string `json:"originInclude,omitempty"`
 	// Functions lists this job's `run:`-step function references
 	// (docs.gitlab.com/ci/functions, GitLab CI only). Kind classifies
 	// the reference form so policies can skip same-repo file
@@ -438,6 +443,10 @@ type Job struct {
 	// on GitLab from the job's cache:, artifacts: and dependencies: keys.
 	Caches    []CacheRef    `json:"caches,omitempty"`
 	Artifacts []ArtifactRef `json:"artifacts,omitempty"`
+	// ReportTypes are the keys of the job's artifacts.reports map (secret_detection, sast, ...),
+	// sorted and deduplicated. The platform's pipeline capabilities read them as evidence that
+	// a job runs a scanner; nothing else reads them. Empty when the job declares no report.
+	ReportTypes []string `json:"reportTypes,omitempty"`
 }
 
 // ReusableCaller is one call of a reusable workflow, as seen from a job of

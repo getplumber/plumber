@@ -94,7 +94,8 @@ Top-level keys are emitted in this order (human-readable flow: context → aggre
   "plumberScore": { ... },
   "containerImages": [ ... ],
   "includes": [ ... ],
-  "jobs": [ ... ]
+  "jobs": [ ... ],
+  "capabilities": [ ... ]
 }
 ```
 
@@ -110,6 +111,7 @@ Top-level keys are emitted in this order (human-readable flow: context → aggre
 | `containerImages` | array | All container images used in the pipeline |
 | `includes` | array | All includes (components, templates, local, remote, project) |
 | `jobs` | array | GitLab only. Per-job service images and runner tags. Omitted entirely when the run produced no pipeline model to read. |
+| `capabilities` | array | GitLab only. What the pipeline's jobs do (today: secret detection), as the CLI recognized it. Omitted when nothing was recognized. |
 
 ### `project` Object
 
@@ -310,6 +312,72 @@ Each entry in `services[]` is an image reference with no compliance verdict atta
 ```
 
 The CycloneDX export does not carry `jobs[]`: a runner tag is not a component, and a service image is already published as one through the pipeline's container images.
+
+### `capabilities[]` Array
+
+**GitLab only.** One entry per job and capability: what the job does, the tool it does it with, and the evidence the match rests on. A capability is a name you declare (or the CLI's built-in list declares, `secret_detection`) with recognizers: glob patterns over what the CLI already parsed (the job's image, the include that defined it, its `artifacts:reports`, its own script lines) and over the shell scripts the job calls in the checkout. The key is omitted when nothing was recognized.
+
+Entries are sorted by job name, then by kind, so two runs over the same pipeline produce the same document. Hidden jobs (a name starting with `.`) are never listed: they never run on their own, and a job that extends one is judged under its own name. A job that matches two capabilities yields two entries.
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `kind` | string | The capability's declared name (`secret_detection`, or a name you declared) |
+| `job` | string | The job name, exactly as the pipeline declares it |
+| `tool` | string | The matching recognizer's `tool` when it declares one (`gitleaks`, `betterleaks`, `trufflehog`, `detect-secrets`, `ggshield`, `gitlab-secret-detection` in the built-in list), else the pattern that matched (`*gitleaks*`) |
+| `evidence` | string | The recognizer field that matched. Closed vocabulary: `images`, `gitlab_include_template`, `gitlab_include_component`, `gitlab_report_types`, `commands`, `wrapper_script` |
+
+**Declaring capabilities.** The schema is the same in `.plumber.yaml`, in the platform's capabilities setting (as JSON) and in the CLI's built-in list:
+
+```yaml
+capabilities:
+  - name: secret_detection
+    recognizers:
+      - tool: gitleaks                       # optional, shown as the entry's tool
+        images: ["*zricethezav/gitleaks*"]
+        commands: ["*gitleaks*"]
+      - tool: gitlab-secret-detection
+        images: ["registry.gitlab.com/security-products/secrets*"]
+        gitlab_report_types: ["secret_detection"]
+        gitlab_include_template: ["Jobs/Secret-Detection*"]
+        gitlab_include_component: ["*/secret-detection/*"]
+```
+
+A name is 1 to 64 bytes of lowercase letters, digits, underscore or hyphen, unique within the list. A recognizer carries an optional `tool` (1 to 64 bytes) and any of the five pattern lists (`images`, `gitlab_include_template`, `gitlab_include_component`, `gitlab_report_types`, `commands`; the `wrapper_script` subject reuses `commands`), at least one pattern in all. Bounds: 50 capabilities, 32 recognizers per capability, 64 patterns per field, 1 to 256 bytes per pattern. In `.plumber.yaml` an unknown key is refused by name, so a typo never silently disables a recognizer; in the list the platform serves, a key this CLI does not know yet (a field of a newer platform) is ignored and the fields it knows are kept, and a recognizer left without any pattern this CLI knows is dropped (one debug line) while the rest of the list stays in force.
+
+**The globs.** `*` matches any run of characters, `/` included, `?` one character, `[...]` a class (`[a-z]`, negated by `[!...]` or `[^...]`, a `]` first in it literal), `\x` the character `x`. Matching is case-sensitive and on the whole subject: `*gitleaks*` matches `gitleaks detect`, `gitleaks` alone does not. A pattern in `.plumber.yaml` that is not a valid glob (an unclosed class, a trailing backslash) is skipped with one warning; the rest of the list stays in force. A match costs at most the length of the subject times the length of the pattern, whatever the pattern.
+
+**The six subjects**, in the order a recognizer's fields are tried (the first field that matches names the evidence, so a job whose image and script both say gitleaks records `images`):
+
+- `images`: the job's image as `<registry>/<name>`, tag and digest stripped, a Docker Hub short name expanded (`zricethezav/gitleaks:v8` is `docker.io/zricethezav/gitleaks`); and the image of a `docker run`, `podman run` or `nerdctl run` script line, the first argument after `run` that is neither a flag nor a flag's value (a flag written with `=` and the boolean ones such as `--rm` or `-it` take no value, any other flag takes the next argument; the arguments after the image are the container's command).
+- `gitlab_include_template`: the template path as written in the `include: template:` entry that defines the job (`Jobs/Secret-Detection.gitlab-ci.yml`).
+- `gitlab_include_component`: the component source of the `include: component:` entry that defines the job, as `host/path/name` with the `@version` stripped, so a pattern never names a version.
+- `gitlab_report_types`: each key of the job's `artifacts:reports` (`secret_detection`). A job that only re-publishes a report it did not produce matches too: the subject is the declaration, not the run.
+- `commands`: each line of the job's `before_script`, `script` and `after_script`, an entry split on newlines first (a `- |` block holds several lines), an unquoted `#` comment removed, surrounding whitespace trimmed. The line is matched whole: the pattern sees the text inside `sh -c "..."` or after `env`, `sudo` or a launcher anyway, so nothing is unwrapped. A `make` target is not followed.
+- `wrapper_script`: a script line whose command (after an optional `sh`, `bash`, `source` or `.`) is a relative path under the repository ending in `.sh` or `.bash` (`./ci/scan.sh`, `bash scripts/scan.sh`, `cd ci && ./scan.sh`, every such call of the job, not only the first; a `cd` chain is followed for 16 steps and 1024 bytes of directory at most); the script's lines, comments removed, are matched against the recognizer's `commands`. One level only (a script called by the script is not read), at most 256 KiB per script. A script that is absent, outside the root, unreadable or over the cap yields no evidence and never fails the run. Scripts are read only when the checkout the CLI runs in is the analyzed project itself, at the analyzed ref (a CI job of that project on that branch); otherwise, including a local run or a run that names another project with `--project`, this subject is off, so a script of one repository never becomes evidence for another.
+
+**Precedence.** Inside a recognizer, the fields in the order above; inside a capability, the recognizers in list order, the first that matches naming the tool. One entry per job and capability.
+
+**The effective list.** A run recognizes your list, then every built-in capability whose name your list does not declare. The order carries no meaning: the entries are sorted. A declaration with a built-in's name replaces that built-in whole (there is no merge of recognizers inside one name), so you can narrow `secret_detection` to your own tool, or switch it off with `name: secret_detection` and `recognizers: []`. Your list comes from:
+
+- in platform mode, the capabilities setting of your organization, served on the project context. It is the configuration: a `capabilities` key in `.plumber.yaml` is ignored, with one info line saying so. A platform that does not serve the field means the built-in list alone; a served list that does not decode or exceeds the bounds is not used, with one warning, and the run goes on with the built-in list.
+- in a standalone run, the `capabilities` key of `.plumber.yaml`. A list with an unknown key, a value of the wrong type or a violation of the bounds is not used, with one warning naming the error, and the run goes on with the built-in list; the key never fails the configuration load.
+
+`plumber capabilities defaults` prints the built-in list in this schema, ready to copy into `.plumber.yaml` and edit.
+
+The platform push carries the same list in its `bom` section, always as an array (`[]` when nothing was recognized), at most 500 entries; past that bound the whole `bom` section is left out of the push and the bound is named on stderr.
+
+**Example:**
+
+```json
+{
+  "kind": "secret_detection",
+  "job": "secret-scan",
+  "tool": "gitleaks",
+  "evidence": "images"
+}
+```
+
+The CycloneDX export does not carry `capabilities[]`: a capability is not a component.
 
 ### `summary` Object
 

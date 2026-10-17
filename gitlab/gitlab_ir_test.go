@@ -469,6 +469,49 @@ lint:
 	}
 }
 
+// TestBuildJobs_ReportTypesFromArtifactsReports covers the keys of the job's
+// artifacts.reports map (secret_detection, sast, ...), which the platform's
+// pipeline capabilities read as evidence a job runs a scanner.
+func TestBuildJobs_ReportTypesFromArtifactsReports(t *testing.T) {
+	const merged = `
+secret_scan:
+  script:
+    - gitleaks detect
+  artifacts:
+    paths:
+      - gl-secret-detection-report.json
+    reports:
+      secret_detection: gl-secret-detection-report.json
+      sast: gl-sast-report.json
+build:
+  script:
+    - make
+`
+	var conf GitlabCIConf
+	if err := yaml.Unmarshal([]byte(merged), &conf); err != nil {
+		t.Fatalf("merged fixture does not parse: %v", err)
+	}
+	origin := &GitlabPipelineOriginData{
+		JobMap: map[string]*GitlabPipelineJobData{
+			"secret_scan": {Name: "secret_scan"},
+			"build":       {Name: "build"},
+		},
+		MergedConf: &conf,
+	}
+
+	byName := map[string]ir.Job{}
+	for _, j := range buildJobs(origin, nil, ".gitlab-ci.yml", nil) {
+		byName[j.Name] = j
+	}
+
+	if got, want := byName["secret_scan"].ReportTypes, []string{"sast", "secret_detection"}; !reflect.DeepEqual(got, want) {
+		t.Fatalf("secret_scan ReportTypes = %v, want %v (sorted keys of artifacts.reports)", got, want)
+	}
+	if got := byName["build"].ReportTypes; len(got) != 0 {
+		t.Fatalf("build ReportTypes = %v, want none", got)
+	}
+}
+
 // TestExtractGitLabTags covers the polymorphic `tags:` keyword: GitLab accepts
 // a list of strings, and authors reach the parser with a bare string or a list
 // holding a non-string entry. Nothing is invented and nothing panics: entries
@@ -655,5 +698,63 @@ func TestExtractGitLabRunStepsSkipsStepsWithoutFunction(t *testing.T) {
 	}
 	if fns := extractGitLabRunSteps(steps); len(fns) != 0 {
 		t.Fatalf("expected no functions, got %+v", fns)
+	}
+}
+
+// TestBuildJobs_OriginIncludeNamesTheDefiningInclude covers ir.Job.OriginInclude, the
+// identity (Source, or Path when Source is empty) of the include that defined a job, which
+// the pipeline capabilities' include rule matches (spec 2026-10-16 pipeline capabilities,
+// evidence `include`). A job the project's own CI file defines keeps it empty, and a job
+// listed by several origins keeps the first.
+func TestBuildJobs_OriginIncludeNamesTheDefiningInclude(t *testing.T) {
+	tmpl := GitlabPipelineOriginDataFull{}
+	tmpl.OriginType = "template"
+	tmpl.GitlabIncludeOrigin.Location = "Security/Secret-Detection.gitlab-ci.yml"
+	tmpl.Jobs = []GitlabPipelineJobData{{Name: "secret_detection"}, {Name: "shared"}}
+	comp := GitlabPipelineOriginDataFull{}
+	comp.OriginType = "component"
+	comp.GitlabComponent.ComponentIncludePath = "gitlab.com/acme/ci/secret-detection@1.0.0"
+	comp.Jobs = []GitlabPipelineJobData{{Name: "comp_scan"}, {Name: "shared"}}
+	plumberTmpl := GitlabPipelineOriginDataFull{}
+	plumberTmpl.OriginType = "project"
+	plumberTmpl.FromPlumber = true
+	plumberTmpl.PlumberOrigin.Path = "gitleaks"
+	plumberTmpl.Jobs = []GitlabPipelineJobData{{Name: "plumber_scan"}}
+	// A local include: its job is both listed by an origin with a real identity and marked
+	// hardcoded (the project's own files define it), so the hardcoded guard alone keeps its
+	// OriginInclude empty; without the guard it would name the local file.
+	local := GitlabPipelineOriginDataFull{}
+	local.OriginType = "local"
+	local.GitlabIncludeOrigin.Location = ".ci/scan.gitlab-ci.yml"
+	local.Jobs = []GitlabPipelineJobData{{Name: "local_scan"}}
+	origin := &GitlabPipelineOriginData{
+		JobMap: map[string]*GitlabPipelineJobData{
+			"secret_detection": {Name: "secret_detection"},
+			"comp_scan":        {Name: "comp_scan"},
+			"shared":           {Name: "shared"},
+			"plumber_scan":     {Name: "plumber_scan"},
+			"build":            {Name: "build"},
+			"local_scan":       {Name: "local_scan"},
+		},
+		JobHardcodedMap: map[string]bool{"build": true, "local_scan": true},
+		Origins:         []GitlabPipelineOriginDataFull{tmpl, comp, plumberTmpl, local},
+	}
+
+	byName := map[string]ir.Job{}
+	for _, j := range buildJobs(origin, nil, ".gitlab-ci.yml", nil) {
+		byName[j.Name] = j
+	}
+	want := map[string]string{
+		"secret_detection": "Security/Secret-Detection.gitlab-ci.yml",
+		"comp_scan":        "gitlab.com/acme/ci/secret-detection@1.0.0",
+		"shared":           "Security/Secret-Detection.gitlab-ci.yml",
+		"plumber_scan":     "gitleaks",
+		"build":            "",
+		"local_scan":       "",
+	}
+	for name, w := range want {
+		if got := byName[name].OriginInclude; got != w {
+			t.Errorf("%s.OriginInclude = %q, want %q", name, got, w)
+		}
 	}
 }

@@ -186,6 +186,7 @@ Plumber reads `.plumber.yaml`; without one, the built-in default applies.
 plumber config init       # create one interactively
 plumber config generate   # write the full commented default template
 plumber config validate
+plumber capabilities defaults   # print the built-in capability list, ready to copy and narrow
 plumber explain ISSUE-411
 ```
 
