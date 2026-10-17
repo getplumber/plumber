@@ -1,0 +1,22 @@
+capabilities:
+  - name: secret_detection
+    recognizers:
+      - tool: gitleaks
+        images: ["*zricethezav/gitleaks*", "*gitleaks/gitleaks*"]
+        commands: ["*gitleaks*"]
+      - tool: betterleaks
+        images: ["*betterleaks/betterleaks*"]
+        commands: ["*betterleaks*"]
+      - tool: trufflehog
+        images: ["*trufflesecurity/trufflehog*"]
+        commands: ["*trufflehog*"]
+      - tool: detect-secrets
+        commands: ["*detect-secrets*", "*detect_secrets*"]
+      - tool: ggshield
+        images: ["*gitguardian/ggshield*"]
+        commands: ["*ggshield secret*", "*ggshield scan*"]
+      - tool: gitlab-secret-detection
+        images: ["registry.gitlab.com/security-products/secrets*"]
+        gitlab_report_types: ["secret_detection"]
+        gitlab_include_template: ["Jobs/Secret-Detection*", "Security/Secret-Detection*"]
+        gitlab_include_component: ["*/secret-detection/*"]

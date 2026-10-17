@@ -578,3 +578,97 @@ github:
 		t.Errorf("github exemptImages = %v", got)
 	}
 }
+
+// Spec 4.2/4.6: .plumber.yaml carries the same capabilities schema as the org setting; a
+// well-formed capabilities key loads into PlumberConfig.Capabilities.
+func TestLoadPlumberConfigFromBytes_Capabilities(t *testing.T) {
+	data := []byte(`version: "2.0"
+capabilities:
+  - name: secret_detection
+    recognizers:
+      - tool: gitleaks
+        images: ["*gitleaks*"]
+        commands: ["*gitleaks*"]
+`)
+	cfg, _, warnings, err := LoadPlumberConfigFromBytes(data, "capabilities")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(warnings) != 0 {
+		t.Fatalf("unexpected warnings: %v", warnings)
+	}
+	if len(cfg.Capabilities) != 1 || cfg.Capabilities[0].Name != "secret_detection" ||
+		len(cfg.Capabilities[0].Recognizers) != 1 || cfg.Capabilities[0].Recognizers[0].Tool != "gitleaks" {
+		t.Fatalf("Capabilities = %+v", cfg.Capabilities)
+	}
+}
+
+// A file without the capabilities key leaves PlumberConfig.Capabilities nil (the CLI fills
+// in the built-in list itself, spec 4.2; the field is not defaulted here).
+func TestLoadPlumberConfigFromBytes_NoCapabilitiesKeyLeavesNil(t *testing.T) {
+	cfg, _, _, err := LoadPlumberConfigFromBytes([]byte(`version: "2.0"`), "no-capabilities")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if cfg.Capabilities != nil {
+		t.Fatalf("Capabilities = %+v, want nil", cfg.Capabilities)
+	}
+}
+
+// ValidateKnownKeys refuses an unknown capabilities key by its path, at the capability
+// level and at the recognizer level (spec 4.2: "unknown fields are refused ... so a typo
+// never silently disables a recognizer").
+func TestValidateKnownKeys_Capabilities(t *testing.T) {
+	cfg := []byte(`capabilities:
+  - name: secret_detection
+    recognizers:
+      - tool: gitleaks
+        image: ["*gitleaks*"]
+`)
+	warnings := ValidateKnownKeys(cfg)
+	found := false
+	for _, w := range warnings {
+		if strings.Contains(w, "capabilities[0].recognizers[0]") && strings.Contains(w, "image") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected a warning naming capabilities[0].recognizers[0] and %q, got %v", "image", warnings)
+	}
+
+	capLevel := []byte(`capabilities:
+  - name: secret_detection
+    recognisers: []
+`)
+	warnings = ValidateKnownKeys(capLevel)
+	found = false
+	for _, w := range warnings {
+		if strings.Contains(w, "capabilities[0]") && strings.Contains(w, "recognisers") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("expected a warning naming capabilities[0] and %q, got %v", "recognisers", warnings)
+	}
+}
+
+// The extends overlay (deepMergeYAML) replaces lists wholesale, so the capabilities key
+// needs no special merge code: the overlay's own list, not a union with the base, is what
+// the user gets (spec 4.2, configuration/merge.go).
+func TestLoadPlumberConfigFromBytes_CapabilitiesOverlayReplacesWholesale(t *testing.T) {
+	data := []byte(`version: "2.0"
+extends: plumber:default
+capabilities:
+  - name: sast
+    recognizers:
+      - tool: semgrep
+        commands: ["*semgrep*"]
+`)
+	cfg, _, _, err := LoadPlumberConfigFromBytes(data, "capabilities-overlay")
+	if err != nil {
+		t.Fatalf("load: %v", err)
+	}
+	if len(cfg.Capabilities) != 1 || cfg.Capabilities[0].Name != "sast" {
+		t.Fatalf("Capabilities = %+v, want exactly the overlay's own [sast]", cfg.Capabilities)
+	}
+}

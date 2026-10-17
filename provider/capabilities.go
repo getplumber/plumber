@@ -13,11 +13,11 @@ import (
 // the one call both bills share (the --pbom artifact and the push's bom
 // section), so the two documents never disagree about what the jobs do.
 //
-// The recognizers are the shipped defaults, then, in platform mode with a
-// fetched /context, the org-defined recognizers the platform served, merged
-// after them. A standalone run, or a platform run whose /context fetch
-// failed, takes the same path with the defaults alone. Nil when the run
-// produced no normalized pipeline.
+// The capabilities are the CLI's built-in list (capability.Effective(nil)),
+// compiled. The declarations a platform serves through /context and the
+// .plumber.yaml key are wired in by the next change of this series; until then
+// a platform run recognizes the built-in list alone, like a standalone run.
+// Nil when the run produced no normalized pipeline.
 //
 // Wrapper scripts are the one rule that reads the disk, and they are read only
 // when the checkout IS the analyzed project (CheckoutIsAnalyzedProject) AND
@@ -26,24 +26,17 @@ import (
 // CLI stands in; with --project naming another one, a script of this checkout
 // would otherwise become wrapper_script evidence for a project that never runs
 // it, which is false coverage. Otherwise the root stays empty and the rule is
-// off; image, include, report and command evidence need no checkout.
+// off; the other five subjects need no checkout.
 func CapabilitiesOf(result *control.AnalysisResult, conf *configuration.Configuration) []capability.Match {
 	if result == nil || result.Pipeline == nil {
 		return nil
 	}
-	recs := capability.Defaults()
 	repoRoot := ""
 	if conf != nil {
 		repoRoot = wrapperScriptRoot(conf)
-		if rc := conf.PlatformRun; rc != nil && rc.Context != nil {
-			served := make([]capability.Recognizer, 0, len(rc.Context.CapabilityRecognizers))
-			for _, r := range rc.Context.CapabilityRecognizers {
-				served = append(served, capability.Recognizer{Capability: r.Capability, Tool: r.Tool, Images: r.Images, Commands: r.Commands})
-			}
-			recs = capability.Merge(recs, served)
-		}
 	}
-	return capability.Recognize(result.Pipeline, repoRoot, recs)
+	decls := capability.Compile(capability.Effective(nil), nil)
+	return capability.Recognize(result.Pipeline, repoRoot, decls)
 }
 
 // wrapperScriptRoot returns the checkout root wrapper scripts may be read

@@ -14,9 +14,9 @@ import (
 )
 
 // The one recognize call both bills share (the --pbom artifact and the push's
-// bom section): the shipped defaults always, the platform-served recognizers
-// merged after them in platform mode, nothing at all without a pipeline.
-func TestCapabilitiesOf_DefaultsStandaloneServedMergedInPlatformMode(t *testing.T) {
+// bom section): the CLI's built-in list, nothing at all without a pipeline. The
+// served declarations are wired in by the next change of this series.
+func TestCapabilitiesOf_BuiltinListStandaloneAndNilPipeline(t *testing.T) {
 	pipe := &ir.NormalizedPipeline{Jobs: []ir.Job{
 		{Name: "leaks", Scripts: []string{"gitleaks detect"}},
 		{Name: "corp", Scripts: []string{"scan-secrets --all"}},
@@ -25,34 +25,9 @@ func TestCapabilitiesOf_DefaultsStandaloneServedMergedInPlatformMode(t *testing.
 	result := &control.AnalysisResult{Pipeline: pipe}
 
 	standalone := CapabilitiesOf(result, &configuration.Configuration{})
-	want := []capability.Match{{Kind: "secret_detection", Job: "leaks", Tool: "gitleaks", Evidence: "command"}}
+	want := []capability.Match{{Kind: "secret_detection", Job: "leaks", Tool: "gitleaks", Evidence: "commands"}}
 	if !reflect.DeepEqual(standalone, want) {
-		t.Fatalf("standalone = %+v, want the defaults only %+v", standalone, want)
-	}
-
-	conf := &configuration.Configuration{PlatformRun: &platform.RunContext{Context: &platform.ProjectContext{
-		CapabilityRecognizers: []platform.CapabilityRecognizer{{Capability: "secret_detection", Tool: "in-house", Commands: []string{"scan-secrets"}}},
-	}}}
-	linked := CapabilitiesOf(result, conf)
-	want = []capability.Match{
-		{Kind: "secret_detection", Job: "corp", Tool: "in-house", Evidence: "command"},
-		{Kind: "secret_detection", Job: "leaks", Tool: "gitleaks", Evidence: "command"},
-	}
-	if !reflect.DeepEqual(linked, want) {
-		t.Fatalf("platform mode = %+v, want %+v", linked, want)
-	}
-
-	// A served recognizer may name images only: the platform-served Images reach the
-	// image rule, and a job running that image matches by image with the served tool.
-	byImage := &control.AnalysisResult{Pipeline: &ir.NormalizedPipeline{Jobs: []ir.Job{
-		{Name: "corp-image", Image: &ir.Image{Registry: "registry.corp", Name: "sec/scanner-v2"}, Scripts: []string{"run-scan"}},
-	}}}
-	imageConf := &configuration.Configuration{PlatformRun: &platform.RunContext{Context: &platform.ProjectContext{
-		CapabilityRecognizers: []platform.CapabilityRecognizer{{Capability: "secret_detection", Tool: "corp-scanner", Images: []string{"registry.corp/sec/scanner*"}}},
-	}}}
-	wantImage := []capability.Match{{Kind: "secret_detection", Job: "corp-image", Tool: "corp-scanner", Evidence: "image"}}
-	if got := CapabilitiesOf(byImage, imageConf); !reflect.DeepEqual(got, wantImage) {
-		t.Fatalf("platform mode, served image = %+v, want %+v", got, wantImage)
+		t.Fatalf("standalone = %+v, want the built-in list only %+v", standalone, want)
 	}
 
 	// A platform run whose /context fetch failed degrades to the defaults.
@@ -90,8 +65,8 @@ func TestCapabilitiesOf_WrapperScriptsOnlyFromTheAnalyzedCheckoutAtItsRef(t *tes
 		{Name: "wrapper", Scripts: []string{"./ci/scan.sh"}},
 	}}}
 	withWrapper := []capability.Match{
-		{Kind: "secret_detection", Job: "command", Tool: "gitleaks", Evidence: "command"},
-		{Kind: "secret_detection", Job: "image", Tool: "gitleaks", Evidence: "image"},
+		{Kind: "secret_detection", Job: "command", Tool: "gitleaks", Evidence: "commands"},
+		{Kind: "secret_detection", Job: "image", Tool: "gitleaks", Evidence: "images"},
 		{Kind: "secret_detection", Job: "wrapper", Tool: "trufflehog", Evidence: "wrapper_script"},
 	}
 	withoutWrapper := withWrapper[:2]
