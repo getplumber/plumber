@@ -208,6 +208,21 @@ surface. Pair with Dependabot
 (`version-update-strategy: sha-and-version`) to keep pins fresh, or
 set `enabled: false` on projects that are not yet ready to migrate.
 
+**Nested references.** A reference pulled in by a composite action or
+by a workflow called in another repository is judged like a direct one,
+at the same severity. Its message ends its finding part with
+`pulled in via <outer> > ...` (the chain, outermost first), and its
+link points at the line of the container that declares it, while the
+finding's location stays the workflow step that pulls the chain in.
+The trusted-owner exemption applies to the reference itself: a
+composite of `actions/*` or `github/*` is exempt, a third-party action
+it pulls in is judged. The fix is on the outermost action: pin it to a
+commit whose chain pins, vendor the chain into `./.github/actions/`
+and pin it there, or ask the container's maintainer to pin it.
+The message closes on this fix in place of the direct one, the GitLab
+SAST solution gives it in full, and the SARIF result carries the
+container line as a related location.
+
 ---
 
 ## ISSUE-704 — `container-hardcoded-credentials`
@@ -422,6 +437,22 @@ githubActionMustComeFromAuthorizedSources:
     - mycompany/*
     - jdx/mise-action
 ```
+
+**Nested references.** A reference pulled in by a composite action or
+by a workflow called in another repository is judged like a direct one,
+at the same severity. Its message ends its finding part with
+`pulled in via <outer> > ...` (the chain, outermost first), and its
+link points at the line of the container that declares it, while the
+finding's location stays the workflow step that pulls the chain in.
+The official-owner, same-org, allowlist and local exemptions apply to
+the reference itself: a trusted composite is exempt, the third-party
+action it pulls in is judged. The fix is on the outermost action:
+replace it with one whose chain only pulls authorized sources, vendor
+the chain into `./.github/actions/` and replace the reference there, or
+ask the container's maintainer to depend on authorized sources.
+The message closes on this fix in place of the direct one, the GitLab
+SAST solution gives it in full, and the SARIF result carries the
+container line as a related location.
 
 ---
 

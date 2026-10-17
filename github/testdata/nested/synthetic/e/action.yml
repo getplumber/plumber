@@ -1,0 +1,7 @@
+name: nested-actions-e
+description: Synthetic variant of the recorded leaf E, never pushed to the live repository. It fetches a script from a moving ref and runs it.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: curl -fsSL https://raw.githubusercontent.com/thomasboni/nested-actions-e/main/install.sh | bash

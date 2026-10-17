@@ -69,6 +69,14 @@ The academic taxonomy to map every control against:
   compromise was *potentially enabled by* `reviewdog/action-setup@v1`
   (**CVE-2025-30154**). Surveyed static tools examine only the **first level** of
   action reuse — deeper reuse is an open gap.
+  Plumber expands composite actions (remote and local) and reusable workflows
+  of other repositories into the pipeline it judges, every nested finding
+  naming its chain (`pulled in via <outer> > ...`), so the first-level limit
+  of the surveyed tools does not apply to it. The resolution is bounded: at
+  most 100 containers per run and 1000 entries per job, a reference past the
+  budget or whose definition cannot be read is listed as unexpanded and the
+  action controls degrade, never a silent pass. Docker actions and
+  `docker://` images are not expanded.
 - **Impostor commit** — pinned SHA that does not belong to the named repo (GitHub
   does not validate the SHA↔repo binding). *API ref resolution.*
 - **Typosquatting** of a known action name. *Edit distance + reputation.*
@@ -157,7 +165,7 @@ reason to hide:
 |--------|---------|-------|
 | **Static YAML pattern** | triggers, permissions, `run:`, `uses:` shapes | textual evasion; a pass asserts little |
 | **Taint / dataflow** | injection (untrusted source → sink) | best-in-class for injection: the research ARGUS system (USENIX Security '23) found injections **>7×** more than pattern scanners; GitHub CodeQL taint for Actions GA Apr 2025. Pattern rules are a *floor* |
-| **Action-source fetch + scan** | mutable-remote-exec, obfuscation, in-action malware | blind spots: subpath/composite, Docker-image actions, GHES/private, API rate limits, **non-determinism across CI environments** |
+| **Action-source fetch + scan** | mutable-remote-exec, obfuscation, in-action malware (Plumber scans every action of the expanded closure, nested composites included) | blind spots: subpath/composite, Docker-image actions, GHES/private, API rate limits, **non-determinism across CI environments** |
 | **API / metadata enrichment** | impostor commit, archived repo, CVE, stars, ref confusion, comment↔SHA | rate limits, offline, GHES |
 | **Obfuscation / entropy** | hidden payloads | encoding space is unbounded → flag *the act of hiding*, don't decode everything |
 | **Provenance / integrity** (SHA pin, checksum, cosign, SLSA, Scorecard) | unpinned, unattested, unverified installs | **SHA pin ≠ immutable execution**; adoption partial |
@@ -178,7 +186,10 @@ swaps, download-then-run, arbitrary encodings, URLs assembled from env/secrets.
 No fixed allowlist of hosts/refs/extensions closes it. Two documented static
 blind spots (arXiv 2601.14455v2): (1) **no runtime observation** → execution-time
 leaks and runtime fetch-exec are invisible; (2) **first-level reuse only** →
-transitive risk missed.
+transitive risk missed. Plumber closes the second one within its bounds: it
+expands composite actions (remote and local) and reusable workflows of other
+repositories into the pipeline it judges, every nested finding naming its
+chain, so the first-level limit of the surveyed tools does not apply to it.
 
 Design principles that follow:
 1. A **clean result = "no known in-the-open pattern seen"**, never "safe".
@@ -218,7 +229,11 @@ Design principles that follow:
 
 **Gaps no tool covers well:** (a) an action that fetches **mutable remote code**
 at runtime; (b) **obfuscated** fetch-and-exec; (c) **transitive** (2nd-level+)
-action compromise. (a) and (b) are Plumber's differentiation.
+action compromise. (a) and (b) are Plumber's differentiation. For (c),
+Plumber expands composite actions (remote and local) and reusable workflows
+of other repositories into the pipeline it judges, every nested finding
+naming its chain, so the first-level limit of the surveyed tools does not
+apply to it.
 
 ---
 
@@ -243,7 +258,7 @@ action compromise. (a) and (b) are Plumber's differentiation.
 | Unverified script exec | ISSUE-411 | shipped |
 | Dependency-update cooldown | (issue) | proposed |
 | **Docker-image action fetch-exec** | — | gap |
-| **Transitive action compromise** | — | gap (needs graph + API) |
+| **Transitive action compromise** | ISSUE-701 / 713 / 702 / 703 / 707 / 709 / 714 to 716 on the resolved pipeline | shipped (composites and cross-repository reusable workflows expanded, budget of 100 containers) |
 | **Runtime exfil / egress** | — | out of scope (runtime tool territory) |
 
 ---

@@ -1,0 +1,9 @@
+name: nested-actions-b
+description: Dummy action that uses nested-actions-c and nested-actions-d.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: echo "hello from B (uses C and D)"
+    - uses: thomasboni/nested-actions-c@main
+    - uses: thomasboni/nested-actions-d@main

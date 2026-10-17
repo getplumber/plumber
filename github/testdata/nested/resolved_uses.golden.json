@@ -1,0 +1,6 @@
+[
+  {"uses": "thomasboni/nested-actions-b@main", "line": 13},
+  {"uses": "thomasboni/nested-actions-c@main", "line": 13, "nested": true, "via": ["thomasboni/nested-actions-b@main"], "definedIn": "thomasboni/nested-actions-b@main:action.yml:8"},
+  {"uses": "thomasboni/nested-actions-d@main", "line": 13, "nested": true, "via": ["thomasboni/nested-actions-b@main"], "definedIn": "thomasboni/nested-actions-b@main:action.yml:9"},
+  {"uses": "thomasboni/nested-actions-e@main", "line": 13, "nested": true, "via": ["thomasboni/nested-actions-b@main", "thomasboni/nested-actions-d@main"], "definedIn": "thomasboni/nested-actions-d@main:action.yml:8"}
+]

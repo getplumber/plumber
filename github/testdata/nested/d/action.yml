@@ -1,0 +1,8 @@
+name: nested-actions-d
+description: Dummy action that uses nested-actions-e.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: echo "hello from D (uses E)"
+    - uses: thomasboni/nested-actions-e@main

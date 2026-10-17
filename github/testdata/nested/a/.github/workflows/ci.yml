@@ -1,0 +1,13 @@
+name: ci
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  nested:
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "hello from A (workflow, uses B)"
+      - uses: thomasboni/nested-actions-b@main

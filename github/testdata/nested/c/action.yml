@@ -1,0 +1,7 @@
+name: nested-actions-c
+description: Dummy leaf action, echoes its name.
+runs:
+  using: composite
+  steps:
+    - shell: bash
+      run: echo "hello from C (leaf)"
