@@ -145,7 +145,7 @@ const (
 // lines and the whole details line are dim.
 func renderPathBlock(out io.Writer, n int, b control.PathBlock, caps termCaps, opts pathBlockOptions) {
 	width := reportWidth(caps)
-	b = b.Clean(sanitizeTerminal)
+	b = b.Clean(sanitizeTerminal).Clean(tickChain)
 	b.ShowCap = opts.ScorePoint
 	lines := control.ReportPathGraph(n, b, width)
 	if caps.Color != colorOff {
@@ -172,7 +172,7 @@ func renderPathBlock(out io.Writer, n int, b control.PathBlock, caps termCaps, o
 		lines = append(lines, pad(blockIndent, hint)+colorIf(caps, colorDim)+hint+colorIf(caps, colorReset))
 	}
 	// Errors discarded: out is the terminal or a test buffer.
-	for _, l := range lines {
+	for _, l := range dimChains(lines, colorIf(caps, colorDim), colorIf(caps, colorReset)) {
 		_, _ = fmt.Fprintln(out, l)
 	}
 	_, _ = fmt.Fprintln(out)
@@ -265,7 +265,13 @@ var jobLead = regexp.MustCompile("^[Jj]ob (?:\"([^\"]*)\"|`([^`]*)`) ")
 // after the dash, empty when the message has none. No dash is left in
 // either.
 func findingBranch(f detailedFinding) (what, so string) {
-	what, so, _ = strings.Cut(sanitizeTerminal(f.Message), consequenceDash)
+	// The last dash is the consequence separator (review of PR 549): a
+	// quoted user text before it (the comment ISSUE-708 quotes) may hold
+	// the same dash, a rule's own text never holds another.
+	what = sanitizeTerminal(f.Message)
+	if at := strings.LastIndex(what, consequenceDash); at >= 0 {
+		what, so = what[:at], what[at+len(consequenceDash):]
+	}
 	job := f.Job
 	if m := jobLead.FindStringSubmatch(what); m != nil {
 		what = what[len(m[0]):]
@@ -359,7 +365,7 @@ func codeGroupLines(g findingCodeGroup, indent string, width int, caps termCaps)
 	shared := ""
 	for i, f := range g.Findings {
 		what, so := findingBranch(f)
-		branches = append(branches, branch{what, so})
+		branches = append(branches, branch{tickChain(what), so})
 		switch {
 		case i == 0:
 			shared = so
@@ -415,7 +421,7 @@ func codeGroupLines(g findingCodeGroup, indent string, width int, caps termCaps)
 	labelled("So", shared)
 	labelled("Fix", sanitizeTerminal(g.Fix))
 	out = append(out, pad+dim("↳ docs: "+g.Code.DocURL()))
-	return out
+	return dimChains(out, colorIf(caps, colorDim), colorIf(caps, colorReset))
 }
 
 // codeFix is the fix of a code read on its own: its entry in the fix
@@ -735,7 +741,7 @@ func renderScoreBlock(out io.Writer, score *control.PlumberScoreResult, caps ter
 		wrap(fmt.Sprintf("%s could not be evaluated: the score covers the others.", plural(n, "control", "controls")))
 	}
 	// "+13 pts" and "78 / 100 (B)" never break across lines.
-	fix := sanitizeTerminal(control.BestFixSummary(score))
+	fix := tickChain(sanitizeTerminal(control.BestFixSummary(score)))
 	if i := strings.LastIndex(fix, ", +"); i >= 0 {
 		gain, result, _ := strings.Cut(fix[i+2:], ", ")
 		fix = fix[:i+2] + strings.ReplaceAll(gain, " ", glue) + ", " + strings.ReplaceAll(result, " ", glue)
@@ -748,7 +754,7 @@ func renderScoreBlock(out io.Writer, score *control.PlumberScoreResult, caps ter
 	}
 	right = append(right, "")
 	if worst := control.WorstCase(score.Paths); worst != "" {
-		labelled("Worst case:", colCritical, sanitizeTerminal(worst))
+		labelled("Worst case:", colCritical, tickChain(sanitizeTerminal(worst)))
 	}
 	labelled("Best fix:", colAccent, fix)
 	if scorePoint {
@@ -759,6 +765,7 @@ func renderScoreBlock(out io.Writer, score *control.PlumberScoreResult, caps ter
 			wrap(why)
 		}
 	}
+	right = dimChains(right, colorIf(caps, colorDim), colorIf(caps, colorReset))
 	fprintBesideLetter(out, renderScoreLetter(score.Score, caps.Color), right)
 }
 

@@ -70,6 +70,10 @@ type EntryFact struct {
 	Actor     string `json:"actor,omitempty"`
 	Gate      string `json:"gate,omitempty"`
 	PinnedSha bool   `json:"pinnedSha,omitempty"`
+	// Via is the chain a nested entry finding was reached through,
+	// outermost first (monorepo spec 2026-10-16 section 6); empty on a
+	// direct entry.
+	Via []string `json:"via,omitempty"`
 }
 
 // ImpactFact is something the job can change, and how sure the facts

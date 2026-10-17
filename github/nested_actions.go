@@ -610,6 +610,10 @@ type nestedWalk struct {
 	// cause is why the closure could not be resolved at all (R6), "".
 	cause    string
 	overflow bool
+	// entriesOverflow holds the references the per-job entry bound left
+	// unexpanded, keyed like the deduplicated list, so the degraded reason
+	// tells that bound from the container budget.
+	entriesOverflow map[string]bool
 	// unexpanded collects what a phase other than the splice could not
 	// expand: a workflow of another repository that could not be read.
 	unexpanded []ir.UnexpandedAction
@@ -856,8 +860,13 @@ func (w *nestedWalk) expand(s *jobSplice, c *nestedContainer, outer ir.Action, c
 			continue
 		}
 		if s.left == 0 {
-			s.unexpanded = append(s.unexpanded, ir.UnexpandedAction{Uses: step.uses, Via: slices.Clone(chain), Reason: ir.UnexpandedBudget})
+			u := ir.UnexpandedAction{Uses: step.uses, Via: slices.Clone(chain), Reason: ir.UnexpandedBudget}
+			s.unexpanded = append(s.unexpanded, u)
 			w.overflow = true
+			if w.entriesOverflow == nil {
+				w.entriesOverflow = map[string]bool{}
+			}
+			w.entriesOverflow[unexpandedKey(u)] = true
 			continue
 		}
 		s.left--
@@ -943,6 +952,7 @@ func resolveNestedActions(pipeline *ir.NormalizedPipeline, defs *definitionFetch
 	}
 	pipeline.UnexpandedActions = dedupeUnexpanded(unexpanded)
 	pipeline.NestedBudgetExceeded = w.overflow
+	pipeline.NestedEntriesOverflow = len(w.entriesOverflow)
 	pipeline.NestedJobsOverflow = len(w.jobsOverflow)
 	pipeline.NestedUnresolvedCause = w.cause
 }

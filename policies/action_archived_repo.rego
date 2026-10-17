@@ -10,18 +10,19 @@
 package action_archived_repo
 
 import rego.v1
+import data.lib.provenance
 
 deny contains finding if {
 	some i, j
 	job := input.pipeline.jobs[i]
 	action := job.uses[j]
 	action.metadata.repoArchived == true
-	finding := {
+	finding := object.union({
 		"code":     "ISSUE-702",
 		"severity": "high",
-		"message":  sprintf("job %q references %q whose upstream repository is archived — no security patches are coming", [job.name, action.uses]),
+		"message":  provenance.message(sprintf("job %q references %q whose upstream repository is archived \u2014 no security patches are coming", [job.name, action.uses]), action),
 		"job":      job.name,
 		"uses":     action.uses,
 		"line":     object.get(action, "line", 0),
-	}
+	}, provenance.fields(action))
 }

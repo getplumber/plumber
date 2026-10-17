@@ -14,6 +14,7 @@
 package workflow_misfeature
 
 import rego.v1
+import data.lib.provenance
 
 deny contains finding if {
 	some i, j
@@ -23,12 +24,12 @@ deny contains finding if {
 	path := action.with.path
 	is_string(path)
 	_uploads_checkout_dir(path)
-	finding := {
+	finding := object.union({
 		"code":     "ISSUE-419",
 		"severity": "medium",
-		"message":  sprintf("job %q uploads the checkout directory as an artefact (path=%q) — `.git/` leaks with it, pair with ISSUE-307 to understand the risk", [job.name, path]),
+		"message":  provenance.message(sprintf("job %q uploads the checkout directory as an artefact (path=%q) \u2014 `.git/` leaks with it, pair with ISSUE-307 to understand the risk", [job.name, path]), action),
 		"job":      job.name,
-	}
+	}, provenance.fields(action))
 }
 
 _uploads_checkout_dir(path) if {

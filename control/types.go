@@ -190,6 +190,11 @@ type AnalysisResult struct {
 	// CiMissing, which is the legitimate "this project has no CI config"
 	// state and is not degraded.
 	DataCollectionDegraded bool `json:"dataCollectionDegraded,omitempty"`
+	// NestedActionsBudgetExceeded is set when the nested actions resolution
+	// stopped at its container budget (monorepo spec 2026-10-16 R3): the
+	// closure is incomplete, which a platform push names among its missing
+	// fields (actions_closure). Never serialised, the degraded reason says it.
+	NestedActionsBudgetExceeded bool `json:"-"`
 
 	// DegradedReasons lists the human-readable collection/enrichment
 	// failures behind DataCollectionDegraded (e.g. "3 workflow file(s)
@@ -234,6 +239,10 @@ type GitHubAnalysisStats struct {
 	ActionRefsTotal    int
 	ActionRefsUnpinned int
 	ActionRefsExempt   int
+	// ActionRefsNested counts the entries a composite action or a called
+	// workflow pulled in (monorepo spec 2026-10-16 section 8), trusted
+	// owners included: they are part of the closure the rules read.
+	ActionRefsNested int
 
 	// Actions supply-chain (ISSUE-702, ISSUE-703, ISSUE-402). Counted
 	// across every `uses:` entry that has API metadata, regardless of

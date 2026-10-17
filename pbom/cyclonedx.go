@@ -6,6 +6,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/getplumber/plumber/internal/ir"
 )
 
 // CycloneDXSpecVersion is the CycloneDX specification version the PBOM is generated as.
@@ -188,6 +190,10 @@ func (p *PBOM) ToCycloneDX(plumberVersion string) *CycloneDX {
 		if inc.Nested {
 			component.Properties = append(component.Properties,
 				CycloneDXProperty{Name: "plumber:nested", Value: "true"})
+		}
+		if len(inc.Via) > 0 {
+			component.Properties = append(component.Properties,
+				CycloneDXProperty{Name: "plumber:via", Value: ir.ViaText(inc.Via)})
 		}
 		if inc.Overridden {
 			component.Properties = append(component.Properties,

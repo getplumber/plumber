@@ -10,6 +10,7 @@
 package stale_action_ref
 
 import rego.v1
+import data.lib.provenance
 
 sha_pattern := `^[0-9a-f]{40}$`
 
@@ -23,14 +24,14 @@ deny contains finding if {
 	pinned := _pinned_sha(ref, action.metadata)
 	pinned != ""
 	pinned != action.metadata.latestReleaseSha
-	finding := {
+	finding := object.union({
 		"code":     "ISSUE-709",
 		"severity": "low",
-		"message":  sprintf("job %q pins %q behind the latest release %q — refresh to pick up upstream security fixes", [job.name, action.uses, action.metadata.latestTag]),
+		"message":  provenance.message(sprintf("job %q pins %q behind the latest release %q \u2014 refresh to pick up upstream security fixes", [job.name, action.uses, action.metadata.latestTag]), action),
 		"job":      job.name,
 		"uses":     action.uses,
 		"line":     object.get(action, "line", 0),
-	}
+	}, provenance.fields(action))
 }
 
 # _pinned_sha returns the SHA the current ref resolves to. For a SHA

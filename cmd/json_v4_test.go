@@ -326,3 +326,44 @@ func TestBuildAnalysisJSONReport_V3IssueCarriesNoSeverity(t *testing.T) {
 		t.Errorf("a v3 issue must carry no severity key, got %v", f["severity"])
 	}
 }
+
+// TestBuildAnalysisJSONReport_PipelineOriginMetrics_NestedActionCounts pins
+// the two pipelineOriginMetrics keys the GitHub path derives from the nested
+// resolution's own counters (spec section 8; review of PR 549): originActionNested
+// from GitHubAnalysisStats.ActionRefsNested (the composite/called-workflow
+// entries pulled into the closure) and unexpandedActions from the length of
+// AnalysisResult.UnexpandedActions (the ones the resolver gave up on). Before
+// this test neither key was asserted by any test in the package.
+func TestBuildAnalysisJSONReport_PipelineOriginMetrics_NestedActionCounts(t *testing.T) {
+	pc := defaultGitHubPlumberConfig(t)
+	result := &control.AnalysisResult{
+		CiValid: true,
+		GitHubStats: &control.GitHubAnalysisStats{
+			ActionRefsNested: 3,
+		},
+		UnexpandedActions: []ir.UnexpandedAction{
+			{Uses: "acme/a@v1", Reason: ir.UnexpandedFetch},
+			{Uses: "acme/b@v1", Reason: ir.UnexpandedFetch},
+		},
+	}
+	s := complianceSummary{scoreMode: true, controlCount: 1}
+
+	payload, err := buildAnalysisJSONReport(result, pc, s, jsonOutputParams{provider: "github"}, nil, nil)
+	if err != nil {
+		t.Fatalf("buildAnalysisJSONReport: %v", err)
+	}
+	var report map[string]any
+	if err := json.Unmarshal(payload, &report); err != nil {
+		t.Fatalf("report is not valid JSON: %v", err)
+	}
+	metrics, ok := report["pipelineOriginMetrics"].(map[string]any)
+	if !ok {
+		t.Fatalf("pipelineOriginMetrics = %v, want an object", report["pipelineOriginMetrics"])
+	}
+	if got, want := metrics["originActionNested"], float64(3); got != want {
+		t.Errorf("originActionNested = %v, want %v (from GitHubStats.ActionRefsNested)", got, want)
+	}
+	if got, want := metrics["unexpandedActions"], float64(2); got != want {
+		t.Errorf("unexpandedActions = %v, want %v (from len(result.UnexpandedActions))", got, want)
+	}
+}

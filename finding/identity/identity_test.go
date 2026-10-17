@@ -1,7 +1,11 @@
 package identity_test
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"slices"
+	"strings"
 	"testing"
 
 	"github.com/getplumber/plumber/finding/identity"
@@ -566,7 +570,129 @@ func TestIdentity_Row85_OverrideFingerprintKeysTheOverrideCodes(t *testing.T) {
 			t.Fatalf("%s: a different override content must be a different identity", code)
 		}
 	}
-	if identity.RecipeVersion != 7 {
-		t.Fatalf("issue #533 (ISSUE-705 re-keyed on {file, job}) is the latest deliberate re-key: RecipeVersion must be 7, got %d", identity.RecipeVersion)
+	if identity.RecipeVersion < 6 {
+		t.Fatalf("row 107 is a deliberate re-key: RecipeVersion must be at least 6, got %d", identity.RecipeVersion)
+	}
+}
+
+// TestRecipe8_DirectFindingsHashAsUnderRecipe7 pins spec 2026-10-16
+// section 6: via is optional, so every direct finding keeps its recipe 7
+// fingerprint byte for byte (the shipped values of
+// TestFingerprint_MatchesTheShippedValues are recipe 7 values and stay
+// green), and no via pair appears without a chain.
+func TestRecipe8_DirectFindingsHashAsUnderRecipe7(t *testing.T) {
+	if identity.RecipeVersion != 8 {
+		t.Fatalf("RecipeVersion = %d, want 8", identity.RecipeVersion)
+	}
+	direct := identity.Finding{Code: "ISSUE-701", File: ".github/workflows/ci.yml", Job: "ci/nested", Data: map[string]any{"uses": "thomasboni/nested-actions-b@main"}}
+	if got := identity.Fingerprint(direct); got != "3d9f11bfd8c3bf94" {
+		t.Fatalf("direct fingerprint = %q, want the recipe 7 value 3d9f11bfd8c3bf94", got)
+	}
+	fields, _ := identity.Of(direct)
+	if _, has := pairValue(fields.Pairs(), "via"); has {
+		t.Fatal("a direct finding carries no via pair")
+	}
+}
+
+// TestRecipe8_EveryDirectFindingIsTheRecipe7Identity pins the guarantee the
+// platform re-stamps recipe 7 to 8 on without an exclusion list (spec
+// 2026-10-16 section 9): for every declared code, a direct finding with every
+// declared key set (and an empty or absent via) has exactly the recipe 7
+// pairs, so its Fingerprint and its PlatformHash are the recipe 7 values,
+// recomputed here from the declaration alone, independently of Of.
+func TestRecipe8_EveryDirectFindingIsTheRecipe7Identity(t *testing.T) {
+	for _, code := range identity.DeclaredCodes() {
+		decl, _ := identity.Declared(code)
+		vias := []any{nil, "", []any{}, []string{}}
+		if _, ok := identity.OptionalDeclared(code); !ok {
+			// L4: a code with no optional declaration keeps its recipe 7
+			// identity even when the finding carries a non-empty via, so a
+			// later refactor that reads via for every code (or from a
+			// global list) cannot silently re-key a job-keyed finding.
+			vias = append(vias, []any{"acme/x@v1"})
+		}
+		for _, via := range vias {
+			f := identity.Finding{Code: code, File: ".github/workflows/ci.yml", Job: "ci/build", Message: "m", Data: map[string]any{}}
+			if via != nil {
+				f.Data["via"] = via
+			}
+			pairs := []identity.Field{{Key: "code", Value: code}}
+			lines := []string{code}
+			for _, key := range decl {
+				v := "v-" + key
+				switch key {
+				case "file":
+					v = f.File
+				case "job":
+					v = f.Job
+				case "message":
+					v = f.Message
+				default:
+					f.Data[key] = v
+				}
+				pairs = append(pairs, identity.Field{Key: key, Value: v})
+				lines = append(lines, key+"="+v)
+			}
+			sum := sha256.Sum256([]byte(strings.Join(lines, "\n")))
+			if got, want := identity.Fingerprint(f), hex.EncodeToString(sum[:])[:16]; got != want {
+				t.Errorf("%s (via %#v): fingerprint = %q, want the recipe 7 value %q", code, via, got, want)
+			}
+			raw, err := json.Marshal(pairs)
+			if err != nil {
+				t.Fatal(err)
+			}
+			psum := sha256.Sum256(raw)
+			if got, _, _ := identity.PlatformHash(f); got != hex.EncodeToString(psum[:]) {
+				t.Errorf("%s (via %#v): PlatformHash moved from its recipe 7 value", code, via)
+			}
+		}
+	}
+}
+
+// TestRecipe8_NestedFindingsKeyOnTheChain pins R5: the chain enters the
+// identity, so two paths to one action in one job are two stable findings.
+func TestRecipe8_NestedFindingsKeyOnTheChain(t *testing.T) {
+	nested := func(uses string, via ...any) identity.Finding {
+		return identity.Finding{Code: "ISSUE-701", File: ".github/workflows/ci.yml", Job: "ci/nested", Data: map[string]any{"uses": uses, "via": via}}
+	}
+	b, c, d, e := "thomasboni/nested-actions-b@main", "thomasboni/nested-actions-c@main", "thomasboni/nested-actions-d@main", "thomasboni/nested-actions-e@main"
+	cases := map[string]identity.Finding{
+		"4fe90b2a1fdc935d": nested(c, b),
+		"10abe70c4cd930e4": nested(d, b),
+		"a3d46c9354db3be5": nested(e, b, d),
+		"7a5b5a96dd7121a8": nested(e, b, c),
+	}
+	for want, f := range cases {
+		if got := identity.Fingerprint(f); got != want {
+			t.Errorf("%v: fingerprint = %q, want %q", f.Data, got, want)
+		}
+	}
+	fields, _ := identity.Of(cases["a3d46c9354db3be5"])
+	if v, _ := pairValue(fields.Pairs(), "via"); v != b+" > "+d {
+		t.Fatalf("via pair = %q", v)
+	}
+	if opt, ok := identity.OptionalDeclared("ISSUE-701"); !ok || !slices.Equal(opt, []string{"via"}) {
+		t.Fatalf("OptionalDeclared(ISSUE-701) = %v %v", opt, ok)
+	}
+	if _, ok := identity.OptionalDeclared("ISSUE-801"); ok {
+		t.Fatal("a job-keyed code declares no optional key")
+	}
+
+	// M1: ISSUE-306 (App token issued without revocation) is keyed on uses
+	// and its rule now carries the chain too, so a direct and a nested
+	// finding of the same uses in the same job must be two identities.
+	tokenDirect := identity.Finding{Code: "ISSUE-306", File: ".github/workflows/ci.yml", Job: "ci/nested", Data: map[string]any{"uses": b}}
+	tokenNested := identity.Finding{Code: "ISSUE-306", File: ".github/workflows/ci.yml", Job: "ci/nested", Data: map[string]any{"uses": b, "via": []any{c}}}
+	if got, want := identity.Fingerprint(tokenDirect), "4737abb9eeaae351"; got != want {
+		t.Errorf("ISSUE-306 direct: fingerprint = %q, want %q", got, want)
+	}
+	if got, want := identity.Fingerprint(tokenNested), "3031e0ddf2ead225"; got != want {
+		t.Errorf("ISSUE-306 nested: fingerprint = %q, want %q", got, want)
+	}
+	if identity.Fingerprint(tokenDirect) == identity.Fingerprint(tokenNested) {
+		t.Fatal("ISSUE-306 direct and nested of the same uses must be two identities")
+	}
+	if opt, ok := identity.OptionalDeclared("ISSUE-306"); !ok || !slices.Equal(opt, []string{"via"}) {
+		t.Fatalf("OptionalDeclared(ISSUE-306) = %v %v", opt, ok)
 	}
 }

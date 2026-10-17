@@ -1,6 +1,7 @@
 package pbom
 
 import (
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -170,26 +171,59 @@ func (g *Generator) processGitHubImages(pipeline *ir.NormalizedPipeline) []Conta
 // github/*, …) is left out of this layer — the PBOM is a complete
 // inventory; compliance interpretation lives on top via the
 // ForbiddenTag / UnpinnedActions enrichment hooks.
+//
+// The inventory is the resolved closure (spec 2026-10-16 section 8): an
+// entry reached only inside a composite action or a reusable workflow of
+// another repository is a Nested include carrying the chain of its first
+// occurrence, and a reference also used directly anywhere stays direct. The
+// include is keyed on the `uses` string as written, the key of the
+// compliance maps (unchanged, spec section 6). A relative `./x` nested in a
+// remote container is the scanned repository's own composite (plan ruling
+// 14), the same include as a direct `./x`.
 func (g *Generator) processGitHubIncludes(pipeline *ir.NormalizedPipeline) []Include {
 	type actionEntry struct {
 		ref     string
 		comment string
+		nested  bool
+		via     []string
 	}
 	actions := map[string]actionEntry{}
-	reusables := map[string]struct{}{}
+	reusables := map[string]actionEntry{}
+	note := func(m map[string]actionEntry, ref, comment string, nested bool, via []string) {
+		e, ok := m[ref]
+		if !ok {
+			e = actionEntry{ref: ref, comment: comment, nested: nested}
+			if nested {
+				e.via = slices.Clone(via)
+			}
+			m[ref] = e
+			return
+		}
+		// The version comment never depends on the job order (review of PR
+		// 549): the direct occurrence's comment wins on the flip from
+		// nested, and any occurrence with a comment fills an empty one.
+		if !nested && e.nested {
+			e.nested, e.via = false, nil
+			if strings.TrimSpace(comment) != "" {
+				e.comment = comment
+			}
+		}
+		if strings.TrimSpace(e.comment) == "" {
+			e.comment = comment
+		}
+		m[ref] = e
+	}
 
 	for i := range pipeline.Jobs {
 		j := &pipeline.Jobs[i]
 		if j.ReusableWorkflowUses != "" {
-			reusables[j.ReusableWorkflowUses] = struct{}{}
+			note(reusables, j.ReusableWorkflowUses, "", j.Nested, j.Via)
 		}
 		for _, u := range j.Uses {
 			if u.Uses == "" {
 				continue
 			}
-			if _, ok := actions[u.Uses]; !ok {
-				actions[u.Uses] = actionEntry{ref: u.Uses, comment: u.Comment}
-			}
+			note(actions, u.Uses, u.Comment, u.Nested, u.Via)
 		}
 	}
 
@@ -207,6 +241,8 @@ func (g *Generator) processGitHubIncludes(pipeline *ir.NormalizedPipeline) []Inc
 			Location: owner + "/" + repo,
 			Project:  owner,
 			Version:  ref,
+			Nested:   actions[r].nested,
+			Via:      actions[r].via,
 		}
 		if g.githubData != nil {
 			if unpinned, ok := g.githubData.UnpinnedActions[r]; ok {
@@ -255,6 +291,8 @@ func (g *Generator) processGitHubIncludes(pipeline *ir.NormalizedPipeline) []Inc
 			Type:     "reusableWorkflow",
 			Location: base,
 			Version:  ref,
+			Nested:   reusables[r].nested,
+			Via:      reusables[r].via,
 		}
 		out = append(out, inc)
 	}

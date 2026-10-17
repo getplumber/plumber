@@ -223,6 +223,14 @@ type Include struct {
 	// Whether this is a nested include (included by another include)
 	Nested bool `json:"nested,omitempty"`
 
+	// Via is the chain a nested GitHub include was pulled in through,
+	// outermost first (spec 2026-10-16 section 8). Empty on a direct include.
+	// When the include is reached on several paths, the chain of the first
+	// one seen (the findings' identities tell the paths apart, the bill
+	// does not). The platform push keeps its outermost 8 entries
+	// (review of PR 549), the full chain stays here.
+	Via []string `json:"via,omitempty"`
+
 	// Override information (populated from control results)
 	Overridden     bool                        `json:"overridden,omitempty"`
 	OverriddenJobs []utils.OverriddenJobDetail `json:"overriddenJobs,omitempty"`

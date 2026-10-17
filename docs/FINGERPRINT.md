@@ -35,7 +35,7 @@ The two sides never have to agree on a hash, only on the selection.
 
 ### The recipe version
 
-`identity.RecipeVersion` is currently **7**. Store it next to anything you key
+`identity.RecipeVersion` is currently **8**. Store it next to anything you key
 off the selection.
 
 It tracks identity **outcomes**, not just the code in the package, so it moves
@@ -66,6 +66,7 @@ signal.
 | 5 | ISSUE-406 and ISSUE-409 (the forbidden override of a required template / component) gain `overrideFingerprint`, the digest the collector computes over the override content. Their identity was the required path alone, so every override of one template was the same issue forever and a decision taken on one override silently carried over to whatever the override became next. With the fingerprint in the key, the identity moves exactly when the overriding content moves, and only then: a dismissal covers only the override content it was made on. Every ISSUE-406 and ISSUE-409 finding re-keys once at this bump. |
 | 6 | ISSUE-405, ISSUE-408 and ISSUE-417 (missing required template / component / action) become singletons (`{}`): one finding per rule evaluation, the code alone is the identity. The missing entries now travel as data (`missingGroups`, one list per alternative) instead of shaping the identity, so a dismissal survives changes to the missing set. Every ISSUE-405, ISSUE-408 and ISSUE-417 finding re-keys once at this bump. |
 | 7 | ISSUE-705 flags a job granted cache write (`cache-mode: write`) on an untrusted trigger instead of a release job's cache restore, and keys on `{file, job}`: one cache-mode in effect per job. ISSUE-717 is retired. Every ISSUE-705 finding re-keys once at this bump (issue #533). |
+| 8 | The uses-keyed GitHub codes (ISSUE-306, ISSUE-307, ISSUE-310, ISSUE-402, ISSUE-421, ISSUE-701, ISSUE-702, ISSUE-703, ISSUE-707, ISSUE-708, ISSUE-709, ISSUE-711, ISSUE-713 to ISSUE-716, ISSUE-804) gain `via` as an **optional** key, the first of the recipe: it is appended after the declared fields only when the finding carries a chain, the containers a nested `uses` entry was reached through. No finding re-keys at this bump: every direct finding hashes byte for byte as under recipe 7, and only nested findings, new with this recipe, carry the pair. ISSUE-302 (also uses-keyed) stays out: its rule is job-level on a reusable call, and the caller-prefixed job name already separates one call path from another. See [Recipe 8: the optional via key](#recipe-8-the-optional-via-key). |
 
 The SARIF `partialFingerprints["plumber/v1"]` key is the name of that SARIF
 entry, not the recipe version. It stays at `v1` across bumps, because renaming
@@ -80,10 +81,40 @@ fingerprint = sha256( code \n key1=value1 \n key2=value2 \n ... )  -> hex, first
 
 `key1=value1, key2=value2, ...` are the declared fields of the finding's code
 (`finding/identity/declarations.go`), in declared order, each rendered as
-`key=value` even when the value is empty (`key=`). There is no conditional
-segment: a declared field always contributes a pair, present or not, so two
-findings of the same code either agree on every pair or differ on at least
-one.
+`key=value` even when the value is empty (`key=`). A declared field always
+contributes a pair, present or not, so two findings of the same code either
+agree on every declared pair or differ on at least one. The one conditional
+segment is an optional key (recipe 8, below), appended after the declared
+pairs only when the finding carries a value for it.
+
+### Recipe 8: the optional via key
+
+A GitHub action step can run inside a composite action or a reusable workflow
+of another repository (monorepo spec 2026-10-16, nested actions resolution).
+Such a nested finding carries `via`, the chain of containers it was reached
+through, outermost first. The uses-keyed codes list `via` in
+`optionalDeclarations` (`finding/identity/declarations.go`, read with
+`identity.OptionalDeclared`): when the chain is non-empty it renders as one
+more pair, `via=<entries joined with " > ">`, after the declared ones. When it
+is empty or absent no pair is rendered at all, unlike a declared field, so a
+direct finding has exactly its recipe 7 pairs and its recipe 7 fingerprint.
+A consumer holding recipe 7 values can re-stamp them as recipe 8 with no
+exclusion list.
+
+The worked example is the reproduction of the spec: workflow A uses B, B uses
+C and D, D uses E, and C uses E too, all in job `ci/nested` of
+`.github/workflows/ci.yml`, every ref `@main`, code ISSUE-701:
+
+| Finding | `via` pair | Fingerprint |
+| --- | --- | --- |
+| `uses=thomasboni/nested-actions-b@main` (direct) | none | `3d9f11bfd8c3bf94` (its recipe 7 value) |
+| `uses=thomasboni/nested-actions-c@main` | `via=thomasboni/nested-actions-b@main` | `4fe90b2a1fdc935d` |
+| `uses=thomasboni/nested-actions-d@main` | `via=thomasboni/nested-actions-b@main` | `10abe70c4cd930e4` |
+| `uses=thomasboni/nested-actions-e@main` | `via=thomasboni/nested-actions-b@main > thomasboni/nested-actions-d@main` | `a3d46c9354db3be5` |
+| `uses=thomasboni/nested-actions-e@main` | `via=thomasboni/nested-actions-b@main > thomasboni/nested-actions-c@main` | `7a5b5a96dd7121a8` |
+
+The two E findings share code, file, job, uses and step: the chain is the only
+field that tells the two paths apart, so they are two stable findings.
 
 ### The paths
 

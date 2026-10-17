@@ -228,3 +228,19 @@ func TestFindingBranchReadsTheJobTheMessageOpensOn(t *testing.T) {
 		}
 	}
 }
+
+// TestFindingBranchSplitsOnTheLastDash pins the review of PR 549 (finding
+// 4297763494): a nested ISSUE-708 message quotes a comment holding the
+// dash, and the branch splits on the last dash, the consequence separator,
+// so the consequence is whole and the quoted comment stays in the what.
+func TestFindingBranchSplitsOnTheLastDash(t *testing.T) {
+	dash := " \u2014 "
+	msg := `job "ci/build" pins "evil/e@` + strings.Repeat("a", 40) + `" but comment "v1` + dash + `internal" names tag "v1" which resolves to "` + strings.Repeat("b", 40) + `", pulled in via acme/wrapper@v1` + dash + "reviewers will misread the version"
+	what, so := findingBranch(detailedFinding{Message: msg, Job: "ci/build", File: ".github/workflows/ci.yml"})
+	if so != "reviewers will misread the version" {
+		t.Errorf("so = %q, want the whole consequence", so)
+	}
+	if !strings.Contains(what, `comment "v1, internal" names tag "v1"`) || !strings.HasSuffix(what, "pulled in via acme/wrapper@v1") {
+		t.Errorf("what = %q, want the quoted comment and the clause", what)
+	}
+}

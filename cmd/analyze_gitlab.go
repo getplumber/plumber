@@ -1154,6 +1154,8 @@ func buildAnalysisJSONReport(result *control.AnalysisResult, pc *configuration.P
 			"originAction":                         s.ActionRefsTotal,
 			"originActionUnpinned":                 s.ActionRefsUnpinned,
 			"originActionTrustedExempt":            s.ActionRefsExempt,
+			"originActionNested":                   s.ActionRefsNested,
+			"unexpandedActions":                    len(result.UnexpandedActions),
 			"originReusableWorkflow":               s.ReusableCalls,
 			"originReusableWorkflowSecretsInherit": s.ReusableCallsSecretsInherit,
 			"originTotal":                          s.ActionRefsTotal + s.ReusableCalls,

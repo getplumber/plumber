@@ -45,3 +45,36 @@ func TestEnrichFindings_NestedJobWithoutCallersAnchorsOnItsNamePrefix(t *testing
 		t.Fatalf("location = %s:%d, want the scanned job's", fs[0].File, fs[0].Line)
 	}
 }
+
+// TestEnrichFindings_NestedJobFileNamedByTheRuleMovesToTheCaller pins R9
+// (plan ruling 15): a rule that names a called workflow's own file still
+// yields a finding inside the scanned repository.
+func TestEnrichFindings_NestedJobFileNamedByTheRuleMovesToTheCaller(t *testing.T) {
+	p := &ir.NormalizedPipeline{Jobs: []ir.Job{
+		{Name: "ci/call", OriginFile: ".github/workflows/ci.yml", OriginLine: 9},
+		{Name: "ci/call/build", Nested: true, OriginFile: "acme/shared/.github/workflows/build.yml@v1", OriginLine: 4,
+			Callers: []ir.ReusableCaller{{Job: "ci/call"}}},
+	}}
+	fs := []Finding{{Code: "ISSUE-422", Job: "ci/call/build", File: "acme/shared/.github/workflows/build.yml@v1", Line: 2}}
+	enrichFindingsWithJobLocation(fs, p)
+	if fs[0].File != ".github/workflows/ci.yml" || fs[0].Line != 9 {
+		t.Fatalf("location = %s:%d, want the calling job's", fs[0].File, fs[0].Line)
+	}
+}
+
+// TestEnrichFindings_DirectFindingNeverTakesANestedStepName pins the
+// engine's step rule (spec 2026-10-16 R9, Task 3 round L4): a nested entry
+// shares its workflow step's line, so a finding without definedIn on an
+// unnamed direct step must not take the name of the named nested entry
+// after it, which would change the direct finding's identity.
+func TestEnrichFindings_DirectFindingNeverTakesANestedStepName(t *testing.T) {
+	p := &ir.NormalizedPipeline{Jobs: []ir.Job{{Name: "ci/build", OriginFile: ".github/workflows/ci.yml", Uses: []ir.Action{
+		{Uses: "acme/b@v1", Line: 13},
+		{Uses: "acme/d@v1", Name: "Use D", Line: 13, Nested: true, Via: []string{"acme/b@v1"}, DefinedIn: "acme/b@v1:action.yml:6"},
+	}}}}
+	fs := []Finding{{Code: "ISSUE-701", Job: "ci/build", Line: 13, Data: map[string]any{"uses": "acme/b@v1"}}}
+	enrichFindingsWithJobLocation(fs, p)
+	if step, has := fs[0].Data["step"]; has {
+		t.Fatalf("the direct finding took step %v", step)
+	}
+}

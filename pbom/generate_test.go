@@ -3,6 +3,7 @@ package pbom
 import (
 	"encoding/json"
 	"reflect"
+	"slices"
 	"strings"
 	"testing"
 
@@ -335,5 +336,94 @@ func TestProcessIncludesCarriesTheComponentProject(t *testing.T) {
 	}
 	if inc.Location != "gitlab.com/getplumber/plumber/plumber" {
 		t.Errorf("Location = %q, want it untouched", inc.Location)
+	}
+}
+
+// TestGenerateFromGitHubIR_NestedIncludes pins spec 2026-10-16 section 8:
+// every entry of the closure is an include, the nested ones flagged with
+// their chain, a reference also used directly stays direct, and a `./x`
+// nested in a remote container is the scanned repository's own composite
+// (plan ruling 14), its include keyed on the reference as written.
+func TestGenerateFromGitHubIR_NestedIncludes(t *testing.T) {
+	p := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{
+		{Name: "ci/a", Uses: []ir.Action{
+			{Uses: "acme/b@main"},
+			{Uses: "acme/c@main", Nested: true, Via: []string{"acme/b@main"}, DefinedIn: "acme/b@main:action.yml:8"},
+			{Uses: "acme/d@main", Nested: true, Via: []string{"acme/b@main"}, DefinedIn: "acme/b@main:action.yml:9"},
+			{Uses: "./.github/actions/setup", Nested: true, Via: []string{"acme/b@main"}, DefinedIn: "acme/b@main:action.yml:10"},
+		}},
+		{Name: "ci/z", Uses: []ir.Action{{Uses: "acme/c@main"}}},
+		{Name: "ci/call/build", Nested: true, Via: []string{"acme/shared/.github/workflows/x.yml@v1"}, ReusableWorkflowUses: "acme/other/.github/workflows/y.yml@v1"},
+		{Name: "ci/call", ReusableWorkflowUses: "acme/shared/.github/workflows/x.yml@v1"},
+	}}
+	doc := NewGenerator("acme/app", 0, "", "main").GenerateFromGitHubIR(p)
+	got := map[string]Include{}
+	for _, inc := range doc.Includes {
+		got[inc.Location+"@"+inc.Version] = inc
+	}
+	if inc := got["acme/b@main"]; inc.Nested || inc.Via != nil {
+		t.Errorf("B is direct: %+v", inc)
+	}
+	if inc := got["acme/c@main"]; inc.Nested || inc.Via != nil {
+		t.Errorf("C is also used directly, it stays direct: %+v", inc)
+	}
+	if inc := got["acme/d@main"]; !inc.Nested || !slices.Equal(inc.Via, []string{"acme/b@main"}) {
+		t.Errorf("D is nested via B: %+v", inc)
+	}
+	if inc, ok := got["./.github/actions/setup@"]; !ok || !inc.Nested || !slices.Equal(inc.Via, []string{"acme/b@main"}) {
+		t.Errorf("the relative composite reached through B: %+v (present %v)", inc, ok)
+	}
+	if inc := got["acme/shared/.github/workflows/x.yml@v1"]; inc.Type != "reusableWorkflow" || inc.Nested || inc.Via != nil {
+		t.Errorf("x.yml is called directly: %+v", inc)
+	}
+	if inc := got["acme/other/.github/workflows/y.yml@v1"]; inc.Type != "reusableWorkflow" || !inc.Nested || !slices.Equal(inc.Via, []string{"acme/shared/.github/workflows/x.yml@v1"}) {
+		t.Errorf("y.yml is called from x.yml: %+v", inc)
+	}
+}
+
+// TestGenerateFromGitHubIR_DirectCommentWinsOverNested pins the review of
+// PR 549 (finding 4297763321): job 1 reaches actions/foo inside a composite
+// with no comment, job 2 uses it directly with `# v4.1.0`. The include
+// flips to direct and keeps the direct occurrence's version comment, and a
+// later occurrence with a comment fills a stored empty one.
+func TestGenerateFromGitHubIR_DirectCommentWinsOverNested(t *testing.T) {
+	sha := "0123456789abcdef0123456789abcdef01234567"
+	foo := "actions/foo@" + sha
+	p := &ir.NormalizedPipeline{Provider: ir.ProviderGitHub, Jobs: []ir.Job{
+		{Name: "ci/a", Uses: []ir.Action{
+			{Uses: "acme/x@v1"},
+			{Uses: foo, Nested: true, Via: []string{"acme/x@v1"}},
+			{Uses: "acme/bar@v2"},
+		}},
+		{Name: "ci/b", Uses: []ir.Action{
+			{Uses: foo, Comment: "v4.1.0"},
+			{Uses: "acme/bar@v2", Comment: "v2.0.1"},
+		}},
+	}}
+	doc := NewGenerator("acme/app", 0, "", "main").GenerateFromGitHubIR(p)
+	got := map[string]Include{}
+	for _, inc := range doc.Includes {
+		got[inc.Location+"@"+inc.Version] = inc
+	}
+	if inc := got[foo]; inc.Nested || inc.LatestVersion != "v4.1.0" {
+		t.Errorf("foo is direct with its comment: %+v", inc)
+	}
+	if inc := got["acme/bar@v2"]; inc.LatestVersion != "v2.0.1" {
+		t.Errorf("bar adopts the later comment: %+v", inc)
+	}
+}
+
+// TestCycloneDX_NestedIncludeCarriesItsChain pins spec 2026-10-16 section 8:
+// plumber:via sits next to plumber:nested, rendered outermost first.
+func TestCycloneDX_NestedIncludeCarriesItsChain(t *testing.T) {
+	doc := &PBOM{Includes: []Include{{Type: "action", Location: "acme/e", Version: "main", Nested: true, Via: []string{"acme/b@main", "acme/d@main"}}}}
+	props := map[string]string{}
+	for _, c := range doc.ToCycloneDX("test").Components {
+		for _, p := range c.Properties {
+			props[p.Name] = p.Value
+		}
+	}
+	if props["plumber:nested"] != "true" || props["plumber:via"] != "acme/b@main > acme/d@main" {
+		t.Fatalf("properties = %v", props)
 	}
 }

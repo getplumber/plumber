@@ -163,6 +163,9 @@ func AggregateGitHubStats(pipeline *ir.NormalizedPipeline, pc *configuration.Plu
 					stats.ActionRefsAbsentUpstream++
 				}
 			}
+			if use.Nested {
+				stats.ActionRefsNested++
+			}
 			if ownerOf(ref) != "" && isTrustedOwner(ref, trustedOwners) {
 				stats.ActionRefsExempt++
 				continue

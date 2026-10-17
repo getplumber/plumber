@@ -18,6 +18,7 @@
 package superfluous_action
 
 import rego.v1
+import data.lib.provenance
 
 superfluous_prefixes := {
 	"peter-evans/create-pull-request":    "gh pr create from the runner",
@@ -36,14 +37,14 @@ deny contains finding if {
 	job := input.pipeline.jobs[i]
 	action := job.uses[j]
 	reason := _superfluous_reason(action.uses)
-	finding := {
+	finding := object.union({
 		"code":     "ISSUE-711",
 		"severity": "low",
-		"message":  sprintf("job %q uses %q — same effect as %q from the runner, drop the third-party dependency", [job.name, action.uses, reason]),
+		"message":  provenance.message(sprintf("job %q uses %q \u2014 same effect as %q from the runner, drop the third-party dependency", [job.name, action.uses, reason]), action),
 		"job":      job.name,
 		"uses":     action.uses,
 		"line":     object.get(action, "line", 0),
-	}
+	}, provenance.fields(action))
 }
 
 _superfluous_reason(uses) := reason if {

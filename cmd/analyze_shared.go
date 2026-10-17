@@ -194,6 +194,7 @@ func runPlatformMode(p provider.Provider, cmd *cobra.Command, conf *configuratio
 	if printOutput {
 		renderPolicySections(p, conf, runs, controlsFilterList, skipControlsList)
 		renderWarnings(result.Warnings)
+		renderUnexpandedActions(os.Stdout, result.UnexpandedActions)
 		// The collection-truth diagnostics outputTextWithProvider prints on
 		// every standalone run. They are facts about what was COLLECTED, not
 		// a verdict: the CI errors explain why an inventory is thin, and the
@@ -598,6 +599,7 @@ func outputTextWithProvider(p provider.Provider, result *control.AnalysisResult,
 		renderFindingGroups(filteredGroups)
 	}
 	renderWarnings(result.Warnings)
+	renderUnexpandedActions(os.Stdout, result.UnexpandedActions)
 	renderApprovalRulesTierCaveat(result)
 	renderMRApprovalSettingsTierCaveat(result)
 	renderMRSettingsPremiumCaveat(result)

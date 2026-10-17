@@ -1,6 +1,9 @@
 package identity
 
-import "sort"
+import (
+	"slices"
+	"sort"
+)
 
 // declarations maps every registered ISSUE code to the ordered field names
 // that identify one finding instance of that code across runs. This table IS
@@ -265,4 +268,37 @@ func DeclaredCodes() []string {
 	}
 	sort.Strings(out)
 	return out
+}
+
+// optionalDeclarations (recipe 8) names, per code, the keys appended to the
+// identity after the declared ones, only when the finding carries a non-empty
+// value: a finding without them hashes as under recipe 7. via is the chain a
+// nested uses entry was reached through (monorepo spec 2026-10-16 section 6),
+// rendered outermost first, " > " separated. Only the uses-keyed GitHub codes
+// whose rule can run on a nested entry carry it, including ISSUE-306 (App
+// token issued without revocation: a nested wrapper that mints the token is
+// a distinct finding from a direct one). ISSUE-302 stays out: its rule is
+// job-level on a reusable call, and the caller-prefixed job name already
+// separates one call path from another, so no chain is needed to tell two
+// paths apart. ISSUE-419 also stays out by ruling, not oversight: it is
+// keyed on the job alone, and a direct and a nested occurrence in one job
+// are meant to stay one finding, the same semantic as two direct ones. The
+// job-keyed codes otherwise keep their recipe 7 identity whatever the
+// payload holds.
+var optionalDeclarations = map[string][]string{
+	"ISSUE-307": {"via"}, "ISSUE-310": {"via"}, "ISSUE-402": {"via"}, "ISSUE-421": {"via"},
+	"ISSUE-701": {"via"}, "ISSUE-702": {"via"}, "ISSUE-703": {"via"}, "ISSUE-707": {"via"},
+	"ISSUE-708": {"via"}, "ISSUE-709": {"via"}, "ISSUE-711": {"via"}, "ISSUE-713": {"via"},
+	"ISSUE-714": {"via"}, "ISSUE-715": {"via"}, "ISSUE-716": {"via"}, "ISSUE-804": {"via"},
+	"ISSUE-306": {"via"},
+}
+
+// OptionalDeclared returns the optional identity keys of code (recipe 8), as
+// a copy, and whether it has any.
+func OptionalDeclared(code string) ([]string, bool) {
+	d, ok := optionalDeclarations[code]
+	if !ok {
+		return nil, false
+	}
+	return slices.Clone(d), true
 }

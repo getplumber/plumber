@@ -149,6 +149,10 @@ var dataArrayKinds = map[string]bool{
 	// the same thing in English (see mr_settings_compliant.rego's _labels).
 	"ISSUE-503.deviatingSettings": false,
 	"ISSUE-506.deviatingSettings": false,
+	// The chain a nested GitHub entry was reached through (monorepo spec
+	// 2026-10-16 section 6): `uses:` references a consumer parses (the
+	// identity, the paths), rendered for a reader by the message's clause.
+	"ISSUE-402.via": false,
 }
 
 // messageBranches is the render manifest, and the answer to a defect class

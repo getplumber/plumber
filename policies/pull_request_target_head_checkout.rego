@@ -19,6 +19,7 @@
 package pull_request_target_head_checkout
 
 import rego.v1
+import data.lib.provenance
 
 # Refs known to resolve to attacker-controlled content under a
 # pull_request_target trigger.
@@ -38,15 +39,15 @@ deny contains finding if {
 	ref := action.with.ref
 	is_string(ref)
 	_ref_points_at_pr_head(ref)
-	finding := object.union({
+	finding := object.union(object.union({
 		"code":     "ISSUE-804",
 		"severity": "critical",
-		"message":  sprintf("job %q runs under pull_request_target AND checks out the PR head (ref=%q) — base-repo secrets and fork-controlled code in the same run (tj-actions / CVE-2025-30066 pattern)", [job.name, ref]),
+		"message":  provenance.message(sprintf("job %q runs under pull_request_target AND checks out the PR head (ref=%q) \u2014 base-repo secrets and fork-controlled code in the same run (tj-actions / CVE-2025-30066 pattern)", [job.name, ref]), action),
 		"job":      job.name,
 		"uses":     action.uses,
 		"ref":      ref,
 		"line":     object.get(action, "line", 0),
-	}, _fork_guard_fields(job, action))
+	}, _fork_guard_fields(job, action)), provenance.fields(action))
 }
 
 # _fork_guard_fields marks a finding whose job carries a fork guard; a

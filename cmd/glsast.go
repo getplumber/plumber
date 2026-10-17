@@ -201,7 +201,11 @@ func buildGLSAST(findings []opaengine.Finding, provider string) glsastReport {
 			title := info.TitleFor(provider)
 			v.Name = title
 			v.Description = info.DescriptionFor(provider)
-			v.Solution = info.Remediation
+			// A nested finding's solution is its code's nested remediation,
+			// the one its message and fix read (spec section 6, maintainer
+			// review of PR 549): the direct one asks to edit a reference the
+			// user cannot edit.
+			v.Solution = info.RemediationFor(control.NestedRemediationApplies(reasonsArrayToStrings(f.Data["via"])))
 			v.Identifiers[0].Name = "Plumber " + f.Code + ": " + title
 			v.Identifiers[0].URL = info.DocURL
 			v.Identifiers = append(v.Identifiers, glsastIdentifier{

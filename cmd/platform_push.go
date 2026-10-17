@@ -6,6 +6,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
@@ -127,7 +128,9 @@ type platformBOMInclude struct {
 	// Type and Location carry no omitempty, matching pbom.Include: spec 4.1
 	// keys every include node on its type, and an include that somehow
 	// arrives without one must arrive blank rather than vanish, so the
-	// platform can refuse it instead of never seeing it.
+	// platform can refuse it instead of never seeing it. Via is
+	// pbom.Include.Via truncated to its outermost bomMaxViaEntries (8)
+	// entries (review of PR 549).
 	Type           string                     `json:"type"`
 	Location       string                     `json:"location"`
 	Project        string                     `json:"project,omitempty"`
@@ -137,6 +140,7 @@ type platformBOMInclude struct {
 	ComponentName  string                     `json:"component_name,omitempty"`
 	FromCatalog    bool                       `json:"from_catalog,omitempty"`
 	Nested         bool                       `json:"nested,omitempty"`
+	Via            []string                   `json:"via,omitempty"`
 	Overridden     bool                       `json:"overridden,omitempty"`
 	OverriddenJobs []platformBOMOverriddenJob `json:"overridden_jobs,omitempty"`
 	Archived       *bool                      `json:"archived,omitempty"`
@@ -630,6 +634,10 @@ const platformBOMSchemaVersion = 1
 // bom_string_bytes, bom_url_bytes, bom_edges and bom_bytes. A bound the CLI
 // does not mirror is a push the platform answers with a 422, and that answer
 // costs the run its results, its findings and its score, not just its bill.
+// bomMaxViaEntries mirrors bom_via, once the platform half adds that reason
+// (monorepo spec 2026-10-16 section 9, CLI ask 6), by truncation rather than
+// refusal, so the CLI never pushes a chain the platform would refuse; until
+// then the CLI bounds it alone and the platform accepts whatever is pushed.
 const (
 	bomMaxIncludes = 500
 	bomMaxImages   = 500
@@ -643,7 +651,13 @@ const (
 	bomMaxServicesPerJob   = 64
 	bomMaxRunnerTagsPerJob = 32
 	bomMaxAdvisories       = 50
-	bomMaxStringRunes      = 512
+	// bomMaxViaEntries bounds a nested include's chain (spec 2026-10-16
+	// section 8): at most 8 entries, each inside the string bounds. A
+	// longer chain is truncated to its outermost 8 entries, never refused
+	// (review of PR 549): nothing bounds the chain depth where it is
+	// produced, and the via of the bill is already lossy (first path only).
+	bomMaxViaEntries  = 8
+	bomMaxStringRunes = 512
 	// A remote include is addressed by a URL, which is legitimately longer
 	// than any other string in the bill.
 	bomMaxRemoteURLRunes = 1024
@@ -681,7 +695,11 @@ const (
 // pushed set in one go, so a short bill silently deletes real dependencies.
 // Past a bound the section is dropped whole and the caller says which bound
 // did it; the push still goes with its results intact, and the platform
-// reports no bill for that run rather than a wrong one.
+// reports no bill for that run rather than a wrong one. The one exception
+// is an include's via chain, kept to its outermost bomMaxViaEntries entries
+// (review of PR 549): the chain only tells how the include was reached, so
+// a shorter one deletes no dependency, while refusing the bill over it
+// would delete them all.
 //
 // A pure function of the document: it collects nothing and reads no state.
 func platformBOMFrom(doc *pbom.PBOM) (*platformBOM, string) {
@@ -706,6 +724,7 @@ func platformBOMFrom(doc *pbom.PBOM) (*platformBOM, string) {
 			ComponentName: inc.ComponentName,
 			FromCatalog:   inc.FromCatalog,
 			Nested:        inc.Nested,
+			Via:           outermostVia(inc.Via),
 			Overridden:    inc.Overridden,
 			Archived:      inc.Archived,
 			HasCVE:        inc.HasCVE,
@@ -879,6 +898,15 @@ func bomNormalizeRef(image string, unresolved bool) (bomRef, bool) {
 	return out, true
 }
 
+// outermostVia keeps the outermost bomMaxViaEntries entries of a nested
+// include's chain (review of PR 549).
+func outermostVia(via []string) []string {
+	if len(via) > bomMaxViaEntries {
+		return via[:bomMaxViaEntries:bomMaxViaEntries]
+	}
+	return via
+}
+
 // platformBOMBound returns the bound the SECTION exceeds, empty when it fits.
 // The single place every count, length and product bound lives, and it is
 // handed the emitted shape rather than the document behind it, so what is
@@ -887,6 +915,9 @@ func bomNormalizeRef(image string, unresolved bool) (bomRef, bool) {
 //
 // The byte cap is the one bound not here: it is a property of the encoded
 // bytes rather than of the section's fields, so it is checked on the marshal.
+//
+// An include's via is never refused for its length: platformBOMFrom kept
+// its outermost bomMaxViaEntries entries, each still under the string bounds.
 func platformBOMBound(out *platformBOM) string {
 	if len(out.Includes) > bomMaxIncludes {
 		return fmt.Sprintf("includes > %d", bomMaxIncludes)
@@ -920,6 +951,7 @@ func platformBOMBound(out *platformBOM) string {
 		}
 		strs := []string{inc.Type, inc.Project, inc.Version, inc.LatestVersion, inc.ComponentName}
 		strs = append(strs, inc.Advisories...)
+		strs = append(strs, inc.Via...)
 		for _, job := range inc.OverriddenJobs {
 			strs = append(strs, job.Job)
 			strs = append(strs, job.Keys...)
@@ -1149,6 +1181,13 @@ func platformCollectionFor(conf *configuration.Configuration, result *control.An
 	}
 	meta.SnapshotCollectedAt = conf.PlatformRun.SnapshotCollectedAt()
 	meta.MissingFields = conf.PlatformRun.MissingSnapshotFields()
+	// The GitHub-shaped lane (spec 2026-10-16 section 7): a nested
+	// resolution stopped at its budget left the closure incomplete. The
+	// platform ignores a lane name it does not know (forward tolerance).
+	if result != nil && result.NestedActionsBudgetExceeded {
+		meta.MissingFields = append(meta.MissingFields, "actions_closure")
+		sort.Strings(meta.MissingFields)
+	}
 	return meta
 }
 

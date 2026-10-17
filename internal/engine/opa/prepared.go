@@ -33,10 +33,24 @@ func prepared(ctx context.Context, query, name, source string) (*rego.PreparedEv
 	if v, ok := preparedQueries.Load(key); ok {
 		return v.(*rego.PreparedEvalQuery), nil
 	}
-	pq, err := rego.New(
+	opts := []func(*rego.Rego){
 		rego.Query(query),
 		rego.Module(name+".rego", source),
-	).PrepareForEval(ctx)
+	}
+	// Only a module that references the shared library (policies/lib)
+	// compiles with it: attaching it to every rule made each evaluation
+	// compile it about 75 times. A library that does not load fails the
+	// module and is never cached.
+	if usesLibrary(source) {
+		lib, err := libraryModules()
+		if err != nil {
+			return nil, err
+		}
+		for _, m := range lib {
+			opts = append(opts, rego.ParsedModule(m))
+		}
+	}
+	pq, err := rego.New(opts...).PrepareForEval(ctx)
 	if err != nil {
 		return nil, err
 	}

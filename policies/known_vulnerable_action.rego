@@ -21,6 +21,7 @@
 package known_vulnerable_action
 
 import rego.v1
+import data.lib.provenance
 
 deny contains finding if {
 	some i, j
@@ -28,16 +29,16 @@ deny contains finding if {
 	action := job.uses[j]
 	action.metadata
 	count(action.metadata.advisories) > 0
-	finding := {
+	finding := object.union({
 		"code":       "ISSUE-703",
 		"severity":   "critical",
-		"message":    sprintf("job %q references %q — published advisories: %s", [job.name, action.uses, _format_advisories(action.metadata.advisories)]),
+		"message":    provenance.message(sprintf("job %q references %q \u2014 published advisories: %s", [job.name, action.uses, _format_advisories(action.metadata.advisories)]), action),
 		"job":        job.name,
 		"uses":       action.uses,
 		"advisories": action.metadata.advisories,
 		"advisorySeverities": object.get(action.metadata, "advisorySeverities", {}),
 		"line":       object.get(action, "line", 0),
-	}
+	}, provenance.fields(action))
 }
 
 # _format_advisories renders each GHSA ID next to its canonical

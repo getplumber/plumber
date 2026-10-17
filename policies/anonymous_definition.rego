@@ -29,6 +29,10 @@ _anonymous_workflow_files contains file if {
 	# rather than `== ""`.
 	some i
 	job := input.pipeline.jobs[i]
+	# A workflow called in another repository is its owner's hygiene, and
+	# its file is outside the scanned repository (monorepo spec
+	# 2026-10-16 section 5, R9).
+	not job.nested
 	not job.workflowName
 	job.originFile != ""
 	file := job.originFile

@@ -11,6 +11,7 @@
 package use_trusted_publishing
 
 import rego.v1
+import data.lib.provenance
 
 # Publish actions we know about. The policy does not cover every
 # obscure community action — Dependabot's own publish pipeline, for
@@ -29,14 +30,14 @@ deny contains finding if {
 	action := job.uses[j]
 	ecosystem := _publish_action_ecosystem(action.uses)
 	_step_uses_static_token(action)
-	finding := {
+	finding := object.union({
 		"code":     "ISSUE-421",
 		"severity": "high",
-		"message":  sprintf("job %q publishes to %s via %q with a static token — migrate to OIDC trusted publishing", [job.name, ecosystem, action.uses]),
+		"message":  provenance.message(sprintf("job %q publishes to %s via %q with a static token \u2014 migrate to OIDC trusted publishing", [job.name, ecosystem, action.uses]), action),
 		"job":      job.name,
 		"uses":     action.uses,
 		"line":     object.get(action, "line", 0),
-	}
+	}, provenance.fields(action))
 }
 
 _publish_action_ecosystem(uses) := eco if {

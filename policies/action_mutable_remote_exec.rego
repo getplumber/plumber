@@ -24,6 +24,7 @@
 package action_mutable_remote_exec
 
 import rego.v1
+import data.lib.provenance
 
 # _signals unifies every mutable-remote-exec signal: one per used action
 # that carries one (consumer side) plus the scanned repo's own action
@@ -45,6 +46,7 @@ _signals contains sig if {
 		"runsOn": object.get(job, "runsOn", []),
 		"runsOnExpression": object.get(job, "runsOnExpression", false),
 		"container": object.get(job, "image", null) != null,
+		"entry": action,
 	}
 }
 
@@ -62,20 +64,21 @@ _signals contains sig if {
 		"runsOn": [],
 		"runsOnExpression": false,
 		"container": false,
+		"entry": {},
 	}
 }
 
 deny contains finding if {
 	some sig in _signals
 	sig.tier == "obfuscated"
-	finding := {
+	finding := object.union({
 		"code":     "ISSUE-715",
 		"severity": "critical",
-		"message":  sprintf("%s obfuscates a remote code fetch/exec (`%s`) — hiding what an action runs at runtime is treated as the strongest signal, whatever host/ref/encoding is used", [sig.who, sig.url]),
+		"message":  provenance.message(sprintf("%s obfuscates a remote code fetch/exec (`%s`) \u2014 hiding what an action runs at runtime is treated as the strongest signal, whatever host/ref/encoding is used", [sig.who, sig.url]), sig.entry),
 		"job":      sig.job,
 		"uses":     sig.uses,
 		"line":     sig.line,
-	}
+	}, provenance.fields(sig.entry))
 }
 
 # _guard_fields and _verified_fields are additive: a signal with no guard
@@ -132,25 +135,25 @@ deny contains finding if {
 	base := {
 		"code":     "ISSUE-714",
 		"severity": "high",
-		"message":  sprintf("%s fetches and runs remote code from a mutable ref with no checksum (`%s`) — a SHA pin on the action does not reach this; a clean result means \"no known pattern seen\", not \"safe\"", [sig.who, sig.url]),
+		"message":  provenance.message(sprintf("%s fetches and runs remote code from a mutable ref with no checksum (`%s`) \u2014 a SHA pin on the action does not reach this; a clean result means \"no known pattern seen\", not \"safe\"", [sig.who, sig.url]), sig.entry),
 		"job":      sig.job,
 		"uses":     sig.uses,
 		"line":     sig.line,
 	}
 	with_guard := object.union(base, _guard_fields(sig))
 	with_verified := object.union(with_guard, _verified_fields(sig))
-	finding := object.union(with_verified, _url_fields(sig))
+	finding := object.union(object.union(with_verified, _url_fields(sig)), provenance.fields(sig.entry))
 }
 
 deny contains finding if {
 	some sig in _signals
 	sig.tier == "unverified"
-	finding := {
+	finding := object.union({
 		"code":     "ISSUE-716",
 		"severity": "low",
-		"message":  sprintf("%s: could not fetch the action source to verify it (offline, GHES, private, rate-limited, or a Docker-image action) — reported as could-not-verify, not a pass", [sig.who]),
+		"message":  provenance.message(sprintf("%s: could not fetch the action source to verify it (offline, GHES, private, rate-limited, or a Docker-image action) \u2014 reported as could-not-verify, not a pass", [sig.who]), sig.entry),
 		"job":      sig.job,
 		"uses":     sig.uses,
 		"line":     sig.line,
-	}
+	}, provenance.fields(sig.entry))
 }

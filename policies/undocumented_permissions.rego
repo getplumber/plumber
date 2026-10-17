@@ -22,6 +22,10 @@ deny contains finding if {
 	input.pipeline.provider == "github"
 	some i
 	job := input.pipeline.jobs[i]
+	# A job of a workflow called in another repository runs with the token
+	# its calling job gives it, and the calling job is judged by its own
+	# finding (monorepo spec 2026-10-16 section 5, plan ruling 15).
+	not job.nested
 	not job.permissions
 	finding := {
 		"code":     "ISSUE-801",

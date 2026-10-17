@@ -32,6 +32,7 @@
 package action_authorized_sources
 
 import rego.v1
+import data.lib.provenance
 
 # Step-level actions (`jobs.<id>.steps[].uses`).
 deny contains finding if {
@@ -41,10 +42,10 @@ deny contains finding if {
 	action := job.uses[j]
 	_is_external(action.uses)
 	not _authorized(action)
-	finding := {
+	finding := object.union({
 		"code":     "ISSUE-713",
 		"severity": "high",
-		"message":  sprintf("job %q references action %q from an unauthorized source — restrict actions to authorized owners (actions/*, github/*), an explicit allowlist, or a minimum-stars threshold", [job.name, action.uses]),
+		"message":  provenance.message(sprintf("job %q references action %q from an unauthorized source \u2014 restrict actions to authorized owners (actions/*, github/*), an explicit allowlist, or a minimum-stars threshold", [job.name, action.uses]), action),
 		"job":      job.name,
 		"uses":     action.uses,
 		"line":     object.get(action, "line", 0),
@@ -54,7 +55,7 @@ deny contains finding if {
 		# on a ref the owner can move.
 		"pinnedBySha":        _pinned_by_sha(action.uses),
 		"occurrenceSeverity": _occurrence_severity(action.uses),
-	}
+	}, provenance.fields(action))
 }
 
 # Job-level reusable-workflow calls (`jobs.<id>.uses:
@@ -68,15 +69,15 @@ deny contains finding if {
 	use != ""
 	_is_external(use)
 	not _authorized({"uses": use})
-	finding := {
+	finding := object.union({
 		"code":     "ISSUE-713",
 		"severity": "high",
-		"message":  sprintf("job %q calls reusable workflow %q from an unauthorized source — restrict to authorized owners (actions/*, github/*) or an explicit allowlist", [job.name, use]),
+		"message":  provenance.message(sprintf("job %q calls reusable workflow %q from an unauthorized source \u2014 restrict to authorized owners (actions/*, github/*) or an explicit allowlist", [job.name, use]), job),
 		"job":      job.name,
 		"uses":     use,
 		"pinnedBySha":        _pinned_by_sha(use),
 		"occurrenceSeverity": _occurrence_severity(use),
-	}
+	}, provenance.fields(job))
 }
 
 # _pinned_by_sha: the reference's ref (after the last "@") is a full

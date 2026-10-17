@@ -190,7 +190,8 @@ Each entry represents a CI/CD include dependency. Fields vary by include type: o
 | `upToDate` | bool | GitLab: whether the include is on its latest release. GitHub `action` entries: tri-state pinning indicator — `false` means the ref is **not** a 40-char SHA (i.e. unpinned, ISSUE-701 candidate). |
 | `componentName` | string | GitLab `component` only |
 | `fromCatalog` | bool | GitLab `component` only |
-| `nested` | bool | GitLab only: `true` when this include was pulled in by another include. |
+| `nested` | bool | GitLab: `true` when this include was pulled in by another include. GitHub: `true` when every use of the action or reusable workflow sits inside a composite action or a reusable workflow of another repository (a reference also used directly in a scanned workflow stays direct). |
+| `via` | string[] | GitHub only, on a nested include: the chain of containers it was reached through, outermost first (the first path seen when it is reached on several). Omitted on a direct include. |
 | `overridden` | bool | GitLab only: `true` when one or more of the include's jobs were overridden locally with forbidden CI/CD keywords. |
 | `overriddenJobs` | array | GitLab only: details of which jobs are overridden and with which keywords. Only present when `overridden` is `true`. JSON uses camelCase (`overriddenJobs`, `overriddenKeys`), not snake_case. |
 | `archived` | bool | GitHub `action` only. `true` when the action's upstream repository is archived (ISSUE-702 finding). Omitted when the GitHub API metadata enrichment did not resolve (no token, offline, non-GitHub action). |
@@ -461,7 +462,8 @@ CycloneDX components carry Plumber-specific metadata as properties:
 | `plumber:up-to-date` | includes | `"true"` / `"false"` |
 | `plumber:component-name` | includes | Component name |
 | `plumber:from-catalog` | includes | `"true"` if from GitLab CI/CD Catalog |
-| `plumber:nested` | includes | GitLab only. `"true"` if nested include |
+| `plumber:nested` | includes | `"true"` if nested include (GitLab and GitHub, see `nested` above) |
+| `plumber:via` | includes | GitHub only. The chain of a nested include, `" > "` separated, outermost first |
 | `plumber:overridden` | includes | GitLab only. `"true"` if the include's jobs are overridden with forbidden keywords |
 | `plumber:overridden-job` | includes | GitLab only. `"jobName:key1,key2"` — one property per overridden job with its forbidden keys |
 | `plumber:archived` | includes | GitHub `action` only. `"true"` / `"false"` — upstream repository archived state (ISSUE-702). |

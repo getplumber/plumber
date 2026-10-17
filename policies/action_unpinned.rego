@@ -19,6 +19,7 @@
 package action_unpinned
 
 import rego.v1
+import data.lib.provenance
 
 deny contains finding if {
 	# Only run when the user opted in. The default is off: pin-by-SHA is
@@ -37,12 +38,12 @@ deny contains finding if {
 	base := {
 		"code":     "ISSUE-701",
 		"severity": "high",
-		"message":  sprintf("job %q references action %q with a mutable ref — pin by commit SHA instead", [job.name, use.uses]),
+		"message":  provenance.message(sprintf("job %q references action %q with a mutable ref \u2014 pin by commit SHA instead", [job.name, use.uses]), use),
 		"job":      job.name,
 		"uses":     use.uses,
 		"line":     object.get(use, "line", 0),
 	}
-	finding := object.union(object.union(base, _archived_tag_fields(use)), _redirected_owner_fields(use))
+	finding := object.union(object.union(object.union(base, _archived_tag_fields(use)), _redirected_owner_fields(use)), provenance.fields(use))
 }
 
 # _archived_tag_fields and _redirected_owner_fields are additive: a
@@ -87,13 +88,13 @@ deny contains finding if {
 	not _is_local(use)
 	not _is_own_repo(use)
 	not _is_trusted_owner(use)
-	finding := {
+	finding := object.union({
 		"code":     "ISSUE-701",
 		"severity": "high",
-		"message":  sprintf("job %q calls reusable workflow %q with a mutable ref — pin by commit SHA instead", [job.name, use]),
+		"message":  provenance.message(sprintf("job %q calls reusable workflow %q with a mutable ref \u2014 pin by commit SHA instead", [job.name, use]), job),
 		"job":      job.name,
 		"uses":     use,
-	}
+	}, provenance.fields(job))
 }
 
 # _ref_of returns the substring after "@" in "owner/repo@ref".

@@ -95,7 +95,15 @@ import (
 //	   singletons (one finding per rule evaluation).
 //	7  (2026-10-16, issue #533): ISSUE-705 flags a job granted cache write on
 //	   an untrusted trigger and keys on {file, job}; ISSUE-717 is retired.
-const RecipeVersion = 7
+//	8  (2026-10-16, nested actions resolution): the uses-keyed codes, and
+//	   ISSUE-306, gain via as an OPTIONAL key, appended after the declared ones only when
+//	   the finding carries a chain (optionalDeclarations), so every direct
+//	   finding hashes byte for byte as under recipe 7 while two paths to
+//	   one action in one job are two findings. The first optional key of
+//	   the recipe: a declared key always renders a pair (key= when absent),
+//	   an optional key renders none when absent, which is what keeps the
+//	   recipe 7 values of every direct finding.
+const RecipeVersion = 8
 
 // fingerprintLength is how many hex characters of the digest the short
 // fingerprint keeps. 16 hex chars (64 bits) is short enough to read in a CSV
@@ -161,7 +169,8 @@ type Field struct {
 // its declaration selected, in declared order.
 type Fields struct {
 	Code string `json:"code"`
-	// Selected holds the declared pairs, in declared (= hash) order.
+	// Selected holds the declared pairs, then the optional pairs the finding
+	// carries (recipe 8), in declared (= hash) order.
 	Selected []Field `json:"selected"`
 	// SubjectFromMessage reports that the declaration includes the prose
 	// message, so rewording the rule re-keys this finding.
@@ -171,15 +180,17 @@ type Fields struct {
 }
 
 // Pairs returns the full ordered identity: the code pair first, then the
-// declared pairs. This is what the JSON identity block publishes.
+// declared pairs, then the optional pairs the finding carries (recipe 8).
+// This is what the JSON identity block publishes.
 func (f Fields) Pairs() []Field {
 	return append([]Field{{Key: "code", Value: f.Code}}, f.Selected...)
 }
 
-// Of returns the identity field set of a finding. ok is false only for a
-// codeless finding. A code missing from the declarations table (unreachable
-// while the parity test is green) gets the deterministic backstop: identity
-// is code + message, flagged SubjectFromMessage.
+// Of returns the identity field set of a finding: the declared pairs, then
+// the optional ones (recipe 8) the finding carries a value for. ok is false
+// only for a codeless finding. A code missing from the declarations table
+// (unreachable while the parity test is green) gets the deterministic
+// backstop: identity is code + message, flagged SubjectFromMessage.
 func Of(f Finding) (Fields, bool) {
 	if f.Code == "" {
 		return Fields{}, false
@@ -208,6 +219,11 @@ func Of(f Finding) (Fields, bool) {
 			v = stringValue(f.Data, key)
 		}
 		out.Selected = append(out.Selected, Field{Key: key, Value: v})
+	}
+	for _, key := range optionalDeclarations[f.Code] {
+		if v := chainValue(f.Data, key); v != "" {
+			out.Selected = append(out.Selected, Field{Key: key, Value: v})
+		}
 	}
 	return out, true
 }
@@ -252,6 +268,30 @@ func (f Fields) canonical() string {
 		segments = append(segments, p.Key+"="+p.Value)
 	}
 	return strings.Join(segments, "\n")
+}
+
+// chainValue reads an optional key: a string as is, a list of strings (a
+// chain, []any after a JSON round trip) joined with " > ", "" otherwise (a
+// list holding anything but strings included, so a malformed chain never
+// enters the identity).
+func chainValue(data map[string]any, key string) string {
+	switch v := data[key].(type) {
+	case string:
+		return v
+	case []string:
+		return strings.Join(v, " > ")
+	case []any:
+		parts := make([]string, 0, len(v))
+		for _, p := range v {
+			s, ok := p.(string)
+			if !ok {
+				return ""
+			}
+			parts = append(parts, s)
+		}
+		return strings.Join(parts, " > ")
+	}
+	return ""
 }
 
 // stringValue reads a non-empty string from a payload bag, tolerating both a

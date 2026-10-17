@@ -19,11 +19,14 @@ import (
 	"slices"
 	"sort"
 	"strings"
+	"sync"
 
+	"github.com/open-policy-agent/opa/v1/ast"
 	"github.com/open-policy-agent/opa/v1/rego"
 
 	"github.com/getplumber/plumber/finding/identity"
 	"github.com/getplumber/plumber/internal/ir"
+	policylib "github.com/getplumber/plumber/policies/lib"
 )
 
 // Finding is a single rule violation emitted by a policy.
@@ -456,23 +459,40 @@ func enrichFindingsWithJobLocation(findings []Finding, pipeline *ir.NormalizedPi
 		// same action are otherwise indistinguishable, so this is what keeps
 		// their fingerprints apart. Runs before the Line fallback below so a
 		// job-level finding never matches an action by the job header line.
+		// A nested entry shares the line of the workflow step that pulled it
+		// in (spec 2026-10-16 R9), so a finding carrying definedIn matches
+		// the entry with that DefinedIn, and a finding without it never
+		// takes a nested entry's name: every direct identity is unchanged.
 		if f.Line != 0 {
+			definedIn, _ := f.Data["definedIn"].(string)
 			for k := range job.Uses {
-				if job.Uses[k].Line == f.Line && job.Uses[k].Name != "" {
-					if f.Data == nil {
-						f.Data = map[string]any{}
-					}
-					if _, has := f.Data["step"]; !has {
-						f.Data["step"] = job.Uses[k].Name
-					}
-					break
+				u := job.Uses[k]
+				match := u.Line == f.Line && !u.Nested
+				if definedIn != "" {
+					match = u.DefinedIn == definedIn
 				}
+				if !match || u.Name == "" {
+					continue
+				}
+				if f.Data == nil {
+					f.Data = map[string]any{}
+				}
+				if _, has := f.Data["step"]; !has {
+					f.Data["step"] = u.Name
+				}
+				break
 			}
 		}
 		anchor := job
 		if job.Nested {
 			anchor = nestedAnchor(byName, job)
 			markNestedJob(f, job)
+			// A rule naming the called workflow's own file would put the
+			// finding outside the scanned repository (R9): it moves to the
+			// anchor, the callee's line staying in definedIn.
+			if f.File == job.OriginFile {
+				f.File, f.Line = "", 0
+			}
 		}
 		if f.File == "" {
 			f.File = anchor.OriginFile
@@ -583,6 +603,40 @@ func (e *Engine) EvaluateSituation(ctx context.Context, source string, pipeline 
 		return nil, fmt.Errorf("situation result: %w", err)
 	}
 	return raw, nil
+}
+
+// libraryModules is the shared Rego library (policies/lib), compiled with
+// the policy modules that reference data.lib so a rule can import
+// data.lib.<name>. It is read and parsed once: a rule that imports it
+// pays the compile, never a re-parse. A library that does not parse is an
+// error of every rule that imports it, never a silent empty library.
+var libraryModules = sync.OnceValues(func() ([]*ast.Module, error) {
+	entries, err := fs.ReadDir(policylib.FS, ".")
+	if err != nil {
+		return nil, fmt.Errorf("read the rego library: %w", err)
+	}
+	var out []*ast.Module
+	for _, e := range entries {
+		if e.IsDir() || !strings.HasSuffix(e.Name(), ".rego") {
+			continue
+		}
+		src, err := fs.ReadFile(policylib.FS, e.Name())
+		if err != nil {
+			return nil, fmt.Errorf("read the rego library: %w", err)
+		}
+		m, err := ast.ParseModuleWithOpts("lib/"+e.Name(), string(src), ast.ParserOptions{RegoVersion: ast.DefaultRegoVersion})
+		if err != nil {
+			return nil, fmt.Errorf("parse the rego library: %w", err)
+		}
+		out = append(out, m)
+	}
+	return out, nil
+})
+
+// usesLibrary reports whether a policy source references the shared
+// library (an import of data.lib or a direct data.lib reference).
+func usesLibrary(source string) bool {
+	return strings.Contains(source, "data.lib")
 }
 
 func evalModule(ctx context.Context, name, source string, input map[string]any) ([]Finding, error) {

@@ -220,6 +220,10 @@ type NormalizedPipeline struct {
 	UnexpandedActions     []UnexpandedAction `json:"-"`
 	NestedBudgetExceeded  bool               `json:"-"`
 	NestedUnresolvedCause string             `json:"-"`
+	// NestedEntriesOverflow counts the budget references of the list that
+	// the per-job entry bound left unexpanded, the others being past the
+	// container budget (NestedBudgetExceeded covers both).
+	NestedEntriesOverflow int `json:"-"`
 	// NestedJobsOverflow counts the budget references of the list that the
 	// run-wide cap on appended nested jobs left unexpanded: the calls of a
 	// reusable workflow of another repository past the cap.

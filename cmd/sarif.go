@@ -10,6 +10,7 @@ import (
 
 	"github.com/getplumber/plumber/control"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
+	"github.com/getplumber/plumber/internal/ir"
 )
 
 // reportFilePath normalizes a finding's file path for security-report
@@ -139,15 +140,23 @@ type sarifResult struct {
 	// results — evaluated-clean, skipped-by-config, and
 	// could-not-fully-evaluate respectively. When Kind is anything
 	// other than "fail" the spec requires Level to be "none".
-	Kind       string          `json:"kind,omitempty"`
-	Level      string          `json:"level"`
-	Message    sarifText       `json:"message"`
-	Locations  []sarifLocation `json:"locations,omitempty"`
-	Properties map[string]any  `json:"properties,omitempty"`
+	Kind      string          `json:"kind,omitempty"`
+	Level     string          `json:"level"`
+	Message   sarifText       `json:"message"`
+	Locations []sarifLocation `json:"locations,omitempty"`
+	// RelatedLocations carries, on a nested finding only, the line of the
+	// container that holds the reference (spec section 6, maintainer review
+	// of PR 549): the primary location stays the workflow step the user
+	// edits, so Code Scanning keeps accepting the upload.
+	RelatedLocations []sarifLocation `json:"relatedLocations,omitempty"`
+	Properties       map[string]any  `json:"properties,omitempty"`
 }
 
 type sarifLocation struct {
 	PhysicalLocation sarifPhysical `json:"physicalLocation"`
+	// Message says what a related location is (SARIF 2.1.0 section
+	// 3.28.5), never set on a primary location.
+	Message *sarifText `json:"message,omitempty"`
 }
 
 type sarifPhysical struct {
@@ -161,6 +170,31 @@ type sarifArtifact struct {
 
 type sarifRegion struct {
 	StartLine int `json:"startLine"`
+}
+
+// sarifContainerLocation is the related location of a nested finding
+// (spec section 6, maintainer review of PR 549): the container line that
+// holds the reference, as the absolute blob URL the finding links to
+// (without its line fragment) with the line as its region, since Code
+// Scanning renders a related location and not the url property. nil for a
+// direct finding, for one under a local outermost composite (its container
+// is a file of the scanned repository, ruling L2), and when the finding
+// carries no web link.
+func sarifContainerLocation(f opaengine.Finding) []sarifLocation {
+	if !control.NestedRemediationApplies(reasonsArrayToStrings(f.Data["via"])) {
+		return nil
+	}
+	definedIn, _ := f.Data["definedIn"].(string)
+	repo, ref, file, line, ok := ir.SplitDefinedIn(definedIn)
+	web := strings.HasPrefix(f.URL, "https://") || strings.HasPrefix(f.URL, "http://")
+	if !ok || repo == "" || line <= 0 || !web {
+		return nil
+	}
+	uri, _, _ := strings.Cut(f.URL, "#")
+	return []sarifLocation{{
+		PhysicalLocation: sarifPhysical{ArtifactLocation: sarifArtifact{URI: uri}, Region: &sarifRegion{StartLine: line}},
+		Message:          &sarifText{Text: fmt.Sprintf("defined in %s@%s, %s line %d", repo, ref, file, line)},
+	}}
 }
 
 func sarifLevel(sev string) string {
@@ -514,6 +548,7 @@ func buildSARIF(findings []opaengine.Finding, fallbackURI, provider string) sari
 				ArtifactLocation: sarifArtifact{URI: fallbackURI},
 			}}}
 		}
+		res.RelatedLocations = sarifContainerLocation(f)
 		results = append(results, res)
 	}
 

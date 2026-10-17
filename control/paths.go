@@ -1384,11 +1384,25 @@ func entryFromFinding(f opaengine.Finding, kind EntryKind) EntryFact {
 		Subject:  entrySubject(f),
 		File:     f.File,
 		Line:     f.Line,
+		Via:      viaOfData(f.Data),
 	}
 	if kind == EntryMutableDependency && computedAtRunTime(ErrorCode(f.Code), fact.Subject) {
 		fact.State = FactUnknown
 	}
 	return fact
+}
+
+// viaOfData reads a finding's provenance chain, a []any after the Rego
+// round trip, nil on a direct finding.
+func viaOfData(data map[string]any) []string {
+	raw, _ := data["via"].([]any)
+	var out []string
+	for _, v := range raw {
+		if s, ok := v.(string); ok {
+			out = append(out, s)
+		}
+	}
+	return out
 }
 
 // unexpandedVariable is a variable an image reference still names: $NAME

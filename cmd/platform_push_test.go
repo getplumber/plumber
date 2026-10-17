@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -4110,5 +4111,46 @@ func TestPlatformPushSituationIsTheSituationFacts(t *testing.T) {
 	}
 	if want := "Repository: public. Default branch: main, not protected. Workflows: 1 job in 1 workflow."; ctx.Situation != want {
 		t.Errorf("situation = %q, want %q", ctx.Situation, want)
+	}
+}
+
+// TestPlatformBOMFrom_ViaIsCarriedAndBounded pins spec 2026-10-16 section
+// 8: via reaches the wire, at most 8 entries of at most 512 runes. A longer
+// chain keeps its outermost 8 entries and the bill is kept (review of PR
+// 549: nothing bounds the chain depth on the producing side, and refusing
+// the section would delete every dependency edge of the run), while an
+// over-long single entry still refuses the section whole.
+func TestPlatformBOMFrom_ViaIsCarriedAndBounded(t *testing.T) {
+	ok, bound := platformBOMFrom(&pbom.PBOM{Includes: []pbom.Include{{Type: "action", Location: "acme/c", Version: "main", Nested: true, Via: []string{"acme/b@main"}}}})
+	if bound != "" || len(ok.Includes) != 1 || !slices.Equal(ok.Includes[0].Via, []string{"acme/b@main"}) || !ok.Includes[0].Nested {
+		t.Fatalf("got %+v, bound %q", ok, bound)
+	}
+	raw, err := json.Marshal(ok.Includes[0])
+	if err != nil || !strings.Contains(string(raw), `"via":["acme/b@main"]`) {
+		t.Fatalf("wire include = %s (%v)", raw, err)
+	}
+	if direct, _ := json.Marshal(platformBOMInclude{Type: "action", Location: "acme/b"}); strings.Contains(string(direct), "via") {
+		t.Fatalf("a direct include carries no via key: %s", direct)
+	}
+	eight := make([]string, 8)
+	for i := range eight {
+		eight[i] = "acme/x@v1"
+	}
+	if out, bound := platformBOMFrom(&pbom.PBOM{Includes: []pbom.Include{{Type: "action", Location: "acme/c", Via: eight}}}); out == nil || bound != "" {
+		t.Fatalf("eight entries are inside the bound: out %v bound %q", out, bound)
+	}
+	nine := make([]string, 9)
+	for i := range nine {
+		nine[i] = fmt.Sprintf("acme/x%d@v1", i)
+	}
+	out, bound := platformBOMFrom(&pbom.PBOM{Includes: []pbom.Include{{Type: "action", Location: "acme/c", Via: nine}}})
+	if out == nil || bound != "" {
+		t.Fatalf("nine entries keep the bill: out %v bound %q", out, bound)
+	}
+	if !slices.Equal(out.Includes[0].Via, nine[:8]) {
+		t.Fatalf("nine entries are truncated to the outermost 8, got %q", out.Includes[0].Via)
+	}
+	if out, bound := platformBOMFrom(&pbom.PBOM{Includes: []pbom.Include{{Type: "action", Location: "acme/c", Via: []string{strings.Repeat("x", 513)}}}}); out != nil || bound != "string > 512 runes" {
+		t.Fatalf("long entry: out %v bound %q", out, bound)
 	}
 }

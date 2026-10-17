@@ -13,6 +13,10 @@ import rego.v1
 deny contains finding if {
 	some i
 	job := input.pipeline.jobs[i]
+	# A job of a workflow called in another repository runs with the token
+	# its calling job gives it, and the calling job is judged by its own
+	# finding (monorepo spec 2026-10-16 section 5, plan ruling 15).
+	not job.nested
 	job.permissions == "write-all"
 	finding := {
 		"code":     "ISSUE-803",

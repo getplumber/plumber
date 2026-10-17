@@ -192,6 +192,9 @@ func TestResolveNested_BudgetOverflowListsTheRest(t *testing.T) {
 	if got := len(p.Jobs[0].Uses); got != MaxNestedContainers+2 {
 		t.Fatalf("the root and its %d steps stay entries, got %d", MaxNestedContainers+1, got)
 	}
+	if p.NestedEntriesOverflow != 0 {
+		t.Fatalf("a container overflow is not a per-job one, NestedEntriesOverflow = %d", p.NestedEntriesOverflow)
+	}
 }
 
 // TestResolveNested_FetchErrorWarnsWithoutDegrading pins spec 4.3: one
@@ -604,6 +607,17 @@ func TestResolveNested_EntriesPerJobBound(t *testing.T) {
 	}
 	if !slices.ContainsFunc(p.UnexpandedActions, func(u ir.UnexpandedAction) bool { return u.Reason == ir.UnexpandedBudget }) {
 		t.Fatalf("the entries past the bound are listed budget, got %d unexpanded", len(p.UnexpandedActions))
+	}
+	// Task 3 round L5: the per-job bound is told apart from the container
+	// budget, so the degraded sentence names the bound that tripped.
+	budget := 0
+	for _, u := range p.UnexpandedActions {
+		if u.Reason == ir.UnexpandedBudget {
+			budget++
+		}
+	}
+	if p.NestedEntriesOverflow != budget {
+		t.Fatalf("NestedEntriesOverflow = %d, want the %d budget references", p.NestedEntriesOverflow, budget)
 	}
 }
 

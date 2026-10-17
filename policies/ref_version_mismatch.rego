@@ -20,6 +20,7 @@
 package ref_version_mismatch
 
 import rego.v1
+import data.lib.provenance
 
 sha_pattern := `^[0-9a-f]{40}$`
 version_comment_pattern := `^\s*v?(\d+(?:\.\d+)*(?:-[A-Za-z0-9.-]+)?)\s*$`
@@ -44,15 +45,15 @@ deny contains finding if {
 	# dereferenced commit, so the two must be compared before calling
 	# the comment a lie.
 	action.metadata.commentTagSha != _ref_commit_sha(action)
-	finding := {
+	finding := object.union({
 		"code":     "ISSUE-708",
 		"severity": "medium",
-		"message":  sprintf("job %q pins %q but comment %q names tag %q which resolves to %q — reviewers will misread the version", [job.name, action.uses, action.comment, action.metadata.commentVersion, action.metadata.commentTagSha]),
+		"message":  provenance.message(sprintf("job %q pins %q but comment %q names tag %q which resolves to %q \u2014 reviewers will misread the version", [job.name, action.uses, action.comment, action.metadata.commentVersion, action.metadata.commentTagSha]), action),
 		"job":      job.name,
 		"uses":     action.uses,
 		"comment":  action.comment,
 		"line":     object.get(action, "line", 0),
-	}
+	}, provenance.fields(action))
 }
 
 # Case 2 — tag pin, comment names a different tag. Offline-safe.
@@ -66,15 +67,15 @@ deny contains finding if {
 	cv := _comment_version(action.comment)
 	cv != ""
 	_strip_v(ref) != _strip_v(cv)
-	finding := {
+	finding := object.union({
 		"code":     "ISSUE-708",
 		"severity": "medium",
-		"message":  sprintf("job %q pins tag %q with comment %q — ref and comment name different versions", [job.name, action.uses, action.comment]),
+		"message":  provenance.message(sprintf("job %q pins tag %q with comment %q \u2014 ref and comment name different versions", [job.name, action.uses, action.comment]), action),
 		"job":      job.name,
 		"uses":     action.uses,
 		"comment":  action.comment,
 		"line":     object.get(action, "line", 0),
-	}
+	}, provenance.fields(action))
 }
 
 # _ref_commit_sha is the commit a tag-object pin dereferences to,

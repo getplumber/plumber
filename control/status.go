@@ -189,11 +189,42 @@ func StatusFor(e ControlEntry, result *AnalysisResult, findingCount int) string 
 		return StatusError
 	}
 	for _, r := range result.DegradedReasons {
+		if degradedReasonIsNestedActions(r) {
+			if nestedActionControls[e.ControlName] {
+				return StatusError
+			}
+			continue
+		}
 		if !degradedReasonIsBranchProtection(r) && !degradedReasonIsVariables(r) && !degradedReasonIsSecurityPolicy(r) && !degradedReasonIsPolicyFailure(r) {
 			return StatusError
 		}
 	}
 	return StatusPassed
+}
+
+// nestedActionControls are the controls whose rules read the jobs' uses
+// entries: the ones a nested resolution stopped at its budget leaves
+// incomplete (spec 2026-10-16 R3, degraded for the action controls).
+var nestedActionControls = map[string]bool{
+	"actionsMustBePinnedByCommitSha":               true,
+	"githubActionMustComeFromAuthorizedSources":    true,
+	"actionsMustNotBeArchived":                     true,
+	"actionsMustNotCarryKnownCVEs":                 true,
+	"actionRefsMustExistUpstream":                  true,
+	"actionPinCommentsMustMatchSha":                true,
+	"actionPinsMustNotBeStale":                     true,
+	"externalRefsMustNotCollide":                   true,
+	"actionsMustNotDuplicateRunnerBuiltins":        true,
+	"actionsMustNotExecuteMutableRemoteCode":       true,
+	"checkoutMustNotPersistCredentials":            true,
+	"pullRequestTargetMustNotCheckoutHead":         true,
+	"publishWorkflowsMustUseOidcTrustedPublishing": true,
+	"workflowMustIncludeRequiredActions":           true,
+	"releaseWorkflowsMustSignArtefacts":            true,
+	"repositoriesMustRunSAST":                      true,
+	"githubAppTokensMustBeRevokedOnExit":           true,
+	"workflowMustNotUseKnownMisfeatures":           true,
+	"workflowMustNotUseDangerousTriggers":          true,
 }
 
 // EvaluatedControlCount counts the entries whose StatusFor is passed or

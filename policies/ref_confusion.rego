@@ -15,6 +15,7 @@
 package ref_confusion
 
 import rego.v1
+import data.lib.provenance
 
 # GitHub: a `uses:` action ref that resolves as both a tag and a branch.
 deny contains finding if {
@@ -22,14 +23,14 @@ deny contains finding if {
 	job := input.pipeline.jobs[i]
 	action := job.uses[j]
 	action.metadata.refIsAmbiguous == true
-	finding := {
+	finding := object.union({
 		"code":     "ISSUE-402",
 		"severity": "medium",
-		"message":  sprintf("Job `%s` references `%s`, whose ref resolves as both a tag and a branch upstream.", [job.name, action.uses]),
+		"message":  provenance.message(sprintf("Job `%s` references `%s`, whose ref resolves as both a tag and a branch upstream.", [job.name, action.uses]), action),
 		"job":      job.name,
 		"uses":     action.uses,
 		"line":     object.get(action, "line", 0),
-	}
+	}, provenance.fields(action))
 }
 
 # GitLab: an `include:` (project ref: or component @version) whose ref

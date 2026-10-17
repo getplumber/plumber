@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
+	"github.com/getplumber/plumber/internal/ir"
 )
 
 // BestFixSummary is the best fix in one line: what to do, the points it
@@ -25,7 +26,11 @@ func BestFixSummary(score *PlumberScoreResult) string {
 	}
 	for _, p := range score.Paths {
 		if fix.PathID != "" && p.ID == fix.PathID {
-			named = pathFixOf(p) + " (" + entryFamily(p) + " " + ShortenCommitSHA(p.Entry.Subject) + ")"
+			label := entryFamily(p) + " " + ShortenCommitSHA(p.Entry.Subject)
+			if len(p.Entry.Via) > 0 {
+				label += " via " + ir.ViaText(p.Entry.Via)
+			}
+			named = pathFixOf(p) + " (" + label + ")"
 		}
 	}
 	if fix.Stays != "" {

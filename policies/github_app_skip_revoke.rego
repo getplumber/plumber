@@ -14,6 +14,7 @@
 package github_app_skip_revoke
 
 import rego.v1
+import data.lib.provenance
 
 token_actions := {
 	"actions/create-github-app-token",
@@ -28,13 +29,13 @@ deny contains finding if {
 	action := job.uses[j]
 	_is_app_token_action(action.uses)
 	_revocation_disabled(action)
-	finding := {
+	finding := object.union({
 		"code":     "ISSUE-306",
 		"severity": "high",
-		"message":  sprintf("job %q mints a GitHub App token via %q with `skip-token-revoke: true` — the token survives the run and any later leak stays exploitable", [job.name, action.uses]),
+		"message":  provenance.message(sprintf("job %q mints a GitHub App token via %q with `skip-token-revoke: true` \u2014 the token survives the run and any later leak stays exploitable", [job.name, action.uses]), action),
 		"job":      job.name,
 		"uses":     action.uses,
-	}
+	}, provenance.fields(action))
 }
 
 _is_app_token_action(uses) if {

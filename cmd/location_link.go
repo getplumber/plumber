@@ -10,6 +10,7 @@ import (
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
+	"github.com/getplumber/plumber/internal/ir"
 	providerPkg "github.com/getplumber/plumber/provider"
 )
 
@@ -111,8 +112,33 @@ func (l *locationLinker) Annotate(findings []opaengine.Finding) {
 		return
 	}
 	for i := range findings {
+		if d, _ := findings[i].Data["definedIn"].(string); d != "" {
+			if u := l.definedInURL(d); u != "" {
+				findings[i].URL = u
+				continue
+			}
+		}
 		findings[i].URL = l.BuildURL(findings[i].File, findings[i].Line)
 	}
+}
+
+// definedInURL is the link a nested finding carries (spec 2026-10-16
+// section 6, R9): the container's blob URL at its ref and line on the
+// GitHub web host, or the scanned repository's own file for a local
+// composite. "" when definedIn does not parse.
+func (l *locationLinker) definedInURL(definedIn string) string {
+	repo, ref, file, line, ok := ir.SplitDefinedIn(definedIn)
+	if !ok {
+		return ""
+	}
+	if repo == "" {
+		return l.BuildURL(file, line)
+	}
+	server := l.serverURL
+	if server == "" {
+		server = "https://github.com"
+	}
+	return buildBlobURL("github", server, repo, ref, file, line)
 }
 
 // buildBlobURL composes a forge web URL. Path segments are URL-escaped

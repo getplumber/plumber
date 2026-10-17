@@ -11,6 +11,7 @@ import (
 
 	"github.com/getplumber/plumber/configuration"
 	"github.com/getplumber/plumber/control"
+	githubpkg "github.com/getplumber/plumber/github"
 	"github.com/getplumber/plumber/gitlab"
 	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	"github.com/getplumber/plumber/internal/ir"
@@ -124,18 +125,28 @@ type findingGroup struct {
 // visible instead of letting it pass silently (ISSUE-228). No-op when
 // there are none.
 func renderWarnings(warnings []string) {
+	renderWarningsTo(os.Stdout, warnings)
+}
+
+// renderWarningsTo is renderWarnings on out. Under the offline switch
+// (PLUMBER_DISABLE_GITHUB_API) a token cannot help, so the token hint is
+// not printed (spec 2026-10-16 R6).
+func renderWarningsTo(out io.Writer, warnings []string) {
 	if len(warnings) == 0 {
 		return
 	}
-	fmt.Println()
-	fmt.Printf("  %s⚠ Could not verify %d item(s):%s\n", colorYellow, len(warnings), colorReset)
+	_, _ = fmt.Fprintln(out)
+	_, _ = fmt.Fprintf(out, "  %s\u26a0 Could not verify %d item(s):%s\n", colorYellow, len(warnings), colorReset)
 	for _, w := range warnings {
-		fmt.Printf("    %s•%s %s\n", colorYellow, colorReset, sanitizeTerminal(w))
+		_, _ = fmt.Fprintf(out, "    %s\u2022%s %s\n", colorYellow, colorReset, styleChain(sanitizeTerminal(w)))
+	}
+	if githubpkg.APIDisabled() {
+		return
 	}
 	// When a version stays unresolved (the authenticated read was blocked and
 	// the anonymous fallback did not succeed), a user-supplied token resolves
 	// it. Point there rather than leaving the user with a dead end (ISSUE-228).
-	fmt.Printf("    %s↳ set PLUMBER_METADATA_TOKEN (a token with public-repo read) to resolve blocked action versions — see the README.%s\n", colorYellow, colorReset)
+	_, _ = fmt.Fprintf(out, "    %s\u21b3 set PLUMBER_METADATA_TOKEN (a token with public-repo read) to resolve blocked action versions \u2014 see the README.%s\n", colorYellow, colorReset)
 }
 
 // renderApprovalRulesTierCaveat prints a caveat when an MR approval-rule
@@ -553,7 +564,7 @@ func renderFindingBlock(out io.Writer, f detailedFinding, indent, role string) {
 	// through here, and the contextual report prints its findings at their
 	// contextual severity through codeGroupLines instead.
 	tag := severityTag(f.Code)
-	message := sanitizeTerminal(f.Message)
+	message := styleChain(sanitizeTerminal(f.Message))
 	if f.Dismissed {
 		message += " [dismissed on the platform]"
 	}
@@ -671,18 +682,92 @@ func formatFindingLocation(f opaengine.Finding) string {
 
 // detailLinesFromFinding unpacks ISSUE-505 structured reasons into CLI sub-lines.
 func detailLinesFromFinding(f opaengine.Finding) []string {
+	nested := nestedDetailLines(f)
 	if f.Code != string(control.CodeBranchNonCompliant) || f.Data == nil {
-		return nil
+		return nested
 	}
 	raw, ok := f.Data["reasons"]
 	if !ok || raw == nil {
-		return nil
+		return nested
 	}
 	lines := reasonsArrayToStrings(raw)
 	if len(lines) == 0 {
+		return nested
+	}
+	return append(nested, sortBranchProtectionDetailLines(lines)...)
+}
+
+// maxUnexpandedShown caps the unexpanded references the terminal lists
+// (spec 2026-10-16 section 7): three lines, then "and N more".
+const maxUnexpandedShown = 3
+
+var unexpandedReasonText = map[string]string{
+	ir.UnexpandedBudget:      "past the nested resolution budget",
+	ir.UnexpandedFetch:       "definition could not be fetched",
+	ir.UnexpandedExpression:  "named by an expression",
+	ir.UnexpandedAPIDisabled: "GitHub API unavailable",
+}
+
+// renderUnexpandedActions prints the references the nested resolution
+// could not expand, after the warnings.
+func renderUnexpandedActions(out io.Writer, list []ir.UnexpandedAction) {
+	if len(list) == 0 {
+		return
+	}
+	noun := "references"
+	if len(list) == 1 {
+		noun = "reference"
+	}
+	_, _ = fmt.Fprintf(out, "\n  %s%d action %s could not be expanded:%s\n", colorYellow, len(list), noun, colorReset)
+	for i, u := range list {
+		if i == maxUnexpandedShown {
+			_, _ = fmt.Fprintf(out, "    and %d more\n", len(list)-maxUnexpandedShown)
+			break
+		}
+		label := u.Uses
+		if len(u.Via) > 0 {
+			label += " via " + ir.ViaText(u.Via)
+		}
+		_, _ = fmt.Fprintf(out, "    %s (%s)\n", styleChain(sanitizeTerminal(label)), unexpandedReasonText[u.Reason])
+	}
+}
+
+// nestedDetailLines are the lines a nested finding adds under its message
+// (spec section 6): the user's step, the container line, and the nested
+// fix when its code has one and the chain starts at a remote reference
+// (under a local composite the control's own fix applies). nil for a
+// direct finding.
+func nestedDetailLines(f opaengine.Finding) []string {
+	definedIn, _ := f.Data["definedIn"].(string)
+	if definedIn == "" {
 		return nil
 	}
-	return sortBranchProtectionDetailLines(lines)
+	var out []string
+	if f.File != "" {
+		loc := reportFilePath(f.File)
+		if f.Line > 0 {
+			loc = fmt.Sprintf("%s:%d", loc, f.Line)
+		}
+		out = append(out, "pulled in by your step at "+loc)
+	}
+	if repo, ref, file, line, ok := ir.SplitDefinedIn(definedIn); ok {
+		where := "this repository"
+		if repo != "" {
+			where = repo + "@" + ref
+		}
+		out = append(out, fmt.Sprintf("defined in %s, %s line %d", where, file, line))
+	}
+	if info := control.LookupCode(control.ErrorCode(f.Code)); info != nil && info.NestedRemediation != "" && control.NestedRemediationApplies(reasonsArrayToStrings(f.Data["via"])) {
+		// When the message already closes on the nested fix
+		// (control.NestedFixMessages), the So line the message half feeds
+		// prints it, so the fix line would repeat it (spec section 6,
+		// maintainer review of PR 549). It stays for a code whose message
+		// half is a consequence or that has no dash.
+		if fix := remediationFix(info.RemediationFor(true)); !strings.HasSuffix(f.Message, consequenceDash+fix) {
+			out = append(out, "fix: "+fix)
+		}
+	}
+	return out
 }
 
 func reasonsArrayToStrings(raw interface{}) []string {

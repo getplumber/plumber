@@ -3,6 +3,9 @@ package control
 import (
 	"fmt"
 	"strings"
+
+	githubpkg "github.com/getplumber/plumber/github"
+	"github.com/getplumber/plumber/internal/ir"
 )
 
 // isNetworkError reports whether err looks like a transient network /
@@ -109,6 +112,108 @@ func applyGitHubDegraded(result *AnalysisResult, partialCount int, branchFetchFa
 	}
 	result.DataCollectionDegraded = true
 	result.DegradedReasons = append(result.DegradedReasons, reasons...)
+}
+
+// degradedReasonNestedActionsPrefix and degradedReasonNestedEntriesPrefix
+// are the shared prefixes of the nested resolution's two degraded reasons
+// (monorepo spec 2026-10-16 section 7, R3, plan ruling 5): the container
+// budget and the per-job entry bound. They are the contract between
+// applyNestedActions (the writer) and StatusFor
+// (degradedReasonIsNestedActions), which degrades the action controls only.
+const (
+	degradedReasonNestedActionsPrefix = "nested actions closure exceeded the budget"
+	degradedReasonNestedEntriesPrefix = "one job's nested closure exceeded"
+)
+
+func degradedReasonIsNestedActions(reason string) bool {
+	return strings.HasPrefix(reason, degradedReasonNestedActionsPrefix) || strings.HasPrefix(reason, degradedReasonNestedEntriesPrefix)
+}
+
+// maxFetchWarnings caps the warnings naming one unreadable definition
+// each: a rate limit in the middle of a run makes every later read fail,
+// and the unexpanded list names them all anyway.
+const maxFetchWarnings = 10
+
+// maxWarnedReference bounds the untrusted reference a fetch warning
+// quotes, whichever of the two fetch-warning branches below writes it.
+const maxWarnedReference = 200
+
+// boundedRef truncates an untrusted reference to maxWarnedReference runes,
+// so neither fetch-warning branch in applyNestedActions embeds an
+// attacker-controlled string of unbounded length in result.Warnings
+// (review of PR 549).
+func boundedRef(ref string) string {
+	if r := []rune(ref); len(r) > maxWarnedReference {
+		return string(r[:maxWarnedReference])
+	}
+	return ref
+}
+
+// referencesNotExpanded is "N references not expanded", in the singular
+// for one.
+func referencesNotExpanded(n int) string {
+	if n == 1 {
+		return "1 reference not expanded"
+	}
+	return fmt.Sprintf("%d references not expanded", n)
+}
+
+// applyNestedActions turns the collector's nested resolution outcome into
+// the run's warnings and degradation (spec section 7): past the budget the
+// run is degraded and the score withheld (R3); with no API at all one
+// warning (the pipeline's advisory warnings, result.Warnings) names the
+// cause and the score is computed (R6); a definition that could not be
+// fetched warns and names the reference, ten at most. Past the per-job
+// entry bound (plan ruling 5) the degraded reason says so in its own words,
+// and so does the run-wide cap on appended nested jobs (MaxNestedJobs).
+// The collector decides the cause
+// on the run's first remote read only, so NestedUnresolvedCause and
+// NestedBudgetExceeded cannot both be set; if they ever are, the overflow
+// wins (coordinator ruling L7): the run degrades and the R6 warning, which
+// says the score stands, is not given.
+func applyNestedActions(result *AnalysisResult, pipeline *ir.NormalizedPipeline) {
+	if result == nil || pipeline == nil {
+		return
+	}
+	if pipeline.NestedUnresolvedCause != "" && !pipeline.NestedBudgetExceeded {
+		result.Warnings = append(result.Warnings, "nested actions were not resolved: "+pipeline.NestedUnresolvedCause)
+	}
+	budget, fetch := 0, 0
+	for _, u := range result.UnexpandedActions {
+		switch u.Reason {
+		case ir.UnexpandedBudget:
+			budget++
+		case ir.UnexpandedFetch:
+			fetch++
+			switch {
+			case fetch > maxFetchWarnings:
+			case u.Invalid:
+				// Refused before any fetch: the one line names the reason, the
+				// untrusted reference quoted and bounded.
+				result.Warnings = append(result.Warnings, fmt.Sprintf("the reference %q was not fetched, it is not a valid GitHub reference", boundedRef(u.Uses)))
+			default:
+				result.Warnings = append(result.Warnings, fmt.Sprintf("the definition of %s could not be fetched, the actions it pulls in were not expanded", boundedRef(u.Uses)))
+			}
+		}
+	}
+	if fetch > maxFetchWarnings {
+		result.Warnings = append(result.Warnings, fmt.Sprintf("and %d more action definitions could not be fetched", fetch-maxFetchWarnings))
+	}
+	if !pipeline.NestedBudgetExceeded {
+		return
+	}
+	result.NestedActionsBudgetExceeded = true
+	entries := min(pipeline.NestedEntriesOverflow, budget)
+	jobs := min(pipeline.NestedJobsOverflow, budget-entries)
+	if containers := budget - entries - jobs; containers > 0 || (entries == 0 && jobs == 0) {
+		markDegraded(result, fmt.Sprintf("%s of %d containers, %s", degradedReasonNestedActionsPrefix, githubpkg.MaxNestedContainers, referencesNotExpanded(containers)))
+	}
+	if jobs > 0 {
+		markDegraded(result, fmt.Sprintf("%s of %d nested jobs, %s", degradedReasonNestedActionsPrefix, githubpkg.MaxNestedJobs, referencesNotExpanded(jobs)))
+	}
+	if entries > 0 {
+		markDegraded(result, fmt.Sprintf("%s %d entries, %s", degradedReasonNestedEntriesPrefix, githubpkg.MaxNestedEntriesPerJob, referencesNotExpanded(entries)))
+	}
 }
 
 // degradedReasonPolicyPrefix is the shared prefix of every DegradedReasons

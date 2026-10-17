@@ -25,6 +25,7 @@
 package impostor_commit
 
 import rego.v1
+import data.lib.provenance
 
 sha_pattern := `^[0-9a-f]{40}$`
 
@@ -39,14 +40,14 @@ deny contains finding if {
 	# confirmed the commit absent regardless of case).
 	regex.match(sha_pattern, lower(ref))
 	action.metadata.refKnownAbsent == true
-	finding := {
+	finding := object.union({
 		"code":     "ISSUE-707",
 		"severity": "critical",
-		"message":  sprintf("job %q pins action %q to a commit SHA that does not exist in the upstream repository (typo, or a commit removed or never pushed upstream)", [job.name, action.uses]),
+		"message":  provenance.message(sprintf("job %q pins action %q to a commit SHA that does not exist in the upstream repository (typo, or a commit removed or never pushed upstream)", [job.name, action.uses]), action),
 		"job":      job.name,
 		"uses":     action.uses,
 		"line":     object.get(action, "line", 0),
-	}
+	}, provenance.fields(action))
 }
 
 _ref_of(uses) := ref if {

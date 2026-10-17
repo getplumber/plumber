@@ -1,5 +1,7 @@
 package control
 
+import "strings"
+
 // docsBaseURL is the base URL for Plumber issue documentation.
 // Each issue code links to its dedicated documentation page.
 const docsBaseURL = "https://getplumber.io/docs/cli/issues/"
@@ -237,6 +239,12 @@ type ErrorCodeInfo struct {
 	Description string `json:"description"`
 	// Remediation provides guidance on how to fix the issue.
 	Remediation string `json:"remediation"`
+	// NestedRemediation replaces Remediation on a finding whose reference a
+	// composite action or a called workflow pulled in (its data carries via,
+	// spec 2026-10-16 section 6): the user cannot edit the container, so the
+	// fix is on the outermost action. Empty when the remediation applies
+	// either way.
+	NestedRemediation string `json:"nestedRemediation,omitempty"`
 	// DocURL is a direct link to the documentation for this issue.
 	DocURL string `json:"docUrl"`
 	// ControlName is the .plumber.yaml control key this code belongs to.
@@ -313,15 +321,16 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		EntryKind:   EntryMutableDependency,
 	},
 	CodeActionUnpinned: {
-		Code:        CodeActionUnpinned,
-		Severity:    SeverityHigh,
-		Title:       "Third-party action reference is not pinned by commit SHA",
-		Description: "A GitHub Actions workflow references a third-party action with a mutable ref (tag or branch) instead of a 40-character commit SHA. Tag and branch refs can be reassigned by the action's maintainer, or by an attacker who compromises the action's repository, to point at arbitrary code, which then runs inside the caller workflow with its secrets. The March 2025 tj-actions/changed-files compromise (CVE-2025-30066) propagated this way to hundreds of repositories, including aquasecurity/trivy.",
-		Remediation: "Replace `uses: owner/action@v4` with `uses: owner/action@<40-char-sha>` and add a `# vX.Y.Z` comment to document the version. Tools like Dependabot's `version-update-strategy: sha-and-version` can automate the update flow. Official GitHub-owned actions (actions/*, github/*) can be excluded if they are in the workflow's trusted boundary.",
-		DocURL:      docsBaseURL + string(CodeActionUnpinned),
-		ControlName: "actionsMustBePinnedByCommitSha",
-		Role:        RoleEntry,
-		EntryKind:   EntryMutableDependency,
+		Code:              CodeActionUnpinned,
+		Severity:          SeverityHigh,
+		Title:             "Third-party action reference is not pinned by commit SHA",
+		Description:       "A GitHub Actions workflow references a third-party action with a mutable ref (tag or branch) instead of a 40-character commit SHA. Tag and branch refs can be reassigned by the action's maintainer, or by an attacker who compromises the action's repository, to point at arbitrary code, which then runs inside the caller workflow with its secrets. The March 2025 tj-actions/changed-files compromise (CVE-2025-30066) propagated this way to hundreds of repositories, including aquasecurity/trivy.",
+		Remediation:       "Replace `uses: owner/action@v4` with `uses: owner/action@<40-char-sha>` and add a `# vX.Y.Z` comment to document the version. Tools like Dependabot's `version-update-strategy: sha-and-version` can automate the update flow. Official GitHub-owned actions (actions/*, github/*) can be excluded if they are in the workflow's trusted boundary.",
+		NestedRemediation: "Pin the outermost action to a commit SHA whose definition pins this reference, or vendor the chain into `./.github/actions/` and pin it there. The reference sits in a container you do not edit (the finding names it), so asking its maintainer to pin it is the lasting fix.",
+		DocURL:            docsBaseURL + string(CodeActionUnpinned),
+		ControlName:       "actionsMustBePinnedByCommitSha",
+		Role:              RoleEntry,
+		EntryKind:         EntryMutableDependency,
 	},
 	CodeCachePoisoning: {
 		Code:        CodeCachePoisoning,
@@ -336,68 +345,74 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		EntryKind: EntryPoisonedCache,
 	},
 	CodeActionArchivedRepo: {
-		Code:        CodeActionArchivedRepo,
-		Severity:    SeverityHigh,
-		Title:       "Action is hosted in an archived repository",
-		Description: "A GitHub Actions workflow references an action whose upstream repository is archived. Archived repos no longer receive maintenance (security fixes, dependency bumps, compatibility patches all stop), and any existing vulnerability stays open forever. A new SHA can still be pushed by the last maintainer, so even pinning by SHA does not make the reference safe against a future takeover.",
-		Remediation: "Replace the action with a maintained fork (audit the fork's owner first) or with an equivalent step implemented inline. If the behaviour is trivial, inlining the shell logic avoids the supply-chain dependency entirely.",
-		DocURL:      docsBaseURL + string(CodeActionArchivedRepo),
-		ControlName: "actionsMustNotBeArchived",
+		Code:              CodeActionArchivedRepo,
+		Severity:          SeverityHigh,
+		Title:             "Action is hosted in an archived repository",
+		Description:       "A GitHub Actions workflow references an action whose upstream repository is archived. Archived repos no longer receive maintenance (security fixes, dependency bumps, compatibility patches all stop), and any existing vulnerability stays open forever. A new SHA can still be pushed by the last maintainer, so even pinning by SHA does not make the reference safe against a future takeover.",
+		Remediation:       "Replace the action with a maintained fork (audit the fork's owner first) or with an equivalent step implemented inline. If the behaviour is trivial, inlining the shell logic avoids the supply-chain dependency entirely.",
+		NestedRemediation: "Replace the outermost action, or vendor the chain into `./.github/actions/` and drop the archived action there. The archived repository is pulled in by a container you do not edit (the finding names it), so ask its maintainer to move off it.",
+		DocURL:            docsBaseURL + string(CodeActionArchivedRepo),
+		ControlName:       "actionsMustNotBeArchived",
 		// Role: hygiene, not entry: an archived repository is frozen, not mutable; hygiene is the smaller loss.
 		Role: RoleHygiene,
 	},
 	CodeActionUnauthorizedSource: {
-		Code:        CodeActionUnauthorizedSource,
-		Severity:    SeverityHigh,
-		Title:       "Action comes from an unauthorized source",
-		Description: "A GitHub Actions workflow references an action whose source is not authorized. Every third-party action runs with the caller workflow's token and secrets, so an unvetted owner is a direct supply-chain entry point: the vector behind the tj-actions/changed-files compromise (CVE-2025-30066), where an attacker also exploited repository rename/re-creation to squat a once-trusted name. Restricting actions to GitHub-official owners, an explicit org allowlist, and a minimum-popularity floor shrinks that attack surface to vetted sources.",
-		Remediation: "Use an action from an authorized source. Configure the allowlist in .plumber.yaml under githubActionMustComeFromAuthorizedSources: keep trustGithubOfficialActions on for actions/* and github/*, add trusted owners or actions to trustedGithubActions (exact `owner/repo` or `owner/*`), and optionally set minimumStars to require a popularity threshold. Vendoring the action into a local `./.github/actions/…` directory removes the external dependency entirely.",
-		DocURL:      docsBaseURL + string(CodeActionUnauthorizedSource),
-		ControlName: "githubActionMustComeFromAuthorizedSources",
+		Code:              CodeActionUnauthorizedSource,
+		Severity:          SeverityHigh,
+		Title:             "Action comes from an unauthorized source",
+		Description:       "A GitHub Actions workflow references an action whose source is not authorized. Every third-party action runs with the caller workflow's token and secrets, so an unvetted owner is a direct supply-chain entry point: the vector behind the tj-actions/changed-files compromise (CVE-2025-30066), where an attacker also exploited repository rename/re-creation to squat a once-trusted name. Restricting actions to GitHub-official owners, an explicit org allowlist, and a minimum-popularity floor shrinks that attack surface to vetted sources.",
+		Remediation:       "Use an action from an authorized source. Configure the allowlist in .plumber.yaml under githubActionMustComeFromAuthorizedSources: keep trustGithubOfficialActions on for actions/* and github/*, add trusted owners or actions to trustedGithubActions (exact `owner/repo` or `owner/*`), and optionally set minimumStars to require a popularity threshold. Vendoring the action into a local `./.github/actions/\u2026` directory removes the external dependency entirely.",
+		NestedRemediation: "Replace the outermost action with one whose chain only pulls authorized sources, or vendor the chain into `./.github/actions/` and replace the reference there. The reference sits in a container you do not edit (the finding names it), so ask its maintainer to depend on authorized sources.",
+		DocURL:            docsBaseURL + string(CodeActionUnauthorizedSource),
+		ControlName:       "githubActionMustComeFromAuthorizedSources",
 		// Role: hygiene, not entry: an owner outside the authorized list is a trust policy finding; ISSUE-701 and its siblings anchor the path when the reference can change.
 		Role: RoleHygiene,
 	},
 	CodeActionMutableRemoteExec: {
-		Code:        CodeActionMutableRemoteExec,
-		Severity:    SeverityHigh,
-		Title:       "Action fetches and runs remote code from a mutable ref (in the open)",
-		Description: "A third-party action's own source fetches and executes a script from a MOVING ref (a branch such as main/master, not a tag or SHA) of another repository at runtime, and does not verify the download against a checksum. Pinning the action by commit SHA does not reach this: the fetched code can change with nothing committed where the pin can see it, so a compromise or retag of that upstream branch runs arbitrary code in the job with its token and secrets. The canonical example is anchore/scan-action, which fetches `raw.githubusercontent.com/anchore/grype/main/install.sh` and runs it. This is a static, text-level match on the action's source: it catches the in-the-open shape, not an author who deliberately hides the fetch (see ISSUE-715), so a clean result asserts 'no known pattern seen', not 'safe'.",
-		Remediation: "Prefer an action that pins its downloads to an immutable ref AND verifies a checksum. Otherwise install the tool yourself from a pinned release, verify it against a checksum committed to your repo, and run it directly; or vendor the action and pin its internal fetch. A fetch that already verifies a pinned checksum is content-pinned and is not flagged here.",
-		DocURL:      docsBaseURL + string(CodeActionMutableRemoteExec),
-		ControlName: "actionsMustNotExecuteMutableRemoteCode",
-		Role:        RoleEntry,
-		EntryKind:   EntryMutableDependency,
+		Code:              CodeActionMutableRemoteExec,
+		Severity:          SeverityHigh,
+		Title:             "Action fetches and runs remote code from a mutable ref (in the open)",
+		Description:       "A third-party action's own source fetches and executes a script from a MOVING ref (a branch such as main/master, not a tag or SHA) of another repository at runtime, and does not verify the download against a checksum. Pinning the action by commit SHA does not reach this: the fetched code can change with nothing committed where the pin can see it, so a compromise or retag of that upstream branch runs arbitrary code in the job with its token and secrets. The canonical example is anchore/scan-action, which fetches `raw.githubusercontent.com/anchore/grype/main/install.sh` and runs it. This is a static, text-level match on the action's source: it catches the in-the-open shape, not an author who deliberately hides the fetch (see ISSUE-715), so a clean result asserts 'no known pattern seen', not 'safe'.",
+		Remediation:       "Prefer an action that pins its downloads to an immutable ref AND verifies a checksum. Otherwise install the tool yourself from a pinned release, verify it against a checksum committed to your repo, and run it directly; or vendor the action and pin its internal fetch. A fetch that already verifies a pinned checksum is content-pinned and is not flagged here.",
+		NestedRemediation: "Replace the outermost action, or vendor the chain into `./.github/actions/` and replace the step that fetches mutable code. A SHA pin on the outermost action does not reach this code and the container that runs it is one you do not edit (the finding names it), so ask its maintainer to pin and verify the download.",
+		DocURL:            docsBaseURL + string(CodeActionMutableRemoteExec),
+		ControlName:       "actionsMustNotExecuteMutableRemoteCode",
+		Role:              RoleEntry,
+		EntryKind:         EntryMutableDependency,
 	},
 	CodeActionObfuscatedRemoteExec: {
-		Code:        CodeActionObfuscatedRemoteExec,
-		Severity:    SeverityCritical,
-		Title:       "Action obfuscates a remote code fetch/exec",
-		Description: "The action's own source decodes and then executes code: `base64 -d | sh`, `eval \"$(… | base64 -d)\"`, `eval(atob(…))`, `new Function(atob(x))`, a hex/xxd decode piped to a shell, and similar. No legitimate action needs to hide what it runs at runtime, so obfuscation-then-execute is treated as the strongest signal regardless of the host, ref, or encoding used. This deliberately does NOT chase every possible encoding (an unbounded space); it flags the act of hiding itself, which is what makes a clean result meaningful here.",
-		Remediation: "Remove the obfuscation. If the action is a dependency, drop or vendor it and replace the hidden fetch with an explicit, pinned, checksum-verified install. An action that must decode data at runtime should not feed that decoded value into a shell or eval.",
-		DocURL:      docsBaseURL + string(CodeActionObfuscatedRemoteExec),
-		ControlName: "actionsMustNotExecuteMutableRemoteCode",
-		Role:        RoleEntry,
-		EntryKind:   EntryMutableDependency,
+		Code:              CodeActionObfuscatedRemoteExec,
+		Severity:          SeverityCritical,
+		Title:             "Action obfuscates a remote code fetch/exec",
+		Description:       "The action's own source decodes and then executes code: `base64 -d | sh`, `eval \"$(\u2026 | base64 -d)\"`, `eval(atob(\u2026))`, `new Function(atob(x))`, a hex/xxd decode piped to a shell, and similar. No legitimate action needs to hide what it runs at runtime, so obfuscation-then-execute is treated as the strongest signal regardless of the host, ref, or encoding used. This deliberately does NOT chase every possible encoding (an unbounded space); it flags the act of hiding itself, which is what makes a clean result meaningful here.",
+		Remediation:       "Remove the obfuscation. If the action is a dependency, drop or vendor it and replace the hidden fetch with an explicit, pinned, checksum-verified install. An action that must decode data at runtime should not feed that decoded value into a shell or eval.",
+		NestedRemediation: "Stop using the outermost action until the obfuscated fetch in its chain is explained, or vendor the chain into `./.github/actions/` without that step. The container that hides it is one you do not edit (the finding names it), so report it to its maintainer.",
+		DocURL:            docsBaseURL + string(CodeActionObfuscatedRemoteExec),
+		ControlName:       "actionsMustNotExecuteMutableRemoteCode",
+		Role:              RoleEntry,
+		EntryKind:         EntryMutableDependency,
 	},
 	CodeActionRemoteExecUnverified: {
-		Code:        CodeActionRemoteExecUnverified,
-		Severity:    SeverityLow,
-		Title:       "Action source could not be verified",
-		Description: "Plumber could not fetch the action's own source (a network error, API rate limit, GitHub Enterprise Server host, private repo, or a Docker-image action) so it could not confirm whether the action fetches mutable remote code at runtime. This is surfaced as an explicit could-not-verify finding rather than a silent pass, because a silent pass would let the same repository score differently across CI environments and would over-claim safety on an unchecked dependency.",
-		Remediation: "Re-run where the action source is reachable (authenticated token, network access) to get a definitive result, or vendor the action so its source is local and auditable. This finding is informational: it flags an unchecked dependency, not a confirmed problem.",
-		DocURL:      docsBaseURL + string(CodeActionRemoteExecUnverified),
-		ControlName: "actionsMustNotExecuteMutableRemoteCode",
-		Role:        RoleEntry,
-		EntryKind:   EntryMutableDependency,
+		Code:              CodeActionRemoteExecUnverified,
+		Severity:          SeverityLow,
+		Title:             "Action source could not be verified",
+		Description:       "Plumber could not fetch the action's own source (a network error, API rate limit, GitHub Enterprise Server host, private repo, or a Docker-image action) so it could not confirm whether the action fetches mutable remote code at runtime. This is surfaced as an explicit could-not-verify finding rather than a silent pass, because a silent pass would let the same repository score differently across CI environments and would over-claim safety on an unchecked dependency.",
+		Remediation:       "Re-run where the action source is reachable (authenticated token, network access) to get a definitive result, or vendor the action so its source is local and auditable. This finding is informational: it flags an unchecked dependency, not a confirmed problem.",
+		NestedRemediation: "Give the run read access to the container's source (a token that can read it), or vendor the chain into `./.github/actions/` so it can be scanned. The container is one you do not edit (the finding names it).",
+		DocURL:            docsBaseURL + string(CodeActionRemoteExecUnverified),
+		ControlName:       "actionsMustNotExecuteMutableRemoteCode",
+		Role:              RoleEntry,
+		EntryKind:         EntryMutableDependency,
 	},
 	CodeImpostorCommit: {
-		Code:        CodeImpostorCommit,
-		Severity:    SeverityCritical,
-		Title:       "Pinned commit SHA does not belong to the action's repository",
-		Description: "A workflow pins an action to a commit SHA that does not resolve in the action's upstream repository. That means either the SHA was mistyped (the reference silently runs whatever tag/branch GitHub falls back to, typically the default branch) or, far worse, the author was tricked by a PR comment / stargazer dashboard showing a detached commit that was never merged upstream. The name-and-SHA combination is the precise form of the `impostor commit` attack documented in academic supply-chain literature.",
-		Remediation: "Replace the reference with a SHA that actually belongs to the action's repository. Use `gh api repos/<owner>/<repo>/commits/<sha>` to verify before committing the change. That endpoint only accepts commit SHAs, so a pin naming an annotated tag object answers 422 there; check it with `gh api repos/<owner>/<repo>/git/tags/<sha>` instead, which also reports the tag name and the commit it points at.",
-		DocURL:      docsBaseURL + string(CodeImpostorCommit),
-		ControlName: "actionRefsMustExistUpstream",
+		Code:              CodeImpostorCommit,
+		Severity:          SeverityCritical,
+		Title:             "Pinned commit SHA does not belong to the action's repository",
+		Description:       "A workflow pins an action to a commit SHA that does not resolve in the action's upstream repository. That means either the SHA was mistyped (the reference silently runs whatever tag/branch GitHub falls back to, typically the default branch) or, far worse, the author was tricked by a PR comment / stargazer dashboard showing a detached commit that was never merged upstream. The name-and-SHA combination is the precise form of the `impostor commit` attack documented in academic supply-chain literature.",
+		Remediation:       "Replace the reference with a SHA that actually belongs to the action's repository. Use `gh api repos/<owner>/<repo>/commits/<sha>` to verify before committing the change. That endpoint only accepts commit SHAs, so a pin naming an annotated tag object answers 422 there; check it with `gh api repos/<owner>/<repo>/git/tags/<sha>` instead, which also reports the tag name and the commit it points at.",
+		NestedRemediation: "Pin the outermost action to a version whose chain only pins commits that exist upstream, or vendor the chain into `./.github/actions/` with a pin that exists. The bad pin sits in a container you do not edit (the finding names it), so report it to its maintainer.",
+		DocURL:            docsBaseURL + string(CodeImpostorCommit),
+		ControlName:       "actionRefsMustExistUpstream",
 		// Role: entry, not hygiene: the pinned SHA does not resolve in the action's upstream repository, so the pin vets no upstream code.
 		Role:      RoleEntry,
 		EntryKind: EntryMutableDependency,
@@ -414,25 +429,27 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Role: RoleHygiene,
 	},
 	CodeStaleActionRef: {
-		Code:        CodeStaleActionRef,
-		Severity:    SeverityLow,
-		Title:       "Action pin is behind the latest upstream release",
-		Description: "A workflow pins an action to a commit SHA that predates the repository's most recent release. The SHA may still work today, but it is missing security fixes, dependency updates, and runtime compatibility changes shipped in later releases. Dependabot's `version-update-strategy: sha-and-version` handles the upgrade loop once configured.",
-		Remediation: "Update the pin to the SHA of the latest release, and refresh the trailing `# vX.Y.Z` comment. Enable Dependabot with `package-ecosystem: github-actions` and `version-update-strategy: sha-and-version` to keep the pins fresh automatically.",
-		DocURL:      docsBaseURL + string(CodeStaleActionRef),
-		ControlName: "actionPinsMustNotBeStale",
-		Role:        RoleHygiene,
+		Code:              CodeStaleActionRef,
+		Severity:          SeverityLow,
+		Title:             "Action pin is behind the latest upstream release",
+		Description:       "A workflow pins an action to a commit SHA that predates the repository's most recent release. The SHA may still work today, but it is missing security fixes, dependency updates, and runtime compatibility changes shipped in later releases. Dependabot's `version-update-strategy: sha-and-version` handles the upgrade loop once configured.",
+		Remediation:       "Update the pin to the SHA of the latest release, and refresh the trailing `# vX.Y.Z` comment. Enable Dependabot with `package-ecosystem: github-actions` and `version-update-strategy: sha-and-version` to keep the pins fresh automatically.",
+		NestedRemediation: "Move the outermost action to a release whose chain pins a current version, or vendor the chain into `./.github/actions/` and refresh the pin there. The stale pin sits in a container you do not edit (the finding names it), so ask its maintainer to refresh it.",
+		DocURL:            docsBaseURL + string(CodeStaleActionRef),
+		ControlName:       "actionPinsMustNotBeStale",
+		Role:              RoleHygiene,
 	},
 	CodeKnownVulnerableAction: {
-		Code:        CodeKnownVulnerableAction,
-		Severity:    SeverityCritical,
-		Title:       "Action version carries a published security advisory",
-		Description: "The pinned version of this action appears in the GitHub Advisory Database under the `actions` ecosystem. Running a workflow on a known-vulnerable action version inherits the published vulnerability class (RCE, secret exfiltration, privilege escalation, depending on the advisory). Examples from history: tj-actions/changed-files (CVE-2025-30066), reviewdog/action-setup with the March 2025 compromise, unpatched releases of `actions/artifact`. This check reports every advisory whose affected-version range covers the pinned ref.",
-		Remediation: "Upgrade the action to a version outside the advisory's affected range (the advisory page lists a fixed-in version). Pin by SHA once upgraded so future retags cannot silently revert the fix. Configure Dependabot with `package-ecosystem: github-actions` to receive PR alerts when new advisories land.",
-		DocURL:      docsBaseURL + string(CodeKnownVulnerableAction),
-		ControlName: "actionsMustNotCarryKnownCVEs",
-		Role:        RoleEntry,
-		EntryKind:   EntryMutableDependency,
+		Code:              CodeKnownVulnerableAction,
+		Severity:          SeverityCritical,
+		Title:             "Action version carries a published security advisory",
+		Description:       "The pinned version of this action appears in the GitHub Advisory Database under the `actions` ecosystem. Running a workflow on a known-vulnerable action version inherits the published vulnerability class (RCE, secret exfiltration, privilege escalation, depending on the advisory). Examples from history: tj-actions/changed-files (CVE-2025-30066), reviewdog/action-setup with the March 2025 compromise, unpatched releases of `actions/artifact`. This check reports every advisory whose affected-version range covers the pinned ref.",
+		Remediation:       "Upgrade the action to a version outside the advisory's affected range (the advisory page lists a fixed-in version). Pin by SHA once upgraded so future retags cannot silently revert the fix. Configure Dependabot with `package-ecosystem: github-actions` to receive PR alerts when new advisories land.",
+		NestedRemediation: "Move the outermost action to a release whose chain pulls a patched version, or vendor the chain into `./.github/actions/` and upgrade the vulnerable action there. The vulnerable reference sits in a container you do not edit (the finding names it), so ask its maintainer to upgrade it.",
+		DocURL:            docsBaseURL + string(CodeKnownVulnerableAction),
+		ControlName:       "actionsMustNotCarryKnownCVEs",
+		Role:              RoleEntry,
+		EntryKind:         EntryMutableDependency,
 	},
 	CodeDockerfileUnpinnedBase: {
 		Code:        CodeDockerfileUnpinnedBase,
@@ -543,15 +560,16 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		Role:        RoleHygiene,
 	},
 	CodeRefConfusion: {
-		Code:        CodeRefConfusion,
-		Severity:    SeverityMedium,
-		Title:       "Reference collides with both a tag and a branch",
-		Description: "An external CI reference is pinned to a name that exists upstream **as both a tag and a branch** (classic case: a tag `v1` kept in parallel with a branch `v1`). This covers GitHub Actions `uses:` refs and GitLab `include:` project `ref:` / component `@version` refs. The platform resolves the tag first, so today the pinned, tagged revision runs, but a maintainer rename, a typo, or a parameter that drops a character can switch the binding to the branch, which tracks every push. The ambiguity makes the reference fundamentally unreliable: the reviewer cannot tell from the YAML alone which of the two upstream revisions will execute, and the referenced code runs in the pipeline with its secrets and tokens.",
-		Remediation: "Pin the reference to a 40-character commit SHA (preferred), which is unambiguous. Alternatively, ask the upstream maintainer to remove one of the two colliding refs; keeping both is a supply-chain landmine for every caller.",
-		DocURL:      docsBaseURL + string(CodeRefConfusion),
-		ControlName: "externalRefsMustNotCollide",
-		Role:        RoleEntry,
-		EntryKind:   EntryMutableDependency,
+		Code:              CodeRefConfusion,
+		Severity:          SeverityMedium,
+		Title:             "Reference collides with both a tag and a branch",
+		Description:       "An external CI reference is pinned to a name that exists upstream **as both a tag and a branch** (classic case: a tag `v1` kept in parallel with a branch `v1`). This covers GitHub Actions `uses:` refs and GitLab `include:` project `ref:` / component `@version` refs. The platform resolves the tag first, so today the pinned, tagged revision runs, but a maintainer rename, a typo, or a parameter that drops a character can switch the binding to the branch, which tracks every push. The ambiguity makes the reference fundamentally unreliable: the reviewer cannot tell from the YAML alone which of the two upstream revisions will execute, and the referenced code runs in the pipeline with its secrets and tokens.",
+		Remediation:       "Pin the reference to a 40-character commit SHA (preferred), which is unambiguous. Alternatively, ask the upstream maintainer to remove one of the two colliding refs; keeping both is a supply-chain landmine for every caller.",
+		NestedRemediation: "Pin the outermost action to a commit SHA whose chain pins this reference by SHA, or vendor the chain into `./.github/actions/` and pin it there. The ambiguous ref sits in a container you do not edit (the finding names it), so ask its maintainer to pin it.",
+		DocURL:            docsBaseURL + string(CodeRefConfusion),
+		ControlName:       "externalRefsMustNotCollide",
+		Role:              RoleEntry,
+		EntryKind:         EntryMutableDependency,
 	},
 	CodeIncludeOutdated: {
 		Code:        CodeIncludeOutdated,
@@ -1090,6 +1108,26 @@ var errorCodeRegistry = map[ErrorCode]ErrorCodeInfo{
 		ControlName: "workflowMustNotGrantPermissionsWriteAll",
 		Role:        RolePrivilege,
 	},
+}
+
+// NestedRemediationApplies says whether a finding reached through via
+// takes its code's nested remediation (spec 2026-10-16 section 6, Task 3
+// round ruling L2): only when the outermost reference of the chain is
+// remote. Under a local composite (./...) the user owns the file that holds
+// the reference, so the direct remediation applies, the message still
+// carrying the chain.
+func NestedRemediationApplies(via []string) bool {
+	return len(via) > 0 && !strings.HasPrefix(via[0], "./")
+}
+
+// RemediationFor is the remediation a finding of this code shows: the
+// nested variant for a finding pulled in through a container when the
+// code has one, the code's own otherwise.
+func (i ErrorCodeInfo) RemediationFor(nested bool) string {
+	if nested && i.NestedRemediation != "" {
+		return i.NestedRemediation
+	}
+	return i.Remediation
 }
 
 // LookupCode returns the ErrorCodeInfo for a given issue code, or nil if not found.

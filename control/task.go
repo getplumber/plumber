@@ -454,6 +454,11 @@ func evaluatePolicies(l *logrus.Entry, conf *configuration.Configuration, provid
 		failures = append(failures, policyFailure{Module: f.Module, Err: f.Err, Controls: affected})
 	}
 	findings = FilterFindingsByEnabledControls(findings, provider, controls, conf.ControlsFilter, conf.SkipControlsFilter)
+	// A nested finding closes on the nested fix, not on the direct
+	// remediation of a reference the user cannot edit (spec section 6,
+	// maintainer review of PR 549): rewritten once here, every output
+	// reads it.
+	NestedFixMessages(findings)
 	if findings == nil {
 		findings = empty
 	}

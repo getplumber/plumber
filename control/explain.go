@@ -501,5 +501,13 @@ func pathBlockFindingOf(f opaengine.Finding) PathBlockFinding {
 	if loc != "" && f.Line > 0 {
 		loc += ":" + strconv.Itoa(f.Line)
 	}
+	// A nested finding sits at the workflow step that pulled its chain in,
+	// a line that names only the outermost action: the line says which
+	// reference it is and through what (spec 2026-10-16 section 8).
+	if via := viaOfData(f.Data); len(via) > 0 && loc != "" {
+		if uses, _ := f.Data["uses"].(string); uses != "" {
+			loc += " (" + withChain(ShortenCommitSHA(uses), via) + ")"
+		}
+	}
 	return PathBlockFinding{Code: ErrorCode(f.Code), Title: title, Location: loc}
 }

@@ -24,6 +24,7 @@
 package artipacked
 
 import rego.v1
+import data.lib.provenance
 
 # ISSUE-310 (high): credential persists AND `.git` is packed into an
 # uploaded artifact — a demonstrable token leak.
@@ -33,11 +34,11 @@ deny contains finding if {
 	action := job.uses[j]
 	startswith(action.uses, "actions/checkout@")
 	not _credentials_disabled(action)
-	some upload in _git_packing_uploads(job, action)
-	finding := {
+	some upload in _git_packing_uploads(job, j)
+	finding := object.union({
 		"code":     "ISSUE-310",
 		"severity": "high",
-		"message":  sprintf("job %q runs %q with credential persistence, then %q uploads a `.git`-inclusive path (%q) — GITHUB_TOKEN is packed into a downloadable artifact and exfiltrable", [job.name, action.uses, upload.uses, _upload_path(upload)]),
+		"message":  provenance.message(sprintf("job %q runs %q with credential persistence, then %q uploads a `.git`-inclusive path (%q) \u2014 GITHUB_TOKEN is packed into a downloadable artifact and exfiltrable", [job.name, action.uses, upload.uses, _upload_path(upload)]), action),
 		"job":      job.name,
 		# The checkout ref, not the upload's: it is what identifies WHICH
 		# step persisted the credential. A job can check out twice (its own
@@ -45,7 +46,7 @@ deny contains finding if {
 		# into one finding and the second checkout is never reported.
 		"uses": action.uses,
 		"line":     object.get(action, "line", 0),
-	}
+	}, provenance.fields(action))
 }
 
 # ISSUE-307 (low): credential persists but nothing packs `.git` into an
@@ -56,15 +57,15 @@ deny contains finding if {
 	action := job.uses[j]
 	startswith(action.uses, "actions/checkout@")
 	not _credentials_disabled(action)
-	count(_git_packing_uploads(job, action)) == 0
-	finding := {
+	count(_git_packing_uploads(job, j)) == 0
+	finding := object.union({
 		"code":     "ISSUE-307",
 		"severity": "low",
-		"message":  sprintf("job %q runs %q without `persist-credentials: false` — GITHUB_TOKEN lingers in .git/config (latent; becomes a leak if a later step packs .git into an artifact or runs fork-controlled code)", [job.name, action.uses]),
+		"message":  provenance.message(sprintf("job %q runs %q without `persist-credentials: false` \u2014 GITHUB_TOKEN lingers in .git/config (latent; becomes a leak if a later step packs .git into an artifact or runs fork-controlled code)", [job.name, action.uses]), action),
 		"job":      job.name,
 		"uses":     action.uses,
 		"line":     object.get(action, "line", 0),
-	}
+	}, provenance.fields(action))
 }
 
 # actions/checkout persists credentials only when the input, upper-cased,
@@ -86,17 +87,22 @@ _credentials_disabled(action) if {
 }
 
 # _git_packing_uploads is the set of upload-artifact actions from the same
-# job that (a) run after the given checkout step and (b) upload a path that
-# would include that checkout's `.git` directory. Built as a comprehension
+# job that (a) run after the checkout step at index j, which is when they
+# come later in the job's resolved list (the runner's order, spec
+# 2026-10-16 section 3.1: a composite's steps share the line of the
+# workflow step that pulled them in, so lines cannot order them), and
+# (b) upload a path that would include that checkout's `.git` directory.
+# Built as a comprehension
 # so the function has exactly one output (the set) for a given input: a
 # job may have several such uploads (a report directory plus files inside
 # it), and a function returning one upload at a time failed the whole
 # evaluation with eval_conflict_error (#489).
-_git_packing_uploads(job, checkout) := {upload |
+_git_packing_uploads(job, j) := {upload |
+	checkout := job.uses[j]
 	some k
+	k > j
 	upload := job.uses[k]
 	startswith(upload.uses, "actions/upload-artifact@")
-	object.get(upload, "line", 0) > object.get(checkout, "line", 0)
 	_uploads_hidden_files(upload)
 	_path_includes_git(_upload_path(upload), _checkout_dir(checkout))
 }

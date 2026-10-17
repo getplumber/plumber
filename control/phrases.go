@@ -8,6 +8,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	opaengine "github.com/getplumber/plumber/internal/engine/opa"
 	"github.com/getplumber/plumber/internal/ir"
 )
 
@@ -67,7 +68,7 @@ func entryClause(p AttackPath) string {
 		}
 		return fmt.Sprintf("%s controls %s, which %s passes to a shell", who, code(p.Entry.Subject), job)
 	case EntryMutableDependency:
-		return fmt.Sprintf("A new version of %s runs inside %s without any change in this repository", code(p.Entry.Subject), job)
+		return fmt.Sprintf("A new version of %s%s runs inside %s without any change in this repository", code(p.Entry.Subject), chainPhrase(p.Entry.Via), job)
 	case EntryUnprotectedPush:
 		return fmt.Sprintf("Anyone with write access to %s runs %s", code(p.Entry.Subject), job)
 	case EntryPoisonedCache:
@@ -656,7 +657,36 @@ func entryLineSubject(p AttackPath) string {
 		}
 		return "one of: " + strings.Join(shown, ", ")
 	}
-	return ShortenCommitSHA(p.Entry.Subject)
+	return withChain(ShortenCommitSHA(p.Entry.Subject), p.Entry.Via)
+}
+
+// withChain is a reference with the chain it was pulled in through, "x via
+// a > b", the reference alone on a direct entry (spec 2026-10-16 section
+// 8: the attack-path renderer prints the chain where it prints the
+// reference, since the workflow line it sits at names only the outermost
+// action).
+func withChain(ref string, via []string) string {
+	if ref == "" || len(via) == 0 {
+		return ref
+	}
+	shown := make([]string, len(via))
+	for i, v := range via {
+		shown[i] = ShortenCommitSHA(v)
+	}
+	return ref + " via " + ir.ViaText(shown)
+}
+
+// chainPhrase is the headline's words for a nested entry's chain,
+// " (pulled in via `a > b`)", "" on a direct entry.
+func chainPhrase(via []string) string {
+	if len(via) == 0 {
+		return ""
+	}
+	shown := make([]string, len(via))
+	for i, v := range via {
+		shown[i] = ShortenCommitSHA(v)
+	}
+	return " (pulled in via " + code(ir.ViaText(shown)) + ")"
 }
 
 // soActor is who gets in, the first half of the So line, by the actor rule
@@ -1271,6 +1301,9 @@ func entryPathFix(p AttackPath) string {
 	}
 	kind := dependencyKind(p)
 	code, untrusted := entryAnchor(p)
+	if fix, ok := nestedFix(code, p.Entry.Via); ok {
+		return fix
+	}
 	row := entryCodes[code]
 	switch {
 	case untrusted && row.untrustedFix != "":
@@ -1283,6 +1316,81 @@ func entryPathFix(p AttackPath) string {
 		return row.actionFix
 	}
 	return pathFix(code, p.Entry.Subject)
+}
+
+// nestedFix is the fix of an entry reached through via (spec 2026-10-16
+// section 6, Task 3 round ruling L2): when the outermost reference of the
+// chain is remote, the first sentence of code's NestedRemediation as
+// something to do, since the user cannot edit the container that holds the
+// reference. ok is false under a local outermost composite (the direct fix
+// applies) or for a code with no nested variant.
+func nestedFix(code ErrorCode, via []string) (string, bool) {
+	if !NestedRemediationApplies(via) {
+		return "", false
+	}
+	info := LookupCode(code)
+	if info == nil || info.NestedRemediation == "" {
+		return "", false
+	}
+	s := strings.TrimSpace(info.NestedRemediation)
+	if i := strings.Index(s, ". "); i >= 0 {
+		s = s[:i]
+	}
+	r := []rune(strings.TrimSuffix(s, "."))
+	if len(r) == 0 {
+		return "", false
+	}
+	r[0] = unicode.ToLower(r[0])
+	return string(r), true
+}
+
+// remediationHalfCodes is the codes whose rule message closes, after the
+// consequence dash, on a direct remediation ("pin by commit SHA instead")
+// rather than on a consequence (spec section 6, maintainer review of PR
+// 549). Those of a code with a nested remediation whose message half reads
+// as a consequence (the advisories of ISSUE-703, the runtime fetch of
+// ISSUE-714) or that has no dash (ISSUE-707, ISSUE-402) are left alone:
+// the half says what was found, not what to do, and the fix detail line
+// carries the nested fix.
+var remediationHalfCodes = map[ErrorCode]bool{
+	CodeActionUnpinned:           true,
+	CodeActionUnauthorizedSource: true,
+	CodeStaleActionRef:           true,
+}
+
+// nestedFixDash is the dash a policy message sets what it found apart from
+// what it means or asks with (the terminal report splits a message there).
+const nestedFixDash = " \u2014 "
+
+// NestedFixMessages rewrites, in place, the remediation half of every
+// nested finding's message (spec section 6, maintainer review of PR 549):
+// for a code of remediationHalfCodes reached through a remote outermost
+// container, the half after the consequence dash becomes the nested fix,
+// the same text the nested Fix line and the fix detail line read
+// (nestedFix), since the direct half asks to edit a reference the user
+// cannot edit. Every output reads the rewritten message (the terminal So
+// line, JSON, SARIF, GitLab SAST). A direct finding, one under a local
+// outermost composite (ruling L2) and one whose message has no dash are
+// left byte-identical.
+func NestedFixMessages(findings []opaengine.Finding) {
+	for i := range findings {
+		f := &findings[i]
+		code := ErrorCode(f.Code)
+		if !remediationHalfCodes[code] {
+			continue
+		}
+		fix, ok := nestedFix(code, viaOfData(f.Data))
+		if !ok {
+			continue
+		}
+		// The last dash is the consequence separator (review of PR 549): a
+		// quoted user text before it may hold the same dash.
+		at := strings.LastIndex(f.Message, nestedFixDash)
+		if at < 0 {
+			continue
+		}
+		f.Message = f.Message[:at] + nestedFixDash + fix
+	}
 }
 
 // runTimeExpressionPattern is an expression a reference is computed with.

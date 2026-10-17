@@ -561,6 +561,7 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 	// parse/read problem (user-fixable), not a degraded collection — only
 	// a failed branch-protection API fetch counts as degraded here (#220).
 	applyGitHubDegraded(result, 0, branchFetchFailed)
+	applyNestedActions(result, pipeline)
 	// Resolve the local clone's HEAD SHA so source links in the report
 	// point at the exact commit being analysed instead of a mutable
 	// branch name. CI runs already get the SHA from GITHUB_SHA; this
@@ -697,6 +698,7 @@ func RunGitHubAnalysisRemote(conf *configuration.Configuration, owner, repo, ref
 	attachSituation(l, conf, "github", pipeline, result)
 	markGitHubLanes(result, conf, owner+"/"+repo, scanMutableExec, branchScope)
 	applyGitHubDegraded(result, len(partial), branchFetchFailed)
+	applyNestedActions(result, pipeline)
 	// An enabled control asserting nothing until its substantive fields are set is not a clean
 	// pass either (#459): it is not_evaluable, config_required, same as any other lane gap. Runs
 	// before the finding-count aggregation below so a dropped not_evaluable finding never inflates
