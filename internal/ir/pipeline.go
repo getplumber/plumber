@@ -287,6 +287,11 @@ type Job struct {
 	OriginFile string   `json:"originFile,omitempty"`
 	OriginLine int      `json:"originLine,omitempty"`
 	OriginKind string   `json:"originKind,omitempty"`
+	// OriginInclude is the Source (or Path when Source is empty) of the include that defined
+	// this job, empty for a job the project's own CI file defines. It names the include's
+	// identity where OriginKind names only its type; the pipeline capabilities' include
+	// evidence matches it against the recognizers' include names.
+	OriginInclude string `json:"originInclude,omitempty"`
 	// Functions lists this job's `run:`-step function references
 	// (docs.gitlab.com/ci/functions, GitLab CI only). Kind classifies
 	// the reference form so policies can skip same-repo file
