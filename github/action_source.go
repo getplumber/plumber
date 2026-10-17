@@ -3,6 +3,7 @@ package github
 import (
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path"
 	"path/filepath"
@@ -1021,6 +1022,10 @@ const (
 	fetchMissing                     // 404: the file is not there
 	fetchError                       // network / rate limit / HTTP error
 	fetchDisabled                    // offline switch: abstain silently
+	// fetchTooLarge: a definition past its bound (maxWorkflowFileBytes).
+	// It is that one reference's outcome (reason fetch), never a sign the
+	// network or the API is unavailable (spec 4.3, R6).
+	fetchTooLarge
 )
 
 // rawFetcher fetches a single file's text from an action repo at a ref.
@@ -1032,18 +1037,27 @@ type rawFetcher func(owner, repo, ref, path string) (text string, status fetchSt
 var firstPartyOwners = map[string]bool{"actions": true, "github": true}
 
 // resolveMutableExec returns the mutable-remote-exec signal for a
-// third-party action, memoised per `uses:` value so an action reused
-// across jobs is fetched once. First-party and unparseable refs are
-// skipped (nil).
-func resolveMutableExec(uses string, cache map[string]*ir.MutableRemoteExec) *ir.MutableRemoteExec {
-	if v, ok := cache[uses]; ok {
+// third-party action, memoised per container key (owner and repo
+// case-folded) so an action reused across jobs is scanned once. Its action.yml comes from defs, the
+// fetcher the nested resolution already read it through (spec 2026-10-16
+// section 4.2), so a container costs one definition request in the run.
+// First-party and unparseable refs are skipped (nil).
+func resolveMutableExec(uses string, defs *definitionFetcher, cache map[string]*ir.MutableRemoteExec) *ir.MutableRemoteExec {
+	owner, repo, subpath, ref, ok := splitActionRefWithSubpath(uses)
+	key := uses
+	if ok {
+		// The container key folds owner and repo case, so case variants of
+		// one reference share one scan and one definition read.
+		key = containerKey(owner, repo, subpath, ref)
+	}
+	if v, seen := cache[key]; seen {
 		return v
 	}
 	var mre *ir.MutableRemoteExec
-	if owner, repo, subpath, ref, ok := splitActionRefWithSubpath(uses); ok && !firstPartyOwners[strings.ToLower(owner)] {
-		mre = analyzeActionMutableExec(httpRawFetcher, owner, repo, ref, subpath)
+	if ok && !firstPartyOwners[strings.ToLower(owner)] {
+		mre = analyzeActionMutableExec(defs.consume(owner, repo, subpath, ref), defs.read, owner, repo, ref, subpath)
 	}
-	cache[uses] = mre
+	cache[key] = mre
 	return mre
 }
 
@@ -1074,30 +1088,22 @@ func splitActionRefWithSubpath(uses string) (owner, repo, subpath, ref string, o
 	return parts[0], parts[1], subpath, tail, true
 }
 
-// analyzeActionMutableExec fetches an action's action.yml and entrypoint
-// at the pinned ref and scans them. subpath is the action's in-repo
-// directory ("" for a root action); action.yml and the declared
-// entrypoint are resolved relative to it, so composite/nested actions
-// (github/codeql-action/init, home-assistant/actions/hassfest) are
-// covered too. Returns nil when the action has no action.yml
-// (Docker-Hub action) or nothing mutable is found.
-func analyzeActionMutableExec(fetch rawFetcher, owner, repo, ref, subpath string) *ir.MutableRemoteExec {
-	ymlPath := path.Join(subpath, "action.yml")
-	actionYML, st := fetch(owner, repo, ref, ymlPath)
-	if st == fetchError {
-		return &ir.MutableRemoteExec{Tier: "unverified", File: ymlPath}
+// analyzeActionMutableExec scans an action from its already-fetched
+// definition (fetchActionDefinition) and its entrypoint, fetched at the
+// pinned ref relative to subpath, so composite and nested actions
+// (github/codeql-action/init, home-assistant/actions/hassfest) are covered
+// too. A definition that could not be fetched is could-not-verify; a
+// missing one (Docker-Hub action, absent subpath) and the offline switch
+// are nil, as before the fetch was shared.
+func analyzeActionMutableExec(def actionDefinition, fetch rawFetcher, owner, repo, ref, subpath string) *ir.MutableRemoteExec {
+	switch def.Status {
+	case fetchOK:
+	case fetchError, fetchTooLarge:
+		return &ir.MutableRemoteExec{Tier: "unverified", File: def.Path}
+	default:
+		return nil
 	}
-	if st != fetchOK {
-		ymlPath = path.Join(subpath, "action.yaml")
-		actionYML, st = fetch(owner, repo, ref, ymlPath)
-		if st == fetchError {
-			return &ir.MutableRemoteExec{Tier: "unverified", File: ymlPath}
-		}
-		if st != fetchOK {
-			return nil // missing (not an action / subpath) or offline → silent
-		}
-	}
-	return scanActionDefinition(actionYML, ymlPath, func(rel string) (string, fetchStatus) {
+	return scanActionDefinition(def.Text, def.Path, func(rel string) (string, fetchStatus) {
 		return fetch(owner, repo, ref, path.Join(subpath, rel))
 	})
 }
@@ -1139,7 +1145,7 @@ func readLocalFile(rootDir, rel string) (string, bool) {
 // it fetches the scanned repo's own root action.yml + entrypoint over raw
 // content and scans them. Used on the --project (upstream-fetch) path.
 func ScanRemoteSelfAction(owner, repo, ref string) *ir.MutableRemoteExec {
-	return analyzeActionMutableExec(httpRawFetcher, owner, repo, ref, "")
+	return analyzeActionMutableExec(fetchActionDefinition(httpRawFetcher, owner, repo, ref, ""), httpRawFetcher, owner, repo, ref, "")
 }
 
 // httpRawFetcher reads file text from raw.githubusercontent.com. It
@@ -1161,6 +1167,40 @@ func rawFetchToken() string {
 }
 
 func httpRawFetcher(owner, repo, ref, path string) (string, fetchStatus) {
+	return httpRawFetch(owner, repo, ref, path, maxRawFileBytes)
+}
+
+// maxRawFileBytes caps a raw read: bundled dist/ files can be a few MB,
+// anything absurd is refused to bound memory.
+const maxRawFileBytes = 16 << 20
+
+// rawFetcherWithLimit is httpRawFetcher reading at most limit bytes: the
+// definition fetch reads one byte past its bound to tell an oversized
+// file from one at the bound.
+func rawFetcherWithLimit(limit int64) rawFetcher {
+	return func(owner, repo, ref, p string) (string, fetchStatus) {
+		return httpRawFetch(owner, repo, ref, p, limit)
+	}
+}
+
+// rawContentURL is the raw host's URL of p at owner/repo@ref, every
+// segment escaped: owner, repo, the ref (a path there, its slashes kept)
+// and the file path. A `?` or `#` from an untrusted reference never opens
+// a query or a fragment.
+func rawContentURL(owner, repo, ref, p string) string {
+	return "https://raw.githubusercontent.com/" + url.PathEscape(owner) + "/" + url.PathEscape(repo) + "/" + escapePathSegments(ref) + "/" + escapePathSegments(p)
+}
+
+// escapePathSegments escapes every `/`-separated segment of p.
+func escapePathSegments(p string) string {
+	segs := strings.Split(p, "/")
+	for i, s := range segs {
+		segs[i] = url.PathEscape(s)
+	}
+	return strings.Join(segs, "/")
+}
+
+func httpRawFetch(owner, repo, ref, path string, limit int64) (string, fetchStatus) {
 	// Respect the offline switch the test suite (and air-gapped runs)
 	// use to keep the collector network-free.
 	if v := os.Getenv(EnvDisableGitHubAPI); v == "1" || v == "true" {
@@ -1169,8 +1209,7 @@ func httpRawFetcher(owner, repo, ref, path string) (string, fetchStatus) {
 	if ref == "" {
 		ref = "HEAD"
 	}
-	url := "https://raw.githubusercontent.com/" + owner + "/" + repo + "/" + ref + "/" + path
-	req, err := http.NewRequest(http.MethodGet, url, nil)
+	req, err := http.NewRequest(http.MethodGet, rawContentURL(owner, repo, ref, path), nil)
 	if err != nil {
 		return "", fetchError
 	}
@@ -1192,9 +1231,7 @@ func httpRawFetcher(owner, repo, ref, path string) (string, fetchStatus) {
 	if resp.StatusCode != http.StatusOK {
 		return "", fetchError // 403 rate-limit, 5xx, … → could not verify
 	}
-	// Cap the read: bundled dist/ files can be a few MB; refuse anything
-	// absurd to bound memory.
-	body, err := io.ReadAll(io.LimitReader(resp.Body, 16<<20))
+	body, err := io.ReadAll(io.LimitReader(resp.Body, limit))
 	if err != nil {
 		return "", fetchError
 	}

@@ -14,6 +14,7 @@ import (
 	"github.com/sirupsen/logrus"
 
 	"github.com/getplumber/plumber/configuration"
+	"github.com/getplumber/plumber/github"
 	"github.com/getplumber/plumber/internal/ir"
 	"github.com/getplumber/plumber/internal/testsupport/pipelines"
 )
@@ -196,6 +197,12 @@ func TestCorpus(t *testing.T) {
 	if len(cases) == 0 {
 		t.Fatal("empty corpus")
 	}
+	// The corpus is offline: captured workflows, no action definitions. The
+	// nested actions stage reads definitions whatever the metadata
+	// enrichment says, so the offline switch is set here, once, before the
+	// parallel cases start (a parallel test cannot set it itself): every
+	// direct reference is then listed api_disabled without degrading.
+	t.Setenv(github.EnvDisableGitHubAPI, "1")
 	// PLUMBER_CORPUS_SNAPSHOT=<file> writes every case's paths and score to
 	// that file, for a before and after comparison across a refactor.
 	snapshot := os.Getenv("PLUMBER_CORPUS_SNAPSHOT")

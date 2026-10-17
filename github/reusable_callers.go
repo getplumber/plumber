@@ -34,8 +34,8 @@ var (
 // it runs (Job.ReusableCallees) and the artifacts they upload or download,
 // their inputs replaced by what the call passes, and a container built
 // from an input resolves to the image each call passes (Job.MatrixImages).
-// Only workflows of the repository itself are linked: a call to another
-// repository's workflow has no job here.
+// A call to another repository's workflow is linked to the jobs the nested
+// resolution appended for it.
 func linkReusableCallers(jobs []ir.Job, projectPath string) {
 	l := &reusableLinker{
 		jobs:     jobs,
@@ -45,22 +45,32 @@ func linkReusableCallers(jobs []ir.Job, projectPath string) {
 		artDone:  map[int][]ir.ArtifactRef{},
 	}
 	for i := range jobs {
-		f := workflowFileOf(jobs[i].OriginFile)
+		f := fileKeyOf(jobs[i])
 		l.byFile[f] = append(l.byFile[f], i)
 	}
 	for i := range jobs {
-		if f := localWorkflowFile(jobs[i].ReusableWorkflowUses, projectPath); f != "" {
-			l.calls = append(l.calls, reusableCall{caller: i, file: f})
+		if !jobs[i].Nested {
+			if f := localWorkflowFile(jobs[i].ReusableWorkflowUses, projectPath); f != "" {
+				l.calls = append(l.calls, reusableCall{caller: i, file: f})
+				continue
+			}
+		}
+		if ref := canonicalWorkflowRef(jobs[i]); ref != "" {
+			if f := remoteFileKey(ref, jobs[i].Name); len(l.byFile[f]) > 0 {
+				l.calls = append(l.calls, reusableCall{caller: i, file: f})
+			}
 		}
 	}
 	if len(l.calls) == 0 {
 		return
 	}
 	for i := range jobs {
-		if !slices.Contains(jobs[i].Triggers, "workflow_call") {
+		// A job appended from another repository's workflow always runs for
+		// its calling job, whatever its untrusted `on:` says (R9).
+		if !jobs[i].Nested && !slices.Contains(jobs[i].Triggers, "workflow_call") {
 			continue
 		}
-		jobs[i].Callers = l.callersOf(workflowFileOf(jobs[i].OriginFile), 0)
+		jobs[i].Callers = l.callersOf(fileKeyOf(jobs[i]), 0)
 		l.resolveImages(i)
 	}
 	for _, c := range l.calls {
@@ -94,6 +104,29 @@ type reusableLinker struct {
 // one, and a call names the file under .github/workflows/.
 func workflowFileOf(originFile string) string {
 	return path.Base(strings.ReplaceAll(originFile, "\\", "/"))
+}
+
+// remoteFileKey keys the jobs one call of another repository's workflow
+// appended: the canonical call and the calling job, since every call
+// appends its own copy (spec 2026-10-16 section 3.2: Callers from that
+// calling job).
+func remoteFileKey(ref, caller string) string { return ref + "\x00" + caller }
+
+// callerOfNested is the calling job of a job appended from another
+// repository's workflow: its name without the last segment.
+func callerOfNested(name string) string {
+	if i := strings.LastIndex(name, "/"); i > 0 {
+		return name[:i]
+	}
+	return name
+}
+
+// fileKeyOf is the key the linker groups a job's workflow under.
+func fileKeyOf(job ir.Job) string {
+	if job.Nested {
+		return remoteFileKey(job.OriginFile, callerOfNested(job.Name))
+	}
+	return workflowFileOf(job.OriginFile)
 }
 
 // localWorkflowFile is the workflow file a job-level uses: calls when it is
@@ -144,8 +177,8 @@ func (l *reusableLinker) callersOf(file string, depth int) []ir.ReusableCaller {
 			If:             cj.If,
 		}
 		var ups []ir.ReusableCaller
-		if slices.Contains(cj.Triggers, "workflow_call") {
-			ups = l.callersOf(workflowFileOf(cj.OriginFile), depth+1)
+		if cj.Nested || slices.Contains(cj.Triggers, "workflow_call") {
+			ups = l.callersOf(fileKeyOf(cj), depth+1)
 		}
 		if len(ups) == 0 {
 			out = append(out, base)

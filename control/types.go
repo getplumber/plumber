@@ -147,6 +147,11 @@ type AnalysisResult struct {
 	// 3) so a degraded check is visible instead of silently passing.
 	Warnings []string `json:"warnings,omitempty"`
 
+	// UnexpandedActions lists the action references the nested resolution
+	// could not expand (GitHub only, spec 2026-10-16 section 7): budget,
+	// fetch, expression or api_disabled.
+	UnexpandedActions []ir.UnexpandedAction `json:"unexpandedActions,omitempty"`
+
 	// ApprovalRulesTierCaveat is set when an MR approval-rule control ran but
 	// the GitLab approvals API returned zero rules — the ambiguous case where
 	// the project is either on GitLab Free (feature unavailable, API returns an

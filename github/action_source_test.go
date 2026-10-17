@@ -178,7 +178,7 @@ func TestAnalyzeActionMutableExec_Subpath(t *testing.T) {
 		}
 		return "", fetchMissing
 	}
-	got := analyzeActionMutableExec(fetch, "acme", "actions", "v1", "hassfest")
+	got := analyzeActionMutableExec(fetchActionDefinition(fetch, "acme", "actions", "v1", "hassfest"), fetch, "acme", "actions", "v1", "hassfest")
 	if got == nil {
 		t.Fatal("expected a finding for the subpath action, got nil (subpath not resolved)")
 	}
@@ -193,7 +193,7 @@ func TestAnalyzeActionMutableExec_Unverified(t *testing.T) {
 	fetchErr := func(owner, repo, ref, p string) (string, fetchStatus) {
 		return "", fetchError
 	}
-	got := analyzeActionMutableExec(fetchErr, "acme", "tool", "v1", "")
+	got := analyzeActionMutableExec(fetchActionDefinition(fetchErr, "acme", "tool", "v1", ""), fetchErr, "acme", "tool", "v1", "")
 	if got == nil || got.Tier != "unverified" {
 		t.Fatalf("network error must yield tier=unverified, got %+v", got)
 	}
@@ -202,7 +202,7 @@ func TestAnalyzeActionMutableExec_Unverified(t *testing.T) {
 	fetchMiss := func(owner, repo, ref, p string) (string, fetchStatus) {
 		return "", fetchMissing
 	}
-	if got := analyzeActionMutableExec(fetchMiss, "acme", "tool", "v1", ""); got != nil {
+	if got := analyzeActionMutableExec(fetchActionDefinition(fetchMiss, "acme", "tool", "v1", ""), fetchMiss, "acme", "tool", "v1", ""); got != nil {
 		t.Fatalf("a missing action.yml must yield nil, got %+v", got)
 	}
 }

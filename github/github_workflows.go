@@ -139,8 +139,18 @@ func ScanGitHubWorkflowsWithProgress(projectPath, defaultBranch, rootDir, apiHos
 	if err != nil {
 		return nil, nil, err
 	}
-	linkReusableCallers(jobs, projectPath)
 	pipeline.Jobs = jobs
+	var client *GitHubMetadataClient
+	if enrichActionMetadata {
+		client = NewGitHubMetadataClientForHost(apiHost)
+	}
+	defs := definitionFetcherForHost(apiHost, client)
+	// The resolved pipeline (spec 2026-10-16 section 4.1) is built right
+	// after the workflows collectWorkflowJobs parsed, before the reusable
+	// callers are linked and before the enrichment, which then runs over
+	// the closure unchanged.
+	resolveNestedActions(pipeline, defs, nestedScope{projectPath: projectPath, readLocal: diskReader(rootDir), localOnDisk: true})
+	linkReusableCallers(pipeline.Jobs, projectPath)
 	pipeline.AnalyzedWorkflows = workflowFiles
 	if dcfg, derr := scanDependabotConfig(rootDir); derr != nil {
 		partialErrors = append(partialErrors, derr)
@@ -158,7 +168,7 @@ func ScanGitHubWorkflowsWithProgress(projectPath, defaultBranch, rootDir, apiHos
 	total := n + 3
 	report(progressFn, 1, total, "Scanning workflow files")
 	if enrichActionMetadata {
-		enrichActionsWithAPIMetadata(pipeline, apiHost, scanMutableExec, wrapProgress(progressFn, total))
+		enrichActions(pipeline, client, defs, scanMutableExec, wrapProgress(progressFn, total))
 	}
 	return pipeline, partialErrors, nil
 }
@@ -195,7 +205,7 @@ func wrapProgress(fn ProgressFunc, grandTotal int) ProgressFunc {
 // The remote scan already consumed slots 1..(1+N) for the listing
 // and per-file fetch phase (N = pipeline.WorkflowFileCount), so the
 // enrichment phase that follows occupies slots (2+N)..(1+N+M). The
-// inner counter from enrichActionsWithAPIMetadata is offset by
+// inner counter from enrichActions is offset by
 // (1+N), the total is set to the pipeline-wide grand total returned
 // by TotalProgressStepsForPipeline so the bar keeps climbing
 // smoothly into the trailing caller-owned slots.
@@ -246,7 +256,7 @@ func report(fn ProgressFunc, step, total int, message string) {
 	}
 }
 
-// enrichActionsWithAPIMetadata walks every job's steps[].uses and
+// enrichActions walks every job's steps[].uses and
 // populates Action.Metadata from the GitHub REST API. Uses a shared
 // client so duplicate `owner/repo@ref` references across workflows
 // cost a single lookup. Also resolves the tag named in a trailing
@@ -262,17 +272,14 @@ func report(fn ProgressFunc, step, total int, message string) {
 // collector skips resolveMutableExec entirely — up to ~7 sequential HTTP
 // requests per unique action — so disabling the control removes its
 // scan-time and rate-limit cost instead of merely hiding the findings.
-func enrichActionsWithAPIMetadata(pipeline *ir.NormalizedPipeline, apiHost string, scanMutableExec bool, progressFn ProgressFunc) {
-	enrichActionsWithClient(pipeline, NewGitHubMetadataClientForHost(apiHost), scanMutableExec, progressFn)
-}
-
-// enrichActionsWithClient is enrichActionsWithAPIMetadata with the
-// metadata client supplied rather than constructed, so tests can drive
-// the collector-to-IR handoff through a stubbed transport. Every field
-// the policies read crosses from GitHubMetadata into ir.ActionMetadata
+//
+// The metadata client and the definition fetcher are supplied rather
+// than constructed, so tests can drive the collector-to-IR handoff
+// through a stubbed transport (enrichActionsWithClient). Every field the
+// policies read crosses from GitHubMetadata into ir.ActionMetadata
 // here, and a field dropped in that copy silently disables the rule
 // that consumes it while every other test stays green.
-func enrichActionsWithClient(pipeline *ir.NormalizedPipeline, client *GitHubMetadataClient, scanMutableExec bool, progressFn ProgressFunc) {
+func enrichActions(pipeline *ir.NormalizedPipeline, client *GitHubMetadataClient, defs *definitionFetcher, scanMutableExec bool, progressFn ProgressFunc) {
 	if !client.Available() {
 		// Returning silently here was the widest silent pass on this
 		// provider: no action gets .Metadata, so every rule that reads it
@@ -292,7 +299,9 @@ func enrichActionsWithClient(pipeline *ir.NormalizedPipeline, client *GitHubMeta
 	uniqueRefs := map[string]struct{}{}
 	for i := range pipeline.Jobs {
 		for k := range pipeline.Jobs[i].Uses {
-			uniqueRefs[pipeline.Jobs[i].Uses[k].Uses] = struct{}{}
+			if a := pipeline.Jobs[i].Uses[k]; !a.Nested || !defs.refuses(a.Uses) {
+				uniqueRefs[a.Uses] = struct{}{}
+			}
 		}
 	}
 	total := len(uniqueRefs)
@@ -303,6 +312,12 @@ func enrichActionsWithClient(pipeline *ir.NormalizedPipeline, client *GitHubMeta
 		job := &pipeline.Jobs[i]
 		for k := range job.Uses {
 			action := &job.Uses[k]
+			if action.Nested && defs.refuses(action.Uses) {
+				// A nested reference past the budget, or outside GitHub's
+				// grammar, is never read: neither its metadata nor its
+				// source (spec 2026-10-16 section 4.3, R8).
+				continue
+			}
 			if _, already := seen[action.Uses]; !already {
 				done++
 				seen[action.Uses] = struct{}{}
@@ -311,7 +326,7 @@ func enrichActionsWithClient(pipeline *ir.NormalizedPipeline, client *GitHubMeta
 			meta := client.Resolve(action.Uses)
 			var mre *ir.MutableRemoteExec
 			if scanMutableExec {
-				mre = resolveMutableExec(action.Uses, mreCache)
+				mre = resolveMutableExec(action.Uses, defs, mreCache)
 			}
 			if isZeroMetadata(meta) && action.Comment == "" && mre == nil {
 				continue
@@ -347,7 +362,7 @@ func enrichActionsWithClient(pipeline *ir.NormalizedPipeline, client *GitHubMeta
 	// (pinned commit unresolvable, tag list blocked) so the renderer and
 	// output writers can show a "could not verify" warning instead of a
 	// silent pass (ISSUE-228).
-	pipeline.AdvisoryWarnings = client.DegradedChecks()
+	pipeline.AdvisoryWarnings = append(pipeline.AdvisoryWarnings, client.DegradedChecks()...)
 }
 
 // ownerRepoFromUses extracts "owner/repo" from a uses: value,

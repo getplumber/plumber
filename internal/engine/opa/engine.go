@@ -469,11 +469,69 @@ func enrichFindingsWithJobLocation(findings []Finding, pipeline *ir.NormalizedPi
 				}
 			}
 		}
+		anchor := job
+		if job.Nested {
+			anchor = nestedAnchor(byName, job)
+			markNestedJob(f, job)
+		}
 		if f.File == "" {
-			f.File = job.OriginFile
+			f.File = anchor.OriginFile
 		}
 		if f.Line == 0 {
-			f.Line = job.OriginLine
+			f.Line = anchor.OriginLine
+		}
+	}
+}
+
+// nestedAnchor is the job of the scanned repository a job appended from
+// another repository's workflow runs for: up its callers to the first job
+// that is not nested, the user's edit point (spec 2026-10-16, R9). With no
+// Callers the calling job is the name without its last segment (the
+// resolution names an appended job <caller>/<callee job>). The job itself
+// when no caller is known.
+func nestedAnchor(byName map[string]*ir.Job, job *ir.Job) *ir.Job {
+	cur := job
+	for range len(byName) {
+		if !cur.Nested {
+			break
+		}
+		up := ""
+		if len(cur.Callers) > 0 {
+			up = cur.Callers[0].Job
+		} else if i := strings.LastIndex(cur.Name, "/"); i > 0 {
+			up = cur.Name[:i]
+		}
+		next, ok := byName[up]
+		if !ok {
+			break
+		}
+		cur = next
+	}
+	if cur.Nested {
+		return job
+	}
+	return cur
+}
+
+// markNestedJob copies a nested job's provenance into its finding when the
+// rule did not: nested, the chain of calls, and the callee's own line.
+func markNestedJob(f *Finding, job *ir.Job) {
+	if f.Data == nil {
+		f.Data = map[string]any{}
+	}
+	if _, has := f.Data["nested"]; !has {
+		f.Data["nested"] = true
+	}
+	if _, has := f.Data["via"]; !has && len(job.Via) > 0 {
+		via := make([]any, len(job.Via))
+		for i, v := range job.Via {
+			via[i] = v
+		}
+		f.Data["via"] = via
+	}
+	if _, has := f.Data["definedIn"]; !has {
+		if d := ir.WorkflowDefinedIn(job.OriginFile, job.OriginLine); d != "" {
+			f.Data["definedIn"] = d
 		}
 	}
 }

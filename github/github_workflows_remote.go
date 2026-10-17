@@ -1,9 +1,12 @@
 package github
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"net/http"
+	"net/url"
 	"sort"
 	"strings"
 
@@ -109,6 +112,15 @@ func ScanGitHubWorkflowsRemote(host, owner, repo, ref string, enrichActionMetada
 	sort.Slice(pipeline.Jobs, func(i, j int) bool {
 		return pipeline.Jobs[i].Name < pipeline.Jobs[j].Name
 	})
+	var client *GitHubMetadataClient
+	if enrichActionMetadata {
+		client = NewGitHubMetadataClientForHost(host)
+	}
+	defs := definitionFetcherForHost(host, client)
+	// The resolved pipeline (spec 2026-10-16 section 4.1): the scanned
+	// repository's composites are read through the contents API at the
+	// scanned ref, the remote ones through the shared definition fetch.
+	resolveNestedActions(pipeline, defs, nestedScope{projectPath: pipeline.ProjectPath, readLocal: contentsReader(rest, owner, repo, ref)})
 	linkReusableCallers(pipeline.Jobs, pipeline.ProjectPath)
 
 	if enrichActionMetadata {
@@ -116,7 +128,7 @@ func ScanGitHubWorkflowsRemote(host, owner, repo, ref string, enrichActionMetada
 		// and can switch to the grand total. wrapProgressRemote maps
 		// the enrichment's local 1..M counter into global slots
 		// (2+N)..(1+N+M).
-		enrichActionsWithAPIMetadata(pipeline, host, scanMutableExec, wrapProgressRemote(progressFn, pipeline))
+		enrichActions(pipeline, client, defs, scanMutableExec, wrapProgressRemote(progressFn, pipeline))
 	}
 
 	return pipeline, partialErrors, nil
@@ -275,12 +287,19 @@ func isRefMissing(err error) bool {
 }
 
 func fetchFileContent(rest *api.RESTClient, owner, repo, filePath, ref string) ([]byte, error) {
-	endpoint := fmt.Sprintf("repos/%s/%s/contents/%s", owner, repo, filePath)
+	return fetchFileContentContext(context.Background(), rest, owner, repo, filePath, ref)
+}
+
+// fetchFileContentContext is fetchFileContent under ctx. Every path segment
+// is escaped and the ref is a query value, so a reference read from an
+// untrusted container never steers the request path or query.
+func fetchFileContentContext(ctx context.Context, rest *api.RESTClient, owner, repo, filePath, ref string) ([]byte, error) {
+	endpoint := fmt.Sprintf("repos/%s/%s/contents/%s", url.PathEscape(owner), url.PathEscape(repo), escapePathSegments(filePath))
 	if ref != "" {
-		endpoint += "?ref=" + ref
+		endpoint += "?ref=" + url.QueryEscape(ref)
 	}
 	var f remoteContentFile
-	if err := rest.Get(endpoint, &f); err != nil {
+	if err := rest.DoWithContext(ctx, http.MethodGet, endpoint, nil, &f); err != nil {
 		return nil, err
 	}
 	if f.Encoding != "" && f.Encoding != "base64" {

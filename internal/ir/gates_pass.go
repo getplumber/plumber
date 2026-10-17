@@ -86,10 +86,15 @@ func ClassifyGates(p *NormalizedPipeline) {
 	for i := range p.Jobs {
 		job := p.Jobs[i]
 		var gate *Gate
-		if hasAnyTrigger(job, PrivilegedTriggers) {
+		// A job appended from another repository's workflow (Nested) runs
+		// only for its calling job, under that job's events and behind its
+		// `if:`: its calls decide its gate (callGate), never its own
+		// condition read alone.
+		throughCalls := job.Nested && len(job.Callers) > 0
+		if hasAnyTrigger(job, PrivilegedTriggers) && !throughCalls {
 			gate = triggersGate(p, byName, job, job.Triggers)
 		}
-		if hasTrigger(job, "workflow_call") {
+		if hasTrigger(job, "workflow_call") || throughCalls {
 			for _, c := range job.Callers {
 				gate = weakerOf(gate, callGate(p, byName, job, c))
 			}

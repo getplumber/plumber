@@ -210,6 +210,21 @@ type NormalizedPipeline struct {
 	// passing. Empty when every action resolved or no action was degraded.
 	AdvisoryWarnings []string `json:"advisoryWarnings,omitempty"`
 
+	// UnexpandedActions lists what the nested actions resolution could not
+	// expand, NestedBudgetExceeded says the container budget was passed (R3)
+	// and NestedUnresolvedCause why the closure could not be resolved at all
+	// (R6), "" when it was (spec 2026-10-16 section 7). Never in the Rego input.
+	// The cause is decided by the run's first remote read only, so the two
+	// cannot both be set; if they ever are, the overflow wins and the run
+	// degrades (coordinator ruling L7, applied by the control package).
+	UnexpandedActions     []UnexpandedAction `json:"-"`
+	NestedBudgetExceeded  bool               `json:"-"`
+	NestedUnresolvedCause string             `json:"-"`
+	// NestedJobsOverflow counts the budget references of the list that the
+	// run-wide cap on appended nested jobs left unexpanded: the calls of a
+	// reusable workflow of another repository past the cap.
+	NestedJobsOverflow int `json:"-"`
+
 	Raw map[string]any `json:"raw,omitempty"`
 
 	// Visibility is the repository's exposure as the provider reports it:
@@ -464,6 +479,11 @@ type Job struct {
 	// gives, one entry per chain. Sorted by calling job.
 	Callers []ReusableCaller `json:"callers,omitempty"`
 
+	// Nested is true on a job appended from a reusable workflow of another
+	// repository, Via the chain of calls that runs it (spec 3.2).
+	Nested bool     `json:"nested,omitempty"`
+	Via    []string `json:"via,omitempty"`
+
 	// If is the JOB-level `if:` expression (GitHub Actions), verbatim,
 	// "" when the job is unconditional. Distinct from Conditions, which
 	// flattens the job's and its steps' conditions together for
@@ -612,6 +632,16 @@ type Action struct {
 	If       string          `json:"if,omitempty"`
 	Metadata *ActionMetadata `json:"metadata,omitempty"`
 	Comment  string          `json:"comment,omitempty"`
+	// Nested is true when the step was not written in the scanned workflow but
+	// pulled in by a composite action or a called workflow (spec 2026-10-16, R1).
+	Nested bool `json:"nested,omitempty"`
+	// Via is the chain of references the step was reached through, outermost
+	// first, as written in the file that pulled each one in:
+	// ["thomasboni/nested-actions-b@main", "thomasboni/nested-actions-d@main"].
+	Via []string `json:"via,omitempty"`
+	// DefinedIn locates the uses: line inside the container that holds it,
+	// "owner/repo@ref:path/action.yml:9" (a local composite: "./.github/actions/x/action.yml:4").
+	DefinedIn string `json:"definedIn,omitempty"`
 }
 
 // ActionMetadata mirrors the collector-side GitHubMetadata shape.

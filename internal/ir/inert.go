@@ -47,8 +47,12 @@ func MarkInert(p *NormalizedPipeline) {
 	if p == nil || p.Provider != ProviderGitHub {
 		return
 	}
+	byName := make(map[string]Job, len(p.Jobs))
+	for _, j := range p.Jobs {
+		byName[j.Name] = j
+	}
 	for i := range p.Jobs {
-		p.Jobs[i].Inert = inertReason(p, p.Jobs[i])
+		p.Jobs[i].Inert = inertReason(p, byName, p.Jobs[i])
 	}
 }
 
@@ -63,11 +67,8 @@ func MarkInert(p *NormalizedPipeline) {
 // workflows only, so a workflow present in the analysed checkout but
 // absent from it (one added on a feature branch) still runs, and keeps
 // whatever reason the rest of this order gives it.
-func inertReason(p *NormalizedPipeline, job Job) string {
-	if p.ActionsDisabled && workflowListed(p, job) {
-		return "actions disabled"
-	}
-	if reason := workflowDisabledReason(p, job); reason != "" {
+func inertReason(p *NormalizedPipeline, byName map[string]Job, job Job) string {
+	if reason := workflowStateReason(p, byName, job, 0); reason != "" {
 		return reason
 	}
 	if !job.WorkflowHasTriggers && len(job.Triggers) == 0 {
@@ -81,6 +82,44 @@ func inertReason(p *NormalizedPipeline, job Job) string {
 	}
 	return repositoryLiteralReason(p, job)
 }
+
+// workflowStateReason is the repository-wide and the workflow-level
+// reason, in that order. A job appended from another repository's
+// workflow (Nested) has a workflow no listing names: it runs only for its
+// calls, so it reads its calling jobs' workflows instead, and is inert
+// only when every call is (the first call's reason names it). A call the
+// scan does not have, or a chain deeper than maxInertCallDepth, decides
+// nothing.
+func workflowStateReason(p *NormalizedPipeline, byName map[string]Job, job Job, depth int) string {
+	if job.Nested && len(job.Callers) > 0 {
+		if depth >= maxInertCallDepth {
+			return ""
+		}
+		reason := ""
+		for _, c := range job.Callers {
+			caller, ok := byName[c.Job]
+			if !ok {
+				return ""
+			}
+			r := workflowStateReason(p, byName, caller, depth+1)
+			if r == "" {
+				return ""
+			}
+			if reason == "" {
+				reason = r
+			}
+		}
+		return reason
+	}
+	if p.ActionsDisabled && workflowListed(p, job) {
+		return "actions disabled"
+	}
+	return workflowDisabledReason(p, job)
+}
+
+// maxInertCallDepth bounds the walk up a chain of nested calls, a guard
+// against a malformed cycle (the nested resolution never builds one).
+const maxInertCallDepth = 16
 
 // workflowDisabledReason reads the job's own workflow state off
 // p.WorkflowStates, keyed by WorkflowStateKey(job.OriginFile): the

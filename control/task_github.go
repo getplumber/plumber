@@ -541,17 +541,18 @@ func RunGitHubAnalysis(conf *configuration.Configuration) (*AnalysisResult, erro
 	}
 	findings, policyFailures := evaluatePolicies(l, conf, "github", pipeline)
 	result := &AnalysisResult{
-		ProjectPath:      conf.ProjectPath,
-		DefaultBranch:    defaultBranch,
-		AnalyzeBranch:    conf.Branch,
-		CIConfigSource:   "local",
-		CiValid:          len(pipeline.Jobs) > 0,
-		CiMissing:        len(pipeline.Jobs) == 0,
-		Findings:         findings,
-		GitHubStats:      AggregateGitHubStats(pipeline, conf.PlumberConfig),
-		GitHubPipeline:   pipeline,
-		AnalyzedCIConfig: githubAnalyzedCIConfig(pipeline),
-		Warnings:         pipeline.AdvisoryWarnings,
+		ProjectPath:       conf.ProjectPath,
+		DefaultBranch:     defaultBranch,
+		AnalyzeBranch:     conf.Branch,
+		CIConfigSource:    "local",
+		CiValid:           len(pipeline.Jobs) > 0,
+		CiMissing:         len(pipeline.Jobs) == 0,
+		Findings:          findings,
+		GitHubStats:       AggregateGitHubStats(pipeline, conf.PlumberConfig),
+		GitHubPipeline:    pipeline,
+		AnalyzedCIConfig:  githubAnalyzedCIConfig(pipeline),
+		Warnings:          pipeline.AdvisoryWarnings,
+		UnexpandedActions: pipeline.UnexpandedActions,
 	}
 	applyPolicyFailures(result, policyFailures)
 	attachSituation(l, conf, "github", pipeline, result)
@@ -679,17 +680,18 @@ func RunGitHubAnalysisRemote(conf *configuration.Configuration, owner, repo, ref
 	}
 	findings, policyFailures := evaluatePolicies(l, conf, "github", pipeline)
 	result := &AnalysisResult{
-		ProjectPath:      owner + "/" + repo,
-		DefaultBranch:    defaultBranch,
-		AnalyzeBranch:    ref,
-		CIConfigSource:   "remote",
-		CiValid:          len(pipeline.Jobs) > 0,
-		CiMissing:        len(pipeline.Jobs) == 0,
-		Findings:         findings,
-		GitHubStats:      AggregateGitHubStats(pipeline, conf.PlumberConfig),
-		GitHubPipeline:   pipeline,
-		AnalyzedCIConfig: githubAnalyzedCIConfig(pipeline),
-		Warnings:         pipeline.AdvisoryWarnings,
+		ProjectPath:       owner + "/" + repo,
+		DefaultBranch:     defaultBranch,
+		AnalyzeBranch:     ref,
+		CIConfigSource:    "remote",
+		CiValid:           len(pipeline.Jobs) > 0,
+		CiMissing:         len(pipeline.Jobs) == 0,
+		Findings:          findings,
+		GitHubStats:       AggregateGitHubStats(pipeline, conf.PlumberConfig),
+		GitHubPipeline:    pipeline,
+		AnalyzedCIConfig:  githubAnalyzedCIConfig(pipeline),
+		Warnings:          pipeline.AdvisoryWarnings,
+		UnexpandedActions: pipeline.UnexpandedActions,
 	}
 	applyPolicyFailures(result, policyFailures)
 	attachSituation(l, conf, "github", pipeline, result)

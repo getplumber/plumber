@@ -5,7 +5,9 @@
 // Two readings are offered. GitHubFromFiles and GitLabFromFiles go through
 // the production collectors (github's workflow scan, gitlab's
 // ToNormalizedPipeline over a merged configuration), offline: no action
-// metadata, no project settings, nothing fetched. ParseGitHubWorkflow and
+// metadata, no project settings, nothing fetched (GitHubFromFiles sets the
+// GitHub offline switch for the test, since the workflow scan reads action
+// definitions even without the metadata enrichment). ParseGitHubWorkflow and
 // ParseGitLabCI are the narrow test-time parsers the rule tests were
 // written against, which read only the fields those tests need.
 //
@@ -28,11 +30,21 @@ import (
 
 // GitHubFromFiles copies the given workflow files into a scratch
 // .github/workflows directory and scans it with the production collector,
-// without action metadata enrichment (no network). Job names come out
-// namespaced by workflow file base name ("release/publish"), as in a real
-// run. A file the collector cannot read or parse fails the test.
+// without action metadata enrichment and with the offline switch
+// (github.EnvDisableGitHubAPI) set for the test: the nested actions stage
+// reads action definitions whatever the enrichment says, so the switch is
+// what keeps the scan off the network. The closure is therefore
+// unresolved (R6) and the pipeline holds the workflows' direct
+// references only. A parallel test cannot call t.Setenv, so its parent
+// sets the switch before the parallel subtests start (control/corpus_test.go
+// does) and GitHubFromFiles leaves an already set switch alone. Job names
+// come out namespaced by workflow file base name ("release/publish"), as in
+// a real run. A file the collector cannot read or parse fails the test.
 func GitHubFromFiles(t testing.TB, files []string) *ir.NormalizedPipeline {
 	t.Helper()
+	if os.Getenv(github.EnvDisableGitHubAPI) != "1" {
+		t.Setenv(github.EnvDisableGitHubAPI, "1")
+	}
 	root := t.TempDir()
 	dir := filepath.Join(root, ".github", "workflows")
 	if err := os.MkdirAll(dir, 0o755); err != nil {

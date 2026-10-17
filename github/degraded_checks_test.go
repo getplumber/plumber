@@ -177,3 +177,50 @@ func TestReadableRepoDoesNotWarnAboutArchived(t *testing.T) {
 		t.Errorf("a repo that was read must not warn, got %q", pipeline.AdvisoryWarnings)
 	}
 }
+
+// TestNestedResolutionWarningsSurviveEnrichActions pins the review of PR
+// 549: github_workflows.go:362 changed from an assignment to an append so
+// that the warnings resolveNestedActions writes into
+// pipeline.AdvisoryWarnings (here, the callee job id outside the GitHub
+// job-id grammar, skipped and named) are not overwritten once enrichActions
+// also runs and appends its own DegradedChecks() warning. A regression back
+// to assignment would drop the nested-resolution warning silently, with the
+// rest of the suite staying green because the nested tests never run
+// enrichActions and the enrichment tests never pre-populate
+// AdvisoryWarnings.
+func TestNestedResolutionWarningsSurviveEnrichActions(t *testing.T) {
+	stub := newStub(map[string]string{
+		"acme/shared@v1:.github/workflows/x.yml": "on:\n  workflow_call:\njobs:\n  ok:\n    runs-on: x\n    steps:\n      - uses: actions/checkout@v4\n  a/b:\n    runs-on: x\n",
+	})
+	caller := ir.Job{Name: "ci/call", ReusableWorkflowUses: "acme/shared/.github/workflows/x.yml@v1"}
+	p := resolveWith(t, stub, nestedScope{}, caller)
+
+	before := strings.Join(p.AdvisoryWarnings, " | ")
+	if !strings.Contains(before, `"a/b"`) {
+		t.Fatalf("resolveNestedActions must warn about the skipped job id before enrichment runs, got %q", p.AdvisoryWarnings)
+	}
+
+	client := stubbedMetadataClient(t, func(r *http.Request) (string, int) {
+		path := r.URL.Path
+		switch {
+		case strings.HasPrefix(path, "/advisories"):
+			// The DegradedChecks() entry under test: enrichActions must
+			// append its own warning, not overwrite the nested one.
+			return `{"message":"API rate limit exceeded"}`, http.StatusForbidden
+		case strings.Count(path, "/") == 3 && strings.HasPrefix(path, "/repos/"):
+			return `{"archived":false,"stargazers_count":900}`, http.StatusOK
+		case strings.Contains(path, "/releases"):
+			return `[]`, http.StatusOK
+		}
+		return `{}`, http.StatusNotFound
+	})
+	enrichActionsWithClient(p, client, false, nil)
+
+	joined := strings.Join(p.AdvisoryWarnings, " | ")
+	if !strings.Contains(joined, `"a/b"`) {
+		t.Fatalf("the nested-resolution warning did not survive enrichActions, got %q", p.AdvisoryWarnings)
+	}
+	if !strings.Contains(joined, "actions/checkout") {
+		t.Fatalf("the enrichment warning is missing, got %q", p.AdvisoryWarnings)
+	}
+}
